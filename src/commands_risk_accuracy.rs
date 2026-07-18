@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_compute_accuracy_stats_emerging_none_when_ungraded() {
-        // All-None history (the 24 historical lines) → no emerging stats.
+        // All-None history (legacy emerging-less lines) → no emerging stats.
         let events = vec![ValidationEvent {
             day: 110,
             hit_count: 3,

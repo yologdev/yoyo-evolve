@@ -1410,7 +1410,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(
             events[0].emerging_accuracy_pct, None,
-            "absent emerging_accuracy_pct → None (24 historical lines stay valid)"
+            "absent emerging_accuracy_pct → None (legacy emerging-less lines stay valid)"
         );
 
         // A line WITH emerging_accuracy_pct parses to Some(value).
@@ -1457,5 +1457,144 @@ mod tests {
         let events = parse_validation_events(&contents);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].emerging_accuracy_pct, Some(75.0));
+    }
+
+    #[test]
+    fn test_record_green_validation_writes_one_graded_event() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let changed = vec![
+            "src/main.rs".to_string(),
+            "src/cli.rs".to_string(),
+            "README.md".to_string(), // non-src: filtered out of grading
+        ];
+        let top_10 = vec!["src/main.rs".to_string(), "src/prompt.rs".to_string()];
+        let emerging = vec!["src/cli.rs".to_string()];
+
+        let grade = record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+            .expect("record green validation");
+
+        // 2 src files changed; 1 (main.rs) was in top_10 → 50% reactive;
+        // 1 (cli.rs) was in emerging → 50% anticipatory.
+        assert_eq!(
+            grade,
+            GreenGrade::Recorded {
+                top_hits: 1,
+                total: 2,
+                top_pct: 50.0,
+                emerging_pct: Some(50.0),
+            }
+        );
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        assert_eq!(
+            contents.lines().filter(|l| !l.trim().is_empty()).count(),
+            1,
+            "exactly one event written"
+        );
+        let raw: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+        // Same green marker the Day-139 watch path uses — one vocabulary.
+        assert_eq!(raw["severity"], "watch_success");
+        assert_eq!(raw["trigger"], "cli");
+        assert_eq!(raw["snapshot_git_hash"], "abc1234");
+        assert!((raw["accuracy_pct"].as_f64().unwrap() - 50.0).abs() < 0.001);
+        assert!((raw["emerging_accuracy_pct"].as_f64().unwrap() - 50.0).abs() < 0.001);
+        // Under a green outcome the "hits" are touched-but-didn't-break —
+        // false-positive evidence for the reactive column.
+        assert_eq!(raw["hits"], serde_json::json!(["src/main.rs"]));
+        assert_eq!(raw["surprises"], serde_json::json!(["src/cli.rs"]));
+    }
+
+    #[test]
+    fn test_record_green_validation_dedups_same_snapshot() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let changed = vec!["src/main.rs".to_string()];
+        let top_10 = vec!["src/main.rs".to_string()];
+        let emerging: Vec<String> = vec![];
+
+        let first = record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+            .expect("first green validation");
+        assert!(matches!(first, GreenGrade::Recorded { .. }));
+
+        // Second run against the SAME snapshot hash → deduped, nothing written.
+        let second =
+            record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+                .expect("second green validation");
+        assert_eq!(second, GreenGrade::Deduped);
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        assert_eq!(
+            contents.lines().filter(|l| !l.trim().is_empty()).count(),
+            1,
+            "dedup: still exactly one event after a repeat run"
+        );
+
+        // A DIFFERENT snapshot hash is not deduped.
+        let third = record_green_validation_to(&path, 141, "def5678", &changed, &top_10, &emerging)
+            .expect("third green validation");
+        assert!(matches!(third, GreenGrade::Recorded { .. }));
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        assert_eq!(
+            contents.lines().filter(|l| !l.trim().is_empty()).count(),
+            2,
+            "a new snapshot hash writes a new event"
+        );
+    }
+
+    #[test]
+    fn test_record_green_validation_no_src_changes_writes_nothing() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let changed = vec!["README.md".to_string(), "docs/src/intro.md".to_string()];
+        let grade = record_green_validation_to(&path, 140, "abc1234", &changed, &[], &[])
+            .expect("green validation with no src changes");
+        assert_eq!(grade, GreenGrade::NoSrcChanges);
+        assert!(
+            !path.exists(),
+            "no src/ changes → no event file (a 0/0 event would drag the average)"
+        );
+    }
+
+    #[test]
+    fn test_accuracy_readers_count_green_event() {
+        // Behavior choice (documented on record_green_validation_to): green
+        // events COUNT toward compute_accuracy_stats — under a green outcome
+        // the hit rate reads as a false-positive rate, the meter's other half.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let changed = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
+        let top_10 = vec!["src/main.rs".to_string()];
+        let emerging = vec!["src/cli.rs".to_string()];
+        record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+            .expect("record green validation");
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        let events = parse_validation_events(&contents);
+        assert_eq!(events.len(), 1, "reader parses the green shape");
+        assert_eq!(events[0].severity.as_deref(), Some("watch_success"));
+        assert_eq!(events[0].hit_count, 1);
+        assert_eq!(events[0].total_changed, 2);
+        assert_eq!(events[0].emerging_accuracy_pct, Some(50.0));
+
+        let stats = crate::commands_risk_accuracy::compute_accuracy_stats(&events);
+        assert_eq!(
+            stats.total_validations, 1,
+            "green event counts toward stats"
+        );
+        assert_eq!(stats.total_hits, 1);
+        assert_eq!(stats.total_changed, 2);
+        assert_eq!(stats.emerging_samples, 1);
+        assert_eq!(stats.emerging_avg_pct, Some(50.0));
+        assert_eq!(
+            stats.severity_counts.get("watch_success").copied(),
+            Some(1),
+            "green events are tallied under the watch_success severity"
+        );
     }
 }
