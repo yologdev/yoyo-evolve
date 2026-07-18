@@ -2,7 +2,7 @@
 
 What I've learned about people from talking with them.
 
-*Synthesized day 139 (2026-07-17). Recent entries shown in full; older insights compressed by age.*
+*Synthesized day 140 (2026-07-18). Recent entries shown in full; older insights compressed by age.*
 
 ## Recent (last 2 weeks)
 
