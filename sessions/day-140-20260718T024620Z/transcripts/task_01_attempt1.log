@@ -1,0 +1,149 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME" src/ --in… ✓ (8ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" src/*…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"risk\"\|\"spawn\"" sr… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,600p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk\b" src/comm… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 586,680p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk\|risk" src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (6 → 24 lines)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_unknown_risk_subcommand() {
+  +         // Every documented subcommand is known
+  +         for sub in RISK_SUBCOMMANDS {
+  +             assert!(
+  +                 !is_unknown_risk_subcommand(sub),
+  +                 "{sub} should be a known /risk subcommand"
+  +             );
+  +         }
+  +         // Empty means "show the report" — not unknown
+  +         assert!(!is_unknown_risk_subcommand(""));
+  +         // A typo must be flagged, not silently fall through to the report
+  +         // (a user typing `yoyo risk snapshoot` would otherwise believe a
+  +         // snapshot was recorded when nothing was)
+  +         assert!(is_unknown_risk_subcommand("snapshoot"));
+  ... (2 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 11 lines)
+  +     // Unknown subcommand: fail loudly instead of silently printing the
+  +     // default report. A typo like `yoyo risk snapshoot` used to fall through
+  +     // here — the user believed a snapshot was recorded when nothing was.
+  +     if is_unknown_risk_subcommand(sub) {
+  +         println!("Unknown /risk subcommand: {sub}");
+  +         println!("Available: snapshot | validate | history | predict | accuracy | effectiveness | --all");
+  +         return;
+  +     }
+  + 
+        let show_all = input.contains("--all");
+        let risks = compute_file_risk_scores();
+ ✓ (8.7s)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_unknown_risk_subcommand() {
+  +         // Every documented subcommand is known
+  ... (13 more lines)
+ ✓ (17.1s)
+  +     // Unknown subcommand: fail loudly instead of silently printing the
+  +     // default report. A typo like `yoyo risk snapshoot` used to fall through
+  +     // here — the user believed a snapshot was recorded when nothing was.
+  +     if is_unknown_risk_subcommand(sub) {
+  +         println!("Unknown /risk subcommand: {sub}");
+  +         println!("Available: snapshot | validate | history | predict | accuracy | effectiveness | --all");
+  +         return;
+  +     }
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 2 lines) ✓ (8.5s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 9 lines)
+  + /// True if `sub` is not a recognized `/risk` subcommand. Empty input means
+  + /// "show the default report" and is never unknown. Kept in sync with
+  + /// [`RISK_SUBCOMMANDS`] so tab-completion and dispatch agree by construction.
+  + pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
+  +     !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+    /// Handle the `/risk` command — display per-file risk scores.
+    pub(crate) fn handle_risk(input: &str) {
+ ✓ (1m 14s)
+  + /// True if `sub` is not a recognized `/risk` subcommand. Empty input means
+  + /// "show the default report" and is never unknown. Kept in sync with
+  + /// [`RISK_SUBCOMMANDS`] so tab-completion and dispatch agree by construction.
+  + pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
+  +     !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+    /// Handle the `/risk` command — display per-file risk scores.
+    pub(crate) fn handle_risk(input: &str) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk 2>&1 | … ✓ (2.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test is_unknown_risk 2>&1 … ✓ (116ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_is_unknown_risk_su… ✓ (7ms)
+  17 tools completed in 4m 30s (17 ✓)
+
+The test edit was rolled back when the auto-check failed. Let me re-add it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_handle_risk_does_n… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 23 lines)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_unknown_risk_subcommand() {
+  +         // Every documented subcommand is known
+  +         for sub in RISK_SUBCOMMANDS {
+  +             assert!(
+  +                 !is_unknown_risk_subcommand(sub),
+  +                 "{sub} should be a known /risk subcommand"
+  +             );
+  +         }
+  +         // Empty means "show the report" — not unknown
+  +         assert!(!is_unknown_risk_subcommand(""));
+  +         // A typo must be flagged, not silently fall through to the report
+  +         // (a user typing `yoyo risk snapshoot` would otherwise believe a
+  +         // snapshot was recorded when nothing was)
+  +         assert!(is_unknown_risk_subcommand("snapshoot"));
+  ... (2 more lines)
+ ✓ (1m 17s)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_unknown_risk_subcommand() {
+  +         // Every documented subcommand is known
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 1s)
+  3 tools completed in 2m 32s (3 ✓)
+
+All green. Committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (14ms)
+
+Done. One small improvement, committed.
+
+What I found: /risk <typo> silently fell through to the default risk report. The nasty case: yoyo risk snapshoot — the user believes a snapshot was recorded, but nothing was written. Since the prediction meter only accumulates through explicit yoyo risk snapshot invocations, a swallowed typo there is a silently lost data point. This is exactly the "silent no-op" anti-pattern I keep rooting out (fail-soft without a signal is fail-silent — Day 139's lesson, one day old).
+
+What I built:
+• `is_unknown_risk_subcommand() in src/commands_risk.rs` — pure, checked against RISK_SUBCOMMANDS (the same list tab-completion uses), so dispatch and completion can't drift apart
+• handle_risk now prints `Unknown /risk subcommand: <sub>` plus the valid list and returns, instead of showing the report
+• Unit test covering: every documented subcommand is known, empty input (default report) passes, typos are flagged
+
+**Verified:** fmt + clippy -D warnings + build + full test suite all green (88 integration + all unit tests pass); manually confirmed ./target/debug/yoyo risk snapshoot now prints the honest error. Committed as f8f64e12.
+
+One wrinkle worth noting honestly: my first test edit was silently rolled back when the auto-check failed (helper didn't exist yet), and I only caught it because I verified the test ran rather than trusting the earlier "Replaced 6 lines" output — the "verify completion claims before writing them" lesson earning its keep in real time.
+
+  watch: no files changed this turn — skipping
+
