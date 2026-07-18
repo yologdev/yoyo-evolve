@@ -1974,8 +1974,55 @@ fn handle_risk_validate() {
             accuracy_pct_rounded,
             emerging_accuracy_pct,
             None, // CLI manual grading — untagged severity
+            None, // red-path event — no green dedup key
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
+        }
+    } else {
+        // GREEN outcome: commits happened since the snapshot but nothing
+        // broke. Grade it anyway — predicted-risky files that were touched
+        // without breaking are false-positive evidence, and a meter that only
+        // records failures can never measure false positives (Day 140). Uses
+        // the same "watch_success" green marker the watch path writes, and
+        // dedups by snapshot git hash so repeated validate runs stay quiet.
+        let changed: std::collections::BTreeSet<String> = entries
+            .iter()
+            .flat_map(|e| e.files.iter().cloned())
+            .collect();
+        let changed: Vec<String> = changed.into_iter().collect();
+        let emerging = emerging_paths_from_snapshot(&snapshot);
+        match crate::commands_risk_snapshots::record_green_validation_to(
+            std::path::Path::new(RISK_VALIDATION_PATH),
+            day as u32,
+            &git_hash,
+            &changed,
+            &top_10,
+            &emerging,
+        ) {
+            Ok(crate::commands_risk_snapshots::GreenGrade::Recorded {
+                top_hits,
+                total,
+                top_pct,
+                emerging_pct,
+            }) => {
+                let emerging_str = match emerging_pct {
+                    Some(p) => format!("{p:.1}%"),
+                    None => "n/a (no emerging list in snapshot)".to_string(),
+                };
+                eprintln!(
+                    "  {DIM}📊 Graded snapshot {git_hash}: no failures — {top_hits}/{total} predicted files touched but clean (top_10 {top_pct:.1}% / emerging {emerging_str} false-positive evidence){RESET}"
+                );
+            }
+            // Deduped: this snapshot was already green-graded — stay silent.
+            Ok(crate::commands_risk_snapshots::GreenGrade::Deduped) => {}
+            Ok(crate::commands_risk_snapshots::GreenGrade::NoSrcChanges) => {
+                // Liveness signal for the fail-soft path (Day 139: fail-soft
+                // without a freshness signal is fail-silent).
+                eprintln!("  {DIM}(no src/ changes since snapshot — nothing to grade){RESET}");
+            }
+            Err(e) => {
+                eprintln!("  {DIM}(warning: could not record green validation event: {e}){RESET}");
+            }
         }
     }
 }

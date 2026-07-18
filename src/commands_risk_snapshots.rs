@@ -189,10 +189,16 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
 ///
 /// `severity` tags what *kind* of outcome this event graded against —
-/// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
-/// stayed green), `"revert"` (full revert — reserved for higher-severity
-/// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
-/// so the file stays backward-compatible with historical severity-less entries.
+/// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (green
+/// outcome: watch stayed green, or CLI validate found no breakage since the
+/// snapshot — one vocabulary for "graded against a green outcome"), `"revert"`
+/// (full revert — reserved for higher-severity wiring). `None` omits the key
+/// entirely (CLI manual grading, legacy lines), so the file stays
+/// backward-compatible with severity-less entries.
+///
+/// `snapshot_git_hash` records which snapshot this event graded — used by the
+/// green-outcome dedup (grade each snapshot at most once). `None` omits the
+/// key (all pre-existing event shapes).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
@@ -203,6 +209,7 @@ pub(crate) fn write_validation_event(
     accuracy_pct: f64,
     emerging_accuracy_pct: Option<f64>,
     severity: Option<&str>,
+    snapshot_git_hash: Option<&str>,
 ) -> std::io::Result<()> {
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -246,6 +253,14 @@ pub(crate) fn write_validation_event(
         }
     }
 
+    // Snapshot hash is optional — only green-outcome events carry it (it's
+    // the dedup key for "grade each snapshot at most once").
+    if let Some(hash) = snapshot_git_hash {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("snapshot_git_hash".to_string(), serde_json::json!(hash));
+        }
+    }
+
     if let Some(parent) = validation_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -281,6 +296,120 @@ pub(crate) fn accuracy_of(
     let pct = (hits as f64 / changed.len() as f64) * 100.0;
     let pct_rounded = (pct * 10.0).round() / 10.0;
     (hits, pct_rounded)
+}
+
+/// Return true if a validation event referencing this snapshot's git hash
+/// already exists in the validations JSONL content. Only green-outcome events
+/// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+/// already green-graded?" question — the dedup that keeps repeated
+/// `yoyo risk validate` runs from spamming duplicate green events.
+pub(crate) fn green_event_exists_for(content: &str, snapshot_git_hash: &str) -> bool {
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .any(|v| v.get("snapshot_git_hash").and_then(|h| h.as_str()) == Some(snapshot_git_hash))
+}
+
+/// Outcome of attempting to record a green (no-failure) validation event.
+#[derive(Debug, PartialEq)]
+pub(crate) enum GreenGrade {
+    /// Event written: `top_hits` of `total` changed src files were predicted
+    /// (touched-but-didn't-break — false-positive evidence for the reactive
+    /// column), plus the anticipatory grade when the snapshot carried one.
+    Recorded {
+        top_hits: usize,
+        total: usize,
+        top_pct: f64,
+        emerging_pct: Option<f64>,
+    },
+    /// This snapshot was already green-graded — nothing written.
+    Deduped,
+    /// No `src/` files changed since the snapshot — nothing to grade
+    /// (a 0/0 event would read as 0% accuracy and drag the average).
+    NoSrcChanges,
+}
+
+/// Record a green-outcome validation event: commits happened since the
+/// snapshot but nothing broke. Grades BOTH the reactive `top_10` and the
+/// anticipatory `emerging` prediction sets against the files that were
+/// *touched* — under a green outcome, a predicted-risky file that changed
+/// without breaking is false-positive evidence. Uses severity
+/// `"watch_success"` (the same green marker the Day-139 watch path writes,
+/// so readers see one vocabulary; `trigger: "cli"` still identifies the
+/// crank) and stamps `snapshot_git_hash` so each snapshot is green-graded
+/// at most once.
+///
+/// Green events COUNT toward `compute_accuracy_stats` exactly like the
+/// watch-green events already do — under a green outcome the hit rate reads
+/// as a false-positive rate, which is the meter's other half.
+pub(crate) fn record_green_validation_to(
+    validation_path: &std::path::Path,
+    day: u32,
+    snapshot_git_hash: &str,
+    changed_files: &[String],
+    top_10: &[String],
+    emerging: &[String],
+) -> std::io::Result<GreenGrade> {
+    // Risk predictions cover source code only — mirror the watch path's filter.
+    let src_files: Vec<&String> = changed_files
+        .iter()
+        .filter(|f| f.starts_with("src/"))
+        .collect();
+    if src_files.is_empty() {
+        return Ok(GreenGrade::NoSrcChanges);
+    }
+
+    // Dedup: grade each snapshot at most once.
+    if let Ok(existing) = std::fs::read_to_string(validation_path) {
+        if green_event_exists_for(&existing, snapshot_git_hash) {
+            return Ok(GreenGrade::Deduped);
+        }
+    }
+
+    let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+    let top_set: std::collections::HashSet<&str> = top_10.iter().map(|s| s.as_str()).collect();
+    let (top_hits, top_pct) = accuracy_of(&changed_refs, &top_set);
+
+    // Legacy snapshots without an emerging list stay None (ungraded) —
+    // distinct from Some(0.0), so they don't drag the emerging average.
+    let emerging_pct = if emerging.is_empty() {
+        None
+    } else {
+        let emerging_set: std::collections::HashSet<&str> =
+            emerging.iter().map(|s| s.as_str()).collect();
+        Some(accuracy_of(&changed_refs, &emerging_set).1)
+    };
+
+    let mut hits: Vec<String> = Vec::new();
+    let mut surprises: Vec<String> = Vec::new();
+    for f in &src_files {
+        if top_set.contains(f.as_str()) {
+            hits.push(f.to_string());
+        } else {
+            surprises.push(f.to_string());
+        }
+    }
+    let total = src_files.len();
+
+    write_validation_event(
+        validation_path,
+        day,
+        "cli",
+        &hits,
+        &surprises,
+        top_pct,
+        emerging_pct,
+        Some("watch_success"),
+        Some(snapshot_git_hash),
+    )?;
+
+    Ok(GreenGrade::Recorded {
+        top_hits,
+        total,
+        top_pct,
+        emerging_pct,
+    })
 }
 
 /// Automatically validate risk predictions against files that were changed
@@ -389,6 +518,7 @@ fn auto_validate_after_failure_to(
         accuracy_pct_rounded,
         emerging_accuracy_pct,
         Some(severity),
+        None, // not a green-grade event — no snapshot dedup key
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -1163,7 +1293,7 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
-        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None, None)
+        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None, None, None)
             .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
@@ -1198,6 +1328,7 @@ mod tests {
             100.0,
             None,
             Some("watch_failure"),
+            None,
         )
         .expect("write validation event");
 
@@ -1223,9 +1354,9 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None, None)
+        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None, None, None)
             .expect("first write");
-        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None, None)
+        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None, None, None)
             .expect("second write");
 
         let events = load_validation_history_from(&path);
@@ -1311,6 +1442,7 @@ mod tests {
             50.0,
             Some(75.0),
             Some("watch_failure"),
+            None,
         )
         .expect("write validation event with emerging");
 
