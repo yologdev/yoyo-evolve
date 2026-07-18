@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ search 'yoyo risk (snapshot|validate)' in src/dispatch_sub.rs ✓ (2ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/help_data.rs … ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,640p' src/commands_r… ✓ (4ms)
+  ▶ edit src/commands_risk.rs (3 → 10 lines)
+    pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
+        !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+  + /// Human-readable list of `/risk` subcommands, derived from
+  + /// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
+  + /// of sync with the actual dispatch table (single source of truth).
+  + pub(crate) fn risk_subcommand_list() -> String {
+  +     RISK_SUBCOMMANDS.join(" | ")
+    }
+  ▶ edit src/commands_risk.rs (5 → 3 lines)
+            println!("Unknown /risk subcommand: {sub}");
+  -         println!(
+  -             "Available: snapshot | validate | history | predict | accuracy | effectiveness | --all"
+  -         );
+  +         println!("Available: {}", risk_subcommand_list());
+            return;
+ ✓ (764ms)
+    pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
+        !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+  + /// Human-readable list of `/risk` subcommands, derived from
+  + /// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
+  + /// of sync with the actual dispatch table (single source of truth).
+  + pub(crate) fn risk_subcommand_list() -> String {
+  +     RISK_SUBCOMMANDS.join(" | ")
+    }
+ ✓ (1.5s)
+            println!("Unknown /risk subcommand: {sub}");
+  -         println!(
+  -             "Available: snapshot | validate | history | predict | accuracy | effectiveness | --all"
+  -         );
+  +         println!("Available: {}", risk_subcommand_list());
+            return;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3540,3567p' src/commands… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk.rs | … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk_subcommand_list" s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3555,3572p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -3558 src/commands_risk.rs … ✓ (7ms)
+  ▶ edit src/commands_risk.rs (2 → 9 lines)
+        !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+  + /// Human-readable list of `/risk` subcommands, derived from
+  + /// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
+  + /// of sync with the actual dispatch table (single source of truth).
+  + pub(crate) fn risk_subcommand_list() -> String {
+  +     RISK_SUBCOMMANDS.join(" | ")
+    }
+ ✓ (1m 43s)
+        !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+  + }
+  + 
+  + /// Human-readable list of `/risk` subcommands, derived from
+  + /// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
+  + /// of sync with the actual dispatch table (single source of truth).
+  + pub(crate) fn risk_subcommand_list() -> String {
+  +     RISK_SUBCOMMANDS.join(" | ")
+    }
+  13 tools completed in 2m 45s (13 ✓)
+
+Add a small regression test in the existing tests module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_unknown_risk_su… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1984,2010p' src/commands… ✓ (3ms)
+  ▶ edit src/commands_risk.rs (3 → 17 lines)
+    mod tests {
+        use super::*;
+    
+  +     #[test]
+  +     fn test_risk_subcommand_list_covers_every_subcommand() {
+  +         // Drift guard: the unknown-subcommand error derives its "Available:"
+  +         // list from RISK_SUBCOMMANDS via this helper. If anyone reverts to a
+  +         // hardcoded string, this pins that every real subcommand is present.
+  +         let list = risk_subcommand_list();
+  +         for sub in RISK_SUBCOMMANDS {
+  +             assert!(
+  +                 list.contains(sub),
+  +                 "risk_subcommand_list() is missing `{sub}`"
+  +             );
+  +         }
+  +         assert!(!list.is_empty());
+  +     }
+ ✓ (1m 44s)
+    mod tests {
+        use super::*;
+    
+  +     #[test]
+  +     fn test_risk_subcommand_list_covers_every_subcommand() {
+  +         // Drift guard: the unknown-subcommand error derives its "Available:"
+  +         // list from RISK_SUBCOMMANDS via this helper. If anyone reverts to a
+  +         // hardcoded string, this pins that every real subcommand is present.
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 23s)
+  4 tools completed in 3m 29s (4 ✓)
+
+All checks pass. Let me confirm my new test actually ran:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk_subcommand_… ✓ (176ms)
+
+Green everywhere (4343 unit tests + integration, clippy, fmt). Committing:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (6 lines) ✓ (18ms)
+
+Done. One small improvement, committed.
+
+What I did: The /risk unknown-subcommand error hardcoded its own copy of the subcommand list ("Available: snapshot | validate | history | ...") right next to the `RISK_SUBCOMMANDS` const it duplicated — exactly the co-located-duplicate drift class from my learnings ("proximity creates an illusion of consistency"). Adding a new subcommand would have silently left the error message stale.
+
+The fix (22 insertions, 3 deletions in `src/commands_risk.rs`):
+• New risk_subcommand_list() helper that joins RISK_SUBCOMMANDS — the error message is now derived from the dispatch table, so drift is impossible by construction
+• A drift-guard test (test_risk_subcommand_list_covers_every_subcommand) pinning that every real subcommand appears in the list, in case anyone ever reverts to a hardcoded string
+
+One honest bump along the way: my first edit_file misfired — the smart-edit fuzzy matcher appended a mangled test fragment to the end of the file instead of inserting the helper. The auto-check caught it immediately (unexpected closing delimiter at line 3559), I truncated the garbage and re-applied the edit cleanly. The safety net did its job.
+
+All checks green: cargo fmt, clippy -D warnings, build, and 4343 unit + 88 integration tests pass. Committed as 76cab7df.
+
+  watch: no files changed this turn — skipping
+
