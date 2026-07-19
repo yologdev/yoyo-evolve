@@ -1,0 +1,169 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'fn suggest_command|fn levenshtein|edit_distance' in src/commands.rs  ▶ search 'SPAWN_SUBCOMMANDS' in src/commands_spawn.rs  ▶ search 'WATCH_SUBCOMMANDS' in src/watch.rs ✓ (3ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'suggest_command' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:400..510 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:1085..1125  ▶ search 'pub async fn handle_spawn|pub fn handle_spawn' in src/commands_spawn.rs ✓ (1ms)
+ ✓ (2ms)
+  ▶ search 'fn handle_spawn' in src/commands_spawn.rs ✓ (2ms)
+  ▶ read src/commands_spawn.rs:634..774 ✓ (1ms)
+  ▶ search 'custom_cmd' in src/watch.rs ✓ (2ms)
+  ▶ read src/watch.rs:1570..1660 ✓ (1ms)
+  ▶ search 'fn parse_spawn_args' in src/commands_spawn.rs ✓ (2ms)
+  ▶ read src/commands_spawn.rs:328..448 ✓ (1ms)
+  ▶ edit src/commands.rs (1 → 23 lines)
+  + /// Find the candidate closest to `word` by Levenshtein distance, if any is
+  + /// within `max_distance` edits. Ties break toward the earlier candidate.
+  + ///
+  + /// Shared by the near-miss typo guards for free-text commands (`/spawn`,
+  + /// `/watch`) so the edit-distance logic lives in exactly one place. Note an
+  + /// exact match (distance 0) is returned too — callers that treat exact words
+  + /// specially must check membership first.
+  + pub fn closest_match<'a>(
+  +     word: &str,
+  +     candidates: &[&'a str],
+  +     max_distance: usize,
+  + ) -> Option<&'a str> {
+  +     let mut best: Option<(&'a str, usize)> = None;
+  +     for &cand in candidates {
+  +         let dist = edit_distance(word, cand);
+  +         if best.is_none_or(|(_, d)| dist < d) {
+  +             best = Some((cand, dist));
+  +         }
+  +     }
+  +     best.filter(|&(_, d)| d <= max_distance).map(|(c, _)| c)
+  ... (3 more lines)
+ ✓ (11.3s)
+  + /// Find the candidate closest to `word` by Levenshtein distance, if any is
+  + /// within `max_distance` edits. Ties break toward the earlier candidate.
+  + ///
+  + /// Shared by the near-miss typo guards for free-text commands (`/spawn`,
+  + /// `/watch`) so the edit-distance logic lives in exactly one place. Note an
+  + /// exact match (distance 0) is returned too — callers that treat exact words
+  + /// specially must check membership first.
+  + pub fn closest_match<'a>(
+  ... (13 more lines)
+  14 tools completed in 1m 53s (14 ✓)
+
+Expected — it's dead until wired. Now the spawn guard:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (1 → 19 lines)
+  + /// Near-miss typo guard for `/spawn`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "statsu" → "status") is almost certainly a typo — spawning a
+  + /// whole sub-agent whose task is that word costs real money and time. Returns
+  + /// the suggested subcommand when the guard should fire. Multi-word arguments
+  + /// (real tasks) and words far from any subcommand are never touched.
+  + pub fn spawn_near_miss(rest: &str) -> Option<&'static str> {
+  +     if rest.is_empty() || rest.contains(char::is_whitespace) {
+  +         return None;
+  +     }
+  +     // Exact subcommands/flags are handled (or shown usage for) elsewhere.
+  +     if SPAWN_SUBCOMMANDS.contains(&rest) {
+  +         return None;
+  +     }
+  +     crate::commands::closest_match(rest, SPAWN_SUBCOMMANDS, 2)
+  + }
+  + 
+    /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
+ ✓ (11.3s)
+  + /// Near-miss typo guard for `/spawn`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "statsu" → "status") is almost certainly a typo — spawning a
+  + /// whole sub-agent whose task is that word costs real money and time. Returns
+  + /// the suggested subcommand when the guard should fire. Multi-word arguments
+  + /// (real tasks) and words far from any subcommand are never touched.
+  + pub fn spawn_near_miss(rest: &str) -> Option<&'static str> {
+  ... (11 more lines)
+
+Now wire the guard into handle_spawn (before the stale-worktree cleanup so a refusal has no side effects):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (1 → 10 lines)
+  +     // Near-miss typo guard: a single word within edit distance 2 of a known
+  +     // subcommand (e.g. "statsu") is a typo, not a task — refuse rather than
+  +     // spawn an agent whose task is the word "statsu".
+  +     if let Some(suggestion) = spawn_near_miss(rest) {
+  +         eprintln!("{RED}  ✗ unknown word '{rest}' — did you mean /spawn {suggestion}?{RESET}");
+  +         println!("{DIM}  (a real spawn task needs a longer description){RESET}\n");
+  +         return None;
+  +     }
+  + 
+        // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+ ✓ (1m 3s)
+  +     // Near-miss typo guard: a single word within edit distance 2 of a known
+  +     // subcommand (e.g. "statsu") is a typo, not a task — refuse rather than
+  +     // spawn an agent whose task is the word "statsu".
+  +     if let Some(suggestion) = spawn_near_miss(rest) {
+  +         eprintln!("{RED}  ✗ unknown word '{rest}' — did you mean /spawn {suggestion}?{RESET}");
+  +         println!("{DIM}  (a real spawn task needs a longer description){RESET}\n");
+  +         return None;
+  +     }
+  + 
+        // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+  ▶ search 'use crate::format' in src/commands_spawn.rs ✓ (2ms)
+  ▶ edit src/watch.rs (2 → 21 lines)
+    /// Watch subcommand names for tab completion.
+    pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all", "lint"];
+  + 
+  + /// Near-miss typo guard for `/watch`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "of" → "off") is almost certainly a typo — silently installing
+  + /// it as the custom watch command would make every subsequent prompt turn fail.
+  + /// Returns the suggested subcommand when the guard should fire. Multi-word
+  + /// custom commands (the real use case, e.g. `npm test`) and single words far
+  + /// from any subcommand (e.g. `pytest`) are never touched.
+  + pub fn watch_near_miss(arg: &str) -> Option<&'static str> {
+  +     if arg.is_empty() || arg.contains(char::is_whitespace) {
+  +         return None;
+  +     }
+  +     // Exact subcommands are handled by their own match arms.
+  +     if WATCH_SUBCOMMANDS.contains(&arg) {
+  +         return None;
+  +     }
+  +     crate::commands::closest_match(arg, WATCH_SUBCOMMANDS, 2)
+  ... (1 more lines)
+ ✓ (11.4s)
+    /// Watch subcommand names for tab completion.
+    pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all", "lint"];
+  + 
+  + /// Near-miss typo guard for `/watch`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "of" → "off") is almost certainly a typo — silently installing
+  + /// it as the custom watch command would make every subsequent prompt turn fail.
+  ... (13 more lines)
+  ▶ edit src/watch.rs (2 → 13 lines)
+            custom_cmd => {
+  +             // Near-miss typo guard: "/watch of" should not silently install
+  +             // "of" as the watch command that then fails on every prompt turn.
+  +             if let Some(suggestion) = watch_near_miss(custom_cmd) {
+  +                 eprintln!(
+  +                     "{RED}  ✗ unknown word '{custom_cmd}' — did you mean /watch {suggestion}?{RESET}"
+  +                 );
+  +                 println!(
+  +                     "{DIM}  (to set '{custom_cmd}' as a custom watch command anyway, use the full command, e.g. /watch {custom_cmd} --flags){RESET}\n"
+  +                 );
+  +                 return;
+  +             }
+                set_watch_command(custom_cmd);
+ ✓ (1m 4s)
+            custom_cmd => {
+  +             // Near-miss typo guard: "/watch of" should not silently install
+  +             // "of" as the watch command that then fails on every prompt turn.
+  +             if let Some(suggestion) = watch_near_miss(custom_cmd) {
+  +                 eprintln!(
+  +                     "{RED}  ✗ unknown word '{custom_cmd}' — did you mean /watch {suggestion}?{RESET}"
+  +                 );
+  +                 println!(
+  ... (5 more lines)
+  ▶ search '^use crate::format|RED' in src/watch.rs ✓ (2ms)
+  ▶ read src/watch.rs (20 lines) ✓ (0ms)
+  6 tools completed in 2m 38s (6 ✓)
+
+  watch: no files changed this turn — skipping
+

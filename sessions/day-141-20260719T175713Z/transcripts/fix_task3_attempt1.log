@@ -1,0 +1,67 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TOTAL_BYTE_CAP\|TOTAL_L…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (5ms)
+ ✓ (29ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The tests were written but the actual constants weren't changed. Let me look:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 25,45p scripts/extract_tr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,935p scripts/extract_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 790,815p scripts/extract_… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=800 && NR<=810' scripts… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,812p scripts/extract_… ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:800..825 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:500..555 ✓ (152ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 6 lines)
+  + # Hard caps on the final YOUR TRAJECTORY block. The byte cap was raised from
+  + # 2048 → 3072 on Day 142: the epistemic blind-spot section (added Day 141)
+  + # renders LAST and was being decapitated by the old cap — a steering channel
+  + # that usually arrives truncated is a dormant mechanism. 3KB ≈ 750 tokens.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 2048
+  + TOTAL_BYTE_CAP = 3072
+ ✓ (59.8s)
+  + # Hard caps on the final YOUR TRAJECTORY block. The byte cap was raised from
+  + # 2048 → 3072 on Day 142: the epistemic blind-spot section (added Day 141)
+  + # renders LAST and was being decapitated by the old cap — a steering channel
+  + # that usually arrives truncated is a dormant mechanism. 3KB ≈ 750 tokens.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 2048
+  + TOTAL_BYTE_CAP = 3072
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 1 lines)
+  -     assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+  +     assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
+ ✓ (1m 4s)
+  -     assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+  +     assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Hard-capped" CLAUDE.md ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Hard-capped at 100 lines / 2KB; typical output 1–2KB.
+  + Hard-capped at 100 lines / 3KB (raised from 2KB on Day 142 so the last-rendered epistemic blind-spot section survives capping intact); typical output 2–3KB.
+ ✓ (1m 1s)
+  - Hard-capped at 100 lines / 2KB; typical output 1–2KB.
+  + Hard-capped at 100 lines / 3KB (raised from 2KB on Day 142 so the last-rendered epistemic blind-spot section survives capping intact); typical output 2–3KB.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (29ms)
+  12 tools completed in 3m 56s (12 ✓)
+
+All self-tests pass. Now the Rust checks (no Rust changes, but confirming a clean tree):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (48.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git status --… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (15 lines) ✓ (9ms)
+  4 tools completed in 1m 17s (4 ✓)
+
+Done. The evaluator's three complaints are all resolved:
+
+1. **`TOTAL_BYTE_CAP raised 2048 → 3072** (scripts/extract_trajectory.py:40`), with a new doc comment explaining the Day 142 rationale (epistemic section renders last and was absorbing all truncation pressure). TOTAL_LINE_CAP stays at 100.
+
+2. CLAUDE.md updated — the "Trajectory awareness" bullet now reads "Hard-capped at 100 lines / 3KB … typical output 2–3KB" instead of the stale "2KB / 1–2KB".
+
+3. Self-tests now all pass — python3 scripts/extract_trajectory.py --test → ALL PASSED, including the previously failing "first epistemic entry survives capping". I also fixed a stale assertion the prior attempt left behind: the test claimed "6 entries -> 5 lines" while EPISTEMIC_TOP_N had already been reduced to 3.
+
+Verification: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (89 passed, 0 failed) are all green. Committed as db462e81` with only the two task files touched; scripts/evolve.sh untouched.
+
+  watch: no files changed this turn — skipping
+

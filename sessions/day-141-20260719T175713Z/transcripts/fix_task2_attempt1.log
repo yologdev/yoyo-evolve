@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'closest_match|spawn_near_miss|watch_near_miss' (*.rs)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (5ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "closest_match\|spawn_ne… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,470p' src/commands.r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1109,1125p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '768,800p' src/commands.r… ✓ (6ms)
+  ▶ edit src/commands.rs (10 → 40 lines)
+            // Global-only command should still be present
+            let lint = result.iter().find(|(n, _)| n == "lint").unwrap();
+            assert_eq!(lint.1, "global lint");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_closest_match_finds_near_miss() {
+  +         let candidates = &["status", "off", "all", "lint"];
+  +         assert_eq!(closest_match("statsu", candidates, 2), Some("status"));
+  +         assert_eq!(closest_match("of", candidates, 2), Some("off"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_closest_match_rejects_far_words() {
+  +         // Negative side (Days 122-124 lesson): a word far from every
+  +         // candidate must return None so callers can accept it as free text.
+  +         let candidates = &["status", "off", "all", "lint"];
+  +         assert_eq!(closest_match("pytest", candidates, 2), None);
+  +         assert_eq!(closest_match("investigate", candidates, 2), None);
+  +     }
+  ... (15 more lines)
+ ✓ (1m 4s)
+            // Global-only command should still be present
+            let lint = result.iter().find(|(n, _)| n == "lint").unwrap();
+            assert_eq!(lint.1, "global lint");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_closest_match_finds_near_miss() {
+  +         let candidates = &["status", "off", "all", "lint"];
+  ... (13 more lines)
+  ▶ edit src/commands_spawn.rs (4 → 45 lines)
+            let tasks = manifest_replay_tasks(&manifest).expect("non-empty");
+            assert_eq!(tasks, vec!["real task".to_string()]);
+  +     }
+  + 
+  +     // --- Near-miss typo guard for /spawn free-text args ---
+  + 
+  +     #[test]
+  +     fn test_spawn_near_miss_fires_on_typo() {
+  +         // "/spawn statsu" is a typo for "status", not a task — refuse
+  +         // instead of spawning an agent whose task is the word "statsu".
+  +         assert_eq!(spawn_near_miss("statsu"), Some("status"));
+  +         assert_eq!(spawn_near_miss("colect"), Some("collect"));
+  +         assert_eq!(spawn_near_miss("repaly"), Some("replay"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_near_miss_silent_on_exact_subcommand() {
+  +         // Exact subcommands are handled by their own match arms — the guard
+  +         // must never fire on them.
+  +         for sub in SPAWN_SUBCOMMANDS {
+  ... (25 more lines)
+ ✓ (1m 3s)
+            let tasks = manifest_replay_tasks(&manifest).expect("non-empty");
+            assert_eq!(tasks, vec!["real task".to_string()]);
+  +     }
+  + 
+  +     // --- Near-miss typo guard for /spawn free-text args ---
+  + 
+  +     #[test]
+  +     fn test_spawn_near_miss_fires_on_typo() {
+  ... (13 more lines)
+  ▶ edit src/watch.rs (6 → 47 lines)
+                prompt.contains("around line 10"),
+                "prompt should reference the error line: {prompt}",
+            );
+  +     }
+  + 
+  +     // --- Near-miss typo guard for /watch free-text args ---
+  + 
+  +     #[test]
+  +     fn test_watch_near_miss_fires_on_typo() {
+  +         // "/watch of" is a typo for "off" — refuse instead of silently
+  +         // installing "of" as a custom watch command that fails every turn.
+  +         assert_eq!(watch_near_miss("of"), Some("off"));
+  +         assert_eq!(watch_near_miss("statu"), Some("status"));
+  +         assert_eq!(watch_near_miss("lnt"), Some("lint"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_watch_near_miss_silent_on_exact_subcommand() {
+  +         // Exact subcommands are handled by their own match arms — the guard
+  +         // must never fire on them.
+  ... (26 more lines)
+ ✓ (1m 4s)
+                prompt.contains("around line 10"),
+                "prompt should reference the error line: {prompt}",
+            );
+  +     }
+  + 
+  +     // --- Near-miss typo guard for /watch free-text args ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+  10 tools completed in 4m 15s (10 ✓)
+
+Now run the full verification:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (37.0s)
+  2 tools completed in 59.0s (2 ✓)
+
+All 15 new tests pass. Committing so the evaluator sees the diff:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt --… (5 lines) ✓ (640ms)
+
+Done. The evaluator's complaint was accurate: the guard logic (closest_match, spawn_near_miss, watch_near_miss, both wiring points) was fully implemented, but requirement #4 — tests — was entirely absent. I added 14 tests (112 insertions) covering every case the task demanded:
+
+src/commands.rs (closest_match helper):
+• Near-misses found (statsu→status, of→off)
+• Far words rejected (pytest, investigate → None)
+• Documented contract pinned: exact words match at distance 0 (callers must check membership first)
+• Empty candidate list → None
+
+src/commands_spawn.rs (spawn_near_miss):
+• Firing side: statsu→status, colect→collect, repaly→replay
+• Every entry of SPAWN_SUBCOMMANDS verified guard-silent (exact subcommands still work)
+• Multi-word tasks untouched — even ones containing a near-miss word (`"statsu the build pipeline"`)
+• Far single words pass through (investigate, benchmark) — the explicit negative case
+• Empty string → None
+
+src/watch.rs (watch_near_miss): same shape — of→off fires, all WATCH_SUBCOMMANDS silent, npm test / cargo clippy --all-targets untouched, and pytest/make accepted as custom commands (guard only fires on near-misses).
+
+The helpers are pure functions, so no #[serial] was needed (unlike the global-state watch tests nearby).
+
+Verification: cargo fmt --check ✓, `cargo clippy --all-targets -- -D warnings ✓, cargo build ✓, cargo test` ✓ (4380 + 89 passed, 0 failed, all 15 new tests green). Committed as 3cc49c92.
+
+  watch: no files changed this turn — skipping
+

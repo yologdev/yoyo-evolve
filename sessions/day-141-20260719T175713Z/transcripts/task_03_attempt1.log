@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "TOTAL_BYTE_CAP\|TOTAL_LINE_CAP\|EPISTEMIC_TOP_N\|compact_epistemic_reas…  ▶ $ git status --short && git log --oneline -3 ✓ (4ms)
+ ✓ (4ms)
+  ▶ read scripts/extract_trajectory.py:20..70  ▶ read scripts/extract_trajectory.py:420..600 ✓ (0ms)
+ ✓ (1ms)
+  ▶ read scripts/extract_trajectory.py:601..838 ✓ (1ms)
+  ▶ edit scripts/extract_trajectory.py (2 → 6 lines)
+  + # Hard output caps. Byte cap raised 2048 → 3072 on Day 141: the epistemic
+  + # blind-spot section (added Day 141) renders LAST and was absorbing all the
+  + # truncation pressure — the steering channel arrived decapitated (1 of 5
+  + # entries survived). 3KB is still ~750 tokens. Line cap unchanged.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 2048
+  + TOTAL_BYTE_CAP = 3072
+  ▶ edit scripts/extract_trajectory.py (1 → 7 lines)
+  - EPISTEMIC_TOP_N = 5
+  + # 3, not 5: the section renders last and absorbs all truncation pressure —
+  + # three intact entries beat five truncated ones (Day 141).
+  + EPISTEMIC_TOP_N = 3
+  + 
+  + # Per-entry length clamp: keep each blind-spot bullet to one short line so
+  + # the whole section fits the byte budget even with reasons attached.
+  + EPISTEMIC_ENTRY_MAX_CHARS = 90
+ ✓ (47.6s)
+  + # Hard output caps. Byte cap raised 2048 → 3072 on Day 141: the epistemic
+  + # blind-spot section (added Day 141) renders LAST and was absorbing all the
+  + # truncation pressure — the steering channel arrived decapitated (1 of 5
+  + # entries survived). 3KB is still ~750 tokens. Line cap unchanged.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 2048
+  + TOTAL_BYTE_CAP = 3072
+ ✓ (1m 35s)
+  - EPISTEMIC_TOP_N = 5
+  + # 3, not 5: the section renders last and absorbs all truncation pressure —
+  + # three intact entries beat five truncated ones (Day 141).
+  + EPISTEMIC_TOP_N = 3
+  + 
+  + # Per-entry length clamp: keep each blind-spot bullet to one short line so
+  + # the whole section fits the byte budget even with reasons attached.
+  + EPISTEMIC_ENTRY_MAX_CHARS = 90
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     """Shrink a verbose report reason to a few words (2KB total budget)."""
+  +     """Shrink a verbose report reason to a few words (3KB total budget)."""
+  ▶ edit scripts/extract_trajectory.py (7 → 9 lines)
+            line = f"- {path} ({score})"
+            if reasons:
+                line += " — " + "; ".join(reasons)
+  +         if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
+  +             line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
+            out.append(line)
+        return out
+ ✓ (47.9s)
+  -     """Shrink a verbose report reason to a few words (2KB total budget)."""
+  +     """Shrink a verbose report reason to a few words (3KB total budget)."""
+ ✓ (1m 48s)
+            line = f"- {path} ({score})"
+            if reasons:
+                line += " — " + "; ".join(reasons)
+  +         if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
+  +             line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
+            out.append(line)
+        return out
+  ▶ edit scripts/extract_trajectory.py (3 → 3 lines)
+    def render_epistemic(entries: list[str]) -> str:
+  -     """≤8 lines incl. header. Empty entries → honest one-line fallback so the
+  +     """≤5 lines incl. header. Empty entries → honest one-line fallback so the
+        planner sees the section exists but is starving, not silence."""
+  ▶ edit scripts/extract_trajectory.py (1 → 25 lines)
+  + def cap_output(
+  +     output: str, line_cap: int = TOTAL_LINE_CAP, byte_cap: int = TOTAL_BYTE_CAP
+  + ) -> str:
+  +     """Apply the hard line + byte caps to the final trajectory block.
+  + 
+  +     Bytes-cap reserves room for the truncation marker so the FINAL output
+  +     stays under byte_cap (the marker itself was previously appended after
+  +     the cap, allowing the file to exceed it by ~37 bytes). Pure so the
+  +     self-tests can assert the epistemic steering section survives capping.
+  +     """
+  +     output = truncate_lines(output, line_cap)
+  +     truncation_marker = "\n... (truncated to fit token budget)\n"
+  +     marker_bytes = len(truncation_marker.encode("utf-8"))
+  +     if len(output.encode("utf-8")) > byte_cap:
+  +         budget = byte_cap - marker_bytes
+  +         b = output.encode("utf-8")[:budget]
+  +         # Back off to last newline within b for clean cut
+  +         idx = b.rfind(b"\n")
+  +         if idx > 0:
+  +             b = b[:idx]
+  ... (5 more lines)
+ ✓ (59.9s)
+    def render_epistemic(entries: list[str]) -> str:
+  -     """≤8 lines incl. header. Empty entries → honest one-line fallback so the
+  +     """≤5 lines incl. header. Empty entries → honest one-line fallback so the
+        planner sees the section exists but is starving, not silence."""
+ ✓ (2m 0s)
+  + def cap_output(
+  +     output: str, line_cap: int = TOTAL_LINE_CAP, byte_cap: int = TOTAL_BYTE_CAP
+  + ) -> str:
+  +     """Apply the hard line + byte caps to the final trajectory block.
+  + 
+  +     Bytes-cap reserves room for the truncation marker so the FINAL output
+  +     stays under byte_cap (the marker itself was previously appended after
+  +     the cap, allowing the file to exceed it by ~37 bytes). Pure so the
+  ... (13 more lines)
+  ▶ edit scripts/extract_trajectory.py (16 → 2 lines)
+        output = header + "\n" + body + "\n"
+  -     # Hard-cap: lines and bytes. Bytes-cap reserves room for the truncation
+  -     # marker so the FINAL output stays under TOTAL_BYTE_CAP (the marker
+  -     # itself was previously appended after the cap, allowing the file to
+  -     # exceed it by ~37 bytes).
+  -     output = truncate_lines(output, TOTAL_LINE_CAP)
+  -     truncation_marker = "\n... (truncated to fit token budget)\n"
+  -     marker_bytes = len(truncation_marker.encode("utf-8"))
+  -     if len(output.encode("utf-8")) > TOTAL_BYTE_CAP:
+  -         budget = TOTAL_BYTE_CAP - marker_bytes
+  -         b = output.encode("utf-8")[:budget]
+  -         # Back off to last newline within b for clean cut
+  -         idx = b.rfind(b"\n")
+  -         if idx > 0:
+  -             b = b[:idx]
+  -         output = b.decode("utf-8", errors="ignore") + truncation_marker
+  +     output = cap_output(output)
+ ✓ (1m 0s)
+        output = header + "\n" + body + "\n"
+  -     # Hard-cap: lines and bytes. Bytes-cap reserves room for the truncation
+  -     # marker so the FINAL output stays under TOTAL_BYTE_CAP (the marker
+  -     # itself was previously appended after the cap, allowing the file to
+  -     # exceed it by ~37 bytes).
+  -     output = truncate_lines(output, TOTAL_LINE_CAP)
+  -     truncation_marker = "\n... (truncated to fit token budget)\n"
+  -     marker_bytes = len(truncation_marker.encode("utf-8"))
+  ... (9 more lines)
+  ▶ edit scripts/extract_trajectory.py (2 → 2 lines)
+        parsed = parse_epistemic_output(canned)
+  -     assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+  +     assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
+  ▶ edit scripts/extract_trajectory.py (6 → 88 lines)
+        rendered = render_epistemic(parsed)
+        assert_true(
+  -         "rendered section stays within 8 lines incl. header",
+  -         len(rendered.splitlines()) <= 8,
+  +         "rendered section stays within 5 lines incl. header",
+  +         len(rendered.splitlines()) <= 5,
+        )
+        assert_true("planner hint present", "planner hint" in rendered)
+  + 
+  +     # 19e. Per-entry clamp: an absurdly long path still yields a <=90-char line
+  +     long_path = "src/" + "x" * 120 + ".rs"
+  +     clamped = parse_epistemic_output(f"   1. {long_path}   5.0\n")
+  +     assert_true(
+  +         "oversized entry clamped to 90 chars",
+  +         len(clamped) == 1 and len(clamped[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
+  +     )
+  + 
+  +     # --- cap_output self-tests: the steering channel must survive ---
+  +     print("\n=== cap_output self-tests ===\n")
+  + 
+  ... (70 more lines)
+ ✓ (1m 3s)
+        parsed = parse_epistemic_output(canned)
+  -     assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+  +     assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
+ ✓ (2m 3s)
+        rendered = render_epistemic(parsed)
+        assert_true(
+  -         "rendered section stays within 8 lines incl. header",
+  -         len(rendered.splitlines()) <= 8,
+  +         "rendered section stays within 5 lines incl. header",
+  +         len(rendered.splitlines()) <= 5,
+        )
+        assert_true("planner hint present", "planner hint" in rendered)
+  ... (13 more lines)
+  ▶ $ python3 scripts/extract_trajectory.py --test 2>&1 | tail -30 ✓ (29ms)
+  ▶ $ grep -n "top_n cap" scripts/extract_trajectory.py; python3 -… (6 lines) ✓ (15ms)
+  16 tools completed in 10m 6s (16 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,107 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+This is the dream-slot task — a chosen experiment in my blindest file. Let me look at the actual code first.
+  ▶ search 'fn command_arg_hint|fn command_arg_completions' in src/commands.rs  ▶ $ grep -n "SUBCOMMANDS\|const.*OPTIONS\|const.*FLAGS" src/commands.rs | head -30 ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ grep -n "command_arg_hint\|command_arg_completions" src/*.rs | head -20 ✓ (6ms)
+  ▶ read src/commands.rs:180..360 ✓ (1ms)
+  4 tools completed in 17.4s (4 ✓)
+
+Confirmed the drift. Now let me check the other wired constants and the callers of command_arg_hint:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "WATCH_SUBCOMMANDS" src/watch.rs | head -3 (11 lines)  ▶ $ grep -rn "command_arg_hint" src/ --include="*.rs" | grep -v "src/commands.rs" ✓ (6ms)
+ ✓ (14ms)
+  ▶ $ sed -n 575,595p src/commands_risk.rs (6 lines)  ▶ $ sed -n 200,220p src/repl.rs ✓ (2ms)
+ ✓ (10ms)
+  4 tools completed in 32.5s (4 ✓)
+
+Let me check the remaining details — /context actual dispatch, CHECKPOINT_SUBCOMMANDS, and /think handling (its hint is missing "minimal"):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CHECKPOINT_SUBCOMMANDS" src/commands_fork.rs | head… (2 lines)  ▶ $ grep -rn '"/stash"\|"/todo"' src/commands.rs src/repl.rs | head -5; grep -n "THI… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ sed -n 1,20p src/commands.rs; grep -n "mod tests" src/commands.rs; sed -n 1015,1… ✓ (5ms)
+  3 tools completed in 47.0s (3 ✓)
+
+Now I'll write the failing tests first, then the fix. Adding the tests to the existing tests module:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 715,725p src/commands.rs; grep -n "^}" src/commands.rs | tail -2 ✓ (4ms)
+  ▶ edit src/commands.rs (2 → 88 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     /// Structural drift guard (Day 141): every command whose tab-completions
+  +     /// are wired to a subcommand constant must have an arg hint that mentions
+  +     /// every non-flag entry of that constant. Fails loudly when a subcommand
+  +     /// is added to a constant without the hint keeping up — the exact drift
+  +     /// class that produced stale `watch`/`git`/`pr` hints and a missing
+  +     /// `risk` hint (Day 140 lesson: never hand-type an enumeration of facts
+  +     /// the code already owns).
+  +     #[test]
+  +     fn test_arg_hints_cover_wired_subcommand_constants() {
+  +         // Commands wired to constants in `command_arg_completions` that take
+  +         // subcommand words (flag-only wirings like /undo and /diff are
+  +         // exempt: their constants hold no bare subcommand words).
+  +         let wired = [
+  +             "git",
+  +             "pr",
+  +             "watch",
+  +             "risk",
+  ... (68 more lines)
+ ✓ (1m 2s)
+    mod tests {
+        use super::*;
+  + 
+  +     /// Structural drift guard (Day 141): every command whose tab-completions
+  +     /// are wired to a subcommand constant must have an arg hint that mentions
+  +     /// every non-flag entry of that constant. Fails loudly when a subcommand
+  +     /// is added to a constant without the hint keeping up — the exact drift
+  +     /// class that produced stale `watch`/`git`/`pr` hints and a missing
+  ... (13 more lines)
+  ▶ $ cargo test --lib commands::tests::test_arg_hints 2>&1 | tail -15; cargo test --l… ✓ (172ms)
+  ▶ $ cargo test test_arg_hints_cover 2>&1 | tail -12 ✓ (98ms)
+  ▶ edit src/commands.rs (68 → 99 lines)
+  + /// Build (once) a `" | "`-joined hint string from a subcommand constant,
+  + /// skipping flag entries (`-`-prefixed). Deriving the hint from the same
+  + /// constant that tab-completion reads makes hint drift structurally
+  + /// impossible — the Day 140 lesson: never hand-type an enumeration of
+  + /// facts the code already owns.
+  + fn derived_hint(
+  +     cell: &'static std::sync::OnceLock<String>,
+  +     subs: &'static [&'static str],
+  + ) -> &'static str {
+  +     cell.get_or_init(|| {
+  +         subs.iter()
+  +             .filter(|s| !s.starts_with('-'))
+  +             .copied()
+  +             .collect::<Vec<_>>()
+  +             .join(" | ")
+  +     })
+  + }
+  + 
+  + /// Expands to `Some(&'static str)` derived from a subcommand constant via
+  + /// [`derived_hint`], with a per-arm `OnceLock` cache.
+  ... (68 more lines)
+ ✓ (1m 4s)
+  + /// Build (once) a `" | "`-joined hint string from a subcommand constant,
+  + /// skipping flag entries (`-`-prefixed). Deriving the hint from the same
+  + /// constant that tab-completion reads makes hint drift structurally
+  + /// impossible — the Day 140 lesson: never hand-type an enumeration of
+  + /// facts the code already owns.
+  + fn derived_hint(
+  +     cell: &'static std::sync::OnceLock<String>,
+  +     subs: &'static [&'static str],
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -5 ✓ (730ms)
+  ▶ $ touch src/commands.rs && cargo build 2>&1 | tail -3 && cargo test test_arg_hints… ✓ (20.2s)
+  ▶ $ cargo test --bin yoyo test_arg_hints_cover_wired 2>&1 | tail -4; cargo test --bi… ✓ (192ms)
+  8 tools completed in 3m 30s (8 ✓)
+
+Both new tests pass. Now the full verification suite:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo test 2>&1 | gr… ✓ (47.4s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result|FAILED" ; echo "test-exit=$?"; cargo fmt… ✓ (29.4s)
+  2 tools completed in 1m 22s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

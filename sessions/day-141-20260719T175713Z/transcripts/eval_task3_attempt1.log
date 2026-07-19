@@ -1,0 +1,20 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "TOTAL_BYTE_CAP\s*=" scripts/extract_trajectory.py; grep -n "2KB\|3KB\|2…  ▶ $ grep -n -B3 "TOTAL_BYTE_CAP" scripts/extract_trajectory.py | head -20 ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ python3 scripts/extract_trajectory.py --self-test 2>&1 | tail -25 ✓ (271ms)
+  ▶ $ tail -8 scripts/extract_trajectory.py; echo ---; python3 scripts/extract_traject… ✓ (30ms)
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (49.2s)
+  5 tools completed in 1m 15s (5 ✓)
+
+Verdict written: FAIL.
+
+Evidence:
+1. `TOTAL_BYTE_CAP` still 2048 — the task explicitly required raising it to 3072; the diff refactored the capping logic into cap_output() but never changed the constant.
+2. CLAUDE.md unchanged — the "Hard-capped at 100 lines / 2KB" bullet (line 184) still says 2KB, contrary to the task's requirement.
+3. Self-tests fail: python3 scripts/extract_trajectory.py --test exits 1 with 2 failures — one being "first epistemic entry survives capping", the precise regression test the task asked for. The steering channel is still being decapitated; the fix does not work. (The harness's "Tests: PASS" only covered cargo test, which has no Rust changes.)
+
+The compact-entries half (TOP_N 5→3, 90-char clamp) was done correctly, but without the cap raise the realistic case still truncates the epistemic section — the task's whole point.
+
+  watch: no files changed this turn — skipping
+

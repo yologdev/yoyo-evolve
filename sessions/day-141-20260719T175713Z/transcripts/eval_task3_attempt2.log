@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The diff matches all three task requirements: EPISTEMIC_TOP_N 5→3 with per-entry 90-char clamp, TOTAL_BYTE_CAP 2048→3072 with doc comment + CLAUDE.md update, and new self-tests via an extracted pure cap_output asserting the epistemic header + first entry survive capping. One quick check — run the self-test:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (87ms)
+
+The --self-test flag isn't the right invocation — let me check how self-tests are triggered:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_self_tests\|__main_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (29ms)
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (49.1s)
+  3 tools completed in 1m 7s (3 ✓)
+
+**Verdict: PASS**
+
+The diff implements exactly what the task asked:
+1. Compact entries — EPISTEMIC_TOP_N 5→3 with rationale comment, plus a new EPISTEMIC_ENTRY_MAX_CHARS = 90 per-entry clamp (char-based Python slicing, no byte-boundary issue).
+2. Cap raise — `TOTAL_BYTE_CAP` 2048→3072 with doc comment near the constants, and the CLAUDE.md "Trajectory awareness" bullet updated to "100 lines / 3KB … typical output 2–3KB".
+3. Self-tests — capping logic extracted into a pure cap_output() (behavior-preserving refactor of the inline main() code), and new tests build a synthetic six-section output at realistic sizes asserting the epistemic header AND first entry survive capping, plus a regression test showing the old 2048 cap would truncate, plus an oversized-input marker test.
+
+Verified live: python3 scripts/extract_trajectory.py --test → ALL PASSED. No product surface touched (harness-side script + docs only), so no #448 concern. Verdict written to session_plan/eval_task_3.md.
+
+  watch: no files changed this turn — skipping
+
