@@ -261,11 +261,29 @@ fn check_fd_redirect(cmd: &str, _cmd_lower: &str) -> Option<String> {
 
 /// Check for rm -rf with dangerous target paths.
 fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
+    // Trim trailing shell "closer" characters from a target token so that
+    // targets buried in nested constructs still compare cleanly — e.g. the
+    // `/)]}` produced by `[[ ${arr[$(rm -rf /)]} ]]` becomes `/`. (Day 141:
+    // zsh-subscript bypass class from Claude Code's permission-fix log.)
+    fn trim_shell_closers(token: &str) -> &str {
+        token.trim_end_matches([')', ']', '}', '\'', '"', '`'])
+    }
+    // A quote or backtick before `rm` is a command position too: quoted
+    // command strings are handed to executors (`man -P 'rm -rf /'`,
+    // `bash -c "rm -rf /"`). The global word-boundary set stays unchanged so
+    // other checks keep their false-positive profile.
+    fn is_rm_boundary(s: &str, pos: usize) -> bool {
+        is_at_word_boundary(s, pos)
+            || matches!(
+                s.as_bytes().get(pos.wrapping_sub(1)),
+                Some(b'\'' | b'"' | b'`')
+            )
+    }
     // Find all occurrences of "rm " in the command
     let mut search_from = 0;
     while let Some(pos) = cmd[search_from..].find("rm ") {
         let abs_pos = search_from + pos;
-        if is_at_word_boundary(cmd, abs_pos) {
+        if is_rm_boundary(cmd, abs_pos) {
             let after_rm = &cmd[abs_pos..];
             // Check if it has recursive + force flags
             let has_r = after_rm.contains("-r")
@@ -278,24 +296,27 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                 // Also check "~" and "$HOME" as standalone args
                 // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
                 let tokens: Vec<&str> = after_rm.split_whitespace().collect();
-                for token in &tokens {
+                for raw_token in &tokens {
+                    // Strip trailing closers from nested constructs first, so
+                    // `/)]}` (subscript/test-bracket nesting) compares as `/`.
+                    let token = trim_shell_closers(raw_token);
                     // Skip flags (e.g. -rf, --force)
                     if token.starts_with('-') {
                         continue;
                     }
-                    if *token == "/"
-                        || *token == "/*"
-                        || *token == "~"
-                        || *token == "~/"
-                        || *token == "~/*"
-                        || *token == "$HOME"
-                        || *token == "$HOME/"
-                        || *token == "$HOME/*"
-                        || *token == "${HOME}"
-                        || *token == "${HOME}/"
-                        || *token == "${HOME}/*"
-                        || *token == "."
-                        || *token == ".."
+                    if token == "/"
+                        || token == "/*"
+                        || token == "~"
+                        || token == "~/"
+                        || token == "~/*"
+                        || token == "$HOME"
+                        || token == "$HOME/"
+                        || token == "$HOME/*"
+                        || token == "${HOME}"
+                        || token == "${HOME}/"
+                        || token == "${HOME}/*"
+                        || token == "."
+                        || token == ".."
                     {
                         let severity = if has_f { "force-" } else { "" };
                         return Some(format!(
@@ -306,7 +327,7 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                     // Use strip_suffix instead of format!() to avoid heap allocations
                     // in this hot inner loop (tokens × critical dirs).
                     for dir in CRITICAL_SYSTEM_DIRS {
-                        if *token == *dir
+                        if token == *dir
                             || token.strip_suffix('/').is_some_and(|t| t == *dir)
                             || token.strip_suffix("/*").is_some_and(|t| t == *dir)
                         {
@@ -2363,6 +2384,53 @@ mod tests {
             "cat /dev/fd/3",             // reading an fd path, not writing
             "echo hi > /dev/fd/2",       // fd 2 is stderr — same as >&2
             "exec bash",                 // exec without fd open
+        ];
+        for cmd in &benign {
+            assert!(
+                analyze_bash_command(cmd).is_none(),
+                "must NOT flag benign form: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bash_analysis_bypass_fixture_table() {
+        // Day 141: two bypass classes from Claude Code's permission-fix log,
+        // checked against our own analyzer. One row per adversarial shape
+        // (Day 137 lesson: enumerate input shapes as a table that fails loudly).
+        let flagged = [
+            // Class 1: command substitution hidden inside a zsh/bash array
+            // subscript within a [[ ]] test expression. The [[ ]] context and
+            // trailing closers (`)]}`) must not mask the inner destructive command.
+            "[[ ${arr[$(rm -rf /)]} ]]",
+            "[[ ${arr[`rm -rf /`]} ]]", // backtick variant of the same shape
+            "if [[ ${x[$(rm -rf ~)]} ]]; then echo hi; fi", // home dir target
+            // Class 2: help/man-looking commands that smuggle execution.
+            "man -P 'rm -rf /' ls",   // man's pager flag executes a command
+            "man -P \"rm -rf /\" ls", // double-quoted variant
+            "foo --help; rm -rf /",   // chained after an innocuous-looking prefix
+            "foo --help && rm -rf ~", // && chain variant
+        ];
+        for cmd in &flagged {
+            assert!(
+                analyze_bash_command(cmd).is_some(),
+                "must flag bypass form: {cmd}"
+            );
+        }
+
+        // Near-miss rows: genuinely innocent shapes on the same boundary MUST
+        // stay safe (Day 31/131 lesson: fix granularity, don't grow the list —
+        // false positives on innocent test-brackets would be a regression).
+        let benign = [
+            "[[ -n ${arr[i]} ]]",              // plain subscript, no substitution
+            "[[ ${arr[$(date +%s)]} ]]",       // substitution, harmless command
+            "man ls",                          // plain man
+            "man -P less foo",                 // pager flag, harmless pager
+            "foo --help",                      // plain help
+            "grep 'rm ' file.txt",             // quoted 'rm ' as a search pattern
+            "echo 'form -rf /' > notes.txt",   // 'rm ' substring inside a word
+            "rm -rf target/",                  // ordinary project-local delete
+            "[[ -f /etc/passwd ]] && echo ok", // test-bracket + critical path read
         ];
         for cmd in &benign {
             assert!(
