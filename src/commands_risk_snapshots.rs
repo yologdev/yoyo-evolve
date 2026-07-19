@@ -621,6 +621,44 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
     events
 }
 
+/// A graded validation event reduced to what the epistemic view needs: the
+/// day it was recorded and every file path that appeared in its graded
+/// outcome. Hits and surprises both count — each taught the model something
+/// (a hit confirms a prediction, a surprise exposes a miss). Lives here
+/// because this module owns the validation JSONL format; extending
+/// [`ValidationEvent`] instead would break its many struct-literal test
+/// fixtures for fields most readers don't need.
+pub(crate) struct GradedEvent {
+    pub(crate) day: u64,
+    pub(crate) paths: Vec<String>,
+}
+
+/// Parse graded events (day + graded file paths) from validation JSONL
+/// content. Defensive like every reader here: malformed lines are skipped,
+/// absent arrays yield empty path lists.
+pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
+    let mut events = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let day = val["day"].as_u64().unwrap_or(0);
+        let mut paths: Vec<String> = Vec::new();
+        for key in ["hits", "surprises"] {
+            if let Some(arr) = val[key].as_array() {
+                paths.extend(arr.iter().filter_map(|v| v.as_str().map(String::from)));
+            }
+        }
+        events.push(GradedEvent { day, paths });
+    }
+    events
+}
+
 /// A parsed risk snapshot from the JSONL file.
 pub(crate) struct ParsedSnapshot {
     pub(crate) day: u64,

@@ -31,6 +31,11 @@ pub(crate) use crate::commands_risk_report::{
 // own report code) remain unchanged.
 pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
 
+// Epistemic ranking (rank files by how little graded outcomes have taught the
+// model — the dream's epistemic-appetite milestone, ranking half only) lives
+// in `commands_risk_epistemic.rs`.
+use crate::commands_risk_epistemic::handle_risk_epistemic;
+
 // Prediction-accuracy stats live in `commands_risk_accuracy.rs`.
 // Re-exported here so all call sites (commands_risk_report.rs and this
 // module's own accuracy/effectiveness code) remain unchanged.
@@ -627,6 +632,11 @@ pub(crate) fn handle_risk(input: &str) {
 
     if sub == "effectiveness" {
         handle_risk_effectiveness();
+        return;
+    }
+
+    if sub == "epistemic" {
+        handle_risk_epistemic();
         return;
     }
 
