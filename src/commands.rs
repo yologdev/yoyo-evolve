@@ -211,6 +211,33 @@ pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check"];
 
 pub const HISTORY_SUBCOMMANDS: &[&str] = &["detail"];
 
+/// Build (once) a `" | "`-joined hint string from a subcommand constant,
+/// skipping flag entries (`-`-prefixed). Deriving the hint from the same
+/// constant that tab-completion reads makes hint drift structurally
+/// impossible — the Day 140 lesson: never hand-type an enumeration of
+/// facts the code already owns.
+fn derived_hint(
+    cell: &'static std::sync::OnceLock<String>,
+    subs: &'static [&'static str],
+) -> &'static str {
+    cell.get_or_init(|| {
+        subs.iter()
+            .filter(|s| !s.starts_with('-'))
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" | ")
+    })
+}
+
+/// Expands to `Some(&'static str)` derived from a subcommand constant via
+/// [`derived_hint`], with a per-arm `OnceLock` cache.
+macro_rules! hint_from {
+    ($subs:expr) => {{
+        static HINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        Some(derived_hint(&HINT, $subs))
+    }};
+}
+
 /// Return a hint string showing available arguments/subcommands for a command.
 ///
 /// Used by the hinter to display dim text after the user types a command + space.
@@ -220,10 +247,10 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "architect" => Some("on | off | <model>"),
         "diff" => Some("[file] [--stat] [--cached] [--staged] [--name-only]"),
         "model" => Some("<model-name>"),
-        "think" => Some("off | low | medium | high"),
-        "git" => Some("status | log | add | diff | branch | stash"),
-        "goal" => Some("set | show | clear | check"),
-        "pr" => Some("create | describe | status | diff"),
+        "think" => hint_from!(THINKING_LEVELS),
+        "git" => hint_from!(GIT_SUBCOMMANDS),
+        "goal" => hint_from!(GOAL_SUBCOMMANDS),
+        "pr" => hint_from!(PR_SUBCOMMANDS),
         "help" => Some("<command>"),
         "config" => Some("show | edit | set <key> <value> | get <key>"),
         "copy" => Some("last | code | <text>"),
@@ -231,17 +258,21 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "load" => Some("<filename.json>"),
         "add" => Some("<file-or-url> ..."),
         "apply" => Some("<patch-file> [--check]"),
-        "bg" => Some("run | list | output | kill"),
-        "checkpoint" => Some("save | list | restore | diff | delete"),
+        "bg" => hint_from!(BG_SUBCOMMANDS),
+        "checkpoint" => hint_from!(checkpoint_subcommands()),
         "undo" => Some("[--all] [--last-commit]"),
-        "refactor" => Some("rename | extract | move"),
-        "watch" => Some("off | status"),
-        "lint" => Some("fix | pedantic | strict | unsafe"),
+        "refactor" => hint_from!(REFACTOR_SUBCOMMANDS),
+        "watch" => hint_from!(crate::watch::WATCH_SUBCOMMANDS),
+        "lint" => hint_from!(crate::commands_lint::LINT_SUBCOMMANDS),
+        "risk" => hint_from!(crate::commands_risk::RISK_SUBCOMMANDS),
+        "fork" => hint_from!(FORK_SUBCOMMANDS),
         "loop" => Some("<N|until-pass> <prompt>"),
         "provider" => Some("<provider-name>"),
-        "context" => Some("show | files | clear"),
-        "skill" => Some("list | show | path"),
-        "spawn" => Some("<task> | replay [run|latest] | runs | status"),
+        "context" => hint_from!(crate::commands_project::context_subcommands()),
+        "skill" => hint_from!(crate::commands_skill::SKILL_SUBCOMMANDS),
+        "spawn" => {
+            Some("<task> | status | worktrees | collect | manifest | manifests | replay [run|latest] | runs")
+        }
         "grep" => Some("<pattern> [path] [-i] [-n]"),
         "find" => Some("<filename-pattern>"),
         "blame" => Some("<file> [line-range]"),
@@ -272,10 +303,10 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "changes" => Some("summary | --diff"),
         "evolution" => Some("[count]"),
         "extended" | "ext" => Some("<prompt>"),
-        "plan" => Some("on | off | show | apply | clear | [--deep] <task>"),
+        "plan" => Some("on | off | open | close | show | apply | clear | status | step | [--deep] <task>"),
         "tree" => Some("[path] [--depth N]"),
         "index" => Some("[path]"),
-        "history" => Some("detail"),
+        "history" => hint_from!(HISTORY_SUBCOMMANDS),
         _ => None,
     }
 }
@@ -714,6 +745,92 @@ pub fn custom_command_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Structural drift guard (Day 141): every command whose tab-completions
+    /// are wired to a subcommand constant must have an arg hint that mentions
+    /// every non-flag entry of that constant. Fails loudly when a subcommand
+    /// is added to a constant without the hint keeping up — the exact drift
+    /// class that produced stale `watch`/`git`/`pr` hints and a missing
+    /// `risk` hint (Day 140 lesson: never hand-type an enumeration of facts
+    /// the code already owns).
+    #[test]
+    fn test_arg_hints_cover_wired_subcommand_constants() {
+        // Commands wired to constants in `command_arg_completions` that take
+        // subcommand words (flag-only wirings like /undo and /diff are
+        // exempt: their constants hold no bare subcommand words).
+        let wired = [
+            "git",
+            "pr",
+            "watch",
+            "risk",
+            "fork",
+            "goal",
+            "bg",
+            "lint",
+            "refactor",
+            "checkpoint",
+            "history",
+            "think",
+            "context",
+            "skill",
+            "plan",
+            "spawn",
+            "config",
+            "revisit",
+            "web",
+            "copy",
+        ];
+        for cmd in wired {
+            let entries = command_arg_completions(&format!("/{cmd}"), "");
+            assert!(
+                !entries.is_empty(),
+                "/{cmd} listed as wired but command_arg_completions returned nothing"
+            );
+            let hint = command_arg_hint(cmd)
+                .unwrap_or_else(|| panic!("/{cmd} has wired completions but no arg hint"));
+            let hint_words: Vec<&str> = hint
+                .split(|c: char| c == '|' || c == '[' || c == ']' || c.is_whitespace())
+                .filter(|w| !w.is_empty())
+                .collect();
+            for entry in &entries {
+                if entry.starts_with('-') || entry.starts_with('<') {
+                    continue; // flags and placeholders are not subcommand words
+                }
+                assert!(
+                    hint_words.iter().any(|w| w == entry),
+                    "/{cmd} hint {hint:?} is missing subcommand {entry:?} from its completion constant"
+                );
+            }
+        }
+    }
+
+    /// Bidirectional pin for the pure-subcommand-list hints named in the
+    /// Day 141 task: these hints are DERIVED from their constants, so the
+    /// hint must be exactly the " | "-join of the constant's non-flag
+    /// entries — no extra advertised words (the old `pr` hint advertised
+    /// `describe`/`status`, which don't exist), none missing.
+    #[test]
+    fn test_pure_list_hints_match_constants_exactly() {
+        let cases: [(&str, &[&str]); 4] = [
+            ("git", GIT_SUBCOMMANDS),
+            ("pr", PR_SUBCOMMANDS),
+            ("watch", crate::watch::WATCH_SUBCOMMANDS),
+            ("risk", crate::commands_risk::RISK_SUBCOMMANDS),
+        ];
+        for (cmd, subs) in cases {
+            let expected = subs
+                .iter()
+                .filter(|s| !s.starts_with('-'))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" | ");
+            assert_eq!(
+                command_arg_hint(cmd),
+                Some(expected.as_str()),
+                "/{cmd} hint must be derived from its subcommand constant"
+            );
+        }
+    }
     use crate::commands_config::format_config_output;
     use std::collections::HashMap;
     use std::path::PathBuf;
