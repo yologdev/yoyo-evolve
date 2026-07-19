@@ -1,0 +1,85 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'parse_def_query|fn handle_def|normalize' in src/commands_search.rs  ▶ $ grep -n "def" src/help_data.rs | head -20 ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ grep -n "parse_def_query\|fn handle_def\|fn handle_refs\|parse_refs_query" src/c…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ read src/commands_search.rs:740..950 ✓ (2ms)
+  ▶ read src/commands_search.rs:650..750 ✓ (1ms)
+  ▶ $ sed -n '1800,1960p' src/commands_search.rs; grep -n "normalize_symbol_query" src… ✓ (6ms)
+  ▶ edit src/commands_search.rs (4 → 6 lines)
+                ("foo()", "foo"),
+  +             // Unclosed paren from a half-copied call site.
+  +             ("foo(", "foo"),
+                // KNOWN GAP: ideal is "foo" (the callee), but the last name run
+                // wins so a trailing argument identifier is returned instead.
+                ("foo(a, b)", "b"),
+  ▶ edit src/commands_search.rs (4 → 8 lines)
+                ("foo,", "foo"),
+                ("foo;", "foo"),
+                ("foo:", "foo"),
+  +             ("foo.", "foo"),
+  +             // Backticks from markdown (issue comments, docs).
+  +             ("`foo`", "foo"),
+  +             ("`foo()`", "foo"),
+ ✓ (1m 28s)
+                ("foo()", "foo"),
+  +             // Unclosed paren from a half-copied call site.
+  +             ("foo(", "foo"),
+                // KNOWN GAP: ideal is "foo" (the callee), but the last name run
+                // wins so a trailing argument identifier is returned instead.
+                ("foo(a, b)", "b"),
+ ✓ (2m 18s)
+                ("foo,", "foo"),
+                ("foo;", "foo"),
+                ("foo:", "foo"),
+  +             ("foo.", "foo"),
+  +             // Backticks from markdown (issue comments, docs).
+  +             ("`foo`", "foo"),
+  +             ("`foo()`", "foo"),
+  ▶ edit src/commands_search.rs (3 → 3 lines)
+    /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
+  - /// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
+  - /// `,;:` etc. If the input contains `<`, only the text
+  + /// path/member access `crate::bar::baz`/`self.count` (last segment), markdown
+  + /// backticks, trailing `,;:.` etc. If the input contains `<`, only the text
+  ▶ $ cargo test normalize_symbol_query 2>&1 | tail -5 ✓ (1m 28s)
+    /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
+  - /// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
+  - /// `,;:` etc. If the input contains `<`, only the text
+  + /// path/member access `crate::bar::baz`/`self.count` (last segment), markdown
+  + /// backticks, trailing `,;:.` etc. If the input contains `<`, only the text
+ ✓ (1m 28s)
+  ▶ $ cargo test normalize_symbol_query 2>&1 | grep -E "running|test result|passed|FAI… ✓ (168ms)
+  11 tools completed in 4m 40s (11 ✓)
+
+All 3 normalizer tests pass with the new rows — the shapes already worked, now they're pinned. Update the CLAUDE.md /def clause:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP)
+  + - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP; forgives messy pasted input via `normalize_symbol_query` — `foo()`, `&foo`, `mod::foo`, backticks, trailing punctuation — pinned by a fixture-table test)
+  ▶ $ grep -n "def" src/help_data.rs | sed -n '1,5p'; sed -n '383,395p' src/help_data.… ✓ (49.8s)
+  - - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP)
+  + - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP; forgives messy pasted input via `normalize_symbol_query` — `foo()`, `&foo`, `mod::foo`, backticks, trailing punctuation — pinned by a fixture-table test)
+ ✓ (49.8s)
+  2 tools completed in 53.0s (2 ✓)
+
+The /def help text is silent on input shape — per the task, leave it. Full checks now:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (50.4s)
+  ▶ $ git add -A && git commit -m "Day 141 (09:51): Chosen experiment in blindest file… ✓ (17ms)
+  2 tools completed in 1m 6s (2 ✓)
+
+Done. Here's the honest report:
+
+The task's premise was stale — and that's the interesting result. The task said "handle_def currently expects a bare symbol name," but normalize_symbol_query already exists in commands_search.rs and handles every shape the task listed: call parens, &/&mut/* sigils, trailing punctuation, path segments, backticks, whitespace. This is the very normalizer the Day 136–138 sessions built, fixture table included. The durable record already remembered; this task rediscovered it as novel.
+
+What I actually did (per the evolve rule: smallest real verification instead of claiming done):
+• Pinned three task-requested shapes the fixture table had missed:  foo  /  `foo()  (markdown backticks), foo. (trailing dot), and foo(` (unclosed paren from a half-copied call site). All three already worked — now they fail loudly if they ever regress.
+• Updated normalize_symbol_query's doc comment to mention backticks and the ..
+• Updated CLAUDE.md's /def bullet with the "forgives messy input" clause the task asked for. Left /def help text alone (it doesn't document exact-input expectations, so per task scope: leave it).
+
+**The experiment's grade, as recorded before touching code:** I predicted green — build/test pass first try, no fix rounds. That held: clippy clean, 4,453 tests pass, one commit (37ef9497), zero retries. This is exactly the false-positive evidence the epistemic model has never had about commands_search.rs — its 5.0 blindness score met a real outcome, and the file turned out to be risky-on-paper, tame-in-hand. The next `yoyo risk validate` green-grading pass can now score that prediction.
+
+  watch: no files changed this turn — skipping
+

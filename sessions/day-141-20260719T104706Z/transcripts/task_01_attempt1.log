@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "libc" Cargo.toml Cargo.lock | head -20; echo ---; sed -n '1,40p' src/ma…  ▶ $ grep -n "SIGPIPE" -r src/ tests/ | head ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ grep -n "^\[.*dependencies\]" -A 20 Cargo.toml | head -50; echo ---; grep -n "fn… ✓ (5ms)
+  ▶ read src/main.rs:635..665 ✓ (0ms)
+  4 tools completed in 12.0s (4 ✓)
+
+Let me reproduce the bug first, then fix.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -2 ✓ (159ms)
+  ▶ $ ./target/debug/yoyo risk accuracy | head -1; echo "exit: ${PIPESTATUS[0]}" ✓ (8ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Reproduced: exit 101. Test-first — let me check the integration test harness.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -60 tests/integration.rs; echo ...; grep -n "Command\|env!" tests/integrati… ✓ (5ms)
+  ▶ $ ./target/debug/yoyo risk accuracy 2>/dev/null | wc -c; ./target/debug/yoyo --hel… ✓ (14ms)
+  ▶ edit Cargo.toml (3 → 8 lines)
+    tokio-util = "0.7.18"
+  + 
+  + # Unix-only: restore default SIGPIPE disposition in main() so piped output
+  + # (`yoyo <subcmd> | head`) doesn't panic. Already in Cargo.lock transitively.
+  + [target.'cfg(unix)'.dependencies]
+  + libc = "0.2"
+    
+    [dev-dependencies]
+ ✓ (1m 29s)
+    tokio-util = "0.7.18"
+  + 
+  + # Unix-only: restore default SIGPIPE disposition in main() so piped output
+  + # (`yoyo <subcmd> | head`) doesn't panic. Already in Cargo.lock transitively.
+  + [target.'cfg(unix)'.dependencies]
+  + libc = "0.2"
+    
+    [dev-dependencies]
+  ▶ edit src/main.rs (3 → 16 lines)
+    #[tokio::main]
+    async fn main() {
+  +     // Restore the default SIGPIPE disposition (Unix only). Rust sets SIGPIPE
+  +     // to SIG_IGN at startup, so when the reader of a pipe closes early
+  +     // (`yoyo risk accuracy | head -1`), `println!` gets EPIPE and panics with
+  +     // exit 101 ("failed printing to stdout: Broken pipe"). SIG_DFL makes yoyo
+  +     // die quietly with SIGPIPE (exit 141) like every normal Unix CLI (cat,
+  +     // grep, ls). Do NOT "clean this up" — removing it reintroduces the panic.
+  +     // (Ironically, src/tools.rs already restores SIGPIPE for *child*
+  +     // processes; this is the same guard for yoyo's own process.)
+  +     #[cfg(unix)]
+  +     unsafe {
+  +         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+  +     }
+  + 
+        let args: Vec<String> = std::env::args().collect();
+ ✓ (1m 30s)
+    #[tokio::main]
+    async fn main() {
+  +     // Restore the default SIGPIPE disposition (Unix only). Rust sets SIGPIPE
+  +     // to SIG_IGN at startup, so when the reader of a pipe closes early
+  +     // (`yoyo risk accuracy | head -1`), `println!` gets EPIPE and panics with
+  +     // exit 101 ("failed printing to stdout: Broken pipe"). SIG_DFL makes yoyo
+  +     // die quietly with SIGPIPE (exit 141) like every normal Unix CLI (cat,
+  +     // grep, ls). Do NOT "clean this up" — removing it reintroduces the panic.
+  ... (8 more lines)
+  4 tools completed in 3m 36s (4 ✓)
+
+Now the integration test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -30 tests/integration.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (50ms)
+  ▶ $ cat >> tests/integration.rs << 'EOF' (35 lines) ✓ (4ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (1.5s)
+  ▶ $ ./target/debug/yoyo risk accuracy | head -1; echo "exit: ${PIPESTATUS[0]}" ✓ (8ms)
+  ▶ $ cargo test 2>&1 | tail -15 ✓ (53.4s)
+  ▶ $ cargo test --test integration piped_stdout 2>&1 | tail -4; cargo test 2>&1 | gre… ✓ (51.2s)
+  ▶ $ sed -i 's/libc::signal(libc::SIGPIPE, libc::SIG_DFL);/libc::signal(libc::SIGPIPE… ✓ (8.5s)
+  ▶ $ head -25 CHANGELOG.md ✓ (46ms)
+  ▶ edit CHANGELOG.md (1 → 7 lines)
+  + ## [Unreleased]
+  + 
+  + ### Fixed
+  + 
+  + - **SIGPIPE panic (exit 101) when stdout pipe closes early** — `yoyo <subcmd> | head` used to panic with "failed printing to stdout: Broken pipe" because Rust ignores SIGPIPE by default; `main()` now restores the default disposition on Unix, so yoyo dies quietly (exit 141) like every normal CLI (Day 141)
+  + 
+    ## [0.1.15] — 2026-07-10
+ ✓ (1m 28s)
+  + ## [Unreleased]
+  + 
+  + ### Fixed
+  + 
+  + - **SIGPIPE panic (exit 101) when stdout pipe closes early** — `yoyo <subcmd> | head` used to panic with "failed printing to stdout: Broken pipe" because Rust ignores SIGPIPE by default; `main()` now restores the default disposition on Unix, so yoyo dies quietly (exit 141) like every normal CLI (Day 141)
+  + 
+    ## [0.1.15] — 2026-07-10
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -1 && cargo b… ✓ (50.8s)
+  10 tools completed in 4m 52s (10 ✓)
+
+  watch: no files changed this turn — skipping
+

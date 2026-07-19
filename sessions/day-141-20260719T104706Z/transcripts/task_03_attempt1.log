@@ -1,0 +1,147 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ wc -l scripts/extract_trajectory.py && grep -n "def \|run_self_tests\|__main__\|… ✓ (7ms)
+  ▶ read scripts/extract_trajectory.py:1..111 ✓ (1ms)
+  ▶ read scripts/extract_trajectory.py:381..511 ✓ (1ms)
+  ▶ read scripts/extract_trajectory.py:507.. ✓ (1ms)
+  ▶ read src/commands_risk_epistemic.rs ✓ (3ms)
+  ▶ read src/commands_risk_epistemic.rs:100..220 ✓ (1ms)
+  ▶ $ ls target/debug/yoyo target/release/yoyo 2>&1; grep -n "epistemic" src/dispatch_… ✓ (5ms)
+  ▶ $ ./target/debug/yoyo risk epistemic 2>&1 | head -30 | cat -A | head -30 ✓ (9ms)
+  ▶ read scripts/extract_trajectory.py:243..273 ✓ (0ms)
+  9 tools completed in 1m 2s (9 ✓)
+
+Now I'll add the new functions after render_provider_health:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit ? (6 → 93 lines)
+        if hits == 0:
+            return f"## Provider/API health\n{sessions} sessions, no provider errors detected."
+        return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
+  + 
+  + 
+  + # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
+  + 
+  + EPISTEMIC_TOP_N = 5
+  + 
+  + # Report entry line: "   1. src/commands_search.rs                   5.0"
+  + EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
+  + 
+  + # Verbose reasons from the report, compacted to fit the byte budget.
+  + EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
+  + EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
+  + 
+  + 
+  + def compact_epistemic_reason(reason: str) -> str:
+  +     """Shrink a verbose report reason to a few words (2KB total budget)."""
+  +     m = EPISTEMIC_DISAGREE_RE.search(reason)
+  ... (70 more lines)
+ ✗ (0ms)
+    │ Invalid arguments: missing 'path' parameter
+  ▶ edit scripts/extract_trajectory.py (6 → 93 lines)
+        if hits == 0:
+            return f"## Provider/API health\n{sessions} sessions, no provider errors detected."
+        return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
+  + 
+  + 
+  + # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
+  + 
+  + EPISTEMIC_TOP_N = 5
+  + 
+  + # Report entry line: "   1. src/commands_search.rs                   5.0"
+  + EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
+  + 
+  + # Verbose reasons from the report, compacted to fit the byte budget.
+  + EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
+  + EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
+  + 
+  + 
+  + def compact_epistemic_reason(reason: str) -> str:
+  +     """Shrink a verbose report reason to a few words (2KB total budget)."""
+  +     m = EPISTEMIC_DISAGREE_RE.search(reason)
+  ... (70 more lines)
+ ✓ (51.2s)
+        if hits == 0:
+            return f"## Provider/API health\n{sessions} sessions, no provider errors detected."
+        return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
+  + 
+  + 
+  + # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
+  + 
+  + EPISTEMIC_TOP_N = 5
+  ... (13 more lines)
+  ▶ edit scripts/extract_trajectory.py (3 → 6 lines)
+        s = render_provider_health(sessions_audited, provider_hits)
+        if s:
+            sections.append(s)
+  +     # Always rendered (has its own honest fallback line) so the planner sees
+  +     # the epistemic view exists even when it's starving for data.
+  +     sections.append(render_epistemic(collect_epistemic_blind_spots()))
+ ✓ (50.4s)
+        s = render_provider_health(sessions_audited, provider_hits)
+        if s:
+            sections.append(s)
+  +     # Always rendered (has its own honest fallback line) so the planner sees
+  +     # the epistemic view exists even when it's starving for data.
+  +     sections.append(render_epistemic(collect_epistemic_blind_spots()))
+  ▶ edit scripts/extract_trajectory.py (6 → 10 lines)
+        s = render_provider_health(sessions_audited, provider_hits)
+        if s:
+            sections.append(s)
+  -     # Always rendered (has its own honest fallback line) so the planner sees
+  -     # the epistemic view exists even when it's starving for data.
+  -     sections.append(render_epistemic(collect_epistemic_blind_spots()))
+  +     # Always rendered when any signal exists (it has its own honest fallback
+  +     # line) so the planner sees the epistemic view even when it's starving.
+  +     # Skipped only when there is no trajectory data at all AND no epistemic
+  +     # data — preserving the honest global "(no trajectory data yet)" state.
+  +     epistemic_entries = collect_epistemic_blind_spots()
+  +     if sections or epistemic_entries:
+  +         sections.append(render_epistemic(epistemic_entries))
+ ✓ (51.2s)
+        s = render_provider_health(sessions_audited, provider_hits)
+        if s:
+            sections.append(s)
+  -     # Always rendered (has its own honest fallback line) so the planner sees
+  -     # the epistemic view exists even when it's starving for data.
+  -     sections.append(render_epistemic(collect_epistemic_blind_spots()))
+  +     # Always rendered when any signal exists (it has its own honest fallback
+  +     # line) so the planner sees the epistemic view even when it's starving.
+  ... (5 more lines)
+  ▶ edit scripts/extract_trajectory.py (2 → 53 lines)
+  +     # --- epistemic parser self-tests ---
+  +     print("\n=== parse_epistemic_output self-tests ===\n")
+  + 
+  +     canned = (
+  +         "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+  +         "   1. src/commands_search.rs                   5.0\n"
+  +         "      • predicted 28×, never graded\n"
+  +         "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+  +         "   2. src/commands_spawn.rs                    5.0\n"
+  +         "      • predicted 13×, never graded\n"
+  +         "   3. src/a.rs   3.0\n"
+  +         "   4. src/b.rs   3.0\n"
+  +         "   5. src/c.rs   3.0\n"
+  +         "   6. src/d.rs   2.0\n"
+  +         "\n  high score = the model is blindest here\n"
+  +     )
+  +     parsed = parse_epistemic_output(canned)
+  +     assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+  +     assert_eq(
+  +         "entry with reasons compacts and joins",
+  ... (33 more lines)
+ ✓ (50.5s)
+  +     # --- epistemic parser self-tests ---
+  +     print("\n=== parse_epistemic_output self-tests ===\n")
+  + 
+  +     canned = (
+  +         "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+  +         "   1. src/commands_search.rs                   5.0\n"
+  +         "      • predicted 28×, never graded\n"
+  +         "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+  ... (13 more lines)
+  ▶ $ python3 scripts/extract_trajectory.py --test 2>&1 | tail -20 ✓ (41ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_TRAJECTORY_OUT=/tmp/traj.md… ✓ (225ms)
+  7 tools completed in 4m 15s (6 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+
