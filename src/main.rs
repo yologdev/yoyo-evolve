@@ -639,6 +639,19 @@ fn restore_session(agent: &mut Agent) {
 
 #[tokio::main]
 async fn main() {
+    // Restore the default SIGPIPE disposition (Unix only). Rust sets SIGPIPE
+    // to SIG_IGN at startup, so when the reader of a pipe closes early
+    // (`yoyo risk accuracy | head -1`), `println!` gets EPIPE and panics with
+    // exit 101 ("failed printing to stdout: Broken pipe"). SIG_DFL makes yoyo
+    // die quietly with SIGPIPE (exit 141) like every normal Unix CLI (cat,
+    // grep, ls). Do NOT "clean this up" — removing it reintroduces the panic.
+    // (Ironically, src/tools.rs already restores SIGPIPE for *child*
+    // processes; this is the same guard for yoyo's own process.)
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args: Vec<String> = std::env::args().collect();
 
     apply_cli_flags(&args);

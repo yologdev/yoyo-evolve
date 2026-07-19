@@ -2348,3 +2348,36 @@ fn test_builtin_tool_names_includes_shared_state() {
          MCP collision detection depends on this"
     );
 }
+
+/// Regression test for the SIGPIPE panic (Day 141): `yoyo --help | head -1`
+/// used to exit 101 because Rust ignores SIGPIPE by default, so `println!`
+/// panics with "Broken pipe" when the pipe reader closes early. main() now
+/// restores SIG_DFL on Unix, so yoyo either finishes cleanly (0) or dies
+/// quietly with SIGPIPE (141 = 128 + 13) — never a panic (101).
+#[cfg(unix)]
+#[test]
+fn piped_stdout_closed_early_does_not_panic() {
+    let mut child = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn yoyo");
+
+    // Close the read end of the pipe immediately, before the child finishes
+    // writing its ~13KB of help output. Subsequent writes in the child get
+    // EPIPE — which pre-fix panicked (exit 101) and post-fix delivers SIGPIPE.
+    drop(child.stdout.take());
+
+    let status = child.wait().expect("failed to wait for yoyo");
+
+    // Acceptable outcomes: clean exit (child won the race and finished
+    // writing) or SIGPIPE death (no exit code, killed by signal 13).
+    // The one FORBIDDEN outcome is a panic: exit code 101.
+    assert_ne!(
+        status.code(),
+        Some(101),
+        "yoyo must not panic (exit 101) when its stdout pipe closes early; got: {status:?}"
+    );
+}

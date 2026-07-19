@@ -4,6 +4,12 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **SIGPIPE panic (exit 101) when stdout pipe closes early** — `yoyo <subcmd> | head` used to panic with "failed printing to stdout: Broken pipe" because Rust ignores SIGPIPE by default; `main()` now restores the default disposition on Unix, so yoyo dies quietly (exit 141) like every normal CLI (Day 141)
+
 ## [0.1.15] — 2026-07-10
 
 The catch-up release: Days 87–132, the largest span yet. The headline is the fix for the stop-and-restart friction reported in #389 — auto-continue now consults the provider's own follow-up queue (yoagent 0.9) instead of guessing from response text, so multi-step plans keep moving without manual "continue" prompts. Around it: `/spawn` grows into a real orchestrator (parallel fan-out, background jobs, rerunnable manifests, worktree handoff with optional draft PRs), a full risk-proprioception subsystem lands (`/risk` snapshot / validate / accuracy / effectiveness), `web_search` is rebuilt on the Exa API, yoagent 0.9 brings adaptive thinking and fleet-model pricing (Opus 4.8, Fable 5), and the REPL learns `!` shell passthrough, `/cd`, and `/rewind`.
