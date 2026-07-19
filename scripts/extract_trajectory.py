@@ -422,7 +422,13 @@ def render_provider_health(sessions: int, hits: int) -> str:
 
 # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
 
-EPISTEMIC_TOP_N = 5
+# 3, not 5: the section renders last and absorbs all truncation pressure —
+# three intact entries beat five truncated ones (Day 141).
+EPISTEMIC_TOP_N = 3
+
+# Per-entry length clamp: keep each blind-spot bullet to one short line so
+# the whole section fits the byte budget even with reasons attached.
+EPISTEMIC_ENTRY_MAX_CHARS = 90
 
 # Report entry line: "   1. src/commands_search.rs                   5.0"
 EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
@@ -463,6 +469,8 @@ def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]
         line = f"- {path} ({score})"
         if reasons:
             line += " — " + "; ".join(reasons)
+        if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
+            line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
         out.append(line)
     return out
 
@@ -508,6 +516,30 @@ def render_epistemic(entries: list[str]) -> str:
 
 
 # ── Final assembly ───────────────────────────────────────────────────────
+
+
+def cap_output(
+    output: str, line_cap: int = TOTAL_LINE_CAP, byte_cap: int = TOTAL_BYTE_CAP
+) -> str:
+    """Apply the hard line + byte caps to the final trajectory block.
+
+    Bytes-cap reserves room for the truncation marker so the FINAL output
+    stays under byte_cap (the marker itself was previously appended after
+    the cap, allowing the file to exceed it by ~37 bytes). Pure so the
+    self-tests can assert the epistemic steering section survives capping.
+    """
+    output = truncate_lines(output, line_cap)
+    truncation_marker = "\n... (truncated to fit token budget)\n"
+    marker_bytes = len(truncation_marker.encode("utf-8"))
+    if len(output.encode("utf-8")) > byte_cap:
+        budget = byte_cap - marker_bytes
+        b = output.encode("utf-8")[:budget]
+        # Back off to last newline within b for clean cut
+        idx = b.rfind(b"\n")
+        if idx > 0:
+            b = b[:idx]
+        output = b.decode("utf-8", errors="ignore") + truncation_marker
+    return output
 
 
 def main() -> int:
@@ -574,21 +606,7 @@ def main() -> int:
         body = "\n\n".join(sections)
 
     output = header + "\n" + body + "\n"
-    # Hard-cap: lines and bytes. Bytes-cap reserves room for the truncation
-    # marker so the FINAL output stays under TOTAL_BYTE_CAP (the marker
-    # itself was previously appended after the cap, allowing the file to
-    # exceed it by ~37 bytes).
-    output = truncate_lines(output, TOTAL_LINE_CAP)
-    truncation_marker = "\n... (truncated to fit token budget)\n"
-    marker_bytes = len(truncation_marker.encode("utf-8"))
-    if len(output.encode("utf-8")) > TOTAL_BYTE_CAP:
-        budget = TOTAL_BYTE_CAP - marker_bytes
-        b = output.encode("utf-8")[:budget]
-        # Back off to last newline within b for clean cut
-        idx = b.rfind(b"\n")
-        if idx > 0:
-            b = b[:idx]
-        output = b.decode("utf-8", errors="ignore") + truncation_marker
+    output = cap_output(output)
 
     try:
         out_path.write_text(output)
@@ -822,10 +840,92 @@ def run_self_tests() -> int:
     )
     rendered = render_epistemic(parsed)
     assert_true(
-        "rendered section stays within 8 lines incl. header",
-        len(rendered.splitlines()) <= 8,
+        "rendered section stays within 5 lines incl. header",
+        len(rendered.splitlines()) <= 5,
     )
     assert_true("planner hint present", "planner hint" in rendered)
+
+    # 19e. Per-entry clamp: an absurdly long path still yields a <=90-char line
+    long_path = "src/" + "x" * 120 + ".rs"
+    clamped = parse_epistemic_output(f"   1. {long_path}   5.0\n")
+    assert_true(
+        "oversized entry clamped to 90 chars",
+        len(clamped) == 1 and len(clamped[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
+    )
+
+    # --- cap_output self-tests: the steering channel must survive ---
+    print("\n=== cap_output self-tests ===\n")
+
+    # Build a synthetic full-length trajectory at today's observed section
+    # sizes (Day 141: the realistic six-section output ran ~2.3-2.6KB, and
+    # the old 2048-byte cap cut the last-rendered epistemic section down to
+    # 1 of its 5 entries).
+    synth_header = (
+        "# YOUR TRAJECTORY\n\n"
+        "Last computed: 2026-07-19T16:58Z. Day 141. Window: last 10 sessions / 14 days.\n"
+    )
+    outcomes_sec = "## Recent session outcomes (last 10)\n" + "\n".join(
+        f"- day-{130 + i}: 3 planned / 3 committed, 0 reverted, evaluator PASS x3" for i in range(10)
+    )
+    tasks_sec = "## Per-task activity (git log, last 14 days)\n" + "\n".join(
+        f"- Day {130 + i}: task committed — improve subsystem {i} (src/commands_foo.rs)"
+        for i in range(8)
+    )
+    reverts_sec = "## Reverts in window\n- 1 revert across 10 sessions (day-135, task 2)"
+    ci_sec = "## Recurring CI error fingerprints\n" + "\n".join(
+        f"- 3x: error[E030{i}]: mismatched types in src/commands_bar.rs" for i in range(5)
+    )
+    provider_sec = "## Provider/API health\n10 sessions, 2 provider error hit(s) in audit.jsonl."
+    epistemic_first = "- src/commands.rs (5.0) — predicted 23×, never graded; columns disagree 3/3"
+    epistemic_sec = render_epistemic(
+        [
+            epistemic_first,
+            "- src/commands_spawn.rs (5.0) — predicted 13×, never graded",
+            "- src/watch.rs (3.0) — stale (7 snapshots)",
+        ]
+    )
+    synth = (
+        synth_header
+        + "\n"
+        + "\n\n".join(
+            [outcomes_sec, tasks_sec, reverts_sec, ci_sec, provider_sec, epistemic_sec]
+        )
+        + "\n"
+    )
+
+    # 20. Realistic full-length output fits the new cap with the epistemic
+    # section (header AND first entry) fully intact — the steering channel
+    # survives.
+    capped = cap_output(synth)
+    assert_true(
+        "capped output stays under TOTAL_BYTE_CAP",
+        len(capped.encode("utf-8")) <= TOTAL_BYTE_CAP,
+    )
+    assert_true(
+        "epistemic header survives capping",
+        "## Epistemic blind spots" in capped,
+    )
+    assert_true(
+        "first epistemic entry survives capping",
+        epistemic_first in capped,
+    )
+
+    # 21. Pin why the cap was raised: under the OLD 2048-byte cap the same
+    # realistic output loses the epistemic entries (the observed Day 141 bug).
+    old_capped = cap_output(synth, byte_cap=2048)
+    assert_true(
+        "old 2048 cap would truncate (regression rationale)",
+        "(truncated to fit token budget)" in old_capped,
+    )
+
+    # 22. Oversized input still gets the marker and stays under the cap
+    huge = synth + ("\n## Padding\n" + "z" * 4000)
+    huge_capped = cap_output(huge)
+    assert_true(
+        "oversized input capped with marker",
+        len(huge_capped.encode("utf-8")) <= TOTAL_BYTE_CAP
+        and "(truncated to fit token budget)" in huge_capped,
+    )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
