@@ -32,8 +32,12 @@ MAX_FAILED_RUNS = 5            # cap on `gh run view --log-failed` calls
 GH_RUN_VIEW_TIMEOUT = 10       # seconds per gh run view
 GH_RUN_LIST_TIMEOUT = 10       # seconds for gh run list
 STUCK_ON_THRESHOLD = 3         # ≥N attempts AND 0 successes → flag
+# Hard caps on the final YOUR TRAJECTORY block. The byte cap was raised from
+# 2048 → 3072 on Day 142: the epistemic blind-spot section (added Day 141)
+# renders LAST and was being decapitated by the old cap — a steering channel
+# that usually arrives truncated is a dormant mechanism. 3KB ≈ 750 tokens.
 TOTAL_LINE_CAP = 100
-TOTAL_BYTE_CAP = 2048
+TOTAL_BYTE_CAP = 3072
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -811,7 +815,7 @@ def run_self_tests() -> int:
         "\n  high score = the model is blindest here\n"
     )
     parsed = parse_epistemic_output(canned)
-    assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+    assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
     assert_eq(
         "entry with reasons compacts and joins",
         parsed[0],
