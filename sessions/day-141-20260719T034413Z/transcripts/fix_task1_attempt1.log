@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "RISK_SUBCOMMANDS" src/commands_risk.rs | head; grep -n "epistemic" src/…  ▶ $ grep -n "epistemic" src/help_data.rs CLAUDE.md | head ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ sed -n 570-660p src/commands_risk.rs 2>/dev/null || sed -n '570,660p' src/comman…  ▶ $ grep -n "risk" src/help_data.rs | head -20 ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 6.1s (4 ✓)
+
+All three gaps are clear. Fixing them now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 5 lines)
+        "accuracy",
+        "effectiveness",
+  +     "epistemic",
+        "--all",
+    ];
+  ▶ edit src/help_data.rs (1 → 2 lines)
+  -              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
+  +              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\
+  +              \x20 /risk epistemic  Rank files graded outcomes have taught the model least about\n\n\
+ ✓ (1m 40s)
+        "accuracy",
+        "effectiveness",
+  +     "epistemic",
+        "--all",
+    ];
+ ✓ (3m 0s)
+  -              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
+  +              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\
+  +              \x20 /risk epistemic  Rank files graded outcomes have taught the model least about\n\n\
+  ▶ $ grep -n "commands_risk_accuracy\|commands_risk_epistemic" CLAUDE.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ sed -n '2035,2060p;2130,2145p' src/commands_risk.rs ✓ (3ms)
+ ✓ (16ms)
+  ▶ $ grep -rn "epistemic" src/commands_risk.rs src/commands_risk_epistemic.rs --inclu… ✓ (5ms)
+  5 tools completed in 3m 13s (5 ✓)
+
+Now add an explicit (non-vacuous) drift test asserting epistemic is in `RISK_SUBCOMMANDS` and dispatched:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 16 lines)
+            assert!(!list.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_subcommands_include_epistemic() {
+  +         // Day 141 drift guard: `epistemic` is dispatched in handle_risk, so it
+  +         // must be discoverable via RISK_SUBCOMMANDS (tab-completion and the
+  +         // unknown-subcommand "Available:" list both read that list). This
+  +         // assertion is deliberately explicit — the generic loop tests above
+  +         // pass vacuously if the entry is simply missing.
+  +         assert!(
+  +             RISK_SUBCOMMANDS.contains(&"epistemic"),
+  +             "RISK_SUBCOMMANDS must list `epistemic` — it is dispatched in handle_risk"
+  +         );
+  +         assert!(!is_unknown_risk_subcommand("epistemic"));
+        }
+ ✓ (1m 40s)
+            assert!(!list.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_subcommands_include_epistemic() {
+  +         // Day 141 drift guard: `epistemic` is dispatched in handle_risk, so it
+  +         // must be discoverable via RISK_SUBCOMMANDS (tab-completion and the
+  +         // unknown-subcommand "Available:" list both read that list). This
+  ... (8 more lines)
+
+Now update CLAUDE.md's commands_risk* section — add the new module line after commands_risk_accuracy.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '94,96p' CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_epistemic.rs` — `yoyo risk epistemic` / `/risk epistemic`: ranks files by how little the graded validation outcomes have taught the model about them (`compute_epistemic_ranking`, `format_epistemic_report` — signals: predicted-but-never-graded, reactive/emerging column disagreement, stale snapshot presence; weights documented as consts). Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. This is the ranking half of the DREAM epistemic-appetite milestone (Day 141); steering the planner slot at high-epistemic-value files is a named follow-up, not done here. Re-exported via `commands_risk`.
+ ✓ (1m 18s)
+    - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_epistemic.rs` — `yoyo risk epistemic` / `/risk epistemic`: ranks files by how little the graded validation outcomes have taught the model about them (`compute_epistemic_ranking`, `format_epistemic_report` — signals: predicted-but-never-graded, reactive/emerging column disagreement, stale snapshot presence; weights documented as consts). Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. This is the ranking half of the DREAM epistemic-appetite milestone (Day 141); steering the planner slot at high-epistemic-value files is a named follow-up, not done here. Re-exported via `commands_risk`.
+  2 tools completed in 1m 28s (2 ✓)
+
+Now run the full verification:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 ✓ (18.4s)
+  ▶ $ cargo build 2>&1 | tail -2 && cargo test 2>&1 | tail -15 ✓ (1m 2s)
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED|failed" | head; cargo test epistem… ✓ (50.0s)
+  ▶ $ ./target/debug/yoyo risk snapshoot 2>&1 | head -3; echo ---; ./target/debug/yoyo… ✓ (12ms)
+  4 tools completed in 2m 28s (4 ✓)
+
+All three evaluator-identified gaps are fixed:
+
+1. **`RISK_SUBCOMMANDS now includes epistemic** (src/commands_risk.rs`) — it appears in tab-completion and the unknown-subcommand "Available:" list (verified at runtime above). Added an explicit non-vacuous drift test `test_risk_subcommands_include_epistemic` asserting the entry exists, since the generic loop tests pass vacuously when an entry is simply missing.
+2. Help line added (src/help_data.rs) — /risk epistemic  Rank files graded outcomes have taught the model least about under the /risk help; the existing test_risk_help_mentions_every_subcommand discoverability guard now covers it too.
+3. **CLAUDE.md updated* — one entry for `commands_risk_epistemic.rs` in the `commands_risk` section describing the ranking (signals, weights-as-consts, reuses existing JSONL readers, no new persistence) and explicitly naming the follow-up: planner-slot steering at high-epistemic-value files is a later session.
+
+Verification: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, and cargo test` all green — 4362 tests passed, 0 failed.
+
+  watch: no files changed this turn — skipping
+

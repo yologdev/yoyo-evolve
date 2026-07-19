@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'SessionCapTool|SESSION_TOOL_CALL_CAP|with_session_cap' in src  ▶ search '"clear"' in src/dispatch.rs ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "SessionCap\|session_ca… ✓ (15ms)
+  ▶ read src/tool_wrappers.rs:890..1020 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/tool_wrappers.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 12,25p src/tool_wrappers.… ✓ (7ms)
+  ▶ read src/tool_wrappers.rs:15..19 ✓ (1ms)
+  ▶ read src/dispatch.rs:1070..1125 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,600p src/agent_builde… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_agent\|fn buil… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 649,700p src/agent_builde… ✓ (5ms)
+  ▶ edit src/tool_wrappers.rs (7 → 78 lines)
+            // sub_agent's counter is untouched.
+            assert!(sub
+  +             .execute(serde_json::json!({}), test_tool_context())
+  +             .await
+  +             .is_ok());
+  +     }
+  + 
+  +     /// Regression pin for the /clear budget-reset contract: `/clear` rebuilds
+  +     /// the agent (dispatch.rs), which constructs brand-new `with_session_cap`
+  +     /// wrappers — so the session budget resets because the counter is
+  +     /// per-wrapper-INSTANCE. If anyone converts the counter to a process-wide
+  +     /// static (e.g. keyed by tool name), a rebuilt wrapper would inherit the
+  +     /// exhausted count and /clear would silently stop resetting the budget.
+  +     /// This test fails loudly in that world.
+  +     #[tokio::test]
+  +     async fn test_session_cap_fresh_wrapper_resets_budget() {
+  +         let make = || {
+  +             with_session_cap(
+  +                 Box::new(MockTool {
+  +                     tool_name: "web_search",
+  ... (58 more lines)
+ ✓ (1m 38s)
+            // sub_agent's counter is untouched.
+            assert!(sub
+  +             .execute(serde_json::json!({}), test_tool_context())
+  +             .await
+  +             .is_ok());
+  +     }
+  + 
+  +     /// Regression pin for the /clear budget-reset contract: `/clear` rebuilds
+  ... (13 more lines)
+  12 tools completed in 3m 32s (12 ✓)
+
+Now fix the stale "per-process" comment that misled the planner:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (5 → 10 lines)
+    /// A wrapper tool that enforces a session-wide cap on the number of times the
+    /// wrapped tool may be called. Once the cap is exceeded, every subsequent call
+    /// returns an honest error explaining why the tool stopped working (never a
+  - /// silent no-op, never a panic). The counter is per-process, which is the
+  - /// right scope for both the REPL and single-prompt modes.
+  + /// silent no-op, never a panic). The counter is per-wrapper-INSTANCE, i.e.
+  + /// per agent build: `/clear` rebuilds the agent (see `CommandRoute::Clear` in
+  + /// dispatch.rs), which constructs fresh wrappers with zeroed counters — so the
+  + /// budget resets on `/clear`, matching what "session-wide" means to a user.
+  + /// Do NOT convert this to a process-wide static; that would silently turn the
+  + /// session cap into a process-lifetime cap (pinned by
+  + /// `test_session_cap_fresh_wrapper_resets_budget`).
+ ✓ (1m 40s)
+    /// A wrapper tool that enforces a session-wide cap on the number of times the
+    /// wrapped tool may be called. Once the cap is exceeded, every subsequent call
+    /// returns an honest error explaining why the tool stopped working (never a
+  - /// silent no-op, never a panic). The counter is per-process, which is the
+  - /// right scope for both the REPL and single-prompt modes.
+  + /// silent no-op, never a panic). The counter is per-wrapper-INSTANCE, i.e.
+  + /// per agent build: `/clear` rebuilds the agent (see `CommandRoute::Clear` in
+  + /// dispatch.rs), which constructs fresh wrappers with zeroed counters — so the
+  ... (4 more lines)
+  ▶ edit src/tool_wrappers.rs (3 → 3 lines)
+                return Err(yoagent::types::ToolError::Failed(format!(
+                    "{} session cap reached ({} calls) — this usually means a runaway \
+  -                  loop. Start a new session to reset.",
+  +                  loop. Use /clear or start a new session to reset.",
+ ✓ (1m 41s)
+                return Err(yoagent::types::ToolError::Failed(format!(
+                    "{} session cap reached ({} calls) — this usually means a runaway \
+  -                  loop. Start a new session to reset.",
+  +                  loop. Use /clear or start a new session to reset.",
+  2 tools completed in 3m 31s (2 ✓)
+
+Now update CLAUDE.md's `tool_wrappers.rs` line:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionCapTool" CLAUDE.… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap) and helper wrappers
+  + SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap; the counter is per-wrapper-instance (per agent build), so the budget resets on `/clear` because `/clear` rebuilds the agent — pinned by `test_session_cap_fresh_wrapper_resets_budget`, do not convert to a process-wide static) and helper wrappers
+ ✓ (1m 20s)
+  - SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap) and helper wrappers
+  + SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap; the counter is per-wrapper-instance (per agent build), so the budget resets on `/clear` because `/clear` rebuilds the agent — pinned by `test_session_cap_fresh_wrapper_resets_budget`, do not convert to a process-wide static) and helper wrappers
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 21s)
+  3 tools completed in 2m 50s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

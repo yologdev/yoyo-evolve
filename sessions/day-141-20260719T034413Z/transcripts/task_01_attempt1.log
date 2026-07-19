@@ -1,0 +1,144 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing structures I need to build on.
+  ▶ $ grep -n "pub struct ParsedSnapshot" -A 20 src/commands_risk_snapshots.rs; grep -…  ▶ $ grep -n "RISK_SUBCOMMANDS\|commands_risk_accuracy\|commands_risk_emerging\|pub u… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ sed -n 550,720p src/commands_risk_snapshots.rs  ▶ $ sed -n 560,720p src/commands_risk.rs ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 7.0s (4 ✓)
+
+The ValidationEvent struct doesn't carry file paths. Let me check what the validation JSONL actually persists — I may need the raw JSON for graded file paths.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "write_validation_event\|files_changed\|hit_files\|\"hits\"\|changed_fil…  ▶ $ head -3 .yoyo/risk_validations.jsonl; echo ---; head -1 .yoyo/risk_snapshots.jso… ✓ (5ms)
+ ✓ (38ms)
+  ▶ $ grep -n "struct DetailedValidationEvent" -A 15 src/commands_risk_weights.rs; gre… ✓ (5ms)
+  ▶ $ sed -n 2020,2060p src/commands_risk.rs; echo ===; sed -n 2115,2140p src/commands…  ▶ $ grep -n '"risk"' -A 30 src/help_data.rs | head -45 ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ grep -rn "ValidationEvent {" src/ | grep -v Detailed; grep -rn "load_validation_… ✓ (16ms)
+  ▶ write src/commands_risk_epistemic.rs (391 lines) ✓ (1m 18s)
+  ▶ $ grep -n "use crate::format" src/commands_risk_snapshots.rs src/commands_risk_acc… ✓ (5ms)
+  ▶ $ grep -n "BOLD\|CYAN\|YELLOW" src/format/mod.rs | head ✓ (4ms)
+  9 tools completed in 3m 33s (9 ✓)
+
+Good — they're Color statics usable in format!. Now add the graded-paths reader to the snapshots module:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (2 → 40 lines)
+  + /// A graded validation event reduced to what the epistemic view needs: the
+  + /// day it was recorded and every file path that appeared in its graded
+  + /// outcome. Hits and surprises both count — each taught the model something
+  + /// (a hit confirms a prediction, a surprise exposes a miss). Lives here
+  + /// because this module owns the validation JSONL format; extending
+  + /// [`ValidationEvent`] instead would break its many struct-literal test
+  + /// fixtures for fields most readers don't need.
+  + pub(crate) struct GradedEvent {
+  +     pub(crate) day: u64,
+  +     pub(crate) paths: Vec<String>,
+  + }
+  + 
+  + /// Parse graded events (day + graded file paths) from validation JSONL
+  + /// content. Defensive like every reader here: malformed lines are skipped,
+  + /// absent arrays yield empty path lists.
+  + pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
+  +     let mut events = Vec::new();
+  +     for line in content.lines() {
+  +         let trimmed = line.trim();
+  +         if trimmed.is_empty() {
+  ... (20 more lines)
+ ✓ (17.4s)
+  + /// A graded validation event reduced to what the epistemic view needs: the
+  + /// day it was recorded and every file path that appeared in its graded
+  + /// outcome. Hits and surprises both count — each taught the model something
+  + /// (a hit confirms a prediction, a surprise exposes a miss). Lives here
+  + /// because this module owns the validation JSONL format; extending
+  + /// [`ValidationEvent`] instead would break its many struct-literal test
+  + /// fixtures for fields most readers don't need.
+  + pub(crate) struct GradedEvent {
+  ... (13 more lines)
+  ▶ edit src/main.rs (3 → 4 lines)
+    mod commands_risk;
+    mod commands_risk_accuracy;
+    mod commands_risk_emerging;
+  + mod commands_risk_epistemic;
+  ▶ edit src/commands_risk.rs (1 → 1 lines) ✓ (17.4s)
+    mod commands_risk;
+    mod commands_risk_accuracy;
+    mod commands_risk_emerging;
+  + mod commands_risk_epistemic;
+ ✓ (34.5s)
+  3 tools completed in 1m 0s (3 ✓)
+
+Now wire the routing in commands_risk.rs — re-export, subcommand list, and dispatch:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 1 lines)
+    // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+  - // Re-exported here so existing call sites keep working unchanged.
+ ✗ (0ms)
+    │ old_text not found in src/commands_risk.rs.
+  ▶ edit src/commands_risk.rs (7 → 3 lines)
+    // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+    // Re-exported here so all call sites (commands_project.rs and this module's
+    // own report code) remain unchanged.
+  - // Epistemic ranking (rank files by how little graded outcomes have taught
+  - // the model — the dream's epistemic-appetite milestone) lives in
+  - // `commands_risk_epistemic.rs`.
+  - use crate::commands_risk_epistemic::handle_risk_epistemic;
+ ✗ (0ms)
+    │ old_text not found in src/commands_risk.rs.
+  2 tools completed in 7.8s (0 ✓, 2 ✗)
+
+I swapped old/new. Retry correctly:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (1 → 6 lines)
+    pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + 
+  + // Epistemic ranking (rank files by how little graded outcomes have taught the
+  + // model — the dream's epistemic-appetite milestone, ranking half only) lives
+  + // in `commands_risk_epistemic.rs`.
+  + use crate::commands_risk_epistemic::handle_risk_epistemic;
+ ✓ (17.2s)
+    pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + 
+  + // Epistemic ranking (rank files by how little graded outcomes have taught the
+  + // model — the dream's epistemic-appetite milestone, ranking half only) lives
+  + // in `commands_risk_epistemic.rs`.
+  + use crate::commands_risk_epistemic::handle_risk_epistemic;
+  ▶ edit src/commands_risk.rs (9 → 10 lines)
+        "predict",
+        "accuracy",
+        "effectiveness",
+  +     "epistemic",
+        "--all",
+    ];
+  ▶ edit src/commands_risk.rs (4 → 9 lines)
+        if sub == "effectiveness" {
+            handle_risk_effectiveness();
+  +         return;
+  +     }
+  + 
+  +     if sub == "epistemic" {
+  +         handle_risk_epistemic();
+            return;
+        }
+ ✓ (17.6s)
+        "predict",
+        "accuracy",
+        "effectiveness",
+  +     "epistemic",
+        "--all",
+    ];
+ ✓ (1m 56s)
+        if sub == "effectiveness" {
+            handle_risk_effectiveness();
+  +         return;
+  +     }
+  + 
+  +     if sub == "epistemic" {
+  +         handle_risk_epistemic();
+            return;
+        }
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -20 ✓ (16.9s)
+  4 tools completed in 2m 38s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
