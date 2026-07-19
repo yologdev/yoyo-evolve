@@ -906,8 +906,13 @@ pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
 /// A wrapper tool that enforces a session-wide cap on the number of times the
 /// wrapped tool may be called. Once the cap is exceeded, every subsequent call
 /// returns an honest error explaining why the tool stopped working (never a
-/// silent no-op, never a panic). The counter is per-process, which is the
-/// right scope for both the REPL and single-prompt modes.
+/// silent no-op, never a panic). The counter is per-wrapper-INSTANCE, i.e.
+/// per agent build: `/clear` rebuilds the agent (see `CommandRoute::Clear` in
+/// dispatch.rs), which constructs fresh wrappers with zeroed counters — so the
+/// budget resets on `/clear`, matching what "session-wide" means to a user.
+/// Do NOT convert this to a process-wide static; that would silently turn the
+/// session cap into a process-lifetime cap (pinned by
+/// `test_session_cap_fresh_wrapper_resets_budget`).
 pub(crate) struct SessionCapTool {
     inner: Box<dyn AgentTool>,
     counter: Arc<AtomicUsize>,
@@ -941,7 +946,7 @@ impl AgentTool for SessionCapTool {
         if used >= self.cap {
             return Err(yoagent::types::ToolError::Failed(format!(
                 "{} session cap reached ({} calls) — this usually means a runaway \
-                 loop. Start a new session to reset.",
+                 loop. Use /clear or start a new session to reset.",
                 self.inner.name(),
                 self.cap
             )));
@@ -3083,5 +3088,76 @@ mod tests {
             .execute(serde_json::json!({}), test_tool_context())
             .await
             .is_ok());
+    }
+
+    /// Regression pin for the /clear budget-reset contract: `/clear` rebuilds
+    /// the agent (dispatch.rs), which constructs brand-new `with_session_cap`
+    /// wrappers — so the session budget resets because the counter is
+    /// per-wrapper-INSTANCE. If anyone converts the counter to a process-wide
+    /// static (e.g. keyed by tool name), a rebuilt wrapper would inherit the
+    /// exhausted count and /clear would silently stop resetting the budget.
+    /// This test fails loudly in that world.
+    #[tokio::test]
+    async fn test_session_cap_fresh_wrapper_resets_budget() {
+        let make = || {
+            with_session_cap(
+                Box::new(MockTool {
+                    tool_name: "web_search",
+                    result_text: "ok".to_string(),
+                }),
+                2,
+            )
+        };
+
+        // Exhaust the cap on the first wrapper (the pre-/clear agent).
+        let old = make();
+        for _ in 0..2 {
+            assert!(old
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_ok());
+        }
+        assert!(
+            old.execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_err(),
+            "cap should be hit on the old wrapper"
+        );
+
+        // A fresh wrapper of the SAME tool name (the post-/clear agent) must
+        // start with a full budget — blocked-then-rebuilt unblocks.
+        let fresh = make();
+        for i in 0..2 {
+            assert!(
+                fresh
+                    .execute(serde_json::json!({}), test_tool_context())
+                    .await
+                    .is_ok(),
+                "fresh wrapper call {i} should be within a full budget"
+            );
+        }
+
+        // Near-miss side (Day 122): a wrapper that never hit its cap also
+        // stays unblocked after another wrapper is created — no cross-talk.
+        let untouched = make();
+        assert!(untouched
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_ok());
+        let _another = make();
+        assert!(
+            untouched
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_ok(),
+            "un-blocked wrapper must keep its remaining budget when a new wrapper appears"
+        );
+
+        // And the old exhausted wrapper stays blocked — fresh instances never
+        // leak a reset back into it.
+        assert!(old
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_err());
     }
 }

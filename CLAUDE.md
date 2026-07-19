@@ -53,7 +53,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
 - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents
 - `smart_edit.rs` — SmartEditTool: fuzzy matching for edit_file errors, whitespace-only auto-fix retry, nearest-match line-number hints
-- `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool, SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap) and helper wrappers
+- `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool, SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap; the counter is per-wrapper-instance (per agent build), so the budget resets on `/clear` because `/clear` rebuilds the agent — pinned by `test_session_cap_fresh_wrapper_resets_budget`, do not convert to a process-wide static) and helper wrappers
 - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression
 - `update.rs` — version comparison (`version_is_newer`) and update checking (`check_for_update`) against GitHub releases
 - `safety.rs` — bash command safety analysis, destructive pattern detection
