@@ -420,6 +420,93 @@ def render_provider_health(sessions: int, hits: int) -> str:
     return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
 
 
+# --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
+
+EPISTEMIC_TOP_N = 5
+
+# Report entry line: "   1. src/commands_search.rs                   5.0"
+EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
+
+# Verbose reasons from the report, compacted to fit the byte budget.
+EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
+EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
+
+
+def compact_epistemic_reason(reason: str) -> str:
+    """Shrink a verbose report reason to a few words (2KB total budget)."""
+    m = EPISTEMIC_DISAGREE_RE.search(reason)
+    if m:
+        return f"columns disagree {m.group(1)}/{m.group(2)}"
+    m = EPISTEMIC_STALE_RE.search(reason)
+    if m:
+        return f"stale ({m.group(1)} snapshots)"
+    return reason[:60]
+
+
+def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]:
+    """Parse `yoyo risk epistemic` report output into compact bullet lines.
+
+    Pure (no subprocess) so the self-tests can exercise it on canned output.
+    Returns [] when nothing parseable is found (empty states, garbage).
+    """
+    entries: list[tuple[str, str, list[str]]] = []
+    for raw in strip_ansi(text).splitlines():
+        m = EPISTEMIC_ENTRY_RE.match(raw)
+        if m:
+            entries.append((m.group(1), m.group(2), []))
+            continue
+        stripped = raw.strip()
+        if stripped.startswith("•") and entries:
+            entries[-1][2].append(compact_epistemic_reason(stripped.lstrip("•").strip()))
+    out = []
+    for path, score, reasons in entries[:top_n]:
+        line = f"- {path} ({score})"
+        if reasons:
+            line += " — " + "; ".join(reasons)
+        out.append(line)
+    return out
+
+
+def find_yoyo_binary() -> str | None:
+    """Locate the built yoyo binary (evolve.sh builds before running us)."""
+    for p in ("target/debug/yoyo", "target/release/yoyo"):
+        if Path(p).is_file() and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def collect_epistemic_blind_spots() -> list[str]:
+    """Run `yoyo risk epistemic` and compact its top entries. Fail-soft:
+    every skip path warn()s (fail-soft without a freshness signal is
+    fail-silent — Day 139) and returns []."""
+    binary = find_yoyo_binary()
+    if binary is None:
+        warn("epistemic section skipped: yoyo binary not found in target/{debug,release}")
+        return []
+    rc, stdout, _stderr = run_cmd([binary, "risk", "epistemic"], timeout=15)
+    if rc != 0:
+        warn(f"epistemic section skipped: `{binary} risk epistemic` rc={rc}")
+        return []
+    entries = parse_epistemic_output(stdout)
+    if not entries:
+        warn("epistemic section skipped: no parseable entries in report output")
+        return []
+    return entries
+
+
+def render_epistemic(entries: list[str]) -> str:
+    """≤8 lines incl. header. Empty entries → honest one-line fallback so the
+    planner sees the section exists but is starving, not silence."""
+    header = "## Epistemic blind spots (files graded outcomes have taught the model least about)"
+    if not entries:
+        return header + "\n(no epistemic data yet)"
+    lines = [header] + entries[:EPISTEMIC_TOP_N]
+    lines.append(
+        "(planner hint: prefer pointing the self-driven slot at one of these — guess first, grade after)"
+    )
+    return "\n".join(lines)
+
+
 # ── Final assembly ───────────────────────────────────────────────────────
 
 
@@ -473,6 +560,13 @@ def main() -> int:
     s = render_provider_health(sessions_audited, provider_hits)
     if s:
         sections.append(s)
+    # Always rendered when any signal exists (it has its own honest fallback
+    # line) so the planner sees the epistemic view even when it's starving.
+    # Skipped only when there is no trajectory data at all AND no epistemic
+    # data — preserving the honest global "(no trajectory data yet)" state.
+    epistemic_entries = collect_epistemic_blind_spots()
+    if sections or epistemic_entries:
+        sections.append(render_epistemic(epistemic_entries))
 
     if not sections:
         body = "(no trajectory data yet — audit-log is empty and no recent task commits found)"
@@ -681,6 +775,57 @@ def run_self_tests() -> int:
         "unparseable name ranks below parsed sessions",
         weird < session_sort_key("day-1-a"),
     )
+
+    # --- epistemic parser self-tests ---
+    print("\n=== parse_epistemic_output self-tests ===\n")
+
+    canned = (
+        "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+        "   1. src/commands_search.rs                   5.0\n"
+        "      • predicted 28×, never graded\n"
+        "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+        "   2. src/commands_spawn.rs                    5.0\n"
+        "      • predicted 13×, never graded\n"
+        "   3. src/a.rs   3.0\n"
+        "   4. src/b.rs   3.0\n"
+        "   5. src/c.rs   3.0\n"
+        "   6. src/d.rs   2.0\n"
+        "\n  high score = the model is blindest here\n"
+    )
+    parsed = parse_epistemic_output(canned)
+    assert_true("top_n cap: 6 entries -> 5 lines", len(parsed) == 5)
+    assert_eq(
+        "entry with reasons compacts and joins",
+        parsed[0],
+        "- src/commands_search.rs (5.0) — predicted 28×, never graded; columns disagree 3/3",
+    )
+    assert_eq("entry without reasons is bare", parsed[2], "- src/a.rs (3.0)")
+
+    # 19b. Stale reason compacts
+    assert_eq(
+        "stale reason compacts",
+        compact_epistemic_reason("last seen 7 snapshots ago, no graded event since"),
+        "stale (7 snapshots)",
+    )
+
+    # 19c. Empty states / garbage yield [] (the fail-soft path)
+    assert_true(
+        "empty-state report yields no entries",
+        parse_epistemic_output("  no snapshots yet — run `yoyo risk snapshot` first\n") == [],
+    )
+    assert_true("garbage yields no entries", parse_epistemic_output("total junk\n42\n") == [])
+
+    # 19d. Fallback rendering carries the honest starvation line
+    assert_true(
+        "render_epistemic fallback line present",
+        "(no epistemic data yet)" in render_epistemic([]),
+    )
+    rendered = render_epistemic(parsed)
+    assert_true(
+        "rendered section stays within 8 lines incl. header",
+        len(rendered.splitlines()) <= 8,
+    )
+    assert_true("planner hint present", "planner hint" in rendered)
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
