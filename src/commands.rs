@@ -1648,4 +1648,34 @@ mod tests {
         let lint = result.iter().find(|(n, _)| n == "lint").unwrap();
         assert_eq!(lint.1, "global lint");
     }
+
+    #[test]
+    fn test_closest_match_finds_near_miss() {
+        let candidates = &["status", "off", "all", "lint"];
+        assert_eq!(closest_match("statsu", candidates, 2), Some("status"));
+        assert_eq!(closest_match("of", candidates, 2), Some("off"));
+    }
+
+    #[test]
+    fn test_closest_match_rejects_far_words() {
+        // Negative side (Days 122-124 lesson): a word far from every
+        // candidate must return None so callers can accept it as free text.
+        let candidates = &["status", "off", "all", "lint"];
+        assert_eq!(closest_match("pytest", candidates, 2), None);
+        assert_eq!(closest_match("investigate", candidates, 2), None);
+    }
+
+    #[test]
+    fn test_closest_match_exact_word_is_distance_zero() {
+        // closest_match does NOT filter exact matches — callers that treat
+        // exact subcommands specially must check membership first (documented
+        // contract). An exact word matches itself at distance 0.
+        let candidates = &["status", "off"];
+        assert_eq!(closest_match("status", candidates, 2), Some("status"));
+    }
+
+    #[test]
+    fn test_closest_match_empty_candidates() {
+        assert_eq!(closest_match("anything", &[], 2), None);
+    }
 }

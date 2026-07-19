@@ -3363,4 +3363,45 @@ E       assert 3 == 4
             "prompt should reference the error line: {prompt}",
         );
     }
+
+    // --- Near-miss typo guard for /watch free-text args ---
+
+    #[test]
+    fn test_watch_near_miss_fires_on_typo() {
+        // "/watch of" is a typo for "off" — refuse instead of silently
+        // installing "of" as a custom watch command that fails every turn.
+        assert_eq!(watch_near_miss("of"), Some("off"));
+        assert_eq!(watch_near_miss("statu"), Some("status"));
+        assert_eq!(watch_near_miss("lnt"), Some("lint"));
+    }
+
+    #[test]
+    fn test_watch_near_miss_silent_on_exact_subcommand() {
+        // Exact subcommands are handled by their own match arms — the guard
+        // must never fire on them.
+        for sub in WATCH_SUBCOMMANDS {
+            assert_eq!(watch_near_miss(sub), None, "guard fired on exact '{sub}'");
+        }
+    }
+
+    #[test]
+    fn test_watch_near_miss_silent_on_multi_word_command() {
+        // Multi-word custom commands are the real use case — untouched.
+        assert_eq!(watch_near_miss("npm test"), None);
+        assert_eq!(watch_near_miss("cargo clippy --all-targets"), None);
+    }
+
+    #[test]
+    fn test_watch_near_miss_silent_on_far_single_word() {
+        // Negative side (Days 122-124 lesson): a single word FAR from any
+        // subcommand (e.g. "pytest") must still be accepted as a custom
+        // watch command — the guard only fires on near-misses.
+        assert_eq!(watch_near_miss("pytest"), None);
+        assert_eq!(watch_near_miss("make"), None);
+    }
+
+    #[test]
+    fn test_watch_near_miss_silent_on_empty() {
+        assert_eq!(watch_near_miss(""), None);
+    }
 }

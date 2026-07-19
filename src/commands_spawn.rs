@@ -3518,4 +3518,45 @@ mod tests {
         let tasks = manifest_replay_tasks(&manifest).expect("non-empty");
         assert_eq!(tasks, vec!["real task".to_string()]);
     }
+
+    // --- Near-miss typo guard for /spawn free-text args ---
+
+    #[test]
+    fn test_spawn_near_miss_fires_on_typo() {
+        // "/spawn statsu" is a typo for "status", not a task — refuse
+        // instead of spawning an agent whose task is the word "statsu".
+        assert_eq!(spawn_near_miss("statsu"), Some("status"));
+        assert_eq!(spawn_near_miss("colect"), Some("collect"));
+        assert_eq!(spawn_near_miss("repaly"), Some("replay"));
+    }
+
+    #[test]
+    fn test_spawn_near_miss_silent_on_exact_subcommand() {
+        // Exact subcommands are handled by their own match arms — the guard
+        // must never fire on them.
+        for sub in SPAWN_SUBCOMMANDS {
+            assert_eq!(spawn_near_miss(sub), None, "guard fired on exact '{sub}'");
+        }
+    }
+
+    #[test]
+    fn test_spawn_near_miss_silent_on_multi_word_task() {
+        // Multi-word args are real tasks — free text stays allowed, even
+        // when a word inside is close to a subcommand.
+        assert_eq!(spawn_near_miss("statsu the build pipeline"), None);
+        assert_eq!(spawn_near_miss("add tests for the parser"), None);
+    }
+
+    #[test]
+    fn test_spawn_near_miss_silent_on_far_single_word() {
+        // Negative side (Days 122-124 lesson): a single word FAR from any
+        // subcommand must pass through untouched.
+        assert_eq!(spawn_near_miss("investigate"), None);
+        assert_eq!(spawn_near_miss("benchmark"), None);
+    }
+
+    #[test]
+    fn test_spawn_near_miss_silent_on_empty() {
+        assert_eq!(spawn_near_miss(""), None);
+    }
 }
