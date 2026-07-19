@@ -1573,6 +1573,25 @@ pub fn detect_watch_all_phases() -> Option<Vec<String>> {
 /// Watch subcommand names for tab completion.
 pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all", "lint"];
 
+/// Near-miss typo guard for `/watch`'s free-text argument.
+///
+/// A single word that isn't a known subcommand but sits within edit distance 2
+/// of one (e.g. "of" → "off") is almost certainly a typo — silently installing
+/// it as the custom watch command would make every subsequent prompt turn fail.
+/// Returns the suggested subcommand when the guard should fire. Multi-word
+/// custom commands (the real use case, e.g. `npm test`) and single words far
+/// from any subcommand (e.g. `pytest`) are never touched.
+pub fn watch_near_miss(arg: &str) -> Option<&'static str> {
+    if arg.is_empty() || arg.contains(char::is_whitespace) {
+        return None;
+    }
+    // Exact subcommands are handled by their own match arms.
+    if WATCH_SUBCOMMANDS.contains(&arg) {
+        return None;
+    }
+    crate::commands::closest_match(arg, WATCH_SUBCOMMANDS, 2)
+}
+
 /// Handle the /watch command: toggle auto-test-on-edit mode.
 pub fn handle_watch(input: &str) {
     let arg = input.strip_prefix("/watch").unwrap_or("").trim();
@@ -1642,6 +1661,17 @@ pub fn handle_watch(input: &str) {
             }
         }
         custom_cmd => {
+            // Near-miss typo guard: "/watch of" should not silently install
+            // "of" as the watch command that then fails on every prompt turn.
+            if let Some(suggestion) = watch_near_miss(custom_cmd) {
+                eprintln!(
+                    "{RED}  ✗ unknown word '{custom_cmd}' — did you mean /watch {suggestion}?{RESET}"
+                );
+                println!(
+                    "{DIM}  (to set '{custom_cmd}' as a custom watch command anyway, use the full command, e.g. /watch {custom_cmd} --flags){RESET}\n"
+                );
+                return;
+            }
             set_watch_command(custom_cmd);
             println!(
                 "{GREEN}  👀 Watch mode ON — will run `{custom_cmd}` after agent edits{RESET}\n"

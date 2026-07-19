@@ -423,6 +423,28 @@ fn edit_distance(a: &str, b: &str) -> usize {
     dp[a.len()][b.len()]
 }
 
+/// Find the candidate closest to `word` by Levenshtein distance, if any is
+/// within `max_distance` edits. Ties break toward the earlier candidate.
+///
+/// Shared by the near-miss typo guards for free-text commands (`/spawn`,
+/// `/watch`) so the edit-distance logic lives in exactly one place. Note an
+/// exact match (distance 0) is returned too — callers that treat exact words
+/// specially must check membership first.
+pub fn closest_match<'a>(
+    word: &str,
+    candidates: &[&'a str],
+    max_distance: usize,
+) -> Option<&'a str> {
+    let mut best: Option<(&'a str, usize)> = None;
+    for &cand in candidates {
+        let dist = edit_distance(word, cand);
+        if best.is_none_or(|(_, d)| dist < d) {
+            best = Some((cand, dist));
+        }
+    }
+    best.filter(|&(_, d)| d <= max_distance).map(|(c, _)| c)
+}
+
 /// Suggest the closest known command for a mistyped slash command.
 ///
 /// Returns `Some("/command")` if there's a close match, `None` otherwise.

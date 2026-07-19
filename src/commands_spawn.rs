@@ -663,6 +663,15 @@ pub async fn handle_spawn(
         return None;
     }
 
+    // Near-miss typo guard: a single word within edit distance 2 of a known
+    // subcommand (e.g. "statsu") is a typo, not a task — refuse rather than
+    // spawn an agent whose task is the word "statsu".
+    if let Some(suggestion) = spawn_near_miss(rest) {
+        eprintln!("{RED}  ✗ unknown word '{rest}' — did you mean /spawn {suggestion}?{RESET}");
+        println!("{DIM}  (a real spawn task needs a longer description){RESET}\n");
+        return None;
+    }
+
     // Clean up stale worktrees from crashed sessions (max age: 1 hour)
     let cwd = std::env::current_dir().unwrap_or_default();
     cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
@@ -1112,6 +1121,24 @@ pub const SPAWN_SUBCOMMANDS: &[&str] = &[
     "--pr",
     "-o",
 ];
+
+/// Near-miss typo guard for `/spawn`'s free-text argument.
+///
+/// A single word that isn't a known subcommand but sits within edit distance 2
+/// of one (e.g. "statsu" → "status") is almost certainly a typo — spawning a
+/// whole sub-agent whose task is that word costs real money and time. Returns
+/// the suggested subcommand when the guard should fire. Multi-word arguments
+/// (real tasks) and words far from any subcommand are never touched.
+pub fn spawn_near_miss(rest: &str) -> Option<&'static str> {
+    if rest.is_empty() || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    // Exact subcommands/flags are handled (or shown usage for) elsewhere.
+    if SPAWN_SUBCOMMANDS.contains(&rest) {
+        return None;
+    }
+    crate::commands::closest_match(rest, SPAWN_SUBCOMMANDS, 2)
+}
 
 /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
 const MANIFEST_TASK_CAP: usize = 200;
