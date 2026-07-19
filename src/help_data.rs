@@ -1304,7 +1304,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
              \x20 /risk history    Show accuracy trend across all past snapshots\n\
              \x20 /risk predict    Structured narrative prediction (top risks + why)\n\
-             \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
+             \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\
+             \x20 /risk epistemic  Rank files graded outcomes have taught the model least about\n\n\
              The snapshot → validate loop measures prediction accuracy:\n\
              run /risk snapshot, keep coding, then /risk validate to see\n\
              which predictions were right (Precision@10) and what surprised you.\n\n\

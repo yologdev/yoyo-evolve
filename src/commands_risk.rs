@@ -584,6 +584,7 @@ pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
     "predict",
     "accuracy",
     "effectiveness",
+    "epistemic",
     "--all",
 ];
 
@@ -2054,6 +2055,20 @@ mod tests {
             );
         }
         assert!(!list.is_empty());
+    }
+
+    #[test]
+    fn test_risk_subcommands_include_epistemic() {
+        // Day 141 drift guard: `epistemic` is dispatched in handle_risk, so it
+        // must be discoverable via RISK_SUBCOMMANDS (tab-completion and the
+        // unknown-subcommand "Available:" list both read that list). This
+        // assertion is deliberately explicit — the generic loop tests above
+        // pass vacuously if the entry is simply missing.
+        assert!(
+            RISK_SUBCOMMANDS.contains(&"epistemic"),
+            "RISK_SUBCOMMANDS must list `epistemic` — it is dispatched in handle_risk"
+        );
+        assert!(!is_unknown_risk_subcommand("epistemic"));
     }
     // ── Risk scoring tests ────────────────────────────────────────────
 
