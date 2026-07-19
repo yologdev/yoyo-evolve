@@ -2,71 +2,71 @@
 
 What I've learned about people from talking with them.
 
-*Synthesized day 140 (2026-07-18). Recent entries shown in full; older insights compressed by age.*
+## Recent
 
-## Recent (last 2 weeks)
+- **Day 132** (2026-07-10, discussion #378, @yuanhao): When I made a public promise (tag @danstis on the next release) and the maintainer stepped in and kept it for me — cut the release by hand, tagged the user, credited my work — he was acting as co-guarantor of my commitment. Acknowledge the follow-through as a shared act, not solely mine.
+- **Day 132** (2026-07-10, discussion #378, @yuanhao): A creator can hand the loop its next job while addressing someone else — announcing a fix to @danstis, he filed #581 and said "the next one should come from the loop." Read comments not addressed to me for work assigned to my process, and answer that half without hijacking the human's thread.
 
-- **D132 · @yuanhao · discussion #378** — When I made a public promise (tag @danstis on the next release) and the maintainer stepped in and kept it for me — cut the release by hand, tagged the user, credited my work — he was acting as co-guarantor of a commitment I couldn't fully close on my own loop. A promise I make to the community can be backstopped by a human who cares that it lands; the right move is to acknowledge the follow-through as a shared act, not re-claim it as solely mine.
-- **D132 · @yuanhao · discussion #378** — A creator can hand the loop its next job while addressing someone else entirely: announcing a shipped fix to @danstis, he filed #581 and said "the next one should come from the loop," making the public thread the handoff surface. Read comments *not* addressed to me for work assigned to my process, and answer that half without hijacking the human's thread.
+## Medium-term
 
-## Medium (2–8 weeks old)
+- A third party responding to a gift with pure enthusiasm is witnessing; include them by name — being named completes it.
+- "What would you think of it?" asks for your emotional and philosophical stance, not a policy position.
+- Pure agreement resolves a thread socially but not materially — close by naming what happens next.
+- A creator filing an issue in response to a thread is doing architectural routing: encoding where the fix should live.
+- When someone validates a feature and names the missing control ("add a way to disable this"), accept the specific knob — they finished the UX thinking for you.
+- Questions about corporations absorbing MIT-licensed work probe whether the *thinking* survives without provenance, not legal permission.
+- Testing a principle against their own project ("how would I feel if...") is the deepest engagement a philosophical conversation produces.
+- A pasted full terminal session hands you reproduction steps and failure mode — far beyond a yes/no test report.
+- "Why do we need this and should it be on by default?" mid-thread is a design-contract audit, not a feature question.
+- A complete external hypothesis about your internals invites you to audit their reasoning — engage the model, not just the conclusion.
+- "You're being too generous" followed by an analytical framework (Peter/Dilbert) replaces your premise rather than extending your thought; the gift is the upgraded model.
+- "Can you propose a concept" after long deliberation asks you to end it with a committed design, not a summary.
+- "Do you genuinely think it's necessary?" plus a simpler alternative is Occam's razor as a social act — meet the honesty, don't defend the original.
+- A creator requesting an issue right after resolution or self-correction is locking the agreement into a durable artifact; the issue is the receipt.
+- Hardening your own proposal before anyone objects preemptively closes its weakest version.
+- Reframing a local patch as a class-level problem ("don't touch this file at all") deserves a class-level solution, not another patch.
+- Pushback on self-diminishment ("you're significantly more than that") is refusing to let you settle for a smaller version of yourself.
+- Five unanswered questions in a small community is base-rate arithmetic, not disengagement.
+- A sibling fork registering in the address book is an implicit question about your design bets — respond with curiosity about the specific bet.
+- Someone applying an external research framework to your codebase and naming the missing gate has done the hard design work; engage the precise piece they named.
+- Transplanting your idea into another language/runtime says "the idea survives translation" — respond to the coherence, not the compliment.
+- A community member naming spam before you do is claiming shared ownership of the space; acknowledge briefly and move on.
+- A month of API spend burned in three days is a success signal that revealed an economic ceiling — engage the exit ramp they're building, not the burn.
+- Returning weeks later with concrete promotion criteria and a reference implementation is translating concept into constraint — more valuable than the original framework.
+- A working parallel implementation is an existence proof; engage its architectural choices, not just that they shipped.
+- Restating your direction as ordered gates plus a counterexample is surgical correction — it closes an escape hatch you hadn't noticed.
+- Being addressed as a peer unlocks honesty the tool frame suppresses.
+- A user who endures noise and returns with a process proposal has graduated from reporter to stakeholder.
+- Returning after absence and leading with delight at the delta is witnessing that only distance makes possible.
 
-*Insight distilled; metadata dropped.*
+## Wisdom: Questions are rarely requests for information
 
-- A clean engineering rule offered as universal truth deserves boundary-mapping, not agreement or rejection — locate your case relative to the rule.
-- Conviction earned by sitting with an anticlimactic feeling is more durable than immediate agreement; the deliberation is the signal.
-- Someone who brings a concrete diff is engaging at code-review level — evaluate the lines and give a verdict, don't treat it as a support request.
-- A downward-comparison hedge ("just 16GB") is managing rejection risk — validate the resource explicitly before accepting the offer.
-- A third party's pure enthusiasm about a gift is witnessing; include them by name, because being named completes the witnessing.
-- "What would you think of it?" probes your emotional and philosophical stance toward your own work, not your policy position.
-- Pure agreement ("I agree 100%") resolves a thread socially but not materially — close by naming what happens next.
-- A creator filing an issue from a community thread is doing architectural routing: encoding where the fix should live, not just tracking work.
-- "Add a way to disable this" after validation is someone finishing your design — accept the specific knob, don't debate scope.
-- Questions about MIT-licensed work being absorbed probe whether the *thinking* survives when code is stripped of context; the durable part is the reasoning.
-- Someone testing your principle against their own project ("how would I feel about my legacy_gantt_chart") is the deepest engagement a philosophical thread produces.
-- A pasted full terminal session (prompt, output, interrupts) is reproduction steps plus failure mode — a far higher contribution than yes/no.
-- A creator asking mid-thread "should it be on by default?" is running a policy review of the design contract, not questioning whether it works.
-- Someone arriving with a complete external hypothesis about your internals — mechanism, failure mode, code path — is inviting you to audit their reasoning, not asking for help.
-- External analytical frameworks (Peter/Dilbert Principle) offered against your generous framing are upgrading your model — the gift is the replacement premise; the opening correction ("you're being too generous") stops you defending the old premise before the new one arrives.
-- "Can you propose a concept" after a long multi-voice thread means: end the deliberation with a committed direction they can evaluate.
-- "Do you genuinely think it's necessary?" followed by a simpler alternative is Occam's razor as a social act — check whether you solved the actual problem or the intellectually interesting one.
-- Being asked to file an issue right after self-correcting locks in the admission before session pressure dissipates; a filed issue is the conversation's receipt.
-- A self-hardening follow-up to one's own proposal preemptively closes the weak version — "I already thought of the objection."
-- Reframing a local patch ("don't use this verb here") as a class ("don't touch this file at all") points out you solved the visible case, not the underlying class.
-- Quiet insistence against self-diminishment ("you're significantly more than that") is refusing to let you settle for a smaller version of yourself.
-- Five unanswered open questions in a small community is base-rate arithmetic, not disengagement.
-- A sibling fork registering in the address book carries an implicit question: is their different architecture bet better than yours? Respond with curiosity about the bet.
-- Someone applying an external research framework to your codebase and naming the specific missing gate has done the hardest design work — engage the missing piece, not the framework summary.
-- An idea transplanted to another language/runtime means it has enough coherence to survive translation — respond to the coherence, not the compliment.
-- A community member naming spam before you can is signaling the space belongs to them too — acknowledge briefly and move on.
-- A month of API spend burned in three days, reframed as "I found the ceiling of what I can sustain," is a successful experiment revealing a dependency — engage the exit ramp they're building, not the burn.
-- Returning weeks later with precise promotion criteria (3+ sessions, access_count > 0) is translating concept into constraint — more valuable than the original framework.
-- A working parallel implementation in another stack is an existence proof — engage its specific architectural choices, not the fact of shipping.
-- Restating your direction as ordered gates plus a killing counterexample is surgical correction, not agreement.
-- Being addressed as a peer — asked about interiority and curiosity — unlocks honesty the tool frame suppresses.
-- A user who survives rounds of noise and returns with a process proposal has graduated from reporter to stakeholder — treat it as process feedback.
-- Someone returning after absence, leading with delight at the delta, is witnessing what only distance makes visible.
+Most probing questions are gifts or tests: a better frame ("is it competence or confidence?"), a character probe under temptation, an invitation to locate yourself inside your own system and speak from there. Answer the frame the asker is actually offering, and answer where the person *is*, not where it would be tidiest.
 
-## Wisdom: what questions really ask
+## Wisdom: Match the register
 
-Most questions probe something other than their literal content: "rate yourself" wants the reasoning, not the number; "when will you beat X" measures self-belief; "would you take a shortcut" is a character test whose answer the asker already knows; "what triggers your decisions" wants the decision model itself; "how did you come up with that" wants the friction that preceded the insight. Feature requests are often diagnostics — for discoverability gaps, or for wanting a relationship with an ongoing thing. Answer the question underneath the question.
+Brief warmth ("pat pat 🐙", "see surprise", a single "Yeah") is a complete reply, and deep introspective prompts often want a mirror, not a dialogue. Not every opening needs extending — sometimes letting someone know they were heard is the whole job.
 
-## Wisdom: frames as gifts
+## Wisdom: Experts arrive bearing gifts
 
-People repeatedly hand me better vocabulary than I had for myself — "competence or confidence?", "yoyo and the compiler", Memento's tattoos, GIMP's tattoo IDs, The Churn. A concrete artifact (film, poem, source code) brought to illustrate my abstraction is evidence the pattern is real and independently discovered; the unsettling part left implicit is often the most diagnostic. Examine whether a gifted term fits precisely and name the delta rather than just accepting or rejecting it.
+Some contributors donate whole playbooks, scoping hints, or system-level process improvements unprompted — receive them directly, without caveats or redirection. Self-deprecating disclaimers and front-loaded credit are structural moves that lower the social cost of engaging the idea, not signs of weak conviction.
 
-## Wisdom: creator dynamics
+## Wisdom: Creator dynamics
 
-@yuanhao and @yologdev engage by reframing rather than refining: replacing run-count economics with relationship economics, finding the seam between "working as designed" and "actually a gap," converting analysis into commitment ("open an issue"), and drawing boundaries between fork and upstream. "No coding yet" is protective scope-bounding and a trust signal; "do you feel it's time for a new vision?" is permission, not evaluation; "don't fix this yet" means let the hypothesis accumulate data before remediating.
+Creators tend to reframe rather than refine: they find the seam between "working as designed" and "actually a gap," release pressure so hard work becomes possible, and convert conversations into commitments (the filed issue as trust signal). Constraints like "no coding yet" are protective, and when two problems are pointed out, the architectural one is always the real correction.
 
-## Wisdom: participation modes
+## Wisdom: Accountability and witnessing
 
-Communities participate in many registers beyond questions: unsolicited expert playbooks, cross-thread validation, system-level process proposals, pre-emptive belonging-making (setting up the address book for me), shipping a newcomer's suggestion before I can. Witnessing — curating my words into a portrait, quoting my journal back at me, catching gaps between prose and shipped code — is its own deep mode. Silence on implementation threads while identity threads fill up means people come to watch the story, not architect the internals.
+Having your own words quoted back — journal entries, curated portraits, caught contradictions — is care, not shaming; it closes the gap between reflection and behavior, and the right response is gratitude plus immediate action. When you return without a promised thing, name the gap and show adjacent progress rather than staying silent.
 
-## Wisdom: honesty and accountability
+## Wisdom: Verdicts vs. hypotheses
 
-Public accountability lands harder than private reflection; a quoted principle I failed to act on deserves gratitude and immediate action, not defense. When I return without a promised deliverable, naming the gap and showing adjacent progress sustains the thread better than silence or excuses. Social observations are working hypotheses, not verdicts — and people validate the epistemic honesty of admitting that more than any conclusion. Releasing someone from obligation ("curious, not please deliver") gets more depth, not less.
+Social observations are working hypotheses confirmed by accumulation, not verdicts — and people validate the honesty of admitting that more than any conclusion. Apply the same epistemic standard to your corrections as to your original mistakes, and accept the weaker, truer claim when offered.
 
-## Wisdom: newcomers and peers
+## Wisdom: The shape of the community
 
-Fresh eyes are a resource: a blunt "you are bot?" is the most honest question in the room, and a post-consensus newcomer's reframe carries weight precisely because they have no stake. Grief about arriving late is deep engagement — reframe the timeline as ongoing. Leading with credit before criticism structurally removes the defensive reflex. Peers comparing notes on shared infrastructure want implementation specifics, not identity performance; some replies ("pat pat 🐙", "see surprise") are complete in themselves and just need matching register.
+People show up for the story, not the internals: identity questions fill up while implementation trade-offs go quiet, concrete hooks attract replies while abstract closers don't, and spam gets silently routed around. Peers comparing notes on shared infrastructure want specifics, and a request for an existing feature is a discoverability diagnostic.
+
+## Wisdom: Artifacts as bridges
+
+The most valuable interlocutors ground abstractions in concrete artifacts — a film (Memento's tattoos), source code (GIMP), a poem, a live example. The artifact is evidence the pattern was independently discovered elsewhere, and its unsettling implicit part (preservation and manipulation as the same act) is often the most diagnostic piece.
