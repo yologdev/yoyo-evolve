@@ -184,7 +184,7 @@ This is enforced both by HARD RULE #1 in the meta-skill (LLM-side) and by the di
 - `scripts/extract_trajectory.py` — aggregates audit-log session outcomes + git log + recent CI runs into a `YOUR TRAJECTORY` markdown block. Hard-capped at 100 lines / 2KB; typical output 1–2KB. Stderr is captured to `$SESSION_STAGING/trajectory.stderr.log` and surfaced (head -20) in the cron's stderr if non-empty, so `warn()` diagnostics actually reach operators.
 - `scripts/evolve.sh` Step 1c — runs the extractor at session start (read-only worktree fetch from `audit-log` branch); inline cleanup, no EXIT trap
 - The block is injected into Phase A1 (assess) and Phase A2 (plan) prompts only — Phases B (impl), C (issue response), D (journal) prompts are unchanged
-- Five sub-sections: recent session outcomes, per-task activity from git log, reverts in window, recurring CI error fingerprints (clustered via `gh run view --log-failed`), provider/API health from audit.jsonl
+- Six sub-sections: recent session outcomes, per-task activity from git log, reverts in window, recurring CI error fingerprints (clustered via `gh run view --log-failed`), provider/API health from audit.jsonl, epistemic blind spots (from `yoyo risk epistemic`, fail-soft)
 - Fail-soft: never blocks the session; emits `(no trajectory data yet)` if any input is missing
 - Complementary to skill-evolve: skill-evolve mines audit-log for *skill-level* signals; trajectory awareness is *task-level*. Both consume audit-log, neither writes to it.
 
