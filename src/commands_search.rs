@@ -697,8 +697,8 @@ fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
 /// Normalize a user-typed symbol query into a bare identifier the symbol
 /// index can match. Strips surrounding punctuation people paste from code:
 /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
-/// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
-/// `,;:` etc. If the input contains `<`, only the text before the first `<` is
+/// path/member access `crate::bar::baz`/`self.count` (last segment), markdown
+/// backticks, trailing `,;:.` etc. If the input contains `<`, only the text before the first `<` is
 /// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
 /// trimmed input if no identifier run is found (e.g. `()` stays `()`).
 ///
@@ -1899,6 +1899,10 @@ mod tests {
             ("foo,", "foo"),
             ("foo;", "foo"),
             ("foo:", "foo"),
+            ("foo.", "foo"),
+            // Backticks from markdown (issue comments, docs).
+            ("`foo`", "foo"),
+            ("`foo()`", "foo"),
             // Index literals — the numeric index is never a symbol name.
             ("arr[0]", "arr"),
             ("items[42]", "items"),
