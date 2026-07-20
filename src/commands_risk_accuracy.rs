@@ -98,6 +98,17 @@ fn compute_accuracy_trend<E: std::borrow::Borrow<ValidationEvent>>(events: &[E])
     }
 }
 
+/// Authoritative green-day predicate (Day 142): a green-day event is one
+/// recorded on a session where nothing broke (`severity == "watch_success"`).
+/// Everything else — `revert`, `watch_failure`, and legacy severity-less
+/// events — is a failure-day event. Both `compute_accuracy_stats` and the
+/// effectiveness verdict in `commands_risk.rs` derive from this single
+/// definition; never hand-copy the string (Day 140: never hand-type an
+/// enumeration/predicate the code already owns).
+pub(crate) fn is_green_event(e: &ValidationEvent) -> bool {
+    e.severity.as_deref() == Some("watch_success")
+}
+
 /// Compute aggregate accuracy statistics from validation events.
 pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStats {
     if events.is_empty() {
@@ -133,9 +144,9 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
     // else, including legacy severity-less events, ⇒ failure day (hit =
     // good recall). Blending them cancels into a meaningless average, so
     // each side gets its own pooled rate.
-    let is_green = |e: &&ValidationEvent| e.severity.as_deref() == Some("watch_success");
-    let failure_events: Vec<&ValidationEvent> = events.iter().filter(|e| !is_green(e)).collect();
-    let green_events: Vec<&ValidationEvent> = events.iter().filter(is_green).collect();
+    let failure_events: Vec<&ValidationEvent> =
+        events.iter().filter(|e| !is_green_event(e)).collect();
+    let green_events: Vec<&ValidationEvent> = events.iter().filter(|e| is_green_event(e)).collect();
 
     let failure_samples = failure_events.len();
     let failure_hit_rate_pct = if failure_samples == 0 {

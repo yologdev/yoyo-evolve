@@ -42,7 +42,7 @@ use crate::commands_risk_epistemic::handle_risk_epistemic;
 // (`AccuracyStats` and the private trend helper are only used inside the
 // accuracy module itself, so they aren't re-exported.)
 pub(crate) use crate::commands_risk_accuracy::{
-    compute_accuracy_stats, format_accuracy_report, AccuracyTrend,
+    compute_accuracy_stats, format_accuracy_report, is_green_event, AccuracyTrend,
 };
 
 // Weight-learning + revert-history live in `commands_risk_weights.rs`.
@@ -1225,8 +1225,15 @@ struct EffectivenessWindow {
 
 /// Full effectiveness report: early vs recent window comparison plus the
 /// overall trend from `compute_accuracy_stats` (so this and `/status` agree).
+/// Windows grade **failure-day events only** (Day 142): a "hit" on a green
+/// day means crying wolf, the opposite polarity — blending it into the
+/// windows would let a rising false-alarm rate read as "learning ↑".
 struct EffectivenessReport {
+    /// Failure-day events graded by the windows.
     total_events: usize,
+    /// Green-day events excluded from the windows (surfaced so the
+    /// exclusion is visible, not a silent behavior change).
+    green_excluded: usize,
     early: Option<EffectivenessWindow>,
     recent: Option<EffectivenessWindow>,
     verdict: EffectivenessVerdict,
@@ -1236,7 +1243,7 @@ struct EffectivenessReport {
 /// Aggregate a slice of validation events into a window summary.
 /// Hit rate is total hits / total changed files across the window
 /// (same definition as the overall hit rate in `compute_accuracy_stats`).
-fn effectiveness_window(events: &[ValidationEvent]) -> EffectivenessWindow {
+fn effectiveness_window(events: &[&ValidationEvent]) -> EffectivenessWindow {
     let hits: usize = events.iter().map(|e| e.hit_count).sum();
     let changed: usize = events.iter().map(|e| e.total_changed).sum();
     let hit_rate_pct = if changed > 0 {
@@ -1263,16 +1270,24 @@ fn compute_effectiveness_verdict(early_rate: f64, recent_rate: f64) -> Effective
 }
 
 /// Build the effectiveness report from a validation-history JSONL file.
-/// Splits events chronologically: early = first half, recent = second half
-/// (the recent window gets the extra event when the count is odd).
+/// Only failure-day events are graded (`!is_green_event` — the authoritative
+/// predicate lives in `commands_risk_accuracy.rs`; legacy severity-less
+/// events count as failure-day, same convention as `compute_accuracy_stats`).
+/// Splits those chronologically: early = first half, recent = second half
+/// (the recent window gets the extra event when the count is odd). The
+/// `MIN_EFFECTIVENESS_EVENTS` gate counts failure-day events only, so a
+/// pile of green events can't unlock a verdict from 1–2 failure samples.
 fn effectiveness_report_from(path: &std::path::Path) -> EffectivenessReport {
-    let events = load_validation_history_from(path);
-    let trend = compute_accuracy_stats(&events).trend;
+    let all_events = load_validation_history_from(path);
+    let trend = compute_accuracy_stats(&all_events).trend;
+    let events: Vec<&ValidationEvent> = all_events.iter().filter(|e| !is_green_event(e)).collect();
+    let green_excluded = all_events.len() - events.len();
     let total_events = events.len();
 
     if total_events < MIN_EFFECTIVENESS_EVENTS {
         return EffectivenessReport {
             total_events,
+            green_excluded,
             early: None,
             recent: None,
             verdict: EffectivenessVerdict::Insufficient,
@@ -1287,6 +1302,7 @@ fn effectiveness_report_from(path: &std::path::Path) -> EffectivenessReport {
 
     EffectivenessReport {
         total_events,
+        green_excluded,
         early: Some(early),
         recent: Some(recent),
         verdict,
@@ -1309,6 +1325,12 @@ fn format_effectiveness_report(report: &EffectivenessReport) -> String {
              {DIM}  verdict unlocks at {} events.{RESET}\n",
             report.total_events, MIN_EFFECTIVENESS_EVENTS, MIN_EFFECTIVENESS_EVENTS
         ));
+        if report.green_excluded > 0 {
+            out.push_str(&format!(
+                "  {DIM}{} green-day events excluded — see /risk accuracy for the false-alarm rate{RESET}\n",
+                report.green_excluded
+            ));
+        }
         return out;
     }
 
@@ -1320,6 +1342,13 @@ fn format_effectiveness_report(report: &EffectivenessReport) -> String {
             "  Early window:   {} events, {early_rate:.1}% hit rate\n\
              \x20 Recent window:  {} events, {recent_rate:.1}% hit rate\n",
             early.event_count, recent.event_count
+        ));
+    }
+
+    if report.green_excluded > 0 {
+        out.push_str(&format!(
+            "  {DIM}{} green-day events excluded — see /risk accuracy for the false-alarm rate{RESET}\n",
+            report.green_excluded
         ));
     }
 
@@ -3379,6 +3408,75 @@ src/baz.rs
         }
         std::fs::write(&path, content).expect("write fixture");
         path
+    }
+
+    /// Append green-day (`"severity":"watch_success"`) events to a fixture
+    /// file. Each entry is (hits, surprises) like `write_effectiveness_fixture`.
+    fn append_green_events(path: &std::path::Path, entries: &[(usize, usize)]) {
+        let mut content = std::fs::read_to_string(path).unwrap_or_default();
+        for (i, (hits, surprises)) in entries.iter().enumerate() {
+            let hit_files: Vec<String> = (0..*hits).map(|n| format!("\"gh{n}.rs\"")).collect();
+            let surprise_files: Vec<String> =
+                (0..*surprises).map(|n| format!("\"gs{n}.rs\"")).collect();
+            let total = hits + surprises;
+            let acc = if total > 0 {
+                (*hits as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            content.push_str(&format!(
+                "{{\"ts\":\"2025-02-{:02}T12:00:00Z\",\"day\":{},\"trigger\":\"watch\",\"severity\":\"watch_success\",\"hits\":[{}],\"surprises\":[{}],\"predicted_count\":10,\"accuracy_pct\":{acc:.1}}}\n",
+                i + 1,
+                200 + i,
+                hit_files.join(","),
+                surprise_files.join(","),
+            ));
+        }
+        std::fs::write(path, content).expect("append green fixture");
+    }
+
+    #[test]
+    fn test_effectiveness_green_events_do_not_move_windows_or_verdict() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Same failure-day shape as the learning test: early 25%, recent 75%.
+        let path = write_effectiveness_fixture(
+            dir.path(),
+            &[(1, 3), (1, 3), (1, 3), (3, 1), (3, 1), (3, 1)],
+        );
+        // Pile on green events with 100% "hit" rates — under the old blended
+        // semantics these would inflate the recent window; under Day 142
+        // polarity they are false-alarm evidence and must be excluded.
+        append_green_events(&path, &[(4, 0), (4, 0), (4, 0), (4, 0)]);
+
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.total_events, 6, "only failure-day events graded");
+        assert_eq!(report.green_excluded, 4);
+        assert_eq!(report.verdict, EffectivenessVerdict::Learning);
+        let early = report.early.as_ref().expect("early window");
+        let recent = report.recent.as_ref().expect("recent window");
+        assert_eq!(early.event_count, 3);
+        assert_eq!(recent.event_count, 3);
+        assert!((early.hit_rate_pct - 25.0).abs() < 0.1);
+        assert!((recent.hit_rate_pct - 75.0).abs() < 0.1);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("4 green-day events excluded"));
+    }
+
+    #[test]
+    fn test_effectiveness_green_events_do_not_unlock_gate() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Only 3 failure-day events (< MIN_EFFECTIVENESS_EVENTS) plus enough
+        // green events to cross the threshold if they were (wrongly) counted.
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 3]);
+        append_green_events(&path, &[(2, 0); 5]);
+
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Insufficient);
+        assert_eq!(report.total_events, 3);
+        assert_eq!(report.green_excluded, 5);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("insufficient data (3 events; need ≥6)"));
+        assert!(formatted.contains("5 green-day events excluded"));
     }
 
     #[test]
