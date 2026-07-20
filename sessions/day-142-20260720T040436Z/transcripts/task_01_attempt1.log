@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start with the epistemic experiment: build and record a risk snapshot so this session's predictions are on record, then read the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,420p' src/git.rs ✓ (4ms)
+ ✓ (794ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=364 && NR<=395' src/git…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_git_args\|Unknown… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '364,382p' src/git.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_git_subcommand\|han… ✓ (6ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs:364..404  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1725,1740p' src/commands… ✓ (1ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_git_subcommand\|pa… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "closest_match(" src/*.r… ✓ (13ms)
+  10 tools completed in 1m 43s (10 ✓)
+
+Existing tests explicitly pin the buggy fallback ("Non-numeric argument falls back to None") — those get updated as part of the fix. Writing tests first in git.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (6 → 9 lines)
+  -         // Non-numeric argument falls back to None (default stash@{0})
+  +         // Non-numeric argument must NOT silently default to stash@{0}
+            assert_eq!(
+                parse_git_args("stash show abc"),
+  -             GitSubcommand::StashShow(None)
+  +             GitSubcommand::BadStashIndex {
+  +                 action: "show".to_string(),
+  +                 arg: "abc".to_string()
+  +             }
+            );
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (6 → 81 lines)
+  -         // Non-numeric argument falls back to None
+  +         // Non-numeric argument must NOT silently drop stash@{0} — that's data loss
+            assert_eq!(
+                parse_git_args("stash drop xyz"),
+  -             GitSubcommand::StashDrop(None)
+  +             GitSubcommand::BadStashIndex {
+  +                 action: "drop".to_string(),
+  +                 arg: "xyz".to_string()
+  +             }
+  +         );
+  +     }
+  + 
+  +     /// Fixture table for the destructive-silent-swallow class (Day 142):
+  +     /// typo'd stash words must never fall through to `stash push` (which would
+  +     /// stash the user's entire working tree), and bad indices must never
+  +     /// default to acting on stash@{0}.
+  +     #[test]
+  +     fn test_git_unknown_inputs_never_destructive() {
+  +         let cases: &[(&str, GitSubcommand)] = &[
+  +             // typo'd stash word — must NOT become Stash (push)
+  ... (63 more lines)
+ ✓ (11.8s)
+  -         // Non-numeric argument falls back to None (default stash@{0})
+  +         // Non-numeric argument must NOT silently default to stash@{0}
+            assert_eq!(
+                parse_git_args("stash show abc"),
+  -             GitSubcommand::StashShow(None)
+  +             GitSubcommand::BadStashIndex {
+  +                 action: "show".to_string(),
+  +                 arg: "abc".to_string()
+  ... (3 more lines)
+ ✓ (23.7s)
+  -         // Non-numeric argument falls back to None
+  +         // Non-numeric argument must NOT silently drop stash@{0} — that's data loss
+            assert_eq!(
+                parse_git_args("stash drop xyz"),
+  -             GitSubcommand::StashDrop(None)
+  +             GitSubcommand::BadStashIndex {
+  +                 action: "drop".to_string(),
+  +                 arg: "xyz".to_string()
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (3 → 17 lines)
+        /// Invalid or missing subcommand — show help
+        Help,
+  +     /// Unrecognized top-level word (e.g. `/git statsu`) — carries the word as
+  +     /// typed so the error can name it and suggest the nearest real one
+  +     Unknown(String),
+  +     /// Unrecognized word after `stash` (e.g. `/git stash pip`) — must NOT fall
+  +     /// through to `stash push`, which would silently stash the working tree
+  +     UnknownStash(String),
+  +     /// `stash drop`/`stash show` with a non-numeric index — must NOT default
+  +     /// to acting on stash@{0} (a typo'd index would destroy the wrong stash)
+  +     BadStashIndex { action: String, arg: String },
+    }
+  + 
+  + /// Valid words after `/git stash` — single source of truth for both
+  + /// `parse_git_args` and unknown-word error messages (never hand-copy this
+  + /// list into a message; derive from it).
+  + pub const STASH_SUBCOMMANDS: &[&str] = &["push", "pop", "list", "show", "drop"];
+ ✓ (12.3s)
+        /// Invalid or missing subcommand — show help
+        Help,
+  +     /// Unrecognized top-level word (e.g. `/git statsu`) — carries the word as
+  +     /// typed so the error can name it and suggest the nearest real one
+  +     Unknown(String),
+  +     /// Unrecognized word after `stash` (e.g. `/git stash pip`) — must NOT fall
+  +     /// through to `stash push`, which would silently stash the working tree
+  +     UnknownStash(String),
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (20 → 37 lines)
+                    match parts[1].to_lowercase().as_str() {
+                        "pop" => GitSubcommand::StashPop,
+                        "list" => GitSubcommand::StashList,
+  -                     "show" => {
+  -                         let n = parts.get(2).and_then(|s| s.parse::<usize>().ok());
+  -                         GitSubcommand::StashShow(n)
+  -                     }
+  -                     "drop" => {
+  -                         let n = parts.get(2).and_then(|s| s.parse::<usize>().ok());
+  -                         GitSubcommand::StashDrop(n)
+  -                     }
+  +                     "show" => match parts.get(2).map(|s| s.trim()) {
+  +                         None | Some("") => GitSubcommand::StashShow(None),
+  +                         Some(s) => match s.parse::<usize>() {
+  +                             Ok(n) => GitSubcommand::StashShow(Some(n)),
+  +                             // A typo'd index must never silently mean stash@{0}
+  +                             Err(_) => GitSubcommand::BadStashIndex {
+  +                                 action: "show".to_string(),
+  +                                 arg: s.to_string(),
+  +                             },
+  ... (22 more lines)
+ ✓ (11.7s)
+                    match parts[1].to_lowercase().as_str() {
+                        "pop" => GitSubcommand::StashPop,
+                        "list" => GitSubcommand::StashList,
+  -                     "show" => {
+  -                         let n = parts.get(2).and_then(|s| s.parse::<usize>().ok());
+  -                         GitSubcommand::StashShow(n)
+  -                     }
+  -                     "drop" => {
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (3 → 3 lines)
+  -         _ => GitSubcommand::Help,
+  +         _ => GitSubcommand::Unknown(parts[0].to_string()),
+        }
+    }
+ ✓ (12.0s)
+  -         _ => GitSubcommand::Help,
+  +         _ => GitSubcommand::Unknown(parts[0].to_string()),
+        }
+    }
+  5 tools completed in 1m 24s (5 ✓)
+
+Now the exhaustive-match arms in run_git_subcommand and the formatter in commands_git.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '766,785p' src/git.rs && … ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (4 → 13 lines)
+                println!("         /git stash drop [n]      Drop stash entry n{RESET}\n");
+  +         }
+  +         GitSubcommand::Unknown(_)
+  +         | GitSubcommand::UnknownStash(_)
+  +         | GitSubcommand::BadStashIndex { .. } => {
+  +             // Message logic lives in commands_git::unknown_git_message (single
+  +             // source — it derives suggestions from the real subcommand lists).
+  +             if let Some(msg) = crate::commands_git::unknown_git_message(subcmd) {
+  +                 println!("{RED}  {msg}{RESET}\n");
+  +             }
+            }
+        }
+    }
+ ✓ (11.8s)
+                println!("         /git stash drop [n]      Drop stash entry n{RESET}\n");
+  +         }
+  +         GitSubcommand::Unknown(_)
+  +         | GitSubcommand::UnknownStash(_)
+  +         | GitSubcommand::BadStashIndex { .. } => {
+  +             // Message logic lives in commands_git::unknown_git_message (single
+  +             // source — it derives suggestions from the real subcommand lists).
+  +             if let Some(msg) = crate::commands_git::unknown_git_message(subcmd) {
+  ... (5 more lines)
+  2 tools completed in 19.0s (2 ✓)
+
+Now the formatter in commands_git.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git.rs (5 → 46 lines)
+  + /// Build an honest error message for unrecognized `/git` input, with a
+  + /// did-you-mean suggestion derived from the REAL subcommand constants
+  + /// (`commands::GIT_SUBCOMMANDS`, `git::STASH_SUBCOMMANDS`) — never a
+  + /// hand-typed word list. Returns `None` for recognized subcommands.
+  + pub fn unknown_git_message(subcmd: &GitSubcommand) -> Option<String> {
+  +     match subcmd {
+  +         GitSubcommand::Unknown(word) => {
+  +             let mut msg = format!("unknown git subcommand '{word}'");
+  +             if let Some(suggestion) = crate::commands::closest_match(
+  +                 &word.to_lowercase(),
+  +                 crate::commands::GIT_SUBCOMMANDS,
+  +                 2,
+  +             ) {
+  +                 msg.push_str(&format!(" — did you mean '/git {suggestion}'?"));
+  +             } else {
+  +                 msg.push_str(&format!(
+  +                     " (valid: {})",
+  +                     crate::commands::GIT_SUBCOMMANDS.join(", ")
+  +                 ));
+  +             }
+  ... (24 more lines)
+ ✓ (1m 37s)
+  + /// Build an honest error message for unrecognized `/git` input, with a
+  + /// did-you-mean suggestion derived from the REAL subcommand constants
+  + /// (`commands::GIT_SUBCOMMANDS`, `git::STASH_SUBCOMMANDS`) — never a
+  + /// hand-typed word list. Returns `None` for recognized subcommands.
+  + pub fn unknown_git_message(subcmd: &GitSubcommand) -> Option<String> {
+  +     match subcmd {
+  +         GitSubcommand::Unknown(word) => {
+  +             let mut msg = format!("unknown git subcommand '{word}'");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (46.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1048,1058p' src/git.rs &… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BadStashIndex\|show abc… ✓ (4ms)
+  4 tools completed in 2m 43s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

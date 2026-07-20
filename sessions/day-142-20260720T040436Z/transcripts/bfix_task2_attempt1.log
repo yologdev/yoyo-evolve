@@ -1,0 +1,76 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat  ▶ search 'try_switch_to_fallback' in src/agent_builder.rs ✓ (3ms)
+ ✓ (13ms)
+  ▶ read src/agent_builder.rs:820..900 ✓ (1ms)
+  3 tools completed in 6.0s (3 ✓)
+
+The tests were added but the fix wasn't applied to try_switch_to_fallback — it still mutates state unconditionally. Let me check the new tests to match the expected behavior.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1990..2160 ✓ (2ms)
+
+The tests were written, but the implementation wasn't applied — try_switch_to_fallback still mutates state first and always returns `true. Let me verify provider_api_key_env` and apply the fix.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn provider_api_key_env' in src ✓ (12ms)
+  ▶ edit src/agent_builder.rs (19 → 33 lines)
+            if self.provider == fallback {
+                return false;
+            }
+  + 
+  +         // Validate the fallback API key BEFORE mutating any state. If the
+  +         // fallback provider requires a key and its env var is unset/empty,
+  +         // refuse the switch honestly instead of retrying with the old
+  +         // provider's credential (which would surface as a baffling 401).
+  +         let fallback_key = match cli::provider_api_key_env(&fallback) {
+  +             Some(env_var) => match std::env::var(env_var) {
+  +                 Ok(key) if !key.is_empty() => Some(key),
+  +                 _ => {
+  +                     eprintln!(
+  +                         "{DIM}  fallback provider {fallback} skipped: ${env_var} not set{RESET}"
+  +                     );
+  +                     return false;
+  +                 }
+  +             },
+  +             // Keyless/local provider (e.g. ollama) — no key required.
+  +             None => None,
+  ... (18 more lines)
+ ✓ (1m 43s)
+            if self.provider == fallback {
+                return false;
+            }
+  + 
+  +         // Validate the fallback API key BEFORE mutating any state. If the
+  +         // fallback provider requires a key and its env var is unset/empty,
+  +         // refuse the switch honestly instead of retrying with the old
+  +         // provider's credential (which would surface as a baffling 401).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use\|DIM\b" src/agent_… ✓ (4ms)
+  3 tools completed in 1m 56s (3 ✓)
+
+DIM/RESET are in scope via crate::format::*. Now build and test.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test agent_builder::tests … ✓ (1.2s)
+  2 tools completed in 9.9s (2 ✓)
+
+All 68 agent_builder tests pass, including the two failing ones. Full suite + clippy:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -6 && car… ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+  2 tools completed in 2m 34s (2 ✓)
+
+All green. The root cause: the tests for the fix had been written, but the implementation in `try_switch_to_fallback was never actually changed — it still mutated provider/model first and returned true` unconditionally.
+
+Fix applied (`src/agent_builder.rs, AgentConfig::try_switch_to_fallback`):
+• Resolve the fallback key availability before any mutation: if cli::provider_api_key_env(&fallback) returns Some(env_var) and that env var is unset or empty → print a dim stderr note (fallback provider <name> skipped: $ENV_VAR not set) and return false with zero state changes.
+• Keyless providers (provider_api_key_env → None, e.g. ollama) still switch fine without touching api_key.
+• State (provider, model, api_key) is only mutated once the switch is known-viable.
+
+Verified:
+• cargo build ✓
+• cargo test — 4384 + 89 passed, 0 failed (both previously failing tests `test_fallback_switch_refuses_when_key_env_missing and test_fallback_switch_refuses_when_key_env_empty` now pass, along with the no-mutation invariant assertions)
+• cargo clippy --all-targets -- -D warnings ✓
+• cargo fmt -- --check ✓
+
+  watch: no files changed this turn — skipping
+

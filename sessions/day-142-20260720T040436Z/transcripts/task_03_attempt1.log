@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search '/git log \[n\]|git_help_text' in src  ▶ search 'GIT_SUBCOMMANDS|STASH_SUBCOMMANDS' in src ✓ (6ms)
+ ✓ (9ms)
+  ▶ $ pwd && ls src/git.rs 2>&1; git log --oneline -3 ✓ (8ms)
+  ▶ $ grep -n "GIT_SUBCOMMANDS\|STASH_SUBCOMMANDS" src/*.rs | head -30  ▶ $ grep -n "git log \[" src/git.rs src/commands_git.rs | head ✓ (4ms)
+ ✓ (7ms)
+  ▶ read src/git.rs:740..820 ✓ (1ms)
+  ▶ $ grep -n "use crate::format" src/git.rs | head; grep -n "\"git\"" src/help_data.r… ✓ (5ms)
+  ▶ read src/help_data.rs:785..815 ✓ (1ms)
+  ▶ read src/git.rs:1210..1240 ✓ (1ms)
+  ▶ edit src/git.rs (13 → 3 lines)
+            GitSubcommand::Help => {
+  -             println!("{DIM}  usage: /git status             Show working tree status");
+  -             println!("         /git log [n]             Show last n commits (default: 5)");
+  -             println!("         /git add <path>          Stage files for commit");
+  -             println!("         /git stage               Interactive file staging picker");
+  -             println!("         /git diff [--cached]     Show diff (unstaged or staged changes)");
+  -             println!("         /git branch [name]       List branches or create & switch");
+  -             println!("         /git stash               Stash uncommitted changes");
+  -             println!("         /git stash pop           Restore stashed changes");
+  -             println!("         /git stash list          List all stash entries");
+  -             println!("         /git stash show [n]      Show diff of stash entry n");
+  -             println!("         /git stash drop [n]      Drop stash entry n{RESET}\n");
+  +             print!("{}", git_help_text());
+            }
+ ✓ (12.9s)
+            GitSubcommand::Help => {
+  -             println!("{DIM}  usage: /git status             Show working tree status");
+  -             println!("         /git log [n]             Show last n commits (default: 5)");
+  -             println!("         /git add <path>          Stage files for commit");
+  -             println!("         /git stage               Interactive file staging picker");
+  -             println!("         /git diff [--cached]     Show diff (unstaged or staged changes)");
+  -             println!("         /git branch [name]       List branches or create & switch");
+  -             println!("         /git stash               Stash uncommitted changes");
+  ... (6 more lines)
+  ▶ $ grep -n "pub fn run_git_subcommand" src/git.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ edit src/git.rs (1 → 24 lines)
+  + /// Build the `/git` help text as a single string (pure, testable).
+  + ///
+  + /// Un-driftable by construction: the completeness test below walks
+  + /// `crate::commands::GIT_SUBCOMMANDS` and `STASH_SUBCOMMANDS` and asserts
+  + /// every subcommand appears here — adding a `/git` subcommand without
+  + /// updating this help is a test failure, not a silent stale surface
+  + /// (Day 140 lesson: hand-typed enumerations near the real list drift).
+  + fn git_help_text() -> String {
+  +     format!(
+  +         "{DIM}  usage: /git status             Show working tree status\n\
+  +          \x20        /git log [n]             Show last n commits (default: 5)\n\
+  +          \x20        /git add <path>          Stage files for commit\n\
+  +          \x20        /git stage               Interactive file staging picker\n\
+  +          \x20        /git diff [--cached]     Show diff (unstaged or staged changes)\n\
+  +          \x20        /git branch [name]       List branches or create & switch\n\
+  +          \x20        /git stash               Stash uncommitted changes (alias: stash push)\n\
+  +          \x20        /git stash pop           Restore stashed changes\n\
+  +          \x20        /git stash list          List all stash entries\n\
+  +          \x20        /git stash show [n]      Show diff of stash entry n\n\
+  +          \x20        /git stash drop [n]      Drop stash entry n{RESET}\n\n"
+  ... (4 more lines)
+ ✓ (1m 56s)
+  + /// Build the `/git` help text as a single string (pure, testable).
+  + ///
+  + /// Un-driftable by construction: the completeness test below walks
+  + /// `crate::commands::GIT_SUBCOMMANDS` and `STASH_SUBCOMMANDS` and asserts
+  + /// every subcommand appears here — adding a `/git` subcommand without
+  + /// updating this help is a test failure, not a silent stale surface
+  + /// (Day 140 lesson: hand-typed enumerations near the real list drift).
+  + fn git_help_text() -> String {
+  ... (13 more lines)
+  12 tools completed in 3m 2s (12 ✓)
+
+Now the completeness tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (16 → 54 lines)
+                        GitSubcommand::UnknownStash(_) | GitSubcommand::Unknown(_)
+                    ),
+                    "STASH_SUBCOMMANDS lists '{word}' but parse_git_args treats it as unknown"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Drift guard (Day 142): the `/git` help text must mention every
+  +     /// subcommand in `commands::GIT_SUBCOMMANDS` and every stash sub-word in
+  +     /// `STASH_SUBCOMMANDS`. Adding a subcommand without updating the help is
+  +     /// now a test failure instead of a silently stale surface — the exact
+  +     /// drift class from Day 140 (hand-typed enumeration near the real list).
+  +     #[test]
+  +     fn test_git_help_text_covers_all_subcommands() {
+  +         let help = git_help_text();
+  +         assert!(!help.is_empty(), "git_help_text() must not be empty");
+  +         for sub in crate::commands::GIT_SUBCOMMANDS {
+  +             assert!(
+  +                 help.contains(&format!("/git {sub}")),
+  +                 "git_help_text() is missing '/git {sub}' — GIT_SUBCOMMANDS lists it"
+  ... (24 more lines)
+ ✓ (1m 52s)
+                        GitSubcommand::UnknownStash(_) | GitSubcommand::Unknown(_)
+                    ),
+                    "STASH_SUBCOMMANDS lists '{word}' but parse_git_args treats it as unknown"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Drift guard (Day 142): the `/git` help text must mention every
+  ... (13 more lines)
+  ▶ $ cargo test --quiet git_help 2>&1 | tail -20; cargo test --quiet help_data_git 2>… ✓ (342ms)
+  2 tools completed in 1m 58s (2 ✓)
+
+The test caught the live drift exactly as predicted — help_data.rs is missing /git stage. Fix it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (2 → 3 lines)
+                 \x20 /git add             Stage all changes\n\
+  +              \x20 /git stage           Interactive file staging picker\n\
+                 \x20 /git diff            Show unstaged changes\n\
+ ✓ (1m 55s)
+                 \x20 /git add             Stage all changes\n\
+  +              \x20 /git stage           Interactive file staging picker\n\
+                 \x20 /git diff            Show unstaged changes\n\
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (1m 55s)
+  ▶ $ cargo test --quiet --bin yoyo 2>&1 | tail -3 && cargo build --quiet 2>&1 | tail … ✓ (57.0s)
+  3 tools completed in 4m 52s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
