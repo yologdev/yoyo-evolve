@@ -56,10 +56,27 @@ pub(crate) struct AccuracyStats {
     pub(crate) best_day: Option<(u32, f64)>, // (day, accuracy_pct)
     pub(crate) worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
     /// Number of events whose anticipatory (emerging) prediction was graded.
+    /// Compat-only (never rendered); read by tests.
+    #[allow(dead_code)]
     pub(crate) emerging_samples: usize,
-    /// Average anticipatory accuracy across graded events. `None` when no
-    /// event carries an emerging grade yet (older validation history).
+    /// Blended anticipatory average across BOTH polarities. Kept for struct
+    /// compatibility (mirrors `overall_hit_rate_pct`); the report renders
+    /// the separated failure/green numbers instead. `None` when no event
+    /// carries an emerging grade yet (older validation history).
+    #[allow(dead_code)]
     pub(crate) emerging_avg_pct: Option<f64>,
+    /// Number of failure-day events with an emerging grade.
+    pub(crate) emerging_failure_samples: usize,
+    /// Anticipatory recall: on failure days, average emerging accuracy —
+    /// how often the momentum-flagged files were the ones that broke.
+    /// `None` when no failure-day event carries an emerging grade.
+    pub(crate) emerging_failure_avg_pct: Option<f64>,
+    /// Number of green-day events with an emerging grade.
+    pub(crate) emerging_green_samples: usize,
+    /// Anticipatory false-alarm signal: on green days, average emerging
+    /// accuracy — momentum-flagged files that changed WITHOUT breaking.
+    /// `None` when no green-day event carries an emerging grade.
+    pub(crate) emerging_green_avg_pct: Option<f64>,
     /// Event counts per severity tag (e.g. `"revert"`, `"watch_failure"`).
     /// Legacy severity-less events are counted under `"untagged"`.
     pub(crate) severity_counts: std::collections::BTreeMap<String, usize>,
@@ -126,6 +143,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             worst_day: None,
             emerging_samples: 0,
             emerging_avg_pct: None,
+            emerging_failure_samples: 0,
+            emerging_failure_avg_pct: None,
+            emerging_green_samples: 0,
+            emerging_green_avg_pct: None,
             severity_counts: std::collections::BTreeMap::new(),
         };
     }
@@ -212,6 +233,11 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
     // Anticipatory (emerging) accuracy: average only the graded events.
     // `None` grades come from snapshots that carried no emerging list —
     // skipping them keeps the 24 historical lines from dragging the average.
+    // The blended number is kept for struct compatibility only (same status
+    // as `overall_hit_rate_pct`); the honest numbers are the polarity split
+    // below — an emerging "hit" is vindication on a failure day and
+    // false-alarm evidence on a green day, so averaging them cancels
+    // rightness against wrongness.
     let graded: Vec<f64> = events
         .iter()
         .filter_map(|e| e.emerging_accuracy_pct)
@@ -221,6 +247,31 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         None
     } else {
         Some(graded.iter().sum::<f64>() / graded.len() as f64)
+    };
+
+    // Polarity split for the anticipatory column (Day 142, evening): same
+    // classifier as the reactive split above. Ungraded events (`None`) are
+    // excluded from both sides, exactly as the blended average excludes them.
+    let emerging_failure_graded: Vec<f64> = failure_events
+        .iter()
+        .filter_map(|e| e.emerging_accuracy_pct)
+        .collect();
+    let emerging_failure_samples = emerging_failure_graded.len();
+    let emerging_failure_avg_pct = if emerging_failure_graded.is_empty() {
+        None
+    } else {
+        Some(emerging_failure_graded.iter().sum::<f64>() / emerging_failure_graded.len() as f64)
+    };
+
+    let emerging_green_graded: Vec<f64> = green_events
+        .iter()
+        .filter_map(|e| e.emerging_accuracy_pct)
+        .collect();
+    let emerging_green_samples = emerging_green_graded.len();
+    let emerging_green_avg_pct = if emerging_green_graded.is_empty() {
+        None
+    } else {
+        Some(emerging_green_graded.iter().sum::<f64>() / emerging_green_graded.len() as f64)
     };
 
     // Per-severity event counts — legacy severity-less events land in
@@ -246,6 +297,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         worst_day,
         emerging_samples,
         emerging_avg_pct,
+        emerging_failure_samples,
+        emerging_failure_avg_pct,
+        emerging_green_samples,
+        emerging_green_avg_pct,
         severity_counts,
     }
 }
@@ -291,6 +346,35 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
             .to_string(),
     };
 
+    // Anticipatory (emerging) column — same polarity split as the reactive
+    // pair above. The blended `emerging_avg_pct` is never rendered: an
+    // emerging hit is recall evidence on failure days and false-alarm
+    // evidence on green days, so the blend means nothing.
+    let emerging_failure_line = match stats.emerging_failure_avg_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "  {BOLD}emerging recall{RESET} (failure days, {} graded): {rounded:.0}% — momentum-flagged files were the ones that broke",
+                stats.emerging_failure_samples
+            )
+        }
+        None => format!(
+            "  {BOLD}emerging recall{RESET}: {DIM}(no graded failure-day events yet){RESET}"
+        ),
+    };
+    let emerging_green_line = match stats.emerging_green_avg_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "  {BOLD}emerging false-alarm signal{RESET} (green days, {} graded): {rounded:.0}% — momentum-flagged files changed without breaking",
+                stats.emerging_green_samples
+            )
+        }
+        None => format!(
+            "  {BOLD}emerging false-alarm signal{RESET}: {DIM}(no graded green-day events yet){RESET}"
+        ),
+    };
+
     let trend_str = match stats.trend {
         AccuracyTrend::Improving => format!("{GREEN}↑ Improving{RESET}"),
         AccuracyTrend::Declining => format!("{RED}↓ Declining{RESET}"),
@@ -306,17 +390,9 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
         None => "—".to_string(),
     };
-    // Anticipatory accuracy line — shown even when ungraded so the gap
-    // between the two prediction meters stays visible.
-    let emerging_str = match stats.emerging_avg_pct {
-        Some(pct) => {
-            let rounded = (pct * 10.0).round() / 10.0;
-            format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
-        }
-        None => "— (not graded yet)".to_string(),
-    };
 
-    let mut report = format!("\n{failure_line}\n{green_line}\n");
+    let mut report =
+        format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
     report.push_str(&format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
          {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
@@ -324,7 +400,6 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
          {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Best day:     {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
-         {BOLD}  │{RESET} Emerging:     {:<25}{BOLD}│{RESET}\n\
          {BOLD}  ╰────────────────────────────╯{RESET}\n",
         stats.total_validations,
         format!(
@@ -334,7 +409,6 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         trend_str,
         best_str,
         worst_str,
-        emerging_str,
     ));
 
     // Per-severity breakdown — only shown once at least one event carries a
@@ -431,6 +505,64 @@ mod tests {
             (avg - 75.0).abs() < 0.1,
             "avg of 100 and 50 is 75, got {avg}"
         );
+        // All events here are failure-day (severity None) → the split's
+        // failure side matches the blend and the green side is empty.
+        assert_eq!(stats.emerging_failure_samples, 2);
+        let f_avg = stats
+            .emerging_failure_avg_pct
+            .expect("two graded failure-day events → Some");
+        assert!((f_avg - 75.0).abs() < 0.1);
+        assert_eq!(stats.emerging_green_samples, 0);
+        assert!(stats.emerging_green_avg_pct.is_none());
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_emerging_split_by_polarity() {
+        // Mixed green + failure events with emerging grades: each side must
+        // average only its own events. Ungraded events drag neither side.
+        let events = vec![
+            ValidationEvent {
+                day: 142,
+                hit_count: 2,
+                total_changed: 4,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(100.0),
+                severity: Some("revert".to_string()), // failure day
+            },
+            ValidationEvent {
+                day: 142,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(40.0),
+                severity: Some("watch_success".to_string()), // green day
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 3,
+                total_changed: 4,
+                accuracy_pct: 75.0,
+                emerging_accuracy_pct: Some(60.0),
+                severity: None, // legacy severity-less → failure day
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 1,
+                total_changed: 4,
+                accuracy_pct: 25.0,
+                emerging_accuracy_pct: None, // ungraded — drags neither side
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        // Failure side: 100 and 60 → 80.
+        assert_eq!(stats.emerging_failure_samples, 2);
+        let f_avg = stats.emerging_failure_avg_pct.expect("failure side graded");
+        assert!((f_avg - 80.0).abs() < 0.1, "avg of 100 and 60 is 80: {f_avg}");
+        // Green side: only the graded 40 — the ungraded green event is excluded.
+        assert_eq!(stats.emerging_green_samples, 1);
+        let g_avg = stats.emerging_green_avg_pct.expect("green side graded");
+        assert!((g_avg - 40.0).abs() < 0.1, "single green grade 40: {g_avg}");
     }
 
     #[test]
@@ -462,8 +594,8 @@ mod tests {
         let stats = compute_accuracy_stats(&events);
         let report = format_accuracy_report(&stats);
         assert!(
-            report.contains("Emerging:"),
-            "report must surface the anticipatory accuracy line: {report}"
+            report.contains("emerging recall"),
+            "report must surface the anticipatory recall line: {report}"
         );
         assert!(
             report.contains("75%"),
@@ -484,10 +616,13 @@ mod tests {
         let stats = compute_accuracy_stats(&events);
         let report = format_accuracy_report(&stats);
         assert!(
-            report.contains("Emerging:"),
-            "line present even without data so the gap is visible: {report}"
+            report.contains("no graded failure-day events yet"),
+            "lines present even without data so the gap is visible: {report}"
         );
-        assert!(report.contains('—'), "ungraded → em-dash placeholder");
+        assert!(
+            report.contains("no graded green-day events yet"),
+            "green side also shows honest absence, not a fake 0%: {report}"
+        );
     }
 
     #[test]
@@ -739,6 +874,10 @@ mod tests {
             worst_day: Some((108, 20.0)),
             emerging_samples: 0,
             emerging_avg_pct: None,
+            emerging_failure_samples: 0,
+            emerging_failure_avg_pct: None,
+            emerging_green_samples: 0,
+            emerging_green_avg_pct: None,
             severity_counts: std::collections::BTreeMap::new(),
         };
         let report = format_accuracy_report(&stats);
