@@ -1726,6 +1726,47 @@ pub fn wants_ai_commit(input: &str) -> bool {
 
 // ── /git ─────────────────────────────────────────────────────────────────
 
+/// Build an honest error message for unrecognized `/git` input, with a
+/// did-you-mean suggestion derived from the REAL subcommand constants
+/// (`commands::GIT_SUBCOMMANDS`, `git::STASH_SUBCOMMANDS`) — never a
+/// hand-typed word list. Returns `None` for recognized subcommands.
+pub fn unknown_git_message(subcmd: &GitSubcommand) -> Option<String> {
+    match subcmd {
+        GitSubcommand::Unknown(word) => {
+            let mut msg = format!("unknown git subcommand '{word}'");
+            if let Some(suggestion) = crate::commands::closest_match(
+                &word.to_lowercase(),
+                crate::commands::GIT_SUBCOMMANDS,
+                2,
+            ) {
+                msg.push_str(&format!(" — did you mean '/git {suggestion}'?"));
+            } else {
+                msg.push_str(&format!(
+                    " (valid: {})",
+                    crate::commands::GIT_SUBCOMMANDS.join(", ")
+                ));
+            }
+            Some(msg)
+        }
+        GitSubcommand::UnknownStash(word) => {
+            let mut msg = format!("unknown stash subcommand '{word}'");
+            if let Some(suggestion) =
+                crate::commands::closest_match(&word.to_lowercase(), STASH_SUBCOMMANDS, 2)
+            {
+                msg.push_str(&format!(" — did you mean '/git stash {suggestion}'?"));
+            } else {
+                msg.push_str(&format!(" (valid: {})", STASH_SUBCOMMANDS.join(", ")));
+            }
+            Some(msg)
+        }
+        GitSubcommand::BadStashIndex { action, arg } => Some(format!(
+            "invalid stash index '{arg}' — expected a number (e.g. /git stash {action} 2); \
+             refusing to default to stash@{{0}}"
+        )),
+        _ => None,
+    }
+}
+
 pub fn handle_git(input: &str) {
     let arg = input.strip_prefix("/git").unwrap_or("").trim();
     let subcmd = parse_git_args(arg);

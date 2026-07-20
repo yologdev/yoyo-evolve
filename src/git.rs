@@ -334,7 +334,21 @@ pub enum GitSubcommand {
     Branch(Option<String>),
     /// Invalid or missing subcommand — show help
     Help,
+    /// Unrecognized top-level word (e.g. `/git statsu`) — carries the word as
+    /// typed so the error can name it and suggest the nearest real one
+    Unknown(String),
+    /// Unrecognized word after `stash` (e.g. `/git stash pip`) — must NOT fall
+    /// through to `stash push`, which would silently stash the working tree
+    UnknownStash(String),
+    /// `stash drop`/`stash show` with a non-numeric index — must NOT default
+    /// to acting on stash@{0} (a typo'd index would destroy the wrong stash)
+    BadStashIndex { action: String, arg: String },
 }
+
+/// Valid words after `/git stash` — single source of truth for both
+/// `parse_git_args` and unknown-word error messages (never hand-copy this
+/// list into a message; derive from it).
+pub const STASH_SUBCOMMANDS: &[&str] = &["push", "pop", "list", "show", "drop"];
 
 /// Parse the argument string after `/git` into a `GitSubcommand`.
 pub fn parse_git_args(arg: &str) -> GitSubcommand {
@@ -367,16 +381,33 @@ pub fn parse_git_args(arg: &str) -> GitSubcommand {
                 match parts[1].to_lowercase().as_str() {
                     "pop" => GitSubcommand::StashPop,
                     "list" => GitSubcommand::StashList,
-                    "show" => {
-                        let n = parts.get(2).and_then(|s| s.parse::<usize>().ok());
-                        GitSubcommand::StashShow(n)
-                    }
-                    "drop" => {
-                        let n = parts.get(2).and_then(|s| s.parse::<usize>().ok());
-                        GitSubcommand::StashDrop(n)
-                    }
+                    "show" => match parts.get(2).map(|s| s.trim()) {
+                        None | Some("") => GitSubcommand::StashShow(None),
+                        Some(s) => match s.parse::<usize>() {
+                            Ok(n) => GitSubcommand::StashShow(Some(n)),
+                            // A typo'd index must never silently mean stash@{0}
+                            Err(_) => GitSubcommand::BadStashIndex {
+                                action: "show".to_string(),
+                                arg: s.to_string(),
+                            },
+                        },
+                    },
+                    "drop" => match parts.get(2).map(|s| s.trim()) {
+                        None | Some("") => GitSubcommand::StashDrop(None),
+                        Some(s) => match s.parse::<usize>() {
+                            Ok(n) => GitSubcommand::StashDrop(Some(n)),
+                            // Dropping stash@{0} on a typo'd index is data loss
+                            Err(_) => GitSubcommand::BadStashIndex {
+                                action: "drop".to_string(),
+                                arg: s.to_string(),
+                            },
+                        },
+                    },
                     "push" => GitSubcommand::Stash,
-                    _ => GitSubcommand::Stash,
+                    // A typo (e.g. `stash pip` for `pop`) must NOT fall through
+                    // to `stash push` — that would stash the entire working
+                    // tree when the user meant to restore it.
+                    _ => GitSubcommand::UnknownStash(parts[1].to_string()),
                 }
             } else {
                 GitSubcommand::Stash
@@ -396,7 +427,7 @@ pub fn parse_git_args(arg: &str) -> GitSubcommand {
                 GitSubcommand::Branch(None)
             }
         }
-        _ => GitSubcommand::Help,
+        _ => GitSubcommand::Unknown(parts[0].to_string()),
     }
 }
 
@@ -748,6 +779,15 @@ pub fn run_git_subcommand(subcmd: &GitSubcommand) {
             println!("         /git stash show [n]      Show diff of stash entry n");
             println!("         /git stash drop [n]      Drop stash entry n{RESET}\n");
         }
+        GitSubcommand::Unknown(_)
+        | GitSubcommand::UnknownStash(_)
+        | GitSubcommand::BadStashIndex { .. } => {
+            // Message logic lives in commands_git::unknown_git_message (single
+            // source — it derives suggestions from the real subcommand lists).
+            if let Some(msg) = crate::commands_git::unknown_git_message(subcmd) {
+                println!("{RED}  {msg}{RESET}\n");
+            }
+        }
     }
 }
 
@@ -1011,8 +1051,16 @@ diff --git a/src/old.rs b/src/old.rs
     fn test_git_subcommand_help() {
         assert_eq!(parse_git_args(""), GitSubcommand::Help);
         assert_eq!(parse_git_args("  "), GitSubcommand::Help);
-        assert_eq!(parse_git_args("unknown"), GitSubcommand::Help);
-        assert_eq!(parse_git_args("push"), GitSubcommand::Help);
+        // Unknown words no longer silently show generic help — they name the word
+        // so handle_git can print an honest error with a did-you-mean suggestion.
+        assert_eq!(
+            parse_git_args("unknown"),
+            GitSubcommand::Unknown("unknown".to_string())
+        );
+        assert_eq!(
+            parse_git_args("push"),
+            GitSubcommand::Unknown("push".to_string())
+        );
     }
 
     #[test]
@@ -1079,10 +1127,14 @@ diff --git a/src/old.rs b/src/old.rs
             parse_git_args("STASH SHOW 0"),
             GitSubcommand::StashShow(Some(0))
         );
-        // Non-numeric argument falls back to None (default stash@{0})
+        // Non-numeric argument no longer silently falls back to stash@{0} —
+        // it surfaces as a bad-index error instead of showing the wrong stash.
         assert_eq!(
             parse_git_args("stash show abc"),
-            GitSubcommand::StashShow(None)
+            GitSubcommand::BadStashIndex {
+                action: "show".to_string(),
+                arg: "abc".to_string(),
+            }
         );
     }
 
@@ -1097,11 +1149,86 @@ diff --git a/src/old.rs b/src/old.rs
             parse_git_args("STASH DROP 1"),
             GitSubcommand::StashDrop(Some(1))
         );
-        // Non-numeric argument falls back to None
+        // Non-numeric argument must NOT silently drop stash@{0} — that's data loss
         assert_eq!(
             parse_git_args("stash drop xyz"),
-            GitSubcommand::StashDrop(None)
+            GitSubcommand::BadStashIndex {
+                action: "drop".to_string(),
+                arg: "xyz".to_string()
+            }
         );
+    }
+
+    /// Fixture table for the destructive-silent-swallow class (Day 142):
+    /// typo'd stash words must never fall through to `stash push` (which would
+    /// stash the user's entire working tree), and bad indices must never
+    /// default to acting on stash@{0}.
+    #[test]
+    fn test_git_unknown_inputs_never_destructive() {
+        let cases: &[(&str, GitSubcommand)] = &[
+            // typo'd stash word — must NOT become Stash (push)
+            ("stash pip", GitSubcommand::UnknownStash("pip".to_string())),
+            (
+                "stash pops",
+                GitSubcommand::UnknownStash("pops".to_string()),
+            ),
+            (
+                "STASH Aply",
+                GitSubcommand::UnknownStash("Aply".to_string()),
+            ),
+            // bad index — must NOT default to stash@{0}
+            (
+                "stash drop abc",
+                GitSubcommand::BadStashIndex {
+                    action: "drop".to_string(),
+                    arg: "abc".to_string(),
+                },
+            ),
+            (
+                "stash show 1x",
+                GitSubcommand::BadStashIndex {
+                    action: "show".to_string(),
+                    arg: "1x".to_string(),
+                },
+            ),
+            // top-level unknown word — named, not generic help
+            ("statsu", GitSubcommand::Unknown("statsu".to_string())),
+            ("push", GitSubcommand::Unknown("push".to_string())),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(&parse_git_args(input), expected, "input: {input:?}");
+        }
+        // Still-valid shapes are untouched
+        assert_eq!(parse_git_args("stash"), GitSubcommand::Stash);
+        assert_eq!(parse_git_args("stash push"), GitSubcommand::Stash);
+        assert_eq!(parse_git_args("stash pop"), GitSubcommand::StashPop);
+        assert_eq!(
+            parse_git_args("stash drop 2"),
+            GitSubcommand::StashDrop(Some(2))
+        );
+        assert_eq!(parse_git_args("stash drop"), GitSubcommand::StashDrop(None));
+        // Trailing whitespace after show/drop still means "no index given"
+        assert_eq!(
+            parse_git_args("stash show "),
+            GitSubcommand::StashShow(None)
+        );
+    }
+
+    /// Drift guard: every word in STASH_SUBCOMMANDS must parse to a real
+    /// (non-Unknown) variant — the const and the match arms are two surfaces
+    /// of one fact (Day 140: derive enumerations, don't copy them).
+    #[test]
+    fn test_stash_subcommands_const_covers_parse() {
+        for word in STASH_SUBCOMMANDS {
+            let parsed = parse_git_args(&format!("stash {word}"));
+            assert!(
+                !matches!(
+                    parsed,
+                    GitSubcommand::UnknownStash(_) | GitSubcommand::Unknown(_)
+                ),
+                "STASH_SUBCOMMANDS lists '{word}' but parse_git_args treats it as unknown"
+            );
+        }
     }
 
     #[test]
