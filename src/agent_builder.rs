@@ -841,17 +841,31 @@ impl AgentConfig {
             return false;
         }
 
+        // Validate the fallback API key BEFORE mutating any state. If the
+        // fallback provider requires a key and its env var is unset/empty,
+        // refuse the switch honestly instead of retrying with the old
+        // provider's credential (which would surface as a baffling 401).
+        let fallback_key = match cli::provider_api_key_env(&fallback) {
+            Some(env_var) => match std::env::var(env_var) {
+                Ok(key) if !key.is_empty() => Some(key),
+                _ => {
+                    eprintln!(
+                        "{DIM}  fallback provider {fallback} skipped: ${env_var} not set{RESET}"
+                    );
+                    return false;
+                }
+            },
+            // Keyless/local provider (e.g. ollama) — no key required.
+            None => None,
+        };
+
         self.provider = fallback.clone();
         self.model = self
             .fallback_model
             .clone()
             .unwrap_or_else(|| cli::default_model_for_provider(&fallback));
-
-        // Resolve API key for fallback provider
-        if let Some(env_var) = cli::provider_api_key_env(&fallback) {
-            if let Ok(key) = std::env::var(env_var) {
-                self.api_key = key;
-            }
+        if let Some(key) = fallback_key {
+            self.api_key = key;
         }
 
         true
@@ -1945,8 +1959,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_fallback_switch_success() {
-        // When fallback is configured and different from current, switch should succeed
+        // When fallback is configured, different from current, and its key is
+        // available, switch should succeed
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("GOOGLE_API_KEY", "test-google-key");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("google".to_string()),
             fallback_model: Some("gemini-2.0-flash".to_string()),
@@ -1956,6 +1976,11 @@ mod tests {
         assert!(config.try_switch_to_fallback());
         assert_eq!(config.provider, "google");
         assert_eq!(config.model, "gemini-2.0-flash");
+        assert_eq!(config.api_key, "test-google-key");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("GOOGLE_API_KEY");
+        }
     }
 
     #[test]
@@ -1983,8 +2008,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_fallback_switch_derives_default_model() {
         // When fallback_model is None, should derive the default model for the provider
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "test-openai-key");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("openai".to_string()),
             fallback_model: None,
@@ -1994,11 +2024,20 @@ mod tests {
         assert!(config.try_switch_to_fallback());
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, cli::default_model_for_provider("openai"));
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
     }
 
     #[test]
+    #[serial]
     fn test_fallback_switch_uses_explicit_model() {
         // When fallback_model is Some, should use it instead of the default
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "test-openai-key");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("openai".to_string()),
             fallback_model: Some("gpt-4-turbo".to_string()),
@@ -2008,6 +2047,10 @@ mod tests {
         assert!(config.try_switch_to_fallback());
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4-turbo");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
     }
 
     #[test]
@@ -2034,10 +2077,13 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_switch_keeps_api_key_when_env_missing() {
-        // If the fallback provider's env var isn't set, original api_key should persist
-        // (removing the env var to be safe)
-        // SAFETY: Test runs serially, no concurrent env var access.
+    #[serial]
+    fn test_fallback_switch_refuses_when_key_env_missing() {
+        // If the fallback provider requires a key and its env var isn't set,
+        // the switch must be refused WITHOUT mutating any state — otherwise
+        // the retry hits the fallback with the OLD provider's credential and
+        // the user gets a baffling 401 instead of an honest "key not set".
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
         unsafe {
             std::env::remove_var("XAI_API_KEY");
         }
@@ -2048,15 +2094,66 @@ mod tests {
             ..test_agent_config("anthropic", "claude-opus-4-6")
         };
         let original_key = config.api_key.clone();
-        assert!(config.try_switch_to_fallback());
-        assert_eq!(config.provider, "xai");
+        assert!(!config.try_switch_to_fallback());
+        // No-mutation invariant: provider, model, and api_key all unchanged.
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, original_key);
     }
 
     #[test]
+    #[serial]
+    fn test_fallback_switch_refuses_when_key_env_empty() {
+        // An empty env var is as unusable as a missing one — refuse without mutating.
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("XAI_API_KEY", "");
+        }
+        let mut config = AgentConfig {
+            fallback_provider: Some("xai".to_string()),
+            fallback_model: Some("grok-3".to_string()),
+            auto_watch: true,
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        let original_key = config.api_key.clone();
+        assert!(!config.try_switch_to_fallback());
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claude-opus-4-6");
+        assert_eq!(config.api_key, original_key);
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("XAI_API_KEY");
+        }
+    }
+
+    #[test]
+    fn test_fallback_switch_keyless_provider_needs_no_key() {
+        // Providers with no API key env var (local, e.g. ollama) must still
+        // switch fine — don't require a key that isn't required.
+        assert!(cli::provider_api_key_env("ollama").is_none());
+        let mut config = AgentConfig {
+            fallback_provider: Some("ollama".to_string()),
+            fallback_model: Some("llama3".to_string()),
+            auto_watch: true,
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        let original_key = config.api_key.clone();
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "ollama");
+        assert_eq!(config.model, "llama3");
+        // Keyless switch keeps the existing api_key untouched.
+        assert_eq!(config.api_key, original_key);
+    }
+
+    #[test]
+    #[serial]
     fn test_fallback_switch_idempotent() {
         // Calling try_switch_to_fallback twice: first call switches, second returns false
         // (because provider now matches fallback)
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("GOOGLE_API_KEY", "test-google-key");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("google".to_string()),
             fallback_model: Some("gemini-2.0-flash".to_string()),
@@ -2068,6 +2165,10 @@ mod tests {
         // Second call: already on fallback
         assert!(!config.try_switch_to_fallback());
         assert_eq!(config.provider, "google");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("GOOGLE_API_KEY");
+        }
     }
 
     #[test]
@@ -2114,8 +2215,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_fallback_prompt_api_error_with_fallback_switches() {
         // When API error occurs and fallback is configured, the config should switch
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("GOOGLE_API_KEY", "test-google-key");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("google".to_string()),
             fallback_model: Some("gemini-2.0-flash".to_string()),
@@ -2135,6 +2241,10 @@ mod tests {
         assert!(config.try_switch_to_fallback());
         assert_eq!(config.provider, "google");
         assert_eq!(config.model, "gemini-2.0-flash");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("GOOGLE_API_KEY");
+        }
     }
 
     #[test]
