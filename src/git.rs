@@ -556,6 +556,29 @@ fn format_status_label(status: &str) -> String {
 }
 
 /// Execute a `/git` subcommand directly (no AI, no tokens).
+/// Build the `/git` help text as a single string (pure, testable).
+///
+/// Un-driftable by construction: the completeness test below walks
+/// `crate::commands::GIT_SUBCOMMANDS` and `STASH_SUBCOMMANDS` and asserts
+/// every subcommand appears here — adding a `/git` subcommand without
+/// updating this help is a test failure, not a silent stale surface
+/// (Day 140 lesson: hand-typed enumerations near the real list drift).
+fn git_help_text() -> String {
+    format!(
+        "{DIM}  usage: /git status             Show working tree status\n\
+         \x20        /git log [n]             Show last n commits (default: 5)\n\
+         \x20        /git add <path>          Stage files for commit\n\
+         \x20        /git stage               Interactive file staging picker\n\
+         \x20        /git diff [--cached]     Show diff (unstaged or staged changes)\n\
+         \x20        /git branch [name]       List branches or create & switch\n\
+         \x20        /git stash               Stash uncommitted changes (alias: stash push)\n\
+         \x20        /git stash pop           Restore stashed changes\n\
+         \x20        /git stash list          List all stash entries\n\
+         \x20        /git stash show [n]      Show diff of stash entry n\n\
+         \x20        /git stash drop [n]      Drop stash entry n{RESET}\n\n"
+    )
+}
+
 pub fn run_git_subcommand(subcmd: &GitSubcommand) {
     match subcmd {
         GitSubcommand::Status => match run_git(&["status", "--short"]) {
@@ -767,17 +790,7 @@ pub fn run_git_subcommand(subcmd: &GitSubcommand) {
             }
         }
         GitSubcommand::Help => {
-            println!("{DIM}  usage: /git status             Show working tree status");
-            println!("         /git log [n]             Show last n commits (default: 5)");
-            println!("         /git add <path>          Stage files for commit");
-            println!("         /git stage               Interactive file staging picker");
-            println!("         /git diff [--cached]     Show diff (unstaged or staged changes)");
-            println!("         /git branch [name]       List branches or create & switch");
-            println!("         /git stash               Stash uncommitted changes");
-            println!("         /git stash pop           Restore stashed changes");
-            println!("         /git stash list          List all stash entries");
-            println!("         /git stash show [n]      Show diff of stash entry n");
-            println!("         /git stash drop [n]      Drop stash entry n{RESET}\n");
+            print!("{}", git_help_text());
         }
         GitSubcommand::Unknown(_)
         | GitSubcommand::UnknownStash(_)
@@ -1227,6 +1240,44 @@ diff --git a/src/old.rs b/src/old.rs
                     GitSubcommand::UnknownStash(_) | GitSubcommand::Unknown(_)
                 ),
                 "STASH_SUBCOMMANDS lists '{word}' but parse_git_args treats it as unknown"
+            );
+        }
+    }
+
+    /// Drift guard (Day 142): the `/git` help text must mention every
+    /// subcommand in `commands::GIT_SUBCOMMANDS` and every stash sub-word in
+    /// `STASH_SUBCOMMANDS`. Adding a subcommand without updating the help is
+    /// now a test failure instead of a silently stale surface — the exact
+    /// drift class from Day 140 (hand-typed enumeration near the real list).
+    #[test]
+    fn test_git_help_text_covers_all_subcommands() {
+        let help = git_help_text();
+        assert!(!help.is_empty(), "git_help_text() must not be empty");
+        for sub in crate::commands::GIT_SUBCOMMANDS {
+            assert!(
+                help.contains(&format!("/git {sub}")),
+                "git_help_text() is missing '/git {sub}' — GIT_SUBCOMMANDS lists it"
+            );
+        }
+        for word in STASH_SUBCOMMANDS {
+            assert!(
+                help.contains(&format!("stash {word}")),
+                "git_help_text() is missing 'stash {word}' — STASH_SUBCOMMANDS lists it"
+            );
+        }
+    }
+
+    /// Same guard for the /help surface: the help_data.rs `/git` entry is a
+    /// second prose copy of the same enumeration (and was missing 'stage'
+    /// when this test landed — live proof of the drift class).
+    #[test]
+    fn test_help_data_git_entry_covers_all_subcommands() {
+        let entry =
+            crate::help_data::command_help("git").expect("help_data must have a /git entry");
+        for sub in crate::commands::GIT_SUBCOMMANDS {
+            assert!(
+                entry.contains(&format!("/git {sub}")),
+                "help_data /git entry is missing '/git {sub}' — GIT_SUBCOMMANDS lists it"
             );
         }
     }

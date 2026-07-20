@@ -793,6 +793,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /git status          Show working tree status\n\
              \x20 /git log             Show recent commit log\n\
              \x20 /git add             Stage all changes\n\
+             \x20 /git stage           Interactive file staging picker\n\
              \x20 /git diff            Show unstaged changes\n\
              \x20 /git branch          List branches\n\
              \x20 /git stash           Stash current changes\n\
