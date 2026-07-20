@@ -558,7 +558,10 @@ mod tests {
         // Failure side: 100 and 60 → 80.
         assert_eq!(stats.emerging_failure_samples, 2);
         let f_avg = stats.emerging_failure_avg_pct.expect("failure side graded");
-        assert!((f_avg - 80.0).abs() < 0.1, "avg of 100 and 60 is 80: {f_avg}");
+        assert!(
+            (f_avg - 80.0).abs() < 0.1,
+            "avg of 100 and 60 is 80: {f_avg}"
+        );
         // Green side: only the graded 40 — the ungraded green event is excluded.
         assert_eq!(stats.emerging_green_samples, 1);
         let g_avg = stats.emerging_green_avg_pct.expect("green side graded");
