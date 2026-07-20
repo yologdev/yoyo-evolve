@@ -369,6 +369,21 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     false
 }
 
+/// The substring that identifies the known-benign "stream ended" outcome
+/// (Issue #222/#612): some providers (e.g. MiniMax) close the SSE stream
+/// without the expected termination signal even though the response was
+/// delivered in full. Single source of truth — the retry classification,
+/// the diagnostic, and the display framing all derive from this.
+const BENIGN_STREAM_END_SUBSTR: &str = "stream ended";
+
+/// True when the error is the known-benign "stream ended" outcome — the
+/// response was (very likely) delivered in full and yoyo deliberately does
+/// not retry (#222). The display layer uses this to print a calm dim notice
+/// instead of a red `error:` line (#612). Pure; case-insensitive.
+pub fn is_benign_stream_end(error: &str) -> bool {
+    error.to_lowercase().contains(BENIGN_STREAM_END_SUBSTR)
+}
+
 /// Diagnose a non-retriable API error and return a user-friendly message
 /// with actionable suggestions. Returns `None` for errors that don't match
 /// known patterns.
@@ -512,7 +527,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         ));
     }
 
-    if lower.contains("stream ended") {
+    if is_benign_stream_end(error) {
         return Some(
             "The API stream ended without the expected termination signal.\n\
              This is common with some providers (e.g. MiniMax) whose SSE format \n\
@@ -754,6 +769,21 @@ mod tests {
         assert!(!is_retriable_error("Stream ended"));
         assert!(!is_retriable_error("stream ended unexpectedly"));
         assert!(!is_retriable_error("Stream ended: no more data"));
+    }
+
+    #[test]
+    fn test_is_benign_stream_end() {
+        // Issue #612: "stream ended" is a known-benign, deliberately-not-retried
+        // outcome (the response was delivered in full) — the display layer uses
+        // this to avoid framing it as a red error.
+        assert!(is_benign_stream_end("Stream ended"));
+        assert!(is_benign_stream_end("error: Stream ended"));
+        assert!(is_benign_stream_end("stream ended: no more data"));
+
+        // Genuinely interrupted streams and other errors are NOT benign
+        assert!(!is_benign_stream_end("stream closed unexpectedly"));
+        assert!(!is_benign_stream_end("broken pipe"));
+        assert!(!is_benign_stream_end("rate limit"));
     }
 
     #[test]

@@ -97,7 +97,8 @@ pub struct PromptOutcome {
 // from `crate::prompt_retry`.
 use crate::prompt_retry::{
     build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
-    is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+    MAX_AUTO_RETRIES,
 };
 // MAX_RETRIES is pub(crate), so import without re-exporting.
 use crate::prompt_retry::MAX_RETRIES;
@@ -543,6 +544,16 @@ impl PromptEventState {
                             } else if is_retriable_error(err_msg) {
                                 // Check if this error is worth retrying
                                 self.retriable_error = Some(err_msg.clone());
+                            } else if is_benign_stream_end(err_msg) {
+                                // #612: "stream ended" is a known-benign outcome —
+                                // the response was delivered in full and we
+                                // deliberately don't retry (#222). Frame it calmly
+                                // instead of as a red error block.
+                                eprintln!(
+                                    "\n{DIM}  stream ended without terminator — response \
+                                     delivered above (known quirk of some providers; \
+                                     not retrying){RESET}"
+                                );
                             } else {
                                 eprintln!("\n{RED}  error: {err_msg}{RESET}");
                                 // Show diagnostic help for common errors
