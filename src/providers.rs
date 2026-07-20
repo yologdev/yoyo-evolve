@@ -97,6 +97,7 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         "cerebras" => &["llama-3.3-70b"],
         "zai" => &["glm-4-plus", "glm-4-air", "glm-4-flash"],
         "minimax" => &[
+            "MiniMax-M3",
             "MiniMax-M2.7",
             "MiniMax-M2.7-highspeed",
             "MiniMax-M2.5",
@@ -197,6 +198,8 @@ mod tests {
 
     #[test]
     fn test_minimax_default_model() {
+        // Deliberate pin: MiniMax-M3 is in the suggested list (issue #611) but
+        // the default stays M2.7 — changing the default is a separate decision.
         assert_eq!(default_model_for_provider("minimax"), "MiniMax-M2.7");
     }
 
@@ -204,6 +207,9 @@ mod tests {
     fn test_minimax_known_models() {
         let models = known_models_for_provider("minimax");
         assert!(!models.is_empty(), "minimax should have known models");
+        // Newest flagship first (issue #611)
+        assert_eq!(models.first(), Some(&"MiniMax-M3"));
+        assert!(models.contains(&"MiniMax-M3"));
         assert!(models.contains(&"MiniMax-M1"));
         assert!(models.contains(&"MiniMax-M1-40k"));
     }

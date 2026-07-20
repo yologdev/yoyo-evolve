@@ -46,6 +46,10 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 | `minimax` | `MiniMax-M2.7` | `MINIMAX_API_KEY` |
 | `custom` | `claude-opus-4-6` | *(none — bring your own)* |
 
+> **Note:** the table shows each provider's *default* model — others are
+> available. For example, MiniMax's flagship `MiniMax-M3` can be selected via
+> `--model MiniMax-M3` or picked in the setup wizard.
+
 ### Examples
 
 ```bash
