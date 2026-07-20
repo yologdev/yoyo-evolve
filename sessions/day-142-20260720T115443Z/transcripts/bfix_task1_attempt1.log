@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_risk_accuracy.rs:240..320  ▶ read src/commands_risk_accuracy.rs:690..750 ✓ (1ms)
+ ✓ (1ms)
+  ▶ read src/commands_risk_accuracy.rs:306..386  ▶ read src/commands_risk_accuracy.rs:1..121 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ sed -n '308,317p' src/commands_risk_accuracy.rs; grep -n "failure_hit_rate_pct\|… ✓ (7ms)
+  ▶ $ sed -n '314,318p' src/commands_risk_accuracy.rs | cat -A | head -8 ✓ (4ms)
+  6 tools completed in 18.5s (6 ✓)
+
+Now I'll fix both issues. First, wire the two computed lines into the report (they must lead it):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (2 → 3 lines)
+  -     let mut report = format!(
+  +     let mut report = format!("\n{failure_line}\n{green_line}\n");
+  +     report.push_str(&format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+ ✓ (759ms)
+  -     let mut report = format!(
+  +     let mut report = format!("\n{failure_line}\n{green_line}\n");
+  +     report.push_str(&format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+  ▶ edit src/commands_risk_accuracy.rs (5 → 5 lines)
+            best_str,
+            worst_str,
+            emerging_str,
+  -     );
+  +     ));
+ ✓ (11.1s)
+            best_str,
+            worst_str,
+            emerging_str,
+  -     );
+  +     ));
+  ▶ edit src/commands_risk_accuracy.rs (2 → 6 lines)
+                overall_hit_rate_pct: 58.333,
+  +             failure_samples: 12,
+  +             failure_hit_rate_pct: Some(58.333),
+  +             green_samples: 0,
+  +             green_flagged_change_rate_pct: None,
+                trend: AccuracyTrend::Improving,
+ ✓ (1m 44s)
+                overall_hit_rate_pct: 58.333,
+  +             failure_samples: 12,
+  +             failure_hit_rate_pct: Some(58.333),
+  +             green_samples: 0,
+  +             green_flagged_change_rate_pct: None,
+                trend: AccuracyTrend::Improving,
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -3 && cargo test 2>&1 | tail -15 ✓ (1m 30s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" ; cargo clippy --all-targets -- -D warn… ✓ (1m 10s)
+  5 tools completed in 5m 1s (5 ✓)
+
+All green. The errors were two related mistakes in format_accuracy_report and one stale test fixture:
+
+1. Unused `failure_line`/`green_line` — the two separated polarity lines were computed but never emitted (the whole point of the task). Fixed by making the report lead with them: let mut report = format!("\n{failure_line}\n{green_line}\n"); followed by `report.push_str(&format!(...)) for the existing box (with the matching ));` closer).
+
+2. **E0063 missing fields** — the pre-existing test_format_accuracy_report_with_data built `AccuracyStats literally and didn't know about the four new fields. Added failure_samples: 12`, failure_hit_rate_pct: Some(58.333), green_samples: 0, green_flagged_change_rate_pct: None (consistent with the fixture's all-failure-day semantics).
+
+Verification:
+• cargo fmt — clean
+• cargo build — ok, no warnings
+• cargo test — 4386 + 89 passed, 0 failed
+• cargo clippy --all-targets -- -D warnings — clean
+
+  watch: no files changed this turn — skipping
+

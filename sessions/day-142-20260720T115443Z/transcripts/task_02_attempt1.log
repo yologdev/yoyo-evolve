@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'stream ended' in src  ▶ search 'error: \{error_msg\}|error: \{' in src/prompt.rs ✗ (2ms)
+    │ Search error: grep: Invalid content of \{\}
+ ✓ (13ms)
+  ▶ search 'error: ' in src/prompt.rs  ▶ read src/prompt_retry.rs:490..550 ✓ (1ms)
+ ✓ (3ms)
+  ▶ $ grep -n "stream ended" src/prompt_retry.rs src/prompt.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  ▶ $ grep -n "stream ended" src/prompt_retry.rs | cat; echo ---; grep -rn "stream end… ✓ (9ms)
+  ▶ $ grep -n "is_retriable_error" src/prompt_retry.rs | head; echo ---; sed -n '680,7… ✓ (5ms)
+  ▶ $ sed -n '290,360p' src/prompt_retry.rs ✓ (3ms)
+  ▶ $ sed -n '360,400p' src/prompt_retry.rs ✓ (3ms)
+  9 tools completed in 21.9s (8 ✓, 1 ✗)
+
+Now let me look at each print site in prompt.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '520,560p' src/prompt.rs; echo ====; sed -n '820,930p' src/prompt.rs ✓ (6ms)
+  ▶ read src/prompt.rs:530..590 ✓ (1ms)
+  ▶ read src/prompt.rs:890..920  ▶ read src/prompt.rs:1095..1145 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -n "use crate::prompt_retry" src/prompt.rs; grep -n "pub fn diagnose_api_er… ✓ (5ms)
+  ▶ $ sed -n '96,105p' src/prompt.rs ✓ (3ms)
+  6 tools completed in 31.5s (6 ✓)
+
+Test first, in prompt_retry.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (2 → 17 lines)
+  +     #[test]
+  +     fn test_is_benign_stream_end() {
+  +         // Issue #612: "stream ended" is a known-benign, deliberately-not-retried
+  +         // outcome (the response was delivered in full) — the display layer uses
+  +         // this to avoid framing it as a red error.
+  +         assert!(is_benign_stream_end("Stream ended"));
+  +         assert!(is_benign_stream_end("error: Stream ended"));
+  +         assert!(is_benign_stream_end("stream ended: no more data"));
+  + 
+  +         // Genuinely interrupted streams and other errors are NOT benign
+  +         assert!(!is_benign_stream_end("stream closed unexpectedly"));
+  +         assert!(!is_benign_stream_end("broken pipe"));
+  +         assert!(!is_benign_stream_end("rate limit"));
+  +     }
+  + 
+        #[test]
+        fn test_diagnose_stream_ended() {
+ ✓ (11.2s)
+  +     #[test]
+  +     fn test_is_benign_stream_end() {
+  +         // Issue #612: "stream ended" is a known-benign, deliberately-not-retried
+  +         // outcome (the response was delivered in full) — the display layer uses
+  +         // this to avoid framing it as a red error.
+  +         assert!(is_benign_stream_end("Stream ended"));
+  +         assert!(is_benign_stream_end("error: Stream ended"));
+  +         assert!(is_benign_stream_end("stream ended: no more data"));
+  ... (9 more lines)
+
+Failing as expected. Now the helper — with one source of truth for the substring:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (1 → 16 lines)
+  + /// The substring that identifies the known-benign "stream ended" outcome
+  + /// (Issue #222/#612): some providers (e.g. MiniMax) close the SSE stream
+  + /// without the expected termination signal even though the response was
+  + /// delivered in full. Single source of truth — the retry classification,
+  + /// the diagnostic, and the display framing all derive from this.
+  + const BENIGN_STREAM_END_SUBSTR: &str = "stream ended";
+  + 
+  + /// True when the error is the known-benign "stream ended" outcome — the
+  + /// response was (very likely) delivered in full and yoyo deliberately does
+  + /// not retry (#222). The display layer uses this to print a calm dim notice
+  + /// instead of a red `error:` line (#612). Pure; case-insensitive.
+  + pub fn is_benign_stream_end(error: &str) -> bool {
+  +     error.to_lowercase().contains(BENIGN_STREAM_END_SUBSTR)
+  + }
+  + 
+    /// Diagnose a non-retriable API error and return a user-friendly message
+ ✓ (17.9s)
+  + /// The substring that identifies the known-benign "stream ended" outcome
+  + /// (Issue #222/#612): some providers (e.g. MiniMax) close the SSE stream
+  + /// without the expected termination signal even though the response was
+  + /// delivered in full. Single source of truth — the retry classification,
+  + /// the diagnostic, and the display framing all derive from this.
+  + const BENIGN_STREAM_END_SUBSTR: &str = "stream ended";
+  + 
+  + /// True when the error is the known-benign "stream ended" outcome — the
+  ... (8 more lines)
+
+Now derive the diagnose branch from the same helper, and wire the display site in prompt.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (1 → 1 lines)
+  -     if lower.contains("stream ended") {
+  +     if is_benign_stream_end(error) {
+ ✓ (1m 41s)
+  -     if lower.contains("stream ended") {
+  +     if is_benign_stream_end(error) {
+  ▶ edit src/prompt.rs (3 → 4 lines)
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  +     MAX_AUTO_RETRIES,
+    };
+ ✓ (17.6s)
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  +     MAX_AUTO_RETRIES,
+    };
+  ▶ edit src/prompt.rs (1 → 11 lines)
+  +                             } else if is_benign_stream_end(err_msg) {
+  +                                 // #612: "stream ended" is a known-benign outcome —
+  +                                 // the response was delivered in full and we
+  +                                 // deliberately don't retry (#222). Frame it calmly
+  +                                 // instead of as a red error.
+  +                                 eprintln!(
+  +                                     "\n{DIM}  stream ended without terminator — response \
+  +                                      delivered above (known quirk of some providers; \
+  +                                      not retrying){RESET}"
+  +                                 );
+                                } else {
+ ✗ (0ms)
+    │ old_text matches 3 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/prompt.rs (4 → 14 lines)
+                                } else if is_retriable_error(err_msg) {
+                                    // Check if this error is worth retrying
+                                    self.retriable_error = Some(err_msg.clone());
+  +                             } else if is_benign_stream_end(err_msg) {
+  +                                 // #612: "stream ended" is a known-benign outcome —
+  +                                 // the response was delivered in full and we
+  +                                 // deliberately don't retry (#222). Frame it calmly
+  +                                 // instead of as a red error block.
+  +                                 eprintln!(
+  +                                     "\n{DIM}  stream ended without terminator — response \
+  +                                      delivered above (known quirk of some providers; \
+  +                                      not retrying){RESET}"
+  +                                 );
+                                } else {
+ ✓ (1m 40s)
+                                } else if is_retriable_error(err_msg) {
+                                    // Check if this error is worth retrying
+                                    self.retriable_error = Some(err_msg.clone());
+  +                             } else if is_benign_stream_end(err_msg) {
+  +                                 // #612: "stream ended" is a known-benign outcome —
+  +                                 // the response was delivered in full and we
+  +                                 // deliberately don't retry (#222). Frame it calmly
+  +                                 // instead of as a red error block.
+  ... (6 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo t… ✓ (1m 24s)
+  5 tools completed in 5m 19s (4 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+
