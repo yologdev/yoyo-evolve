@@ -19,11 +19,39 @@ pub(crate) enum AccuracyTrend {
 }
 
 /// Aggregate accuracy statistics computed from validation history.
+///
+/// Since Day 140, validation events carry two opposite polarities and a
+/// "hit" means opposite things on the two day types:
+/// - **failure-day** events (severity `revert`, `watch_failure`, or legacy
+///   `None`): a hit = a predicted-risky file was involved in the breakage
+///   → GOOD prediction (recall).
+/// - **green-day** events (severity `watch_success`): a hit = a
+///   predicted-risky file changed and NOTHING broke → false-alarm evidence
+///   (precision-inverse).
+///
+/// `overall_hit_rate_pct` blends both into a semantically meaningless
+/// average — it is kept only for backward compatibility (the `/status`
+/// summary in `commands_risk_report.rs` reads it). The honest numbers are
+/// the separated `failure_hit_rate_pct` / `green_flagged_change_rate_pct`.
 pub(crate) struct AccuracyStats {
     pub(crate) total_validations: usize,
     pub(crate) total_hits: usize,
     pub(crate) total_changed: usize,
+    /// Blended hit rate across BOTH polarities. Kept for struct
+    /// compatibility; the report leads with the separated numbers instead.
     pub(crate) overall_hit_rate_pct: f64,
+    /// Number of failure-day events (severity ≠ `watch_success`).
+    pub(crate) failure_samples: usize,
+    /// Recall: when something broke, how often was the broken file on the
+    /// risk list? Pooled over failure-day events only. `None` when there
+    /// are no failure-day events yet — absence is not a score.
+    pub(crate) failure_hit_rate_pct: Option<f64>,
+    /// Number of green-day events (severity `watch_success`).
+    pub(crate) green_samples: usize,
+    /// False-alarm signal: on green days, what fraction of changed files
+    /// that were flagged as risky changed WITHOUT breaking? Pooled over
+    /// green-day events only. `None` when there are no green-day events.
+    pub(crate) green_flagged_change_rate_pct: Option<f64>,
     pub(crate) trend: AccuracyTrend,
     pub(crate) best_day: Option<(u32, f64)>, // (day, accuracy_pct)
     pub(crate) worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
@@ -39,17 +67,24 @@ pub(crate) struct AccuracyStats {
 
 /// Compute trend by comparing the average accuracy of the last N events
 /// vs the first N events. Uses min(5, len/2) as window size.
-fn compute_accuracy_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+///
+/// Callers should pass failure-day events only: on green days a high
+/// `accuracy_pct` means MORE false alarms, so mixing polarities would let
+/// crying-wolf evidence read as an "improving" recall trend.
+fn compute_accuracy_trend<E: std::borrow::Borrow<ValidationEvent>>(events: &[E]) -> AccuracyTrend {
     if events.len() < 2 {
         return AccuracyTrend::Insufficient;
     }
 
     let window = std::cmp::min(5, events.len() / 2).max(1);
-    let first_avg: f64 =
-        events[..window].iter().map(|e| e.accuracy_pct).sum::<f64>() / window as f64;
+    let first_avg: f64 = events[..window]
+        .iter()
+        .map(|e| e.borrow().accuracy_pct)
+        .sum::<f64>()
+        / window as f64;
     let last_avg: f64 = events[events.len() - window..]
         .iter()
-        .map(|e| e.accuracy_pct)
+        .map(|e| e.borrow().accuracy_pct)
         .sum::<f64>()
         / window as f64;
 
@@ -71,6 +106,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             total_hits: 0,
             total_changed: 0,
             overall_hit_rate_pct: 0.0,
+            failure_samples: 0,
+            failure_hit_rate_pct: None,
+            green_samples: 0,
+            green_flagged_change_rate_pct: None,
             trend: AccuracyTrend::Insufficient,
             best_day: None,
             worst_day: None,
@@ -89,10 +128,47 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         0.0
     };
 
-    // Group by day — average accuracy per day for best/worst
+    // Polarity split (Day 142): a "hit" means opposite things on the two
+    // day types. `watch_success` ⇒ green day (hit = false alarm); anything
+    // else, including legacy severity-less events, ⇒ failure day (hit =
+    // good recall). Blending them cancels into a meaningless average, so
+    // each side gets its own pooled rate.
+    let is_green = |e: &&ValidationEvent| e.severity.as_deref() == Some("watch_success");
+    let failure_events: Vec<&ValidationEvent> = events.iter().filter(|e| !is_green(e)).collect();
+    let green_events: Vec<&ValidationEvent> = events.iter().filter(is_green).collect();
+
+    let failure_samples = failure_events.len();
+    let failure_hit_rate_pct = if failure_samples == 0 {
+        None
+    } else {
+        let hits: usize = failure_events.iter().map(|e| e.hit_count).sum();
+        let changed: usize = failure_events.iter().map(|e| e.total_changed).sum();
+        if changed > 0 {
+            Some((hits as f64 / changed as f64) * 100.0)
+        } else {
+            Some(0.0)
+        }
+    };
+
+    let green_samples = green_events.len();
+    let green_flagged_change_rate_pct = if green_samples == 0 {
+        None
+    } else {
+        let hits: usize = green_events.iter().map(|e| e.hit_count).sum();
+        let changed: usize = green_events.iter().map(|e| e.total_changed).sum();
+        if changed > 0 {
+            Some((hits as f64 / changed as f64) * 100.0)
+        } else {
+            Some(0.0)
+        }
+    };
+
+    // Best/worst day — failure-day events only, same reason as the trend:
+    // a green day's 100% accuracy_pct is maximal false-alarm evidence, not
+    // a "best" prediction day.
     let mut day_accuracies: std::collections::BTreeMap<u32, Vec<f64>> =
         std::collections::BTreeMap::new();
-    for e in events {
+    for e in &failure_events {
         day_accuracies
             .entry(e.day)
             .or_default()
@@ -116,7 +192,11 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         }
     }
 
-    let trend = compute_accuracy_trend(events);
+    // Recall trend — failure-day events only. Green days are excluded
+    // because their accuracy_pct is a false-alarm rate: a run of "clean"
+    // green 100% events would otherwise read as an improving recall trend.
+    // Fewer than 2 failure-day events ⇒ Insufficient (handled inside).
+    let trend = compute_accuracy_trend(&failure_events);
 
     // Anticipatory (emerging) accuracy: average only the graded events.
     // `None` grades come from snapshots that carried no emerging list —
@@ -146,6 +226,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         total_hits,
         total_changed,
         overall_hit_rate_pct,
+        failure_samples,
+        failure_hit_rate_pct,
+        green_samples,
+        green_flagged_change_rate_pct,
         trend,
         best_day,
         worst_day,
@@ -168,6 +252,34 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
     }
 
     let hit_rate_rounded = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+
+    // Lead with the two separated polarity numbers — a "hit" means opposite
+    // things on failure days (recall) and green days (false alarm), so the
+    // blended box number below is kept only for continuity.
+    let failure_line = match stats.failure_hit_rate_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "  {BOLD}recall{RESET} (failure days, {} events): {rounded:.0}% of breakages were on the risk list",
+                stats.failure_samples
+            )
+        }
+        None => {
+            format!("  {BOLD}recall{RESET}: {DIM}(no failure-day events yet){RESET}").to_string()
+        }
+    };
+    let green_line = match stats.green_flagged_change_rate_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "  {BOLD}false-alarm signal{RESET} (green days, {} events): {rounded:.0}% — flagged files changed without breaking",
+                stats.green_samples
+            )
+        }
+        None => format!("  {BOLD}false-alarm signal{RESET}: {DIM}(no green-day events yet){RESET}")
+            .to_string(),
+    };
+
     let trend_str = match stats.trend {
         AccuracyTrend::Improving => format!("{GREEN}↑ Improving{RESET}"),
         AccuracyTrend::Declining => format!("{RED}↓ Declining{RESET}"),
@@ -193,7 +305,8 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         None => "— (not graded yet)".to_string(),
     };
 
-    let mut report = format!(
+    let mut report = format!("\n{failure_line}\n{green_line}\n");
+    report.push_str(&format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
          {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Hit rate:     {:<13}{BOLD}│{RESET}\n\
@@ -211,7 +324,7 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         best_str,
         worst_str,
         emerging_str,
-    );
+    ));
 
     // Per-severity breakdown — only shown once at least one event carries a
     // severity tag (legacy histories are all "untagged"; stay quiet for them).
@@ -606,6 +719,10 @@ mod tests {
             total_hits: 7,
             total_changed: 12,
             overall_hit_rate_pct: 58.333,
+            failure_samples: 12,
+            failure_hit_rate_pct: Some(58.333),
+            green_samples: 0,
+            green_flagged_change_rate_pct: None,
             trend: AccuracyTrend::Improving,
             best_day: Some((115, 80.0)),
             worst_day: Some((108, 20.0)),
