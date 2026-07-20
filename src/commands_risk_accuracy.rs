@@ -739,4 +739,193 @@ mod tests {
         assert!(report.contains("Day 115"));
         assert!(report.contains("Day 108"));
     }
+
+    // ── Polarity split (Day 142): green vs failure days ──
+
+    /// Fixture: 2 failure-day events (recall) + 2 green-day events (false
+    /// alarm). A "hit" means opposite things on the two day types, so the
+    /// blended average is flattering nonsense.
+    fn mixed_polarity_events() -> Vec<ValidationEvent> {
+        vec![
+            ValidationEvent {
+                day: 140,
+                hit_count: 2,
+                total_changed: 4,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 2,
+                total_changed: 4,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: Some("revert".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 4,
+                total_changed: 4,
+                accuracy_pct: 100.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 142,
+                hit_count: 4,
+                total_changed: 4,
+                accuracy_pct: 100.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_polarity_split_separates_recall_from_false_alarm() {
+        let stats = compute_accuracy_stats(&mixed_polarity_events());
+        // Old blended average: (2+2+4+4)/16 = 75% — flattering.
+        assert!(
+            (stats.overall_hit_rate_pct - 75.0).abs() < 0.1,
+            "blended average should be the flattering 75%, got {}",
+            stats.overall_hit_rate_pct
+        );
+        // But the honest separated numbers tell a different story:
+        assert_eq!(stats.failure_samples, 2);
+        let recall = stats.failure_hit_rate_pct.expect("2 failure events → Some");
+        assert!(
+            (recall - 50.0).abs() < 0.1,
+            "recall is 4/8 = 50%, got {recall}"
+        );
+        assert_eq!(stats.green_samples, 2);
+        let false_alarm = stats
+            .green_flagged_change_rate_pct
+            .expect("2 green events → Some");
+        assert!(
+            (false_alarm - 100.0).abs() < 0.1,
+            "green flagged-change rate is 8/8 = 100%, got {false_alarm}"
+        );
+    }
+
+    #[test]
+    fn test_polarity_split_report_contains_both_labeled_lines() {
+        let stats = compute_accuracy_stats(&mixed_polarity_events());
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("(failure days, 2 events)")
+                && report.contains("of breakages were on the risk list"),
+            "report must lead with the labeled recall line: {report}"
+        );
+        assert!(
+            report.contains("(green days, 2 events)")
+                && report.contains("flagged files changed without breaking"),
+            "report must include the labeled false-alarm line: {report}"
+        );
+    }
+
+    #[test]
+    fn test_polarity_split_zero_sample_sides_print_no_events_yet() {
+        // Failure-only history → the green side must say "(no ... yet)",
+        // never 0.0% — absence is not a score.
+        let failure_only = vec![ValidationEvent {
+            day: 140,
+            hit_count: 2,
+            total_changed: 4,
+            accuracy_pct: 50.0,
+            emerging_accuracy_pct: None,
+            severity: Some("watch_failure".to_string()),
+        }];
+        let stats = compute_accuracy_stats(&failure_only);
+        assert_eq!(stats.green_samples, 0);
+        assert!(stats.green_flagged_change_rate_pct.is_none());
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("(no green-day events yet)"),
+            "zero green samples must print the no-events text: {report}"
+        );
+
+        // Green-only history → the failure side must say "(no ... yet)".
+        let green_only = vec![
+            ValidationEvent {
+                day: 141,
+                hit_count: 4,
+                total_changed: 4,
+                accuracy_pct: 100.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 142,
+                hit_count: 4,
+                total_changed: 4,
+                accuracy_pct: 100.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&green_only);
+        assert_eq!(stats.failure_samples, 0);
+        assert!(stats.failure_hit_rate_pct.is_none());
+        // Two green events but zero failure events → recall trend must stay
+        // Insufficient (green days are excluded from the trend).
+        assert_eq!(stats.trend, AccuracyTrend::Insufficient);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("(no failure-day events yet)"),
+            "zero failure samples must print the no-events text: {report}"
+        );
+    }
+
+    #[test]
+    fn test_green_100pct_event_does_not_raise_failure_recall() {
+        let failure_events = vec![
+            ValidationEvent {
+                day: 140,
+                hit_count: 1,
+                total_changed: 4,
+                accuracy_pct: 25.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 1,
+                total_changed: 4,
+                accuracy_pct: 25.0,
+                emerging_accuracy_pct: None,
+                severity: Some("revert".to_string()),
+            },
+        ];
+        let baseline = compute_accuracy_stats(&failure_events);
+        let baseline_recall = baseline.failure_hit_rate_pct.expect("failure events");
+
+        let mut with_green = failure_events;
+        with_green.push(ValidationEvent {
+            day: 142,
+            hit_count: 4,
+            total_changed: 4,
+            accuracy_pct: 100.0,
+            emerging_accuracy_pct: None,
+            severity: Some("watch_success".to_string()),
+        });
+        let mixed = compute_accuracy_stats(&with_green);
+        let mixed_recall = mixed.failure_hit_rate_pct.expect("failure events");
+        assert!(
+            (mixed_recall - baseline_recall).abs() < f64::EPSILON,
+            "a green 100% event must not raise failure-day recall: \
+             baseline {baseline_recall}, with green {mixed_recall}"
+        );
+        // The blended number DOES move — that's exactly the bug the split fixes.
+        assert!(
+            mixed.overall_hit_rate_pct > baseline.overall_hit_rate_pct,
+            "sanity: the blended average is what the green event inflates"
+        );
+        // And best day must not become the green day.
+        assert_ne!(
+            mixed.best_day.map(|(d, _)| d),
+            Some(142),
+            "a green day's 100% is false-alarm evidence, not a best prediction day"
+        );
+    }
 }
