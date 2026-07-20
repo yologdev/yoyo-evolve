@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_risk_accuracy.rs:330..460 ✓ (1ms)
+  ▶ $ sed -n '400,420p' src/commands_risk_accuracy.rs | cat -A | head -30 ✓ (6ms)
+  ▶ edit src/commands_risk_accuracy.rs (11 → 1 lines)
+  -     // Anticipatory accuracy line — shown even when ungraded so the gap
+  -     // between the two prediction meters stays visible.
+  -     let emerging_str = match stats.emerging_avg_pct {
+  -         Some(pct) => {
+  -             let rounded = (pct * 10.0).round() / 10.0;
+  -             format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+  -         }
+  -         None => "— (not graded yet)".to_string(),
+  -     };
+  - 
+        let mut report =
+  ▶ edit src/commands_risk_accuracy.rs (4 → 3 lines)
+            best_str,
+            worst_str,
+  -         emerging_str,
+        ));
+ ✓ (11.2s)
+  -     // Anticipatory accuracy line — shown even when ungraded so the gap
+  -     // between the two prediction meters stays visible.
+  -     let emerging_str = match stats.emerging_avg_pct {
+  -         Some(pct) => {
+  -             let rounded = (pct * 10.0).round() / 10.0;
+  -             format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+  -         }
+  -         None => "— (not graded yet)".to_string(),
+  ... (3 more lines)
+ ✓ (22.3s)
+            best_str,
+            worst_str,
+  -         emerging_str,
+        ));
+  ▶ $ grep -n "emerging_str" src/commands_risk_accuracy.rs; sed -n '780,830p' src/comm… ✓ (5ms)
+  ▶ read src/commands_risk_accuracy.rs:380..420 ✓ (1ms)
+  6 tools completed in 54.6s (6 ✓)
+
+The second edit applied but the first appears to have been rolled back. Removing the dead emerging_str block now, and fixing the test fixture missing the new fields:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (12 → 3 lines)
+  -     };
+  -     // Anticipatory accuracy line — shown even when ungraded so the gap
+  -     // between the two prediction meters stays visible.
+  -     let emerging_str = match stats.emerging_avg_pct {
+  -         Some(pct) => {
+  -             let rounded = (pct * 10.0).round() / 10.0;
+  -             format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+  -         }
+  -         None => "— (not graded yet)".to_string(),
+        };
+    
+        let mut report =
+ ✓ (11.2s)
+  -     };
+  -     // Anticipatory accuracy line — shown even when ungraded so the gap
+  -     // between the two prediction meters stays visible.
+  -     let emerging_str = match stats.emerging_avg_pct {
+  -         Some(pct) => {
+  -             let rounded = (pct * 10.0).round() / 10.0;
+  -             format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+  -         }
+  ... (4 more lines)
+  ▶ $ sed -n '30,90p' src/commands_risk_accuracy.rs; grep -n "emerging_samples\|emergi… ✓ (5ms)
+  ▶ $ grep -rn "emerging_samples\|emerging_avg_pct" src/ --include="*.rs" | grep -v co… ✓ (7ms)
+  ▶ edit src/commands_risk_accuracy.rs (2 → 4 lines)
+        /// Number of events whose anticipatory (emerging) prediction was graded.
+  +     /// Compat-only (never rendered); read by tests.
+  +     #[allow(dead_code)]
+        pub(crate) emerging_samples: usize,
+ ✓ (11.4s)
+        /// Number of events whose anticipatory (emerging) prediction was graded.
+  +     /// Compat-only (never rendered); read by tests.
+  +     #[allow(dead_code)]
+        pub(crate) emerging_samples: usize,
+  ▶ $ sed -n '60,68p' src/commands_risk_accuracy.rs ✓ (3ms)
+  ▶ edit src/commands_risk_accuracy.rs (2 → 3 lines)
+        /// carries an emerging grade yet (older validation history).
+  +     #[allow(dead_code)]
+        pub(crate) emerging_avg_pct: Option<f64>,
+ ✓ (11.4s)
+        /// carries an emerging grade yet (older validation history).
+  +     #[allow(dead_code)]
+        pub(crate) emerging_avg_pct: Option<f64>,
+  ▶ edit src/commands_risk_accuracy.rs (5 → 9 lines)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             emerging_failure_samples: 0,
+  +             emerging_failure_avg_pct: None,
+  +             emerging_green_samples: 0,
+  +             emerging_green_avg_pct: None,
+                severity_counts: std::collections::BTreeMap::new(),
+            };
+            let report = format_accuracy_report(&stats);
+ ✓ (1m 37s)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             emerging_failure_samples: 0,
+  +             emerging_failure_avg_pct: None,
+  +             emerging_green_samples: 0,
+  +             emerging_green_avg_pct: None,
+                severity_counts: std::collections::BTreeMap::new(),
+            };
+            let report = format_accuracy_report(&stats);
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -3 && cargo test 2>&1 | grep -E "test resul… ✓ (48.8s)
+  ▶ read src/commands_risk_accuracy.rs:515..570 ✓ (1ms)
+  ▶ edit src/commands_risk_accuracy.rs (30 → 33 lines)
+            let stats = compute_accuracy_stats(&events);
+            let report = format_accuracy_report(&stats);
+            assert!(
+  -             report.contains("Emerging:"),
+  -             "report must surface the anticipatory accuracy line: {report}"
+  +             report.contains("emerging recall"),
+  +             "report must surface the anticipatory recall line: {report}"
+            );
+            assert!(
+                report.contains("75%"),
+  ···
+            let stats = compute_accuracy_stats(&events);
+            let report = format_accuracy_report(&stats);
+            assert!(
+  -             report.contains("Emerging:"),
+  -             "line present even without data so the gap is visible: {report}"
+  +             report.contains("no graded failure-day events yet"),
+  +             "lines present even without data so the gap is visible: {report}"
+            );
+  -         assert!(report.contains('—'), "ungraded → em-dash placeholder");
+  ... (5 more lines)
+ ✓ (1m 43s)
+            let stats = compute_accuracy_stats(&events);
+            let report = format_accuracy_report(&stats);
+            assert!(
+  -             report.contains("Emerging:"),
+  -             "report must surface the anticipatory accuracy line: {report}"
+  +             report.contains("emerging recall"),
+  +             "report must surface the anticipatory recall line: {report}"
+            );
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -2 && cargo test 2>&1 | grep -E "test resul… ✓ (1m 10s)
+  ▶ $ grep -n "emerging_failure\|emerging_green" src/commands_risk_accuracy.rs | grep … ✓ (7ms)
+  ▶ $ grep -n "emerging_failure_samples\|emerging_green_samples\|emerging_failure_avg_…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ sed -n '470,525p' src/commands_risk_accuracy.rs; grep -n "fn is_green_event" -A … ✓ (5ms)
+  ▶ edit src/commands_risk_accuracy.rs (8 → 66 lines)
+                (avg - 75.0).abs() < 0.1,
+                "avg of 100 and 50 is 75, got {avg}"
+            );
+  +         // All events here are failure-day (severity None) → the split's
+  +         // failure side matches the blend and the green side is empty.
+  +         assert_eq!(stats.emerging_failure_samples, 2);
+  +         let f_avg = stats
+  +             .emerging_failure_avg_pct
+  +             .expect("two graded failure-day events → Some");
+  +         assert!((f_avg - 75.0).abs() < 0.1);
+  +         assert_eq!(stats.emerging_green_samples, 0);
+  +         assert!(stats.emerging_green_avg_pct.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compute_accuracy_stats_emerging_split_by_polarity() {
+  +         // Mixed green + failure events with emerging grades: each side must
+  +         // average only its own events. Ungraded events drag neither side.
+  +         let events = vec![
+  +             ValidationEvent {
+  ... (42 more lines)

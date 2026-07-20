@@ -1,0 +1,193 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_risk_accuracy.rs ✓ (6ms)
+  ▶ read src/commands_risk_accuracy.rs:100..450 ✓ (3ms)
+  ▶ read src/commands_risk_accuracy.rs:199..389 ✓ (2ms)
+  3 tools completed in 17.0s (3 ✓)
+
+Now let me check where emerging_avg_pct / emerging_samples are used elsewhere:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'emerging_avg_pct|emerging_samples' (*.rs) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "emerging_avg_pct\|emer… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1595,1638p src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 780,893p src/commands_ris… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 726,758p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 744,750p src/commands_ris… ✓ (3ms)
+  ▶ read src/commands_risk_accuracy.rs:744..754 ✓ (0ms)
+  ▶ edit src/commands_risk_accuracy.rs (5 → 19 lines)
+        /// Number of events whose anticipatory (emerging) prediction was graded.
+        pub(crate) emerging_samples: usize,
+  -     /// Average anticipatory accuracy across graded events. `None` when no
+  -     /// event carries an emerging grade yet (older validation history).
+  +     /// Blended anticipatory average across BOTH polarities. Kept for struct
+  +     /// compatibility (mirrors `overall_hit_rate_pct`); the report renders
+  +     /// the separated failure/green numbers instead. `None` when no event
+  +     /// carries an emerging grade yet (older validation history).
+        pub(crate) emerging_avg_pct: Option<f64>,
+  +     /// Number of failure-day events with an emerging grade.
+  +     pub(crate) emerging_failure_samples: usize,
+  +     /// Anticipatory recall: on failure days, average emerging accuracy —
+  +     /// how often the momentum-flagged files were the ones that broke.
+  +     /// `None` when no failure-day event carries an emerging grade.
+  +     pub(crate) emerging_failure_avg_pct: Option<f64>,
+  +     /// Number of green-day events with an emerging grade.
+  +     pub(crate) emerging_green_samples: usize,
+  +     /// Anticipatory false-alarm signal: on green days, average emerging
+  +     /// accuracy — momentum-flagged files that changed WITHOUT breaking.
+  +     /// `None` when no green-day event carries an emerging grade.
+  ... (1 more lines)
+ ✓ (11.2s)
+        /// Number of events whose anticipatory (emerging) prediction was graded.
+        pub(crate) emerging_samples: usize,
+  -     /// Average anticipatory accuracy across graded events. `None` when no
+  -     /// event carries an emerging grade yet (older validation history).
+  +     /// Blended anticipatory average across BOTH polarities. Kept for struct
+  +     /// compatibility (mirrors `overall_hit_rate_pct`); the report renders
+  +     /// the separated failure/green numbers instead. `None` when no event
+  +     /// carries an emerging grade yet (older validation history).
+  ... (13 more lines)
+  8 tools completed in 46.2s (8 ✓)
+
+Expected — now the initializers. Empty case:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (5 → 9 lines)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             emerging_failure_samples: 0,
+  +             emerging_failure_avg_pct: None,
+  +             emerging_green_samples: 0,
+  +             emerging_green_avg_pct: None,
+                severity_counts: std::collections::BTreeMap::new(),
+            };
+        }
+ ✓ (11.1s)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             emerging_failure_samples: 0,
+  +             emerging_failure_avg_pct: None,
+  +             emerging_green_samples: 0,
+  +             emerging_green_avg_pct: None,
+                severity_counts: std::collections::BTreeMap::new(),
+            };
+        }
+
+Now the split computation and the main initializer:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (13 → 43 lines)
+        // Anticipatory (emerging) accuracy: average only the graded events.
+        // `None` grades come from snapshots that carried no emerging list —
+        // skipping them keeps the 24 historical lines from dragging the average.
+  +     // The blended number is kept for struct compatibility only (same status
+  +     // as `overall_hit_rate_pct`); the honest numbers are the polarity split
+  +     // below — an emerging "hit" is vindication on a failure day and
+  +     // false-alarm evidence on a green day, so averaging them cancels
+  +     // rightness against wrongness.
+        let graded: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.emerging_accuracy_pct)
+  ···
+            None
+        } else {
+            Some(graded.iter().sum::<f64>() / graded.len() as f64)
+  +     };
+  + 
+  +     // Polarity split for the anticipatory column (Day 142, evening): same
+  +     // classifier as the reactive split above. Ungraded events (`None`) are
+  +     // excluded from both sides, exactly as the blended average excludes them.
+  ... (21 more lines)
+ ✓ (11.3s)
+        // Anticipatory (emerging) accuracy: average only the graded events.
+        // `None` grades come from snapshots that carried no emerging list —
+        // skipping them keeps the 24 historical lines from dragging the average.
+  +     // The blended number is kept for struct compatibility only (same status
+  +     // as `overall_hit_rate_pct`); the honest numbers are the polarity split
+  +     // below — an emerging "hit" is vindication on a failure day and
+  +     // false-alarm evidence on a green day, so averaging them cancels
+  +     // rightness against wrongness.
+  ... (13 more lines)
+  ▶ edit src/commands_risk_accuracy.rs (5 → 9 lines)
+            emerging_samples,
+            emerging_avg_pct,
+  +         emerging_failure_samples,
+  +         emerging_failure_avg_pct,
+  +         emerging_green_samples,
+  +         emerging_green_avg_pct,
+            severity_counts,
+        }
+    }
+ ✓ (11.3s)
+            emerging_samples,
+            emerging_avg_pct,
+  +         emerging_failure_samples,
+  +         emerging_failure_avg_pct,
+  +         emerging_green_samples,
+  +         emerging_green_avg_pct,
+            severity_counts,
+        }
+    }
+  2 tools completed in 30.8s (2 ✓)
+
+Now the rendering — replace the blended emerging line with the two-sided rendering:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (1 → 30 lines)
+  +     // Anticipatory (emerging) column — same polarity split as the reactive
+  +     // pair above. The blended `emerging_avg_pct` is never rendered: an
+  +     // emerging hit is recall evidence on failure days and false-alarm
+  +     // evidence on green days, so the blend means nothing.
+  +     let emerging_failure_line = match stats.emerging_failure_avg_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  +                 "  {BOLD}emerging recall{RESET} (failure days, {} graded): {rounded:.0}% — momentum-flagged files were the ones that broke",
+  +                 stats.emerging_failure_samples
+  +             )
+  +         }
+  +         None => format!(
+  +             "  {BOLD}emerging recall{RESET}: {DIM}(no graded failure-day events yet){RESET}"
+  +         ),
+  +     };
+  +     let emerging_green_line = match stats.emerging_green_avg_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  ... (10 more lines)
+ ✓ (11.4s)
+  +     // Anticipatory (emerging) column — same polarity split as the reactive
+  +     // pair above. The blended `emerging_avg_pct` is never rendered: an
+  +     // emerging hit is recall evidence on failure days and false-alarm
+  +     // evidence on green days, so the blend means nothing.
+  +     let emerging_failure_line = match stats.emerging_failure_avg_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  ... (13 more lines)
+
+Now wire the lines in and remove the blended box line:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (9 → 9 lines)
+  -     let mut report = format!("\n{failure_line}\n{green_line}\n");
+  +     let mut report =
+  +         format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+        report.push_str(&format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+             {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
+  ···
+             {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
+             {BOLD}  │{RESET} Best day:     {:<13}{BOLD}│{RESET}\n\
+             {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
+  -          {BOLD}  │{RESET} Emerging:     {:<25}{BOLD}│{RESET}\n\
+ ✓ (11.1s)
+  -     let mut report = format!("\n{failure_line}\n{green_line}\n");
+  +     let mut report =
+  +         format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+        report.push_str(&format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+             {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
+  ···
+             {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
+  ... (3 more lines)
+  ▶ read src/commands_risk_accuracy.rs:378..423 ✓ (1ms)
+  2 tools completed in 14.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
