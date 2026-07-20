@@ -901,8 +901,10 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn --model <name> <task>    Use a specific model for the subagent\n\
              \x20 /spawn --system <prompt> <task> Custom system prompt for the subagent\n\
              \x20 /spawn --bg -o <f> <task>       Background with output capture\n\
+             \x20 /spawn --pr <task>              Push handoff branch + open draft PR\n\
              \x20 /spawn collect <id>             Collect a finished background spawn\n\
              \x20 /spawn status                   Show all tracked spawns\n\
+             \x20 /spawn worktrees                List active spawn worktrees\n\
              \x20 /spawn runs                     List recorded --parallel run manifests\n\
              \x20 /spawn replay [<run_id>|latest] Re-launch a recorded fan-out\n\n\
              Creates a new AI agent with a separate context window to\n\
@@ -925,6 +927,12 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              /spawn replay --list) to see recorded runs, and\n\
              /spawn replay <run_id> (or `latest`, or bare /spawn replay)\n\
              to re-launch the same fan-out from its manifest.\n\n\
+             Sub-agents run in isolated git worktrees when possible; use\n\
+             /spawn worktrees to list the active ones. Finished work is\n\
+             committed to a spawn/<id> branch for review. With --pr, after a\n\
+             successful handoff commit yoyo also pushes that branch and opens\n\
+             a draft PR (requires the `gh` CLI; if push or PR creation fails,\n\
+             you get an honest note and the local branch remains the result).\n\n\
              Examples:\n\
              \x20 /spawn write unit tests for the parser module\n\
              \x20 /spawn --model claude-haiku-4-5 summarize this file\n\
@@ -1466,6 +1474,22 @@ mod tests {
             );
         }
         assert!(help.contains("--all"), "/risk help is missing --all");
+    }
+
+    #[test]
+    fn test_spawn_help_mentions_every_subcommand() {
+        // Discoverability guard: every /spawn subcommand, flag, and alias must
+        // appear in the /spawn help text (Day 142 — worktrees and --pr were
+        // shipped but undocumented, invisible to `/help spawn`). Flags and
+        // aliases are included on purpose: exceptions in completeness tests
+        // are how drift gets back in.
+        let help = command_help("spawn").expect("/spawn has a help entry");
+        for sub in crate::commands_spawn::SPAWN_SUBCOMMANDS {
+            assert!(
+                help.contains(sub),
+                "/spawn help is missing subcommand `{sub}`"
+            );
+        }
     }
 
     #[test]
