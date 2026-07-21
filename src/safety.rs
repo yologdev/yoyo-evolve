@@ -1549,6 +1549,155 @@ fn check_archive_extraction_to_system(cmd: &str, _cmd_lower: &str) -> Option<Str
 }
 
 // ---------------------------------------------------------------------------
+// Write-command detection (read/plan-mode enforcement)
+// ---------------------------------------------------------------------------
+
+/// Commands that write to the filesystem even though they are not
+/// "destructive" in the `analyze_bash_command` sense. Matched only in
+/// command position (first token of a segment, after unwrapping `sudo`
+/// etc.), so `grep tee file` or `ls /backup/mv` never match.
+const WRITE_VERBS: &[&str] = &[
+    "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln",
+];
+
+/// Wrapper tokens skipped when locating the actual command of a segment
+/// (`sudo touch x` is still a `touch`). `xargs` is included so piped
+/// fan-outs like `find | xargs touch` are caught too.
+const COMMAND_WRAPPERS: &[&str] = &["sudo", "env", "command", "nohup", "time", "xargs"];
+
+/// Replace quoted regions and backslash-escaped characters with spaces so
+/// that a `>` (or a write verb) inside a string literal — `echo "use >
+/// carefully"` — is never mistaken for a real redirection. The returned
+/// string is only scanned, never indexed back into the original.
+fn strip_quoted_regions(cmd: &str) -> String {
+    let mut out = String::with_capacity(cmd.len());
+    let mut chars = cmd.chars();
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some(c) = chars.next() {
+        if in_single {
+            if c == '\'' {
+                in_single = false;
+            }
+            out.push(' ');
+        } else if in_double {
+            if c == '"' {
+                in_double = false;
+            } else if c == '\\' {
+                // Escaped char inside double quotes: consume it too.
+                chars.next();
+                out.push(' ');
+            }
+            out.push(' ');
+        } else {
+            match c {
+                '\'' => {
+                    in_single = true;
+                    out.push(' ');
+                }
+                '"' => {
+                    in_double = true;
+                    out.push(' ');
+                }
+                '\\' => {
+                    // Escaped literal outside quotes (e.g. `echo \> x`):
+                    // neither char is shell syntax anymore.
+                    chars.next();
+                    out.push(' ');
+                    out.push(' ');
+                }
+                _ => out.push(c),
+            }
+        }
+    }
+    out
+}
+
+/// Scan a quote-stripped command for output redirection (`>` / `>>`) that
+/// targets a file. Fd duplication (`2>&1`, `>&-`) and `/dev/null` targets
+/// are not file writes and pass through.
+fn detect_redirection(stripped: &str) -> Option<String> {
+    let bytes = stripped.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'>' {
+            i += 1;
+            continue;
+        }
+        // `i` is always a char boundary here: b'>' is ASCII and UTF-8
+        // continuation bytes are >= 0x80, so they can never equal b'>'.
+        let mut j = i + 1;
+        let op = if bytes.get(j) == Some(&b'>') {
+            j += 1;
+            ">>"
+        } else {
+            ">"
+        };
+        // Fd duplication or close (`2>&1`, `>&-`): not a file write.
+        if bytes.get(j) == Some(&b'&') {
+            i = j + 1;
+            continue;
+        }
+        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+            j += 1;
+        }
+        let target = stripped[j..].split_whitespace().next().unwrap_or("");
+        if target == "/dev/null" {
+            i = j;
+            continue;
+        }
+        let shown = if target.is_empty() {
+            "a file".to_string()
+        } else {
+            format!("'{target}'")
+        };
+        return Some(format!("output redirection `{op}` targets {shown}"));
+    }
+    None
+}
+
+/// Detect bash commands that write to the filesystem without being
+/// "destructive": `touch`, `mv`, `sed -i`, `tee`, `>` redirection, etc.
+///
+/// This is intentionally stricter than `analyze_bash_command` and is used
+/// only by the read/plan-mode guard (`ReadModeGuardTool` in
+/// `tool_wrappers.rs`), where refusing writes is the whole point — a
+/// false positive costs one retry with an explanatory error; a false
+/// negative breaks the read-only promise. Returns `Some(what_matched)`.
+///
+/// Quoted regions are stripped first, so `echo "use > carefully"` and
+/// `grep 'mv' file` pass. Write verbs match only in command position
+/// (first token of a `;`/`|`/`&`/`(`/backtick-separated segment, after
+/// unwrapping `sudo`/`env`/`xargs`-style wrappers and env assignments),
+/// so `grep tee file` and paths merely containing `mv` pass.
+pub fn detect_write_command(cmd: &str) -> Option<String> {
+    let stripped = strip_quoted_regions(cmd);
+
+    for segment in stripped.split([';', '|', '&', '\n', '(', ')', '`']) {
+        let mut tokens = segment.split_whitespace();
+        let cmd_token = tokens.find(|t| !COMMAND_WRAPPERS.contains(t) && !t.contains('='));
+        let Some(cmd_token) = cmd_token else { continue };
+        // Basename, so full-path invocations (`/usr/bin/touch`) are caught.
+        let base = cmd_token.rsplit('/').next().unwrap_or(cmd_token);
+        if WRITE_VERBS.contains(&base) {
+            return Some(format!("`{base}` writes to the filesystem"));
+        }
+        if base == "sed"
+            && segment
+                .split_whitespace()
+                .any(|t| t.starts_with("-i") || t.starts_with("--in-place"))
+        {
+            return Some("`sed -i` edits files in place".to_string());
+        }
+        if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
+            return Some("`dd of=...` writes to a file".to_string());
+        }
+    }
+
+    detect_redirection(&stripped)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2448,5 +2597,91 @@ mod tests {
         // DELETE FROM with WHERE — safe targeted delete
         assert!(analyze_bash_command("mysql -e 'DELETE FROM users WHERE id = 42'").is_none());
         assert!(analyze_bash_command("psql -c 'delete from orders where status = 0'").is_none());
+    }
+
+    // === detect_write_command (read/plan-mode enforcement) ===
+
+    #[test]
+    fn test_detect_write_command_positives() {
+        // Fixture table: every non-destructive write shape must be caught.
+        let positives = [
+            "touch /tmp/x",
+            "mkdir -p build",
+            "mv a b",
+            "cp a b",
+            "cargo test | tee /tmp/out.log", // tee in a pipe segment
+            "tee /tmp/x",
+            "truncate -s 0 file",
+            "install -m 755 bin dest",
+            "ln -s a b",
+            "sed -i 's/a/b/' file.txt",
+            "sed --in-place=.bak 's/a/b/' f",
+            "dd if=/dev/zero of=/tmp/img bs=1M",
+            "echo hi > out.txt",           // truncating redirection
+            "cat a >> b",                  // appending redirection
+            "echo foo 2> err.log",         // stderr to a real file
+            "ls && touch marker",          // write verb after &&
+            "sudo touch /tmp/x",           // wrapper-unwrapped
+            "FOO=1 tee /tmp/x",            // env assignment skipped
+            "/usr/bin/touch x",            // full-path invocation
+            "find . -name '*.o' | xargs touch", // xargs fan-out
+        ];
+        for cmd in &positives {
+            assert!(
+                detect_write_command(cmd).is_some(),
+                "must flag write command: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_detect_write_command_negatives() {
+        // Fixture table: read-only commands must pass — both sides of the
+        // boundary (Day 122 lesson).
+        let negatives = [
+            "echo \"use > carefully\"",   // > inside double quotes
+            "echo 'a > b'",               // > inside single quotes
+            "echo \\> x",                 // backslash-escaped >
+            "grep tee file",              // verb as argument, not command
+            "grep -rn touch src/",        // verb as search pattern
+            "git log --stat",
+            "ls",
+            "cat file",
+            "ls /backup/mv",              // path merely containing mv
+            "cargo check 2>&1",           // fd duplication, not a file write
+            "grep foo . 2>/dev/null",     // /dev/null target is not a write
+            "git diff > /dev/null",
+            "sed -n '5p' file",           // sed without -i is read-only
+            "dd if=/dev/sda",             // dd without of= writes nothing
+            "man mv",
+        ];
+        for cmd in &negatives {
+            assert_eq!(
+                detect_write_command(cmd),
+                None,
+                "must NOT flag read-only command: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_detect_write_command_names_what_matched() {
+        // The refusal message must name WHAT matched — honest errors.
+        let what = detect_write_command("touch /tmp/x").expect("touch must match");
+        assert!(what.contains("touch"), "message should name the verb: {what}");
+        let what = detect_write_command("echo hi > out.txt").expect("> must match");
+        assert!(
+            what.contains("out.txt"),
+            "message should name the redirect target: {what}"
+        );
+        let what = detect_write_command("sed -i 's/a/b/' f").expect("sed -i must match");
+        assert!(what.contains("sed -i"), "message should name sed -i: {what}");
+    }
+
+    #[test]
+    fn test_detect_write_command_multibyte_safe() {
+        // Multi-byte UTF-8 near operators must not panic (#250 class).
+        assert!(detect_write_command("echo ✓ > données.txt").is_some());
+        assert!(detect_write_command("grep '✓ > ok' fichier").is_none());
     }
 }

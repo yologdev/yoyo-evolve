@@ -975,10 +975,11 @@ pub(crate) enum ReadGuardKind {
     /// Always refused while a blocking mode is on (write_file, edit_file,
     /// rename_symbol).
     Write,
-    /// Refused while a blocking mode is on only when the command matches the
-    /// existing destructive-pattern classification in `safety.rs`. This is
-    /// honest but incomplete — e.g. plain `>` redirection is not classified
-    /// as destructive, so it passes through; the refusal message says so.
+    /// Refused while a blocking mode is on when the command matches either
+    /// the destructive-pattern classification (`analyze_bash_command`) or
+    /// the write-command detection (`detect_write_command`: `touch`, `mv`,
+    /// `sed -i`, `tee`, `>`/`>>` redirection, ...) in `safety.rs`.
+    /// Read-only commands pass through.
     Bash,
 }
 
@@ -1081,10 +1082,16 @@ impl AgentTool for ReadModeGuardTool {
                         if let Some(reason) = crate::safety::analyze_bash_command(cmd) {
                             return Err(yoagent::types::ToolError::Failed(format!(
                                 "{} is active — this command was blocked as \
-                                 destructive ({reason}). Note: only commands matching \
-                                 known destructive patterns are blocked; this guard does \
-                                 not catch every possible write (e.g. plain `>` \
-                                 redirection). {}",
+                                 destructive ({reason}). {}",
+                                mode.label(),
+                                mode.exit_hint()
+                            )));
+                        }
+                        if let Some(what) = crate::safety::detect_write_command(cmd) {
+                            return Err(yoagent::types::ToolError::Failed(format!(
+                                "{} is active — this bash command was blocked \
+                                 because it writes: {what}. Read-only commands \
+                                 are allowed. {}",
                                 mode.label(),
                                 mode.exit_hint()
                             )));
@@ -1108,7 +1115,8 @@ pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
 }
 
 /// Wrap the bash tool with read/plan-mode enforcement: while a blocking mode
-/// is on, commands flagged by the destructive-pattern classifier are refused;
+/// is on, commands flagged by the destructive-pattern classifier OR the
+/// write-command detector (`safety::detect_write_command`) are refused;
 /// read-only commands pass through.
 pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     Box::new(ReadModeGuardTool {
