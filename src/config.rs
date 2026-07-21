@@ -69,7 +69,9 @@ impl DirectoryRestrictions {
     /// - Absolute paths are used directly.
     /// - Relative paths are resolved against the current working directory.
     /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
-    ///   when the path exists, or by manual normalization when it doesn't.
+    ///   when the path exists; for non-existent paths, the nearest existing
+    ///   ancestor is canonicalized and the remainder re-appended, so symlinked
+    ///   spellings can't bypass deny checks (issue #600).
     pub fn check_path(&self, path: &str) -> Result<(), String> {
         if self.is_empty() {
             return Ok(());
@@ -108,14 +110,19 @@ impl DirectoryRestrictions {
 
 /// Resolve a path to an absolute, normalized form.
 /// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
-/// Falls back to manual normalization for paths that don't exist yet.
+/// For non-existent paths, canonicalizes the nearest existing ancestor
+/// (resolving symlinks) and re-appends the non-existent remainder, so that
+/// existing and non-existent spellings of the same location converge on one
+/// canonical form (issue #600: `/etc/shadow` vs a deny on `/etc` that
+/// canonicalizes to `/private/etc` on macOS).
 fn resolve_path(path: &str) -> String {
     // Try canonicalize first (works for existing paths)
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().to_string();
     }
 
-    // Manual normalization for non-existent paths
+    // Non-existent path: make absolute, then normalize `.` and `..` lexically
+    // (they can't be resolved against a real filesystem).
     let p = std::path::Path::new(path);
     let absolute = if p.is_absolute() {
         p.to_path_buf()
@@ -125,7 +132,6 @@ fn resolve_path(path: &str) -> String {
             .join(p)
     };
 
-    // Normalize components: resolve `.` and `..`
     let mut components = Vec::new();
     for component in absolute.components() {
         match component {
@@ -137,6 +143,28 @@ fn resolve_path(path: &str) -> String {
         }
     }
     let normalized: std::path::PathBuf = components.iter().collect();
+
+    // Walk up to the nearest existing ancestor, canonicalize it (resolving
+    // symlinks), then re-append the non-existent remainder components.
+    let mut remainder: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor: Option<&std::path::Path> = Some(normalized.as_path());
+    while let Some(dir) = cursor {
+        if let Ok(canonical_dir) = std::fs::canonicalize(dir) {
+            let mut result = canonical_dir;
+            for component in remainder.iter().rev() {
+                result.push(component);
+            }
+            return result.to_string_lossy().to_string();
+        }
+        match dir.file_name() {
+            Some(name) => remainder.push(name.to_os_string()),
+            // No file name (e.g. root that failed to canonicalize) — stop.
+            None => break,
+        }
+        cursor = dir.parent();
+    }
+
+    // Degenerate case: no ancestor exists — fall back to manual normalization.
     normalized.to_string_lossy().to_string()
 }
 
@@ -1193,7 +1221,74 @@ env = { API_KEY = "secret" }
     #[test]
     fn test_config_module_resolve_path_normalizes_parent_dir() {
         let resolved = resolve_path("/tmp/a/../b");
-        assert_eq!(resolved, "/tmp/b");
+        // /tmp may itself be a symlink (macOS: /tmp -> /private/tmp), so
+        // compare against its canonical form rather than the literal string.
+        let expected = std::fs::canonicalize("/tmp")
+            .map(|p| p.join("b").to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/tmp/b".to_string());
+        assert_eq!(resolved, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_path_nonexistent_under_symlink_resolves_symlink() {
+        // Issue #600: a NON-existent path under a symlinked dir must resolve
+        // the symlink via its nearest existing ancestor, so deny/allow prefix
+        // checks agree with the canonicalized form of the directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real_dir");
+        std::fs::create_dir(&real).unwrap();
+        let link = tmp.path().join("link_dir");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let canonical_real = std::fs::canonicalize(&real).unwrap();
+        let target = link.join("does_not_exist.txt");
+        let resolved = resolve_path(&target.to_string_lossy());
+        let expected = canonical_real.join("does_not_exist.txt");
+        assert_eq!(resolved, expected.to_string_lossy());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_deny_check_symlink_and_real_spellings_converge() {
+        // Both spellings of the same location must land on one canonical form:
+        // a deny on the symlink path blocks a non-existent target reached via
+        // the real path, and vice versa.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real_secrets");
+        std::fs::create_dir(&real).unwrap();
+        let link = tmp.path().join("link_secrets");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Deny via the symlink spelling; check via the real spelling.
+        let deny_link = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![link.to_string_lossy().to_string()],
+        };
+        let via_real = real.join("nonexistent_file");
+        assert!(
+            deny_link.check_path(&via_real.to_string_lossy()).is_err(),
+            "deny on symlink path should block non-existent target via real path"
+        );
+
+        // Deny via the real spelling; check via the symlink spelling.
+        let deny_real = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![real.to_string_lossy().to_string()],
+        };
+        let via_link = link.join("nonexistent_file");
+        assert!(
+            deny_real.check_path(&via_link.to_string_lossy()).is_err(),
+            "deny on real path should block non-existent target via symlink path"
+        );
+    }
+
+    #[test]
+    fn test_resolve_path_deeply_nonexistent_preserves_remainder() {
+        // Multiple non-existent components: nearest existing ancestor is the
+        // root, remainder is re-appended unchanged.
+        let resolved = resolve_path("/nonexistent_yoyo_600/a/b");
+        assert_eq!(resolved, "/nonexistent_yoyo_600/a/b");
     }
 
     #[test]
