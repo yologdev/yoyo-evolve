@@ -380,6 +380,11 @@ const BENIGN_STREAM_END_SUBSTR: &str = "stream ended";
 /// response was (very likely) delivered in full and yoyo deliberately does
 /// not retry (#222). The display layer uses this to print a calm dim notice
 /// instead of a red `error:` line (#612). Pure; case-insensitive.
+///
+/// Note (#622): the MiniMax root cause was fixed upstream in yoagent 0.13.1
+/// (#612 / yoagent#76) — a DONE-less SSE close after finish_reason is now a
+/// clean EOF — so this softening is inert for MiniMax, but KEPT as
+/// defense-in-depth for other OpenAI-compat providers that may close DONE-less.
 pub fn is_benign_stream_end(error: &str) -> bool {
     error.to_lowercase().contains(BENIGN_STREAM_END_SUBSTR)
 }
