@@ -1621,6 +1621,74 @@ fn repo_root(start: &Path) -> PathBuf {
         .unwrap_or_else(|_| start.to_path_buf())
 }
 
+/// Pre-flight symlink check for a worktree target path.
+///
+/// Walks each already-existing component of `wt_path` below `repo_root` and
+/// refuses if any component is a symlink whose canonicalized target resolves
+/// OUTSIDE the canonicalized repo root — otherwise `git worktree add` would
+/// follow the link and write files outside the repository the user thinks
+/// they're isolated in (bug class transferred from Claude Code v2.1.212's
+/// fix log). Non-existent components are fine: they'll be created as real
+/// directories. Symlinks that resolve back inside the repo are allowed.
+///
+/// Fails open (returns Ok) if the repo root itself can't be canonicalized —
+/// the check can't judge escape without a trustworthy root, and product
+/// behavior must not regress on exotic filesystems.
+fn check_worktree_path_escape(repo_root: &Path, wt_path: &Path) -> Result<(), String> {
+    let canon_root = match repo_root.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    let rel = match wt_path.strip_prefix(repo_root) {
+        Ok(r) => r,
+        // Target isn't lexically under the root at all — refuse honestly.
+        Err(_) => {
+            return Err(format!(
+                "worktree path {} is not under repo root {}",
+                wt_path.display(),
+                repo_root.display()
+            ))
+        }
+    };
+    let mut cur = repo_root.to_path_buf();
+    for component in rel.components() {
+        cur.push(component);
+        let meta = match std::fs::symlink_metadata(&cur) {
+            Ok(m) => m,
+            // First non-existent component: the rest will be created as
+            // real directories — nothing left to escape through.
+            Err(_) => break,
+        };
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&cur)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|_| "<unreadable>".to_string());
+            match cur.canonicalize() {
+                Ok(resolved) if resolved.starts_with(&canon_root) => {
+                    // Symlink stays inside the repo — not an escape.
+                }
+                Ok(resolved) => {
+                    return Err(format!(
+                        "refusing worktree: {} is a symlink to {} (resolves to {}, outside repo root {})",
+                        cur.display(),
+                        target,
+                        resolved.display(),
+                        canon_root.display()
+                    ));
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "refusing worktree: {} is a symlink to {} that cannot be resolved",
+                        cur.display(),
+                        target
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Create a worktree for a spawn task.
 ///
 /// The worktree is placed under `<repo>/.yoyo/worktrees/spawn-{task_id}-{ts}/`
@@ -1635,6 +1703,10 @@ pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<Worktree
         .as_secs();
     let dir_name = format!("spawn-{task_id}-{ts}");
     let wt_path = root.join(".yoyo").join("worktrees").join(&dir_name);
+
+    // Pre-flight: refuse if any existing path component is a symlink that
+    // resolves outside the repo root (worker writes would escape the repo).
+    check_worktree_path_escape(&root, &wt_path)?;
 
     // Make sure parent exists.
     if let Err(e) = std::fs::create_dir_all(wt_path.parent().unwrap_or(&root)) {
@@ -2974,6 +3046,85 @@ mod tests {
             .output()
             .expect("git commit");
         tmp
+    }
+
+    #[test]
+    fn test_symlink_preflight_real_dir_passes() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".yoyo").join("worktrees")).expect("mkdir");
+        let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+        assert!(check_worktree_path_escape(root, &wt).is_ok());
+    }
+
+    #[test]
+    fn test_symlink_preflight_fresh_nonexistent_parent_passes() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let root = tmp.path();
+        // Nothing under root exists yet — the common fresh case.
+        let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+        assert!(check_worktree_path_escape(root, &wt).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_preflight_refuses_escape_outside_repo() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let root = tmp.path().join("repo");
+        let outside = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(root.join(".yoyo")).expect("mkdir repo/.yoyo");
+        std::fs::create_dir_all(&outside).expect("mkdir elsewhere");
+        // .yoyo/worktrees is a symlink pointing OUTSIDE the repo root.
+        std::os::unix::fs::symlink(&outside, root.join(".yoyo").join("worktrees"))
+            .expect("create symlink");
+        let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+        let err = check_worktree_path_escape(&root, &wt).expect_err("should refuse escape");
+        assert!(
+            err.contains("symlink"),
+            "error should name the symlink, got: {err}"
+        );
+        assert!(
+            err.contains("elsewhere"),
+            "error should name where it points, got: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_preflight_allows_symlink_inside_repo() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(root.join(".yoyo")).expect("mkdir repo/.yoyo");
+        std::fs::create_dir_all(root.join("real-worktrees")).expect("mkdir real-worktrees");
+        // Symlink that resolves back INSIDE the repo root — not an escape.
+        std::os::unix::fs::symlink(
+            root.join("real-worktrees"),
+            root.join(".yoyo").join("worktrees"),
+        )
+        .expect("create symlink");
+        let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+        assert!(check_worktree_path_escape(&root, &wt).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_create_spawn_worktree_refuses_symlinked_parent() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+        let outside = tempfile::tempdir().expect("create outside dir");
+        std::fs::create_dir_all(repo.join(".yoyo")).expect("mkdir .yoyo");
+        std::os::unix::fs::symlink(outside.path(), repo.join(".yoyo").join("worktrees"))
+            .expect("create symlink");
+        let err = create_spawn_worktree(repo, 5).expect_err("should refuse symlinked parent");
+        assert!(err.contains("symlink"), "got: {err}");
+        // Nothing should have been written outside the repo.
+        assert!(
+            std::fs::read_dir(outside.path())
+                .expect("read outside dir")
+                .next()
+                .is_none(),
+            "no files should land outside the repo"
+        );
     }
 
     #[test]
