@@ -814,9 +814,12 @@ pub async fn handle_spawn(
         context_prompt
     };
 
-    // Build a fresh agent with context-enriched system prompt
+    // Build a fresh agent with context-enriched system prompt.
+    // Pin the worker's bash cwd to the worktree when one exists (enforced
+    // default confinement, not a sandbox — absolute paths can still escape).
     let mut sub_config = crate::AgentConfig {
         system_prompt: effective_prompt,
+        bash_cwd: spawn_bash_cwd(worktree.as_ref()),
         ..clone_agent_config(agent_config)
     };
 
@@ -964,7 +967,7 @@ fn handle_spawn_bg(
     // default confinement, not a sandbox — absolute paths can still escape).
     let mut sub_config = crate::AgentConfig {
         system_prompt: effective_prompt,
-        bash_cwd: worktree.as_ref().map(|w| w.path.display().to_string()),
+        bash_cwd: spawn_bash_cwd(worktree.as_ref()),
         ..clone_agent_config(agent_config)
     };
 
@@ -1608,6 +1611,15 @@ pub struct WorktreeInfo {
     pub branch: String,
     /// When the worktree was created (for stale-cleanup).
     pub created_at: Instant,
+}
+
+/// The bash cwd to pin a spawn worker to: the worktree path when isolation
+/// succeeded, `None` (inherit process cwd) when it didn't.
+///
+/// This is enforced default confinement, NOT a sandbox — relative paths and
+/// bare `git` operate in the worktree, but absolute paths can still escape.
+pub fn spawn_bash_cwd(worktree: Option<&WorktreeInfo>) -> Option<String> {
+    worktree.map(|w| w.path.display().to_string())
 }
 
 /// Run a git command in a specific directory.
@@ -3713,5 +3725,90 @@ mod tests {
     #[test]
     fn test_spawn_near_miss_silent_on_empty() {
         assert_eq!(spawn_near_miss(""), None);
+    }
+
+    // -- spawn worktree cwd pinning (#621) --------------------------------
+
+    fn fake_worktree(path: &str) -> WorktreeInfo {
+        WorktreeInfo {
+            path: PathBuf::from(path),
+            branch: "spawn/1".to_string(),
+            created_at: Instant::now(),
+        }
+    }
+
+    fn base_agent_config() -> crate::AgentConfig {
+        crate::AgentConfig {
+            model: "test-model".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::default(),
+            system_prompt: "test".to_string(),
+            thinking: yoagent::ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            auto_commit: false,
+            permissions: crate::cli::PermissionConfig::default(),
+            dir_restrictions: crate::cli::DirectoryRestrictions::default(),
+            context_strategy: crate::cli::ContextStrategy::default(),
+            context_window: None,
+            shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
+            auto_watch: false,
+            allowed_tools: vec![],
+            disallowed_tools: vec![],
+            no_tools: false,
+            lite: false,
+            bash_cwd: None,
+        }
+    }
+
+    #[test]
+    fn test_spawn_bash_cwd_maps_worktree_path() {
+        let wt = fake_worktree("/tmp/yoyo-spawn-42");
+        assert_eq!(
+            spawn_bash_cwd(Some(&wt)),
+            Some("/tmp/yoyo-spawn-42".to_string())
+        );
+    }
+
+    #[test]
+    fn test_spawn_bash_cwd_none_without_worktree() {
+        assert_eq!(spawn_bash_cwd(None), None);
+    }
+
+    #[test]
+    fn test_sub_config_bash_cwd_wired_from_worktree() {
+        // Mirrors the production wiring in handle_spawn: the sub_config built
+        // for a spawn worker gets bash_cwd pinned to the worktree path.
+        let base = base_agent_config();
+        let worktree = Some(fake_worktree("/tmp/yoyo-spawn-worktree"));
+        let sub_config = crate::AgentConfig {
+            system_prompt: "spawn task".to_string(),
+            bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(&base)
+        };
+        assert_eq!(
+            sub_config.bash_cwd,
+            Some("/tmp/yoyo-spawn-worktree".to_string())
+        );
+    }
+
+    #[test]
+    fn test_sub_config_bash_cwd_none_when_worktree_unavailable() {
+        // When worktree creation failed, the worker inherits the process cwd
+        // (bash_cwd stays None) — same fallback as before #621.
+        let base = base_agent_config();
+        let worktree: Option<WorktreeInfo> = None;
+        let sub_config = crate::AgentConfig {
+            system_prompt: "spawn task".to_string(),
+            bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(&base)
+        };
+        assert_eq!(sub_config.bash_cwd, None);
     }
 }

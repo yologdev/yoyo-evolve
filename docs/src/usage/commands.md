@@ -356,7 +356,7 @@ This is useful for tasks that would consume a lot of context in your main sessio
 
 The subagent has access to the same tools (bash, file operations, etc.) and uses the same model. Its token usage counts toward your session total, but its context is completely separate from your main conversation. When it finishes, a summary of the task and result is injected into your main conversation so you have awareness of what was done.
 
-**Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+**Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees, and the worker's bash working directory is pinned to its worktree (relative paths and bare `git` commands operate there by default; this is enforced default confinement, not a sandbox — absolute paths can still reach outside). When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
 
 ```
 ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
