@@ -3454,6 +3454,51 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn test_read_guard_bash_blocks_write_commands_refused_in_read_mode() {
+        let _reset = ReadModeReset;
+
+        let tool = with_read_guard_bash(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+
+        // Non-destructive write commands (the plan/read-mode write hole):
+        // refused under read mode with an error naming what matched.
+        crate::commands_config::set_read_mode(true);
+        for cmd in ["tee /tmp/x", "touch /tmp/x"] {
+            let result = tool
+                .execute(serde_json::json!({"command": cmd}), test_tool_context())
+                .await;
+            let err = result.expect_err(&format!(
+                "write command `{cmd}` must be refused in read mode"
+            ));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("read mode is active"),
+                "refusal for `{cmd}` should name read mode, got: {msg}"
+            );
+            assert!(
+                msg.contains("writes"),
+                "refusal for `{cmd}` should say the command writes, got: {msg}"
+            );
+        }
+
+        // Other side of the boundary (Day 122): the SAME commands pass when
+        // no mode is active — normal bash stays unrestricted.
+        crate::commands_config::set_read_mode(false);
+        for cmd in ["tee /tmp/x", "touch /tmp/x"] {
+            let result = tool
+                .execute(serde_json::json!({"command": cmd}), test_tool_context())
+                .await;
+            assert!(
+                result.is_ok(),
+                "`{cmd}` must pass through when no blocking mode is active"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_read_guard_bash_passthrough_when_read_mode_off() {
         let _reset = ReadModeReset;
         crate::commands_config::set_read_mode(false);

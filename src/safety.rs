@@ -2617,13 +2617,13 @@ mod tests {
             "sed -i 's/a/b/' file.txt",
             "sed --in-place=.bak 's/a/b/' f",
             "dd if=/dev/zero of=/tmp/img bs=1M",
-            "echo hi > out.txt",           // truncating redirection
-            "cat a >> b",                  // appending redirection
-            "echo foo 2> err.log",         // stderr to a real file
-            "ls && touch marker",          // write verb after &&
-            "sudo touch /tmp/x",           // wrapper-unwrapped
-            "FOO=1 tee /tmp/x",            // env assignment skipped
-            "/usr/bin/touch x",            // full-path invocation
+            "echo hi > out.txt",                // truncating redirection
+            "cat a >> b",                       // appending redirection
+            "echo foo 2> err.log",              // stderr to a real file
+            "ls && touch marker",               // write verb after &&
+            "sudo touch /tmp/x",                // wrapper-unwrapped
+            "FOO=1 tee /tmp/x",                 // env assignment skipped
+            "/usr/bin/touch x",                 // full-path invocation
             "find . -name '*.o' | xargs touch", // xargs fan-out
         ];
         for cmd in &positives {
@@ -2639,20 +2639,20 @@ mod tests {
         // Fixture table: read-only commands must pass — both sides of the
         // boundary (Day 122 lesson).
         let negatives = [
-            "echo \"use > carefully\"",   // > inside double quotes
-            "echo 'a > b'",               // > inside single quotes
-            "echo \\> x",                 // backslash-escaped >
-            "grep tee file",              // verb as argument, not command
-            "grep -rn touch src/",        // verb as search pattern
+            "echo \"use > carefully\"", // > inside double quotes
+            "echo 'a > b'",             // > inside single quotes
+            "echo \\> x",               // backslash-escaped >
+            "grep tee file",            // verb as argument, not command
+            "grep -rn touch src/",      // verb as search pattern
             "git log --stat",
             "ls",
             "cat file",
-            "ls /backup/mv",              // path merely containing mv
-            "cargo check 2>&1",           // fd duplication, not a file write
-            "grep foo . 2>/dev/null",     // /dev/null target is not a write
+            "ls /backup/mv",          // path merely containing mv
+            "cargo check 2>&1",       // fd duplication, not a file write
+            "grep foo . 2>/dev/null", // /dev/null target is not a write
             "git diff > /dev/null",
-            "sed -n '5p' file",           // sed without -i is read-only
-            "dd if=/dev/sda",             // dd without of= writes nothing
+            "sed -n '5p' file", // sed without -i is read-only
+            "dd if=/dev/sda",   // dd without of= writes nothing
             "man mv",
         ];
         for cmd in &negatives {
@@ -2668,14 +2668,20 @@ mod tests {
     fn test_detect_write_command_names_what_matched() {
         // The refusal message must name WHAT matched — honest errors.
         let what = detect_write_command("touch /tmp/x").expect("touch must match");
-        assert!(what.contains("touch"), "message should name the verb: {what}");
+        assert!(
+            what.contains("touch"),
+            "message should name the verb: {what}"
+        );
         let what = detect_write_command("echo hi > out.txt").expect("> must match");
         assert!(
             what.contains("out.txt"),
             "message should name the redirect target: {what}"
         );
         let what = detect_write_command("sed -i 's/a/b/' f").expect("sed -i must match");
-        assert!(what.contains("sed -i"), "message should name sed -i: {what}");
+        assert!(
+            what.contains("sed -i"),
+            "message should name sed -i: {what}"
+        );
     }
 
     #[test]
