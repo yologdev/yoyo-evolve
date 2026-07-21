@@ -1267,8 +1267,24 @@ mod tests {
         // build_tools should return 8 tools regardless of auto_approve (in non-terminal: no ask_user)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools_approved = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
-        let tools_confirm = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools_approved = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
+        let tools_confirm = build_tools(
+            false,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(tools_approved.len(), 9);
         assert_eq!(tools_confirm.len(), 9);
     }
@@ -1421,7 +1437,15 @@ mod tests {
         // Verify build_tools still returns exactly 9 — SubAgentTool is added via with_sub_agent
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(
             tools.len(),
             9,
@@ -1479,7 +1503,15 @@ mod tests {
         // When auto_approve is true, tools should not have ConfirmTool wrappers
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(tools.len(), 9);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -1493,7 +1525,15 @@ mod tests {
         // (ConfirmTool delegates name() to inner tool)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            false,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(tools.len(), 9);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -1981,7 +2021,15 @@ mod tests {
     fn test_rename_symbol_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"rename_symbol"),
@@ -2024,7 +2072,15 @@ mod tests {
         // In test environment (no terminal), ask_user should NOT be included
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             !names.contains(&"ask_user"),
@@ -2138,7 +2194,15 @@ mod tests {
     fn test_todo_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"todo"),
@@ -2398,7 +2462,15 @@ mod tests {
     fn test_all_tool_names_unique() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         let mut seen = std::collections::HashSet::new();
         for name in &names {
@@ -2413,7 +2485,15 @@ mod tests {
     fn test_all_tools_have_descriptions() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         for tool in &tools {
             let desc = tool.description();
             assert!(
@@ -2435,7 +2515,15 @@ mod tests {
             allow: vec!["./src".to_string()],
             deny: vec!["/etc".to_string(), "/tmp/secret".to_string()],
         };
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(
             tools.len(),
             9,
@@ -2447,7 +2535,15 @@ mod tests {
     fn test_build_tools_with_audit_wrapping() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            true,
+            vec![],
+            None,
+        );
         assert_eq!(
             tools.len(),
             9,
@@ -2772,7 +2868,15 @@ mod tests {
     fn test_build_tools_canonical_names() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         // In non-terminal mode (test env), there should be exactly these 9 tools
         let expected = [
@@ -2804,7 +2908,15 @@ mod tests {
         // In test (non-terminal) environment, ask_user should be excluded
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             !names.contains(&"ask_user"),
@@ -2996,7 +3108,15 @@ mod tests {
     fn test_web_search_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"web_search"),

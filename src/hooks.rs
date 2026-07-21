@@ -929,7 +929,15 @@ mod tests {
         let perms = crate::config::PermissionConfig::default();
         let dirs = crate::config::DirectoryRestrictions::default();
         // Build with audit=false => hooks is empty => tools are NOT wrapped
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
         assert_eq!(tools.len(), 9, "Tool count should be 9 without audit hooks");
     }
 
@@ -938,9 +946,24 @@ mod tests {
         // With audit=true, tool count stays the same (tools are wrapped, not added)
         let perms = crate::config::PermissionConfig::default();
         let dirs = crate::config::DirectoryRestrictions::default();
-        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
-        let tools_with_audit =
-            build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true, vec![], None);
+        let tools_no_audit = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
+        let tools_with_audit = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            true,
+            vec![],
+            None,
+        );
         assert_eq!(
             tools_no_audit.len(),
             tools_with_audit.len(),
@@ -953,9 +976,24 @@ mod tests {
         // Tool names should be identical with or without audit
         let perms = crate::config::PermissionConfig::default();
         let dirs = crate::config::DirectoryRestrictions::default();
-        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![], None);
-        let tools_with_audit =
-            build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true, vec![], None);
+        let tools_no_audit = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            false,
+            vec![],
+            None,
+        );
+        let tools_with_audit = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS,
+            true,
+            vec![],
+            None,
+        );
         let names_no: Vec<&str> = tools_no_audit.iter().map(|t| t.name()).collect();
         let names_yes: Vec<&str> = tools_with_audit.iter().map(|t| t.name()).collect();
         assert_eq!(
