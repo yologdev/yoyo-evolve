@@ -846,6 +846,7 @@ pub async fn handle_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn build_apply_prompt_contains_verify_cmd() {
@@ -1165,7 +1166,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_plan_mode_toggle() {
+        // Plan mode is a process global also exercised by the tool-layer
+        // guard tests in tool_wrappers.rs — #[serial] prevents races.
         // Ensure clean state
         set_plan_mode(false);
         assert!(!is_plan_mode());

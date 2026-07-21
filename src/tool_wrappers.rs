@@ -966,33 +966,80 @@ pub(crate) fn with_session_cap(tool: Box<dyn AgentTool>, cap: usize) -> Box<dyn 
 }
 
 // ---------------------------------------------------------------------------
-// ReadModeGuardTool — mechanical /read mode enforcement
+// ReadModeGuardTool — mechanical /read + /plan mode enforcement
 // ---------------------------------------------------------------------------
 
-/// How the read-mode guard classifies its wrapped tool.
+/// How the read/plan-mode guard classifies its wrapped tool.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReadGuardKind {
-    /// Always refused under read mode (write_file, edit_file, rename_symbol).
+    /// Always refused while a blocking mode is on (write_file, edit_file,
+    /// rename_symbol).
     Write,
-    /// Refused under read mode only when the command matches the existing
-    /// destructive-pattern classification in `safety.rs`. This is honest but
-    /// incomplete — e.g. plain `>` redirection is not classified as destructive,
-    /// so it passes through; the refusal message says so.
+    /// Refused while a blocking mode is on only when the command matches the
+    /// existing destructive-pattern classification in `safety.rs`. This is
+    /// honest but incomplete — e.g. plain `>` redirection is not classified
+    /// as destructive, so it passes through; the refusal message says so.
     Bash,
 }
 
-/// A wrapper that mechanically enforces `/read` mode at the tool layer.
+/// A wrapper that mechanically enforces `/read` mode and `/plan` mode at the
+/// tool layer.
 ///
-/// `/read` was previously prompt-only (`READ_MODE_PROMPT` injected into the
-/// conversation) — a model that ignored the prompt could still write files.
-/// This wrapper checks `crate::commands_config::is_read_mode()` **at call
-/// time** (read mode toggles at runtime; snapshotting at build time would
-/// desync the guard from `/read on`/`/read off`) and returns an honest tool
-/// error instead of executing. When read mode is off (the default), it is a
-/// transparent pass-through.
+/// Both modes were previously prompt-only (`READ_MODE_PROMPT` /
+/// `PLAN_MODE_PROMPT` injected into the conversation) — a request, not a
+/// lock: a model that ignored the prompt could still write files. This
+/// wrapper checks `crate::commands_config::is_read_mode()` and
+/// `crate::commands_plan::is_plan_mode()` **at call time** (both toggle at
+/// runtime; snapshotting at build time would desync the guard from the mode
+/// commands) and returns an honest tool error instead of executing.
+///
+/// Plan-mode exception: while `/plan apply` is executing
+/// (`crate::commands_plan::is_plan_apply_active()`), the plan-mode block is a
+/// transparent pass-through — apply needs full tool access to execute the
+/// plan. When neither mode is on (the default), the wrapper is a transparent
+/// pass-through.
 pub(crate) struct ReadModeGuardTool {
     inner: Box<dyn AgentTool>,
     kind: ReadGuardKind,
+}
+
+/// Which restrictive mode, if any, currently blocks write-class work.
+///
+/// Read mode wins when both are somehow on (it's the stricter promise).
+/// Plan mode only counts while `/plan apply` is NOT executing — apply needs
+/// write access to carry out the plan.
+fn active_blocking_mode() -> Option<BlockingMode> {
+    if crate::commands_config::is_read_mode() {
+        return Some(BlockingMode::Read);
+    }
+    if crate::commands_plan::is_plan_mode() && !crate::commands_plan::is_plan_apply_active() {
+        return Some(BlockingMode::Plan);
+    }
+    None
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BlockingMode {
+    Read,
+    Plan,
+}
+
+impl BlockingMode {
+    /// "<mode> is active" prefix for refusal messages.
+    fn label(self) -> &'static str {
+        match self {
+            BlockingMode::Read => "read mode",
+            BlockingMode::Plan => "plan mode",
+        }
+    }
+
+    /// How the user exits the mode (named in every refusal — no silent no-ops).
+    fn exit_hint(self) -> &'static str {
+        match self {
+            BlockingMode::Read => "Use /read off to enable writes.",
+            BlockingMode::Plan => "Use /plan apply to execute the plan or /plan off to exit.",
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -1018,25 +1065,28 @@ impl AgentTool for ReadModeGuardTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
-        // Check at call time — read mode is toggled at runtime via /read.
-        if crate::commands_config::is_read_mode() {
+        // Check at call time — both modes are toggled at runtime.
+        if let Some(mode) = active_blocking_mode() {
             match self.kind {
                 ReadGuardKind::Write => {
                     return Err(yoagent::types::ToolError::Failed(format!(
-                        "read mode is active — {} is a write tool and was blocked. \
-                         Use /read off to enable writes.",
-                        self.inner.name()
+                        "{} is active — {} is a write tool and was blocked. {}",
+                        mode.label(),
+                        self.inner.name(),
+                        mode.exit_hint()
                     )));
                 }
                 ReadGuardKind::Bash => {
                     if let Some(cmd) = params.get("command").and_then(|v| v.as_str()) {
                         if let Some(reason) = crate::safety::analyze_bash_command(cmd) {
                             return Err(yoagent::types::ToolError::Failed(format!(
-                                "read mode is active — this command was blocked as \
+                                "{} is active — this command was blocked as \
                                  destructive ({reason}). Note: only commands matching \
-                                 known destructive patterns are blocked; read mode does \
+                                 known destructive patterns are blocked; this guard does \
                                  not catch every possible write (e.g. plain `>` \
-                                 redirection). Use /read off to enable writes."
+                                 redirection). {}",
+                                mode.label(),
+                                mode.exit_hint()
                             )));
                         }
                     }
@@ -1048,7 +1098,8 @@ impl AgentTool for ReadModeGuardTool {
 }
 
 /// Wrap a write-class tool (write_file, edit_file, rename_symbol) with
-/// read-mode enforcement: refused entirely while `/read` is on.
+/// read/plan-mode enforcement: refused entirely while `/read` is on, or while
+/// `/plan` is on and `/plan apply` is not executing.
 pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     Box::new(ReadModeGuardTool {
         inner: tool,
@@ -1056,8 +1107,8 @@ pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     })
 }
 
-/// Wrap the bash tool with read-mode enforcement: while `/read` is on,
-/// commands flagged by the destructive-pattern classifier are refused;
+/// Wrap the bash tool with read/plan-mode enforcement: while a blocking mode
+/// is on, commands flagged by the destructive-pattern classifier are refused;
 /// read-only commands pass through.
 pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     Box::new(ReadModeGuardTool {
@@ -3415,6 +3466,147 @@ mod tests {
         assert!(
             result.is_ok(),
             "read-mode guard must be a transparent pass-through when read mode is off"
+        );
+    }
+
+    // === Plan-mode enforcement tests (same guard, sibling mode) ===
+    //
+    // Plan mode and the plan-apply flag are process globals
+    // (commands_plan::set_plan_mode / set_plan_apply_active), so these tests
+    // are #[serial] and use an RAII guard to force both OFF at the end of
+    // each test — even when an assertion panics.
+
+    struct PlanModeReset;
+    impl Drop for PlanModeReset {
+        fn drop(&mut self) {
+            crate::commands_plan::set_plan_mode(false);
+            crate::commands_plan::set_plan_apply_active(false);
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_plan_guard_blocks_write_tools_when_plan_mode_on() {
+        let _reset = PlanModeReset;
+        crate::commands_plan::set_plan_mode(true);
+        crate::commands_plan::set_plan_apply_active(false);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard(Box::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await;
+            let err = result.expect_err(&format!("{name} must be refused under plan mode"));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("plan mode is active"),
+                "refusal for {name} should name plan mode, got: {msg}"
+            );
+            assert!(
+                msg.contains("/plan apply") && msg.contains("/plan off"),
+                "refusal for {name} should tell the user how to exit plan mode, got: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_plan_guard_passthrough_when_apply_active() {
+        let _reset = PlanModeReset;
+        crate::commands_plan::set_plan_mode(true);
+        crate::commands_plan::set_plan_apply_active(true);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard(Box::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await;
+            assert!(
+                result.is_ok(),
+                "{name} must pass through during /plan apply — apply needs write access"
+            );
+        }
+
+        // Bash too: apply must be able to run real commands.
+        let bash = with_read_guard_bash(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+        assert!(
+            bash.execute(
+                serde_json::json!({"command": "rm -rf ./build"}),
+                test_tool_context(),
+            )
+            .await
+            .is_ok(),
+            "bash must pass through during /plan apply"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_plan_guard_passthrough_when_plan_mode_off() {
+        let _reset = PlanModeReset;
+        crate::commands_plan::set_plan_mode(false);
+        crate::commands_plan::set_plan_apply_active(false);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard(Box::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await;
+            assert!(
+                result.is_ok(),
+                "{name} must pass through when plan mode is off (product default)"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_plan_guard_bash_blocks_destructive_allows_readonly() {
+        let _reset = PlanModeReset;
+        crate::commands_plan::set_plan_mode(true);
+        crate::commands_plan::set_plan_apply_active(false);
+
+        let tool = with_read_guard_bash(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+
+        // Destructive command: refused with an honest error.
+        let result = tool
+            .execute(
+                serde_json::json!({"command": "rm -rf /"}),
+                test_tool_context(),
+            )
+            .await;
+        let err = result.expect_err("destructive bash must be refused under plan mode");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("plan mode is active"),
+            "bash refusal should name plan mode, got: {msg}"
+        );
+
+        // Benign read-only command passes through.
+        let result = tool
+            .execute(
+                serde_json::json!({"command": "git status"}),
+                test_tool_context(),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "read-only `git status` must be allowed under plan mode"
         );
     }
 }
