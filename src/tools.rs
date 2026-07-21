@@ -22,8 +22,8 @@ use crate::safety::analyze_bash_command;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
-    with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
-    SESSION_TOOL_CALL_CAP,
+    with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap,
+    with_truncation, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
@@ -986,7 +986,7 @@ pub fn build_tools(
     let mut tools = vec![
         maybe_hook(
             with_recovery_hints(
-                with_truncation(Box::new(bash), max_tool_output),
+                with_truncation(with_read_guard_bash(Box::new(bash)), max_tool_output),
                 &failure_tracker,
             ),
             &hooks,
@@ -1003,14 +1003,20 @@ pub fn build_tools(
         ),
         maybe_hook(
             with_recovery_hints(
-                with_truncation(with_auto_check(write_tool), max_tool_output),
+                with_truncation(
+                    with_read_guard(with_auto_check(write_tool)),
+                    max_tool_output,
+                ),
                 &failure_tracker,
             ),
             &hooks,
         ),
         maybe_hook(
             with_recovery_hints(
-                with_truncation(with_smart_edit(with_auto_check(edit_tool)), max_tool_output),
+                with_truncation(
+                    with_read_guard(with_smart_edit(with_auto_check(edit_tool))),
+                    max_tool_output,
+                ),
                 &failure_tracker,
             ),
             &hooks,
@@ -1037,7 +1043,7 @@ pub fn build_tools(
         ),
         maybe_hook(
             with_recovery_hints(
-                with_truncation(rename_tool, max_tool_output),
+                with_truncation(with_read_guard(rename_tool), max_tool_output),
                 &failure_tracker,
             ),
             &hooks,

@@ -966,6 +966,107 @@ pub(crate) fn with_session_cap(tool: Box<dyn AgentTool>, cap: usize) -> Box<dyn 
 }
 
 // ---------------------------------------------------------------------------
+// ReadModeGuardTool — mechanical /read mode enforcement
+// ---------------------------------------------------------------------------
+
+/// How the read-mode guard classifies its wrapped tool.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ReadGuardKind {
+    /// Always refused under read mode (write_file, edit_file, rename_symbol).
+    Write,
+    /// Refused under read mode only when the command matches the existing
+    /// destructive-pattern classification in `safety.rs`. This is honest but
+    /// incomplete — e.g. plain `>` redirection is not classified as destructive,
+    /// so it passes through; the refusal message says so.
+    Bash,
+}
+
+/// A wrapper that mechanically enforces `/read` mode at the tool layer.
+///
+/// `/read` was previously prompt-only (`READ_MODE_PROMPT` injected into the
+/// conversation) — a model that ignored the prompt could still write files.
+/// This wrapper checks `crate::commands_config::is_read_mode()` **at call
+/// time** (read mode toggles at runtime; snapshotting at build time would
+/// desync the guard from `/read on`/`/read off`) and returns an honest tool
+/// error instead of executing. When read mode is off (the default), it is a
+/// transparent pass-through.
+pub(crate) struct ReadModeGuardTool {
+    inner: Box<dyn AgentTool>,
+    kind: ReadGuardKind,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for ReadModeGuardTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Check at call time — read mode is toggled at runtime via /read.
+        if crate::commands_config::is_read_mode() {
+            match self.kind {
+                ReadGuardKind::Write => {
+                    return Err(yoagent::types::ToolError::Failed(format!(
+                        "read mode is active — {} is a write tool and was blocked. \
+                         Use /read off to enable writes.",
+                        self.inner.name()
+                    )));
+                }
+                ReadGuardKind::Bash => {
+                    if let Some(cmd) = params.get("command").and_then(|v| v.as_str()) {
+                        if let Some(reason) = crate::safety::analyze_bash_command(cmd) {
+                            return Err(yoagent::types::ToolError::Failed(format!(
+                                "read mode is active — this command was blocked as \
+                                 destructive ({reason}). Note: only commands matching \
+                                 known destructive patterns are blocked; read mode does \
+                                 not catch every possible write (e.g. plain `>` \
+                                 redirection). Use /read off to enable writes."
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        self.inner.execute(params, ctx).await
+    }
+}
+
+/// Wrap a write-class tool (write_file, edit_file, rename_symbol) with
+/// read-mode enforcement: refused entirely while `/read` is on.
+pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+    Box::new(ReadModeGuardTool {
+        inner: tool,
+        kind: ReadGuardKind::Write,
+    })
+}
+
+/// Wrap the bash tool with read-mode enforcement: while `/read` is on,
+/// commands flagged by the destructive-pattern classifier are refused;
+/// read-only commands pass through.
+pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+    Box::new(ReadModeGuardTool {
+        inner: tool,
+        kind: ReadGuardKind::Bash,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
