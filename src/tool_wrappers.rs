@@ -3261,4 +3261,160 @@ mod tests {
             .await
             .is_err());
     }
+
+    // === ReadModeGuardTool tests ===
+    //
+    // Read mode is a process global (commands_config::set_read_mode), so these
+    // tests are #[serial] and use an RAII guard to force read mode OFF at the
+    // end of each test — even when an assertion panics — to avoid poisoning
+    // other tests in the process.
+
+    struct ReadModeReset;
+    impl Drop for ReadModeReset {
+        fn drop(&mut self) {
+            crate::commands_config::set_read_mode(false);
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_blocks_write_tools_when_read_mode_on() {
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(true);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard(Box::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await;
+            let err = result.expect_err(&format!("{name} must be refused under read mode"));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("read mode is active"),
+                "refusal for {name} should name read mode, got: {msg}"
+            );
+            assert!(
+                msg.contains("/read off"),
+                "refusal for {name} should tell the user how to exit read mode, got: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_passthrough_when_read_mode_off() {
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(false);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard(Box::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await;
+            assert!(
+                result.is_ok(),
+                "{name} must pass through when read mode is off (product default)"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_toggles_at_call_time_not_build_time() {
+        let _reset = ReadModeReset;
+        // Build the wrapper while read mode is OFF...
+        crate::commands_config::set_read_mode(false);
+        let tool = with_read_guard(Box::new(MockTool {
+            tool_name: "write_file",
+            result_text: "wrote".to_string(),
+        }));
+        assert!(tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_ok());
+
+        // ...then flip it ON: the SAME wrapper instance must start refusing.
+        crate::commands_config::set_read_mode(true);
+        assert!(
+            tool.execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_err(),
+            "guard must check read mode at call time, not snapshot at build time"
+        );
+
+        // And flipping OFF again unblocks without a rebuild.
+        crate::commands_config::set_read_mode(false);
+        assert!(tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_bash_blocks_destructive_allows_readonly() {
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(true);
+
+        let tool = with_read_guard_bash(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+
+        // Destructive command: refused with an honest error.
+        let result = tool
+            .execute(
+                serde_json::json!({"command": "rm -rf /"}),
+                test_tool_context(),
+            )
+            .await;
+        let err = result.expect_err("destructive bash must be refused under read mode");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("read mode is active"),
+            "bash refusal should name read mode, got: {msg}"
+        );
+
+        // Read-only commands: pass through even under read mode.
+        for cmd in ["git status", "ls -la"] {
+            let result = tool
+                .execute(serde_json::json!({"command": cmd}), test_tool_context())
+                .await;
+            assert!(
+                result.is_ok(),
+                "read-only command `{cmd}` must be allowed under read mode"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_bash_passthrough_when_read_mode_off() {
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(false);
+
+        let tool = with_read_guard_bash(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+        // Even a destructive-looking command passes through the READ-MODE
+        // guard when read mode is off (other layers, e.g. confirmation,
+        // still apply in the real tool stack).
+        let result = tool
+            .execute(
+                serde_json::json!({"command": "rm -rf /"}),
+                test_tool_context(),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "read-mode guard must be a transparent pass-through when read mode is off"
+        );
+    }
 }

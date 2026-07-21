@@ -22,8 +22,8 @@ use crate::safety::analyze_bash_command;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
-    with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap,
-    with_truncation, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap, with_truncation,
+    ToolFailureTracker, SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
