@@ -73,6 +73,19 @@ This project is a...
 > find all TODO comments in this project
 ```
 
+## Screen reader / plain output
+
+If you use a screen reader (or any environment where in-place terminal
+animations are unwelcome), start yoyo with:
+
+```bash
+yoyo --screen-reader
+```
+
+This disables the spinner and progress-timer animations (no carriage-return
+redraws or cursor-movement escapes — tool activity is announced as plain,
+linear lines) and turns off colors, same as `--no-color`.
+
 ## Exiting
 
 Type `/quit`, `/exit`, or press Ctrl+D.
