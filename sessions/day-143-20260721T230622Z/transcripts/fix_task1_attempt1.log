@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'bash_cwd' in src ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '930,1000p' src/commands_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct WorktreeInfo" -A… ✓ (4ms)
+  4 tools completed in 14.1s (4 ✓)
+
+Now I'll extract a small pure helper for the wiring and test it, then update CLAUDE.md.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (7 → 7 lines)
+        // default confinement, not a sandbox — absolute paths can still escape).
+        let mut sub_config = crate::AgentConfig {
+            system_prompt: effective_prompt,
+  -         bash_cwd: worktree.as_ref().map(|w| w.path.display().to_string()),
+  +         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(agent_config)
+        };
+ ✓ (7.9s)
+        // default confinement, not a sandbox — absolute paths can still escape).
+        let mut sub_config = crate::AgentConfig {
+            system_prompt: effective_prompt,
+  -         bash_cwd: worktree.as_ref().map(|w| w.path.display().to_string()),
+  +         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(agent_config)
+        };
+  ▶ edit src/commands_spawn.rs (10 → 19 lines)
+        pub branch: String,
+        /// When the worktree was created (for stale-cleanup).
+        pub created_at: Instant,
+  + }
+  + 
+  + /// The bash cwd to pin a spawn worker to: the worktree path when isolation
+  + /// succeeded, `None` (inherit process cwd) when it didn't.
+  + ///
+  + /// This is enforced default confinement, NOT a sandbox — relative paths and
+  + /// bare `git` operate in the worktree, but absolute paths can still escape.
+  + pub fn spawn_bash_cwd(worktree: Option<&WorktreeInfo>) -> Option<String> {
+  +     worktree.map(|w| w.path.display().to_string())
+    }
+ ✓ (1m 2s)
+        pub branch: String,
+        /// When the worktree was created (for stale-cleanup).
+        pub created_at: Instant,
+  + }
+  + 
+  + /// The bash cwd to pin a spawn worker to: the worktree path when isolation
+  + /// succeeded, `None` (inherit process cwd) when it didn't.
+  + ///
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '790,830p' src/commands_s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '760,790p' src/commands_s… ✓ (3ms)
+  5 tools completed in 1m 38s (5 ✓)
+
+The foreground spawn path (line 818) also creates a worktree but doesn't pin the cwd — I'll wire it with the same helper for consistency:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 8 lines)
+  -     // Build a fresh agent with context-enriched system prompt
+  +     // Build a fresh agent with context-enriched system prompt.
+  +     // Pin the worker's bash cwd to the worktree when one exists (enforced
+  +     // default confinement, not a sandbox — absolute paths can still escape).
+        let mut sub_config = crate::AgentConfig {
+            system_prompt: effective_prompt,
+  +         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(agent_config)
+        };
+ ✓ (1m 1s)
+  -     // Build a fresh agent with context-enriched system prompt
+  +     // Build a fresh agent with context-enriched system prompt.
+  +     // Pin the worker's bash cwd to the worktree when one exists (enforced
+  +     // default confinement, not a sandbox — absolute paths can still escape).
+        let mut sub_config = crate::AgentConfig {
+            system_prompt: effective_prompt,
+  +         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+            ..clone_agent_config(agent_config)
+        };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2240,2270p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,545p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/pub struct AgentConfig/,/^… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/pub struct AgentConfig/,/^… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1935,1972p' src/agent_bu… ✓ (3ms)
+  6 tools completed in 1m 35s (6 ✓)
+
+Now append the tests at the end of the module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 90 lines)
+        #[test]
+        fn test_spawn_near_miss_silent_on_empty() {
+            assert_eq!(spawn_near_miss(""), None);
+  +     }
+  + 
+  +     // -- spawn worktree cwd pinning (#621) --------------------------------
+  + 
+  +     fn fake_worktree(path: &str) -> WorktreeInfo {
+  +         WorktreeInfo {
+  +             path: PathBuf::from(path),
+  +             branch: "spawn/1".to_string(),
+  +             created_at: Instant::now(),
+  +         }
+  +     }
+  + 
+  +     fn base_agent_config() -> crate::AgentConfig {
+  +         crate::AgentConfig {
+  +             model: "test-model".to_string(),
+  +             api_key: "test-key".to_string(),
+  +             provider: "anthropic".to_string(),
+  ... (70 more lines)
+ ✓ (1m 1s)
+        #[test]
+        fn test_spawn_near_miss_silent_on_empty() {
+            assert_eq!(spawn_near_miss(""), None);
+  +     }
+  + 
+  +     // -- spawn worktree cwd pinning (#621) --------------------------------
+  + 
+  +     fn fake_worktree(path: &str) -> WorktreeInfo {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (112ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test bash_cwd 2>&1 | tail …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "worktree" docs/src/ | … ✓ (3ms)
+ ✓ (101ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass)
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass; when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, but absolute paths / `git -C /abs` can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+ ✓ (46.1s)
+  - - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass)
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass; when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, but absolute paths / `git -C /abs` can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,365p' docs/src/usage… ✓ (2ms)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+  + **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees, and the worker's bash working directory is pinned to its worktree (relative paths and bare `git` commands operate there by default; this is enforced default confinement, not a sandbox — absolute paths can still reach outside). When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+ ✓ (46.3s)
+  - **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+  + **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees, and the worker's bash working directory is pinned to its worktree (relative paths and bare `git` commands operate there by default; this is enforced default confinement, not a sandbox — absolute paths can still reach outside). When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (58.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (10 lines) ✓ (17ms)
+  10 tools completed in 4m 29s (10 ✓)
+
+  watch: no files changed this turn — skipping
+

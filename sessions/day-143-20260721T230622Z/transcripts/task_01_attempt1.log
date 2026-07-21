@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ gh issue view 621 --comments 2>/dev/null | head -150  ▶ $ gh issue view 620 --comments 2>/dev/null | tail -60 ✓ (657ms)
+ ✓ (677ms)
+  ▶ $ gh issue view 621 2>&1 | head -120; echo ---; gh issue view 621 --comments 2>&1 … ✓ (1.2s)
+  3 tools completed in 10.5s (3 ✓)
+
+The plan is clear. Let me look at the code.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cwd" src/tools.rs | head -30; echo ---; grep -n "fn build_tools" src/to…  ▶ $ grep -n "pub struct AgentConfig" -A 40 src/agent_builder.rs | head -60; echo ---… ✓ (4ms)
+ ✓ (8ms)
+  ▶ read src/tools.rs:60..120  ▶ read src/tools.rs:860..940 ✓ (0ms)
+ ✓ (1ms)
+  ▶ read src/tools.rs:939..979  ▶ $ grep -n "sub_config" src/commands_spawn.rs | head -20 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/commands_spawn.rs:790..850  ▶ read src/commands_spawn.rs:940..1000 ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ grep -rn "AgentConfig {" src/ | head -20; echo ---; grep -n "clone_agent_config"… ✓ (7ms)
+  ▶ $ grep -rn "AgentConfig {" src/ scripts/ tests/ 2>/dev/null; echo ---; grep -n "fn… ✓ (7ms)
+  ▶ $ grep -rn "AgentConfig {" src/ | grep -v "pub struct" | wc -l; grep -rn "AgentCon… ✓ (7ms)
+  ▶ $ sed -n '953,990p' src/agent_builder.rs; echo ===; sed -n '985,1000p' src/agent_b… ✓ (4ms)
+  ▶ edit src/tools.rs (6 → 17 lines)
+    impl StreamingBashTool {
+        pub fn with_confirm(mut self, f: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+            self.confirm_fn = Some(Box::new(f));
+  +         self
+  +     }
+  + 
+  +     /// Pin the working directory for all commands run by this tool.
+  +     ///
+  +     /// Used by `/spawn` worktree isolation to default the worker's bash into
+  +     /// its worktree. Defense-in-depth, not a sandbox: relative paths and bare
+  +     /// `git` operate in `path` by default, but absolute paths or `git -C /abs`
+  +     /// can still escape.
+  +     pub fn with_cwd(mut self, path: impl Into<String>) -> Self {
+  +         self.cwd = Some(path.into());
+            self
+        }
+    }
+ ✓ (11.2s)
+    impl StreamingBashTool {
+        pub fn with_confirm(mut self, f: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+            self.confirm_fn = Some(Box::new(f));
+  +         self
+  +     }
+  + 
+  +     /// Pin the working directory for all commands run by this tool.
+  +     ///
+  ... (9 more lines)
+  13 tools completed in 1m 11s (13 ✓)
+
+Expected dead-code until wired. Now update build_tools:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (18 → 26 lines)
+    /// When `audit` is true, all tools are wrapped with the AuditHook via the hook system.
+  + /// When `bash_cwd` is `Some(path)`, the bash tool runs every command with that
+  + /// working directory (used by `/spawn` worktree isolation); `None` keeps the
+  + /// process cwd — the default for interactive and normal-agent use.
+    pub fn build_tools(
+        auto_approve: bool,
+        permissions: &cli::PermissionConfig,
+  ···
+        max_tool_output: usize,
+        audit: bool,
+        shell_hooks: Vec<hooks::ShellHook>,
+  +     bash_cwd: Option<String>,
+    ) -> Vec<Box<dyn AgentTool>> {
+        // Shared flag: when any tool gets "always", all tools skip prompts
+        let always_approved = Arc::new(AtomicBool::new(false));
+    
+  +     let base_bash = match bash_cwd {
+  +         Some(cwd) => StreamingBashTool::default().with_cwd(cwd),
+  +         None => StreamingBashTool::default(),
+  +     };
+  ... (8 more lines)
+ ✓ (8.0s)
+    /// When `audit` is true, all tools are wrapped with the AuditHook via the hook system.
+  + /// When `bash_cwd` is `Some(path)`, the bash tool runs every command with that
+  + /// working directory (used by `/spawn` worktree isolation); `None` keeps the
+  + /// process cwd — the default for interactive and normal-agent use.
+    pub fn build_tools(
+        auto_approve: bool,
+        permissions: &cli::PermissionConfig,
+  ···
+  ... (13 more lines)
+  ▶ $ sed -i 's/build_tools(\(.*\), vec!\[\])/build_tools(\1, vec!… (2 lines) ✓ (5ms)
+  ▶ $ sed -n '1996,2010p' src/tools.rs ✓ (2ms)
+  ▶ edit src/tools.rs (5 → 6 lines)
+                TOOL_OUTPUT_MAX_CHARS_PIPED,
+                false,
+                vec![],
+  +             None,
+            );
+            assert_eq!(tools.len(), 9, "Should still have 9 tools with piped limit");
+ ✓ (8.0s)
+                TOOL_OUTPUT_MAX_CHARS_PIPED,
+                false,
+                vec![],
+  +             None,
+            );
+            assert_eq!(tools.len(), 9, "Should still have 9 tools with piped limit");
+  4 tools completed in 35.8s (4 ✓)
+
+Now the two agent_builder.rs sites and the new AgentConfig field:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '530,548p' src/agent_builder.rs; echo ===; sed -n '2412,2432p' src/agent_… ✓ (4ms)
+  ▶ edit src/agent_builder.rs (3 → 4 lines)
+                    is_audit_enabled(),
+                    self.shell_hooks.clone(),
+  +                 self.bash_cwd.clone(),
+                );
+ ✓ (7.9s)
+                    is_audit_enabled(),
+                    self.shell_hooks.clone(),
+  +                 self.bash_cwd.clone(),
+                );
+  2 tools completed in 12.1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

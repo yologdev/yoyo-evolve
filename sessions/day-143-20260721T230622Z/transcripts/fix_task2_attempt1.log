@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grade_forecast\|accurac… ✓ (2ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,560p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/ri… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/ri… (8 lines) ✓ (5ms)
+ ✓ (17ms)
+ ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 .yoy… (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -4 .yoy… (7 lines) ✓ (17ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,260p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GradedEvent\|parse_grad… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,320p' src/commands_ris… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ValidationEvent"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,430p' src/commands_r… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "write_validation_event… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1940,2070p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ValidationEvent {" src… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_accuracy_stats…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ValidationEvent {" src/… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 8 "ValidationEvent {"… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (8 → 30 lines)
+        // Only record the anticipatory accuracy when we actually have emerging
+        // data to grade against — absent means "no emerging list in the snapshot"
+        // (older snapshots), NOT "0% accurate".
+  -     if let Some(ea) = emerging_accuracy_pct {
+  -         if let Some(obj) = event.as_object_mut() {
+  -             obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+  +     //
+  +     // Day 143 experiment note (quiet-because-right vs quiet-because-silent):
+  +     // predicted the recent 0.0% emerging green events graded against EMPTY
+  +     // emerging lists. Checked `.yoyo/risk_snapshots.jsonl` — prediction
+  +     // FAILED: snapshots 57775c09/e48051c4/c6c19de2 carried 10/10/9 emerging
+  +     // paths, so those 0.0% grades are genuine (zero anticipatory false
+  +     // alarms). The ambiguity is still real for the *ungraded* case though:
+  +     // an event whose forecast was empty used to be indistinguishable from a
+  +     // legacy no-emerging event. So when the grade is `None`, we now persist
+  +     // an explicit `emerging_skipped: "empty_forecast"` marker — every caller
+  +     // computes the grade via `grade_forecast`, whose `None` means exactly
+  +     // "the emerging list was empty at snapshot time" (legacy snapshots parse
+  +     // to an empty list too — same meaning: no forecast existed). Historical
+  +     // lines without the marker stay valid and simply read as "unknown".
+  ... (13 more lines)
+ ✓ (1m 12s)
+        // Only record the anticipatory accuracy when we actually have emerging
+        // data to grade against — absent means "no emerging list in the snapshot"
+        // (older snapshots), NOT "0% accurate".
+  -     if let Some(ea) = emerging_accuracy_pct {
+  -         if let Some(obj) = event.as_object_mut() {
+  -             obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+  +     //
+  +     // Day 143 experiment note (quiet-because-right vs quiet-because-silent):
+  ... (13 more lines)
+  20 tools completed in 3m 57s (20 ✓)
+
+2. `ValidationEvent`: new defensive field + parsing:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (6 → 12 lines)
+        /// severity-less lines and CLI manual grading (parse is defensive, so
+        /// legacy JSONL stays valid).
+        pub(crate) severity: Option<String>,
+  +     /// True when the event's emerging column was skipped because the
+  +     /// forecast list was EMPTY at snapshot time (`emerging_skipped:
+  +     /// "empty_forecast"` marker, Day 143). Distinguishes "quiet because
+  +     /// silent" (no forecast existed) from legacy lines where the absence of
+  +     /// a grade is simply unknown. Absent marker → `false` (defensive).
+  +     pub(crate) emerging_skipped_empty: bool,
+    }
+ ✓ (7.3s)
+        /// severity-less lines and CLI manual grading (parse is defensive, so
+        /// legacy JSONL stays valid).
+        pub(crate) severity: Option<String>,
+  +     /// True when the event's emerging column was skipped because the
+  +     /// forecast list was EMPTY at snapshot time (`emerging_skipped:
+  +     /// "empty_forecast"` marker, Day 143). Distinguishes "quiet because
+  +     /// silent" (no forecast existed) from legacy lines where the absence of
+  +     /// a grade is simply unknown. Absent marker → `false` (defensive).
+  +     pub(crate) emerging_skipped_empty: bool,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (15 → 20 lines)
+                .get("severity")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+  +         // Optional skipped-because-empty marker (Day 143) — absent on all
+  +         // historical lines (defensive: absent → false, "unknown").
+  +         let emerging_skipped_empty = val.get("emerging_skipped").and_then(|v| v.as_str())
+  +             == Some("empty_forecast");
+    
+            events.push(ValidationEvent {
+                day,
+  ···
+                accuracy_pct,
+                emerging_accuracy_pct,
+                severity,
+  +             emerging_skipped_empty,
+            });
+ ✓ (7.5s)
+                .get("severity")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+  +         // Optional skipped-because-empty marker (Day 143) — absent on all
+  +         // historical lines (defensive: absent → false, "unknown").
+  +         let emerging_skipped_empty = val.get("emerging_skipped").and_then(|v| v.as_str())
+  +             == Some("empty_forecast");
+    
+  ... (8 more lines)
+  2 tools completed in 28.2s (2 ✓)
+
+Now bulk-insert the field into all test fixtures (right after the opening line — literal field order doesn't matter in Rust):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (2.8s)
+
+The script also matched the struct definition — remove that one bad insertion:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 2 lines)
+    pub(crate) struct ValidationEvent {
+  -     emerging_skipped_empty: false,
+        pub(crate) day: u32,
+ ✓ (10.6s)
+    pub(crate) struct ValidationEvent {
+  -     emerging_skipped_empty: false,
+        pub(crate) day: u32,
+
+  watch: no files changed this turn — skipping
+

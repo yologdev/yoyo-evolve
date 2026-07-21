@@ -1,0 +1,192 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grade_forecast\|accurac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat ✓ (5ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk_snaps…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 270,360p src/commands_ris… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_of\|emerging" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1960,2040p src/commands_r… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 385,430p src/commands_ris… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/commands_risk.r… ✓ (4ms)
+  8 tools completed in 36.8s (8 ✓)
+
+Now I'll make the edits. Site 1 — record_green_validation_to:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (9 → 3 lines)
+        // Legacy snapshots without an emerging list stay None (ungraded) —
+        // distinct from Some(0.0), so they don't drag the emerging average.
+  -     let emerging_pct = if emerging.is_empty() {
+  -         None
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             emerging.iter().map(|s| s.as_str()).collect();
+  -         Some(accuracy_of(&changed_refs, &emerging_set).1)
+  -     };
+  +     let emerging_pct = grade_forecast(&changed_refs, emerging).map(|(_, pct)| pct);
+ ✓ (1m 3s)
+        // Legacy snapshots without an emerging list stay None (ungraded) —
+        // distinct from Some(0.0), so they don't drag the emerging average.
+  -     let emerging_pct = if emerging.is_empty() {
+  -         None
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             emerging.iter().map(|s| s.as_str()).collect();
+  -         Some(accuracy_of(&changed_refs, &emerging_set).1)
+  -     };
+  +     let emerging_pct = grade_forecast(&changed_refs, emerging).map(|(_, pct)| pct);
+  ▶ edit src/commands_risk_snapshots.rs (9 → 6 lines)
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  -         (0, None)
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             last.emerging.iter().map(|s| s.as_str()).collect();
+  -         let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -         (e_hits, Some(e_pct))
+  -     };
+  +     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) =
+  +         match grade_forecast(&changed_refs, &last.emerging) {
+  +             Some((e_hits, e_pct)) => (e_hits, Some(e_pct)),
+  +             None => (0, None),
+  +         };
+ ✓ (1m 3s)
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  -         (0, None)
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             last.emerging.iter().map(|s| s.as_str()).collect();
+  -         let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -         (e_hits, Some(e_pct))
+  ... (6 more lines)
+  ▶ edit src/commands_risk.rs (6 → 6 lines)
+    pub(crate) use crate::commands_risk_snapshots::{
+        accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  -     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  +     grade_forecast, load_validation_history_from, parse_all_snapshots, parse_validation_events,
+        risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
+        RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    };
+ ✓ (11.7s)
+    pub(crate) use crate::commands_risk_snapshots::{
+        accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  -     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  +     grade_forecast, load_validation_history_from, parse_all_snapshots, parse_validation_events,
+        risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
+        RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    };
+  3 tools completed in 2m 33s (3 ✓)
+
+Expected — now the call site itself:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (14 → 12 lines)
+  -         let emerging_accuracy_pct = if emerging.is_empty() {
+  -             None
+  -         } else {
+  -             let emerging_set: std::collections::HashSet<&str> =
+  -                 emerging.iter().map(|s| s.as_str()).collect();
+  -             let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -             // Reactive-vs-emerging comparison, visible the moment it's measured
+  -             // (mirrors the watch-failure path in commands_risk_snapshots.rs).
+  -             eprintln!(
+  -                 "  {DIM}📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+  -                 e_hits, total_changed, e_pct, accuracy_pct_rounded,
+  -             );
+  -             Some(e_pct)
+  +         let emerging_accuracy_pct = match grade_forecast(&changed_refs, &emerging) {
+  +             None => None,
+  +             Some((e_hits, e_pct)) => {
+  +                 // Reactive-vs-emerging comparison, visible the moment it's measured
+  +                 // (mirrors the watch-failure path in commands_risk_snapshots.rs).
+  +                 eprintln!(
+  +                     "  {DIM}📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+  ... (5 more lines)
+ ✓ (11.5s)
+  -         let emerging_accuracy_pct = if emerging.is_empty() {
+  -             None
+  -         } else {
+  -             let emerging_set: std::collections::HashSet<&str> =
+  -                 emerging.iter().map(|s| s.as_str()).collect();
+  -             let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -             // Reactive-vs-emerging comparison, visible the moment it's measured
+  -             // (mirrors the watch-failure path in commands_risk_snapshots.rs).
+  ... (13 more lines)
+
+accuracy_of is no longer used via the re-export. Check who else uses it:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "accuracy_of" src/ | gr… ✓ (6ms)
+  ▶ edit src/commands_risk.rs (3 → 3 lines)
+    pub(crate) use crate::commands_risk_snapshots::{
+  -     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  -     grade_forecast, load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, grade_forecast,
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+ ✓ (1m 2s)
+    pub(crate) use crate::commands_risk_snapshots::{
+  -     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  -     grade_forecast, load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, grade_forecast,
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  2 tools completed in 1m 14s (2 ✓)
+
+Now add the red-green test the task asked for (pinning `None`-on-empty). Let me check the existing test around line 1455 to follow the pattern:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/commands_… ✓ (4ms)
+  ▶ edit src/commands_risk_snapshots.rs (6 → 35 lines)
+            let (zh, zp) = accuracy_of(&empty, &reactive);
+            assert_eq!(zh, 0);
+            assert!((zp - 0.0).abs() < 0.001);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_grade_forecast_empty_list_is_ungraded_not_zero() {
+  +         // "Quiet because silent": an EMPTY prediction list is absence of a
+  +         // forecast — it must grade as None (ungraded), never Some(0.0), so it
+  +         // can't contribute a fake 0.0 sample to the emerging averages.
+  +         let changed = ["src/a.rs", "src/b.rs"];
+  +         let empty: Vec<String> = Vec::new();
+  +         assert_eq!(
+  +             grade_forecast(&changed, &empty),
+  +             None,
+  +             "empty forecast → ungraded, not 0%"
+  +         );
+  + 
+  +         // "Quiet because right": a POPULATED forecast grades normally via
+  +         // accuracy_of — including a genuine 0% when nothing was hit.
+  ... (13 more lines)
+ ✓ (1m 2s)
+            let (zh, zp) = accuracy_of(&empty, &reactive);
+            assert_eq!(zh, 0);
+            assert!((zp - 0.0).abs() < 0.001);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_grade_forecast_empty_list_is_ungraded_not_zero() {
+  +         // "Quiet because silent": an EMPTY prediction list is absence of a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (6.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (50.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (36.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  7 tools completed in 3m 28s (7 ✓)
+
+Fixed. All four checks green: build, test (4425 + 89 passed), clippy -D warnings, fmt.
+
+**Root cause of the clippy error:** the implementation added the grade_forecast helper (empty forecast → None, never `Some(0.0)`) but never wired it into any call site — so it was dead code, and the inline empty-checks it was meant to replace were still duplicated at three grading paths.
+
+What I changed (fixed the error by completing the wiring, not by suppressing it):
+
+1. `src/commands_risk_snapshots.rs`
+   • record_green_validation_to: replaced the inline if emerging.is_empty() { None } else { ...accuracy_of... } with `grade_forecast(&changed_refs, emerging).map(|(_, pct)| pct)`
+   • `auto_validate_after_failure: same replacement via a match, preserving the (emerging_hits, Option<pct>)` shape used by the stderr comparison line
+   • Added `test_grade_forecast_empty_list_is_ungraded_not_zero — pins that an empty forecast grades as None` (quiet-because-silent), while a populated-but-wrong forecast grades as a real Some(0.0) (distinct outcomes, the task's core experiment)
+
+2. `src/commands_risk.rs`
+   • CLI validate path (handle_risk_validate): replaced its inline empty-check with grade_forecast, keeping the reactive-vs-emerging stderr line only when the forecast was populated
+   • Re-export list: added grade_forecast, dropped accuracy_of (no longer used outside commands_risk_snapshots.rs, where it remains the shared grading core called by grade_forecast)
+
+Behavior is unchanged for legacy data — all three sites already returned None on empty lists; they now do it through one tested helper instead of three hand-rolled copies, so the "empty = ungraded" invariant can't drift per-site.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Day 143, task 2 — a chosen epistemic experiment. Let me write down my prediction first, then diagnose.
+
+Prediction: the recent 0.0% emerging green events graded against an EMPTY emerging list (quiet-because-silent), not a populated one — meaning accuracy_of (or a call site) turns an empty forecast into Some(0.0) instead of None.
+
+Let me check the actual data and code:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 .yoy… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 .yoy… (6 lines) ✓ (23ms)
+ ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines)  ▶ search 'fn accuracy_of' in src/commands_risk_snapshots.rs ✓ (2ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines)  ▶ read src/commands_risk_snapshots.rs:270..350 ✓ (0ms)
+ ✓ (18ms)
+  6 tools completed in 22.7s (6 ✓)
+
+The output keeps getting elided. Let me see all validation lines:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (14 lines) ✓ (17ms)
+  ▶ read /tmp/val_summary.txt ✓ (0ms)
+  ▶ read src/commands_risk_snapshots.rs:349..499  ▶ search 'accuracy_of|emerging' in src/commands_risk.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'handle_risk_validate|accuracy_of' in src ✓ (7ms)
+  5 tools completed in 28.1s (5 ✓)
+
+Search tool giving odd results — let me grep directly:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "accuracy_of\|handle_ri… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_of\|handle_ris… ✓ (3ms)
+  ▶ read src/commands_risk.rs:1930..2060 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging" src/commands_…  ▶ read src/commands_risk_snapshots.rs:1410..1470 ✓ (0ms)
+ ✓ (3ms)
+  ▶ read src/commands_risk_accuracy.rs:40..160  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_green_validation… ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/commands_risk_accuracy.rs:159..339 ✓ (1ms)
+  ▶ read src/commands_risk_accuracy.rs:338..458 ✓ (0ms)
+  9 tools completed in 1m 39s (9 ✓)
+
+Now let me see the rest of the auto_validate_after_failure_to emerging block:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:491..536 ✓ (0ms)
+
+Diagnosis complete. Now implementing — first the shared helper that moves the empty-forecast invariant into the shared layer:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (5 → 22 lines)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Grade a forecast that may be absent: an EMPTY prediction list yields
+  + /// `None` (ungraded), never `Some(0.0)`. An empty list is the absence of a
+  + /// forecast — "quiet because silent" — and must stay distinguishable from a
+  + /// populated forecast that scored 0% ("quiet because right" on a green day,
+  + /// a miss on a failure day). Day 143: this invariant used to live only as a
+  + /// hand-copied guard at each call site (enforcement on the cooperative
+  + /// path); it now lives in the shared layer so a future call site can't
+  + /// forget it. Returns `Some((hits, accuracy_pct))` for populated forecasts.
+  + pub(crate) fn grade_forecast(changed: &[&str], predicted_paths: &[String]) -> Option<(usize, f64)> {
+  +     if predicted_paths.is_empty() {
+  +         return None;
+  +     }
+  +     let set: std::collections::HashSet<&str> =
+  +         predicted_paths.iter().map(|s| s.as_str()).collect();
+  +     Some(accuracy_of(changed, &set))
+  ... (1 more lines)
+ ✓ (11.3s)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Grade a forecast that may be absent: an EMPTY prediction list yields
+  + /// `None` (ungraded), never `Some(0.0)`. An empty list is the absence of a
+  + /// forecast — "quiet because silent" — and must stay distinguishable from a
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+
