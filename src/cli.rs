@@ -212,6 +212,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--context-strategy",
     "--context-window",
     "--no-color",
+    "--screen-reader",
     "--no-bell",
     "--no-notify",
     "--no-rtk",
@@ -766,6 +767,14 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         && std::io::stdout().is_terminal()
         && crate::config::parse_no_color_from_config(&file_config)
     {
+        crate::format::disable_color();
+    }
+    // --screen-reader: plain, linear, animation-free output. Suppresses the
+    // Spinner/ToolProgressTimer animations (no \r redraws, no cursor-movement
+    // escapes) and implies --no-color (reuses disable_color() — single source
+    // of truth for the color-off path).
+    if args.iter().any(|a| a == "--screen-reader") {
+        crate::format::set_plain_output(true);
         crate::format::disable_color();
     }
 
@@ -1413,6 +1422,13 @@ mod tests {
     fn test_no_color_flag_recognized() {
         let args = ["yoyo".to_string(), "--no-color".to_string()];
         assert!(args.iter().any(|a| a == "--no-color"));
+    }
+
+    #[test]
+    fn test_screen_reader_flag_recognized() {
+        let args = ["yoyo".to_string(), "--screen-reader".to_string()];
+        assert!(args.iter().any(|a| a == "--screen-reader"));
+        assert!(KNOWN_FLAGS.contains(&"--screen-reader"));
     }
 
     #[test]

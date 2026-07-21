@@ -6,6 +6,42 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use yoagent::types::{Content, ToolResult};
 
+// --- Plain output (screen reader) mode ---
+
+/// Whether plain, linear, animation-free output is enabled (via --screen-reader).
+/// When set, the Spinner and ToolProgressTimer never emit `\r` redraws or ANSI
+/// cursor-movement escapes — at most a single plain line each.
+static PLAIN_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable/disable plain (screen-reader-friendly) output. Call from CLI arg parsing.
+pub fn set_plain_output(enabled: bool) {
+    PLAIN_OUTPUT.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Check whether plain (screen-reader-friendly) output is active.
+pub fn is_plain_output() -> bool {
+    PLAIN_OUTPUT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// True when animated in-place redraws (`\r` + `\x1b[K`) are allowed:
+/// stderr must be a terminal AND plain output must be off.
+fn animations_enabled() -> bool {
+    stderr_is_terminal() && !is_plain_output()
+}
+
+/// The single plain line the Spinner prints in plain-output mode.
+/// Deliberately free of `\r` and ANSI escapes — screen readers get one
+/// linear announcement instead of an animation.
+pub fn plain_spinner_line() -> String {
+    "  thinking...".to_string()
+}
+
+/// The single plain line the ToolProgressTimer prints in plain-output mode
+/// once a tool exceeds the display threshold. No `\r`, no ANSI escapes.
+pub fn plain_tool_progress_line(tool_name: &str) -> String {
+    format!("  running {tool_name}...")
+}
+
 pub const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Get the spinner frame for a given tick index (wraps around).
@@ -30,6 +66,15 @@ impl Spinner {
         // Skip the spinner thread when stderr isn't a terminal — ANSI escape
         // sequences (\r, \x1b[K) would leak as garbage into piped output.
         if !stderr_is_terminal() {
+            return Self {
+                cancel: cancel_tx,
+                handle: None,
+            };
+        }
+
+        // Plain (screen reader) mode: one linear announcement, no animation.
+        if is_plain_output() {
+            eprintln!("{}", plain_spinner_line());
             return Self {
                 cancel: cancel_tx,
                 handle: None,
@@ -76,8 +121,8 @@ impl Spinner {
     /// to Drop to minimize latency on the critical path.
     pub fn stop(self) {
         let _ = self.cancel.send(true);
-        // Only emit ANSI clear sequence when stderr is a terminal
-        if stderr_is_terminal() {
+        // Only emit ANSI clear sequence when animated output was in use
+        if animations_enabled() {
             eprint!("\r\x1b[K");
             let _ = io::stderr().flush();
         }
@@ -90,8 +135,8 @@ impl Spinner {
 impl Drop for Spinner {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
-        // Only emit ANSI clear sequence when stderr is a terminal
-        if stderr_is_terminal() {
+        // Only emit ANSI clear sequence when animated output was in use
+        if animations_enabled() {
             eprint!("\r\x1b[K");
             let _ = io::stderr().flush();
         }
@@ -253,6 +298,25 @@ impl ToolProgressTimer {
                 line_count,
                 label,
                 handle: None,
+            };
+        }
+
+        // Plain (screen reader) mode: no repaints — print a single plain line
+        // once the tool exceeds the display threshold, then stay silent.
+        if is_plain_output() {
+            let handle = tokio::spawn(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                        eprintln!("{}", plain_tool_progress_line(&tool_name));
+                    }
+                    _ = cancel_rx.changed() => {}
+                }
+            });
+            return Self {
+                cancel: cancel_tx,
+                line_count,
+                label,
+                handle: Some(handle),
             };
         }
 
@@ -437,6 +501,34 @@ mod tests {
     #[test]
     fn test_spinner_frames_not_empty() {
         assert!(!SPINNER_FRAMES.is_empty());
+    }
+
+    #[test]
+    fn test_plain_output_flag_roundtrip() {
+        // Default is off; setting and clearing must round-trip.
+        set_plain_output(true);
+        assert!(is_plain_output());
+        set_plain_output(false);
+        assert!(!is_plain_output());
+    }
+
+    #[test]
+    fn test_plain_render_lines_have_no_ansi_or_carriage_returns() {
+        // Screen-reader mode's render output must be linear plain text:
+        // no \r in-place redraws, no ANSI escape sequences.
+        let lines = [
+            plain_spinner_line(),
+            plain_tool_progress_line("bash"),
+            plain_tool_progress_line("web_search"),
+        ];
+        for line in &lines {
+            assert!(!line.contains('\r'), "plain line contains \\r: {line:?}");
+            assert!(
+                !line.contains('\x1b'),
+                "plain line contains ANSI escape: {line:?}"
+            );
+            assert!(!line.is_empty(), "plain line should announce something");
+        }
     }
 
     #[test]

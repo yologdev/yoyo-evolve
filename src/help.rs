@@ -113,6 +113,10 @@ pub fn cli_help_text() -> String {
         s,
         "  --no-color        Disable colored output (also respects NO_COLOR env)"
     );
+    let _ = writeln!(
+        s,
+        "  --screen-reader   Plain, linear, animation-free output (implies --no-color)"
+    );
     let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
     let _ = writeln!(s, "  --no-notify       Disable desktop notifications on long completions (also respects YOYO_NO_NOTIFY env)");
     let _ = writeln!(
@@ -1543,6 +1547,7 @@ mod tests {
             "--mcp",
             "--openapi",
             "--no-color",
+            "--screen-reader",
             "--no-bell",
             "--no-notify",
             "--no-rtk",
