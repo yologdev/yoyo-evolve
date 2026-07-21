@@ -960,8 +960,11 @@ fn handle_spawn_bg(
         context_prompt
     };
 
+    // Pin the worker's bash cwd to the worktree when one exists (enforced
+    // default confinement, not a sandbox — absolute paths can still escape).
     let mut sub_config = crate::AgentConfig {
         system_prompt: effective_prompt,
+        bash_cwd: worktree.as_ref().map(|w| w.path.display().to_string()),
         ..clone_agent_config(agent_config)
     };
 
@@ -1588,6 +1591,7 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
         disallowed_tools: vec![],
         no_tools: false,
         lite: false,
+        bash_cwd: config.bash_cwd.clone(),
     }
 }
 

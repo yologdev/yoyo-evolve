@@ -503,6 +503,10 @@ pub struct AgentConfig {
     pub disallowed_tools: Vec<String>,
     pub no_tools: bool,
     pub lite: bool,
+    /// When set, the agent's bash tool runs every command with this working
+    /// directory (used by /spawn worktree isolation). `None` (the default)
+    /// keeps the process cwd — interactive/normal-agent behavior unchanged.
+    pub bash_cwd: Option<String>,
 }
 
 impl AgentConfig {
@@ -542,6 +546,7 @@ impl AgentConfig {
                 },
                 is_audit_enabled(),
                 self.shell_hooks.clone(),
+                self.bash_cwd.clone(),
             );
 
             // Filter to only allowed tools (--allowed-tools whitelist)
@@ -822,6 +827,7 @@ impl AgentConfig {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         editor_config.build_agent()
     }
@@ -976,6 +982,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         }
     }
 
@@ -1007,6 +1014,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -1049,6 +1057,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -1085,6 +1094,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1121,6 +1131,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1156,6 +1167,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1191,6 +1203,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -1282,6 +1295,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -1318,6 +1332,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -1585,6 +1600,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -1673,6 +1689,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -1734,6 +1751,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config.build_agent();
         // If this compiles and runs, BedrockProvider is correctly wired
@@ -1769,6 +1787,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -1868,6 +1887,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         // This should not panic — context config and execution limits are wired
         let agent = config.configure_agent(
@@ -1910,6 +1930,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         // Should not panic — limits are set with defaults
         let agent = config_no_turns.configure_agent(
@@ -1947,6 +1968,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            bash_cwd: None,
         };
         let agent = config_with_turns.configure_agent(
             Agent::from_provider(
@@ -2425,6 +2447,7 @@ mod tests {
             8000,
             false,
             vec![],
+            None,
         );
 
         let all_names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
