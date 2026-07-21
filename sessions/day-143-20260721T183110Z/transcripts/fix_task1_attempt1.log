@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'guard|bash' in src/commands_spawn.rs ✓ (2ms)
+ ✓ (7ms)
+  ▶ search 'worktree' in src/commands_spawn.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bash\|guard\|Guard" src… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 780,880p src/commands_spa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bash_guard\|bash_preche…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct AgentConfig" -A … ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_confirm\|confirm_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clone_agent_config\|fn … ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub struct PermissionCo… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 840,960p src/tools.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p src/hooks.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ShellHook" -B5 -… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,660p src/agent_builde… ✓ (3ms)
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null; grep -rn "pub tools" ~/.c… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct SessionCapTool" …  ▶ $ grep -n "trait AgentTool" -A 40 ~/.cargo/registry/src/*/yoagent-0.13.0/src/types… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff .yoyo/risk_weights.json… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_agent()" src/comm… ✓ (4ms)
+  19 tools completed in 3m 54s (19 ✓)
+
+Now let me check how tests construct ToolContext for wrapper execute tests, then implement.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolContext" src/tool_w…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add .yoyo/risk_weights.json … ✓ (5ms)
+ ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_tool_context\|s… ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Now I'll implement. First, find the worktree section to place the detector next to its wiring:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct WorktreeInfo\|fn… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1590,1640p src/commands_s… ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now writing the detector + guard wrapper, placed in the worktree section of commands_spawn.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (6 → 200 lines)
+    /// handling and test safety.
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+        crate::git::run_git_in_dir(repo, args)
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Git-redirect guard — worker bash commands must not escape the worktree
+  + // ---------------------------------------------------------------------------
+  + //
+  + // A spawn worker running inside an isolated worktree can defeat that isolation
+  + // by redirecting git back into the shared main checkout via `git -C <path>` or
+  + // `git --git-dir=...` (bug class transferred from Claude Code v2.1.212's fix
+  + // log). The detector lives HERE, next to its call site in
+  + // `guard_worker_git_redirect` / `GitRedirectGuard::execute` — same file, same
+  + // commit, so cross-file dead-code failures (the 2× revert cause) cannot recur.
+  + //
+  + // Scope: the two redirect shapes above only. `GIT_DIR=`/`GIT_WORK_TREE=`
+  + // env-prefix and `--work-tree` detection are a named follow-up ("Extend spawn
+  + // git-redirect guard: env-prefix + --work-tree shapes").
+  + 
+  ... (178 more lines)
+ ✓ (9.5s)
+    /// handling and test safety.
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+        crate::git::run_git_in_dir(repo, args)
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Git-redirect guard — worker bash commands must not escape the worktree
+  + // ---------------------------------------------------------------------------
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

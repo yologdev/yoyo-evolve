@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/…  ▶ search 'struct Spinner|struct ToolProgressTimer|\\r|AtomicBool' in src/format/tools.rs ✓ (2ms)
+ ✓ (6ms)
+  ▶ read src/format/tools.rs ✓ (4ms)
+  ▶ read src/format/tools.rs:100..360 ✓ (1ms)
+  4 tools completed in 9.0s (4 ✓)
+
+Now let me look at how --no-color is parsed in cli.rs and the help text:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'no-color|disable_color' in src/cli.rs  ▶ search 'no-color|no-bell|--quiet' in src/help.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "no.color\|no_color" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 740,820p src/cli.rs && ec… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disable_color\|no-color… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 510,560p src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\-\-quiet\|enable_quiet… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 720,745p src/cli.rs && se… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,130p src/help.rs && s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1500,1535p src/help.rs &&… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 225,290p src/format/mod.r… ✓ (4ms)
+  11 tools completed in 1m 24s (11 ✓)
+
+I have the full picture. Let me implement, starting with the tests-first pure helpers in src/format/tools.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (1 → 37 lines)
+  + // --- Plain output (screen reader) mode ---
+  + 
+  + /// Whether plain, linear, animation-free output is enabled (via --screen-reader).
+  + /// When set, the Spinner and ToolProgressTimer never emit `\r` redraws or ANSI
+  + /// cursor-movement escapes — at most a single plain line each.
+  + static PLAIN_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Enable/disable plain (screen-reader-friendly) output. Call from CLI arg parsing.
+  + pub fn set_plain_output(enabled: bool) {
+  +     PLAIN_OUTPUT.store(enabled, std::sync::atomic::Ordering::Relaxed);
+  + }
+  + 
+  + /// Check whether plain (screen-reader-friendly) output is active.
+  + pub fn is_plain_output() -> bool {
+  +     PLAIN_OUTPUT.load(std::sync::atomic::Ordering::Relaxed)
+  + }
+  + 
+  + /// True when animated in-place redraws (`\r` + `\x1b[K`) are allowed:
+  + /// stderr must be a terminal AND plain output must be off.
+  + fn animations_enabled() -> bool {
+  ... (17 more lines)
+ ✓ (14.0s)
+  + // --- Plain output (screen reader) mode ---
+  + 
+  + /// Whether plain, linear, animation-free output is enabled (via --screen-reader).
+  + /// When set, the Spinner and ToolProgressTimer never emit `\r` redraws or ANSI
+  + /// cursor-movement escapes — at most a single plain line each.
+  + static PLAIN_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Enable/disable plain (screen-reader-friendly) output. Call from CLI arg parsing.
+  ... (13 more lines)
+
+Expected — dead code until wired. Now wire the Spinner:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (8 → 17 lines)
+            // Skip the spinner thread when stderr isn't a terminal — ANSI escape
+            // sequences (\r, \x1b[K) would leak as garbage into piped output.
+            if !stderr_is_terminal() {
+  +             return Self {
+  +                 cancel: cancel_tx,
+  +                 handle: None,
+  +             };
+  +         }
+  + 
+  +         // Plain (screen reader) mode: one linear announcement, no animation.
+  +         if is_plain_output() {
+  +             eprintln!("{}", plain_spinner_line());
+                return Self {
+                    cancel: cancel_tx,
+                    handle: None,
+ ✓ (14.0s)
+            // Skip the spinner thread when stderr isn't a terminal — ANSI escape
+            // sequences (\r, \x1b[K) would leak as garbage into piped output.
+            if !stderr_is_terminal() {
+  +             return Self {
+  +                 cancel: cancel_tx,
+  +                 handle: None,
+  +             };
+  +         }
+  ... (7 more lines)
+
+Now the stop/Drop clear guards and the timer:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (18 → 18 lines)
+        pub fn stop(self) {
+            let _ = self.cancel.send(true);
+  -         // Only emit ANSI clear sequence when stderr is a terminal
+  -         if stderr_is_terminal() {
+  +         // Only emit ANSI clear sequence when animated output was in use
+  +         if animations_enabled() {
+                eprint!("\r\x1b[K");
+                let _ = io::stderr().flush();
+            }
+  ···
+    impl Drop for Spinner {
+        fn drop(&mut self) {
+            let _ = self.cancel.send(true);
+  -         // Only emit ANSI clear sequence when stderr is a terminal
+  -         if stderr_is_terminal() {
+  +         // Only emit ANSI clear sequence when animated output was in use
+  +         if animations_enabled() {
+ ✓ (14.1s)
+        pub fn stop(self) {
+            let _ = self.cancel.send(true);
+  -         // Only emit ANSI clear sequence when stderr is a terminal
+  -         if stderr_is_terminal() {
+  +         // Only emit ANSI clear sequence when animated output was in use
+  +         if animations_enabled() {
+                eprint!("\r\x1b[K");
+                let _ = io::stderr().flush();
+  ... (9 more lines)
+  ▶ edit src/format/tools.rs (9 → 28 lines)
+                    line_count,
+                    label,
+                    handle: None,
+  +             };
+  +         }
+  + 
+  +         // Plain (screen reader) mode: no repaints — print a single plain line
+  +         // once the tool exceeds the display threshold, then stay silent.
+  +         if is_plain_output() {
+  +             let handle = tokio::spawn(async move {
+  +                 tokio::select! {
+  +                     _ = tokio::time::sleep(Duration::from_secs(2)) => {
+  +                         eprintln!("{}", plain_tool_progress_line(&tool_name));
+  +                     }
+  +                     _ = cancel_rx.changed() => {}
+  +                 }
+  +             });
+  +             return Self {
+  +                 cancel: cancel_tx,
+  +                 line_count,
+  ... (4 more lines)
+ ✓ (14.1s)
+                    line_count,
+                    label,
+                    handle: None,
+  +             };
+  +         }
+  + 
+  +         // Plain (screen reader) mode: no repaints — print a single plain line
+  +         // once the tool exceeds the display threshold, then stay silent.
+  ... (13 more lines)
+  2 tools completed in 34.6s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

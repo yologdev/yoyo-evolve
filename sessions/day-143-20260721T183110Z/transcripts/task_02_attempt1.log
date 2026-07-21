@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'destructive|pub fn' in src/safety.rs  ▶ search 'ReadModeGuardTool|ReadGuardKind|with_read_guard' in src/tool_wrappers.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn" src/safety.rs |… ✓ (6ms)
+  ▶ read src/safety.rs (160 lines)  ▶ read src/tool_wrappers.rs:960..1130 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quote\|strip" src/safet… ✓ (4ms)
+  ▶ read src/safety.rs:1040..1120 ✓ (1ms)
+  7 tools completed in 1m 23s (7 ✓)
+
+Now let me look at existing tests for the read guard to mirror the pattern:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_guard\|set_read_mo… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:3300..3500 ✓ (1ms)
+  2 tools completed in 9.8s (2 ✓)
+
+I have the full picture. Test-first: I'll add the detector in safety.rs, wire it into the guard, and add tests. Let me find where safety.rs tests start:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/saf… ✓ (4ms)
+  ▶ read src/safety.rs:1520..1560 ✓ (0ms)
+  2 tools completed in 58.9s (2 ✓)
+
+Now I have everything. Let me implement — detector in safety.rs first:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (6 → 155 lines)
+  + // ---------------------------------------------------------------------------
+  + // Write-command detection (read/plan-mode enforcement)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Commands that write to the filesystem even though they are not
+  + /// "destructive" in the `analyze_bash_command` sense. Matched only in
+  + /// command position (first token of a segment, after unwrapping `sudo`
+  + /// etc.), so `grep tee file` or `ls /backup/mv` never match.
+  + const WRITE_VERBS: &[&str] = &[
+  +     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln",
+  + ];
+  + 
+  + /// Wrapper tokens skipped when locating the actual command of a segment
+  + /// (`sudo touch x` is still a `touch`). `xargs` is included so piped
+  + /// fan-outs like `find | xargs touch` are caught too.
+  + const COMMAND_WRAPPERS: &[&str] = &["sudo", "env", "command", "nohup", "time", "xargs"];
+  + 
+  + /// Replace quoted regions and backslash-escaped characters with spaces so
+  + /// that a `>` (or a write verb) inside a string literal — `echo "use >
+  + /// carefully"` — is never mistaken for a real redirection. The returned
+  ... (132 more lines)
+ ✓ (14.6s)
+  + // ---------------------------------------------------------------------------
+  + // Write-command detection (read/plan-mode enforcement)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Commands that write to the filesystem even though they are not
+  + /// "destructive" in the `analyze_bash_command` sense. Matched only in
+  + /// command position (first token of a segment, after unwrapping `sudo`
+  + /// etc.), so `grep tee file` or `ls /backup/mv` never match.
+  ... (13 more lines)
+
+The dead-code trap the task warned about — wiring the consumer now (same edit sequence):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (15 → 21 lines)
+                            if let Some(reason) = crate::safety::analyze_bash_command(cmd) {
+                                return Err(yoagent::types::ToolError::Failed(format!(
+                                    "{} is active — this command was blocked as \
+  -                                  destructive ({reason}). Note: only commands matching \
+  -                                  known destructive patterns are blocked; this guard does \
+  -                                  not catch every possible write (e.g. plain `>` \
+  -                                  redirection). {}",
+  +                                  destructive ({reason}). {}",
+  +                                 mode.label(),
+  +                                 mode.exit_hint()
+  +                             )));
+  +                         }
+  +                         if let Some(what) = crate::safety::detect_write_command(cmd) {
+  +                             return Err(yoagent::types::ToolError::Failed(format!(
+  +                                 "{} is active — this bash command was blocked \
+  +                                  because it writes: {what}. Read-only commands \
+  +                                  are allowed. {}",
+                                    mode.label(),
+                                    mode.exit_hint()
+                                )));
+ ✓ (1m 18s)
+                            if let Some(reason) = crate::safety::analyze_bash_command(cmd) {
+                                return Err(yoagent::types::ToolError::Failed(format!(
+                                    "{} is active — this command was blocked as \
+  -                                  destructive ({reason}). Note: only commands matching \
+  -                                  known destructive patterns are blocked; this guard does \
+  -                                  not catch every possible write (e.g. plain `>` \
+  -                                  redirection). {}",
+  +                                  destructive ({reason}). {}",
+  ... (12 more lines)
+  ▶ edit src/tool_wrappers.rs (5 → 6 lines)
+  -     /// Refused while a blocking mode is on only when the command matches the
+  -     /// existing destructive-pattern classification in `safety.rs`. This is
+  -     /// honest but incomplete — e.g. plain `>` redirection is not classified
+  -     /// as destructive, so it passes through; the refusal message says so.
+  +     /// Refused while a blocking mode is on when the command matches either
+  +     /// the destructive-pattern classification (`analyze_bash_command`) or
+  +     /// the write-command detection (`detect_write_command`: `touch`, `mv`,
+  +     /// `sed -i`, `tee`, `>`/`>>` redirection, ...) in `safety.rs`.
+  +     /// Read-only commands pass through.
+        Bash,
+ ✓ (1m 19s)
+  -     /// Refused while a blocking mode is on only when the command matches the
+  -     /// existing destructive-pattern classification in `safety.rs`. This is
+  -     /// honest but incomplete — e.g. plain `>` redirection is not classified
+  -     /// as destructive, so it passes through; the refusal message says so.
+  +     /// Refused while a blocking mode is on when the command matches either
+  +     /// the destructive-pattern classification (`analyze_bash_command`) or
+  +     /// the write-command detection (`detect_write_command`: `touch`, `mv`,
+  +     /// `sed -i`, `tee`, `>`/`>>` redirection, ...) in `safety.rs`.
+  +     /// Read-only commands pass through.
+        Bash,
+  ▶ edit src/tool_wrappers.rs (3 → 4 lines)
+    /// Wrap the bash tool with read/plan-mode enforcement: while a blocking mode
+  - /// is on, commands flagged by the destructive-pattern classifier are refused;
+  + /// is on, commands flagged by the destructive-pattern classifier OR the
+  + /// write-command detector (`safety::detect_write_command`) are refused;
+    /// read-only commands pass through.
+ ✓ (1m 20s)
+    /// Wrap the bash tool with read/plan-mode enforcement: while a blocking mode
+  - /// is on, commands flagged by the destructive-pattern classifier are refused;
+  + /// is on, commands flagged by the destructive-pattern classifier OR the
+  + /// write-command detector (`safety::detect_write_command`) are refused;
+    /// read-only commands pass through.
+  3 tools completed in 4m 10s (3 ✓)
+
+Now add the fixture-table tests in safety.rs. Let me find the end of its tests module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/safety.rs ✓ (2ms)
+  ▶ edit src/safety.rs (10 → 96 lines)
+            // DELETE FROM with WHERE — safe targeted delete
+            assert!(analyze_bash_command("mysql -e 'DELETE FROM users WHERE id = 42'").is_none());
+            assert!(analyze_bash_command("psql -c 'delete from orders where status = 0'").is_none());
+  +     }
+  + 
+  +     // === detect_write_command (read/plan-mode enforcement) ===
+  + 
+  +     #[test]
+  +     fn test_detect_write_command_positives() {
+  +         // Fixture table: every non-destructive write shape must be caught.
+  +         let positives = [
+  +             "touch /tmp/x",
+  +             "mkdir -p build",
+  +             "mv a b",
+  +             "cp a b",
+  +             "cargo test | tee /tmp/out.log", // tee in a pipe segment
+  +             "tee /tmp/x",
+  +             "truncate -s 0 file",
+  +             "install -m 755 bin dest",
+  +             "ln -s a b",
+  ... (71 more lines)
+ ✓ (1m 19s)
+            // DELETE FROM with WHERE — safe targeted delete
+            assert!(analyze_bash_command("mysql -e 'DELETE FROM users WHERE id = 42'").is_none());
+            assert!(analyze_bash_command("psql -c 'delete from orders where status = 0'").is_none());
+  +     }
+  + 
+  +     // === detect_write_command (read/plan-mode enforcement) ===
+  + 
+  +     #[test]
+  ... (13 more lines)
+  2 tools completed in 1m 38s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

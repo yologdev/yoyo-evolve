@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'detect_write_command' in src ✓ (7ms)
+ ✓ (8ms)
+  ▶ read src/tool_wrappers.rs:960..1150  ▶ search 'ReadModeGuard|read_guard|read mode' in src/tool_wrappers.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_guard\|ReadModeGua… ✓ (4ms)
+  ▶ read src/tool_wrappers.rs:3300..3500 ✓ (1ms)
+  6 tools completed in 17.0s (6 ✓)
+
+Now let me check the CLAUDE.md bullet that needs updating:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ReadModeGuardTool" CLAU… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so);
+  + and blocks bash commands flagged by the destructive-pattern classifier in `safety.rs` OR the write-command detector (`safety::detect_write_command` — write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `sed -i`, `dd of=`, `install`, `ln`, plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass);
+ ✓ (1m 2s)
+  - and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so);
+  + and blocks bash commands flagged by the destructive-pattern classifier in `safety.rs` OR the write-command detector (`safety::detect_write_command` — write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `sed -i`, `dd of=`, `install`, `ln`, plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass);
+  ▶ edit src/tool_wrappers.rs (3 → 47 lines)
+  +     #[tokio::test]
+  +     #[serial]
+  +     async fn test_read_guard_bash_blocks_write_commands_refused_in_read_mode() {
+  +         let _reset = ReadModeReset;
+  + 
+  +         let tool = with_read_guard_bash(Box::new(MockTool {
+  +             tool_name: "bash",
+  +             result_text: "ran".to_string(),
+  +         }));
+  + 
+  +         // Non-destructive write commands (the plan/read-mode write hole):
+  +         // refused under read mode with an error naming what matched.
+  +         crate::commands_config::set_read_mode(true);
+  +         for cmd in ["tee /tmp/x", "touch /tmp/x"] {
+  +             let result = tool
+  +                 .execute(serde_json::json!({"command": cmd}), test_tool_context())
+  +                 .await;
+  +             let err =
+  +                 result.expect_err(&format!("write command `{cmd}` must be refused in read mode"));
+  +             let msg = format!("{err:?}");
+  ... (27 more lines)
+ ✓ (1m 18s)
+  +     #[tokio::test]
+  +     #[serial]
+  +     async fn test_read_guard_bash_blocks_write_commands_refused_in_read_mode() {
+  +         let _reset = ReadModeReset;
+  + 
+  +         let tool = with_read_guard_bash(Box::new(MockTool {
+  +             tool_name: "bash",
+  +             result_text: "ran".to_string(),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers 2>&1 | … ✓ (164ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/safety.rs | head -6… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo te… ✓ (38.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (11 lines) ✓ (17ms)
+  9 tools completed in 5m 15s (9 ✓)
+
+Both evaluator issues are fixed and committed:
+
+1. CLAUDE.md doc fix — the ReadModeGuardTool bullet no longer claims "plain > redirection is not caught". It now documents the actual behavior: bash commands are blocked by the destructive-pattern classifier OR safety::detect_write_command (write verbs touch, mkdir, `mv, cp, tee, truncate, sed -i, dd of=, install, ln` at token boundaries, plus >/>> redirection outside quoted regions; refusal names what matched).
+
+2. Missing test added — `test_read_guard_bash_blocks_write_commands_refused_in_read_mode` in tool_wrappers.rs:
+• Refuses tee /tmp/x and touch /tmp/x under read mode, asserting the error names read mode and says the command writes
+• Passes both commands through when no mode is active (both sides of the boundary, per the Day 122 lesson)
+• Uses the existing #[serial] + ReadModeReset RAII pattern to avoid poisoning the process-global mode flag
+
+Verification — all green:
+• cargo fmt -- --check ✓
+• cargo clippy --all-targets -- -D warnings ✓
+• cargo build ✓
+• cargo test — 4417 + 89 passed, 0 failed (new test confirmed passing by name)
+
+Note: the safety.rs diff in the commit is `cargo fmt comment-realignment only (no logic change). The pre-existing uncommitted .yoyo/risk_weights.json` change was left untouched — it predates this fix and isn't part of the task.
+
+  watch: no files changed this turn — skipping
+

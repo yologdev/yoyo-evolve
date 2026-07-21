@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The diff touches exactly the three allowed source files (cli.rs, format/tools.rs, help.rs), adds the AtomicBool switch, guards Spinner/ToolProgressTimer, updates docs (CLAUDE.md + quick-start.md), and adds both required tests. Let me do one quick user-facing check — exercise the flag on the built binary:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "" | timeout 10 ./target/de… ✓ (5ms)
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (57.5s)
+  3 tools completed in 1m 15s (3 ✓)
+
+Verdict: **PASS**
+
+Evidence:
+1. Diff matches the task — all three specified files changed (cli.rs, format/tools.rs, help.rs), no scope violations. set_plain_output/is_plain_output AtomicBool added; Spinner short-circuits to one plain eprintln! line and stop/Drop skip the `\r\x1b[K` clear when plain mode is on; ToolProgressTimer prints one threshold line and never repaints.
+2. **Feature exercised live** — ./target/debug/yoyo --help lists --screen-reader, and the binary accepts the flag without an unknown-flag warning.
+3. Product-safe default — animations_enabled() = `stderr_is_terminal() && !is_plain_output()`, so with the flag off, behavior is identical to before. Opt-in only, per issue #448 discipline.
+4. **Tests present** — flag round-trip test, no-\r/no-ANSI assertion on the plain render lines, and a KNOWN_FLAGS test in cli.rs; help.rs test list updated.
+5. **Docs updated in-commit** — CLAUDE.md format/tools.rs bullet and quick-start.md "Screen reader / plain output" section.
+
+Minor note (not a failure): the `.yoyo/risk_weights.json` timestamp churn was swept into the diff — harmless state-file noise.
+
+  watch: no files changed this turn — skipping
+
