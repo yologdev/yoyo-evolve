@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'redirect|git_redirect' in src/safety.rs ✓ (2ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat dd578e4b && grep… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|^fn\|#\[cfg(tes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bash\|Guard\|guard\|wor… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 460,560p src/commands_spa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 770,845p src/commands_spa… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct AgentConfig" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GuardedTool\|bash_guard… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "analyze_bash_command" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p src/safety.rs ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 508,640p src/agent_builde… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentConfig {" src/ | … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentConfig {" src/ sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1620p src/commands_s… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 24,140p src/tool_wrappers… ✓ (4ms)
+  16 tools completed in 1m 39s (16 ✓)
+
+Confirmed: the previous commit only bumped risk_weights.json — none of the work landed. Let me implement it now. First, let me check a few remaining details.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2640,2700p src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 940,1000p src/commands_sp… ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && … ✓ (7ms)
+  ▶ todo add 'detect_git_redirect detector + fixture tests in sa…' ✓ (0ms)
+  ▶ todo add 'GitRedirectGuardTool wrapper in tool_wrappers.rs' ✓ (0ms)
+  ▶ todo add 'AgentConfig.git_redirect_guard field + wiring in c…' ✓ (0ms)
+  ▶ todo add 'commands_spawn: enable guard when worktree active,…' ✓ (0ms)
+  ▶ todo add 'CLAUDE.md doc sentence + full verify (fmt, clippy,…' ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/safety.rs && grep -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1530,1560p src/safety.rs ✓ (3ms)
+  ▶ edit src/safety.rs (6 → 150 lines)
+  + // ---------------------------------------------------------------------------
+  + // Git-redirect detection (spawn worktree escape guard)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Replace single- and double-quoted regions of a shell command with spaces,
+  + /// so quoted text (commit messages, grep patterns) can't trigger token matches.
+  + /// Byte-for-byte replacement keeps all indices/boundaries stable and ASCII-safe.
+  + fn strip_quoted_regions(cmd: &str) -> String {
+  +     let mut out = String::with_capacity(cmd.len());
+  +     let mut chars = cmd.chars();
+  +     let mut in_quote: Option<char> = None;
+  +     while let Some(c) = chars.next() {
+  +         match in_quote {
+  +             Some(q) => {
+  +                 // Inside quotes: emit a space for every char to preserve token gaps
+  +                 out.push(' ');
+  +                 if c == q {
+  +                     in_quote = None;
+  +                 } else if c == '\\' && q == '"' {
+  +                     // Skip escaped char inside double quotes
+  ... (127 more lines)
+ ✓ (17.6s)
+  + // ---------------------------------------------------------------------------
+  + // Git-redirect detection (spawn worktree escape guard)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Replace single- and double-quoted regions of a shell command with spaces,
+  + /// so quoted text (commit messages, grep patterns) can't trigger token matches.
+  + /// Byte-for-byte replacement keeps all indices/boundaries stable and ASCII-safe.
+  + fn strip_quoted_regions(cmd: &str) -> String {
+  ... (13 more lines)
+  11 tools completed in 1m 3s (11 ✓)
+
+Dead-code errors are expected until the wrapper lands. Adding the fixture tests now, then the wrapper:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_delete_from_wit… ✓ (3ms)
+  ▶ edit src/safety.rs (2 → 82 lines)
+  +     // =========================================================================
+  +     // detect_git_redirect — fixture tables (Day 137 lesson: input-class guards
+  +     // need fixture tables, not grep)
+  +     // =========================================================================
+  + 
+  +     #[test]
+  +     fn test_detect_git_redirect_positives() {
+  +         let positives: &[(&str, &str)] = &[
+  +             // The four redirect shapes from the task
+  +             ("git -C /home/user/main-checkout commit -am wip", "-C"),
+  +             ("git -C .. push", "-C"),
+  +             ("git --git-dir=/repo/.git status", "--git-dir"),
+  +             ("git --git-dir /repo/.git add .", "--git-dir"),
+  +             ("git --work-tree=/other/checkout checkout -- .", "--work-tree"),
+  +             ("git --work-tree /other/checkout reset --hard", "--work-tree"),
+  +             ("GIT_DIR=/repo/.git git add .", "GIT_DIR="),
+  +             ("GIT_WORK_TREE=/main git checkout -- src/", "GIT_WORK_TREE="),
+  +             // Env redirect via export/env, then git in a later segment
+  +             ("export GIT_DIR=/repo/.git; git commit -am x", "GIT_DIR="),
+  +             ("env GIT_WORK_TREE=/main git status", "GIT_WORK_TREE="),
+  ... (62 more lines)
+ ✓ (17.5s)
+  +     // =========================================================================
+  +     // detect_git_redirect — fixture tables (Day 137 lesson: input-class guards
+  +     // need fixture tables, not grep)
+  +     // =========================================================================
+  + 
+  +     #[test]
+  +     fn test_detect_git_redirect_positives() {
+  +         let positives: &[(&str, &str)] = &[
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet safety::tests… ✓ (20.5s)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,24p src/tool_wrappers.r… ✓ (3ms)
+  5 tools completed in 1m 12s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

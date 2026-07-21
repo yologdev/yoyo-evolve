@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'resolve_path' in src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline … ✓ (4ms)
+ ✓ (9ms)
+  ▶ read src/config.rs:60..170 ✓ (1ms)
+  ▶ read src/cli.rs:1965..2025 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1180,1215p src/config.rs … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/config.r… ✓ (8ms)
+  6 tools completed in 46.3s (6 ✓)
+
+Tests first — add the regression tests to src/config.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (5 → 72 lines)
+        #[test]
+        fn test_config_module_resolve_path_normalizes_parent_dir() {
+            let resolved = resolve_path("/tmp/a/../b");
+  -         assert_eq!(resolved, "/tmp/b");
+  +         // /tmp may itself be a symlink (macOS: /tmp -> /private/tmp), so
+  +         // compare against its canonical form rather than the literal string.
+  +         let expected = std::fs::canonicalize("/tmp")
+  +             .map(|p| p.join("b").to_string_lossy().to_string())
+  +             .unwrap_or_else(|_| "/tmp/b".to_string());
+  +         assert_eq!(resolved, expected);
+  +     }
+  + 
+  +     #[cfg(unix)]
+  +     #[test]
+  +     fn test_resolve_path_nonexistent_under_symlink_resolves_symlink() {
+  +         // Issue #600: a NON-existent path under a symlinked dir must resolve
+  +         // the symlink via its nearest existing ancestor, so deny/allow prefix
+  +         // checks agree with the canonicalized form of the directory.
+  +         let tmp = tempfile::tempdir().unwrap();
+  +         let real = tmp.path().join("real_dir");
+  ... (53 more lines)
+ ✓ (1m 35s)
+        #[test]
+        fn test_config_module_resolve_path_normalizes_parent_dir() {
+            let resolved = resolve_path("/tmp/a/../b");
+  -         assert_eq!(resolved, "/tmp/b");
+  +         // /tmp may itself be a symlink (macOS: /tmp -> /private/tmp), so
+  +         // compare against its canonical form rather than the literal string.
+  +         let expected = std::fs::canonicalize("/tmp")
+  +             .map(|p| p.join("b").to_string_lossy().to_string())
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib config::tests::… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test resolve_path 2>&1 | t… ✓ (146ms)
+  3 tools completed in 1m 45s (3 ✓)
+
+The new tests fail exactly as the bug predicts. Now implement the fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (33 → 59 lines)
+    /// Resolve a path to an absolute, normalized form.
+    /// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
+  - /// Falls back to manual normalization for paths that don't exist yet.
+  + /// For non-existent paths, canonicalizes the nearest existing ancestor
+  + /// (resolving symlinks) and re-appends the non-existent remainder, so that
+  + /// existing and non-existent spellings of the same location converge on one
+  + /// canonical form (issue #600: `/etc/shadow` vs a deny on `/etc` that
+  + /// canonicalizes to `/private/etc` on macOS).
+    fn resolve_path(path: &str) -> String {
+        // Try canonicalize first (works for existing paths)
+        if let Ok(canonical) = std::fs::canonicalize(path) {
+            return canonical.to_string_lossy().to_string();
+        }
+    
+  -     // Manual normalization for non-existent paths
+  +     // Non-existent path: make absolute, then normalize `.` and `..` lexically
+  +     // (they can't be resolved against a real filesystem).
+        let p = std::path::Path::new(path);
+        let absolute = if p.is_absolute() {
+            p.to_path_buf()
+  ... (36 more lines)
+ ✓ (1m 36s)
+    /// Resolve a path to an absolute, normalized form.
+    /// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
+  - /// Falls back to manual normalization for paths that don't exist yet.
+  + /// For non-existent paths, canonicalizes the nearest existing ancestor
+  + /// (resolving symlinks) and re-appends the non-existent remainder, so that
+  + /// existing and non-existent spellings of the same location converge on one
+  + /// canonical form (issue #600: `/etc/shadow` vs a deny on `/etc` that
+  + /// canonicalizes to `/private/etc` on macOS).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (50.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 8s)
+  3 tools completed in 3m 44s (3 ✓)
+
+All green. One doc comment on check_path is now stale — fix it in the same commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (2 → 4 lines)
+        /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
+  -     ///   when the path exists, or by manual normalization when it doesn't.
+  +     ///   when the path exists; for non-existent paths, the nearest existing
+  +     ///   ancestor is canonicalized and the remainder re-appended, so symlinked
+  +     ///   spellings can't bypass deny checks (issue #600).
+ ✓ (1m 38s)
+        /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
+  -     ///   when the path exists, or by manual normalization when it doesn't.
+  +     ///   when the path exists; for non-existent paths, the nearest existing
+  +     ///   ancestor is canonicalized and the remainder re-appended, so symlinked
+  +     ///   spellings can't bypass deny checks (issue #600).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (334ms)
+  2 tools completed in 1m 56s (2 ✓)
+
+Task complete. Summary of what shipped:
+
+The fix (src/config.rs, resolve_path): non-existent paths previously got only lexical `./..` normalization with no symlink resolution, while existing paths were fully canonicalized — so on macOS a deny on /etc resolved to /private/etc but a check on the not-yet-existing /etc/shadow stayed `/etc/shadow`, and the prefix comparison silently let it through. Now a non-existent path walks up to its nearest existing ancestor, canonicalizes that (resolving symlinks), and re-appends the remainder — so both spellings of a location converge on one canonical form. The degenerate no-existing-ancestor case falls back to the old manual normalization, exactly as the creator-verified direction specified.
+
+Tests (test-first — I watched the symlink test fail with `link_dir/... vs real_dir/...` before implementing):
+• `test_resolve_path_nonexistent_under_symlink_resolves_symlink (cfg(unix), tempdir + std::os::unix::fs::symlink`) — non-existent target under a symlink dir resolves under the canonical real dir
+• test_deny_check_symlink_and_real_spellings_converge — deny on the symlink path blocks a non-existent target via the real path, and vice versa
+• `test_resolve_path_deeply_nonexistent_preserves_remainder` — multi-component non-existent remainder survives intact
+• Updated `test_config_module_resolve_path_normalizes_parent_dir to compare against canonicalize("/tmp") instead of the literal /tmp/b` — under the new (correct) behavior, the literal assertion would have been wrong on macOS where /tmp is itself a symlink. The `src/cli.rs:1989` deny test is not platform-gated and passes.
+
+Docs: refreshed the now-stale check_path doc comment in the same commit. No CLAUDE.md change needed (config.rs description already covers permission config).
+
+Verified: cargo build, full cargo test (4398 passed), cargo clippy --all-targets -- -D warnings, `cargo fmt --check — all green. Committed as acf3c959`.
+
+The satisfying part: the two-sided test (deny-via-symlink blocks via-real and deny-via-real blocks via-symlink) is exactly the "both spellings land on one canonical form" property the issue asked for — not just the one direction that reproduced the original bypass.
+
+  watch: no files changed this turn — skipping
+

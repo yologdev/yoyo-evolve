@@ -1,0 +1,135 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the relevant code first.
+  ▶ search 'fn is_read_mode|fn set_read_mode' in src/commands_config.rs  ▶ $ grep -n "pub fn\|pub struct\|impl Tool" src/tool_wrappers.rs | head -60 ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ grep -n "read_mode\|READ_MODE" src/commands_config.rs | head -20; echo ---; grep… ✓ (10ms)
+  ▶ $ grep -n "struct GuardedTool\|impl.*Tool for GuardedTool" -A 5 src/tool_wrappers.… ✓ (6ms)
+  ▶ $ sed -n '60,120p' src/tool_wrappers.rs; echo ===; grep -n "ToolResult\|ToolError"… ✓ (6ms)
+  ▶ $ grep -n "pub fn\|maybe_guard\|maybe_hook" src/tools.rs | head -40; echo ===; gre… ✓ (6ms)
+  ▶ $ sed -n '870,1080p' src/tools.rs ✓ (5ms)
+  ▶ $ sed -n '1,110p' src/safety.rs ✓ (4ms)
+  ▶ $ grep -n "mod tests" src/tool_wrappers.rs; grep -n "tokio::test\|struct.*Tool\b\|… ✓ (8ms)
+  ▶ $ sed -n '1400,1470p' src/tool_wrappers.rs; echo ===; sed -n '1615,1660p' src/tool… ✓ (6ms)
+  ▶ $ grep -n "use serial_test\|serial_test" src/tool_wrappers.rs Cargo.toml | head; e… ✓ (7ms)
+  ▶ $ sed -n '900,972p' src/tool_wrappers.rs ✓ (4ms)
+  ▶ edit src/tool_wrappers.rs (9 → 110 lines)
+            inner: tool,
+            counter: Arc::new(AtomicUsize::new(0)),
+            cap,
+  +     })
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // ReadModeGuardTool — mechanical /read mode enforcement
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// How the read-mode guard classifies its wrapped tool.
+  + #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+  + pub(crate) enum ReadGuardKind {
+  +     /// Always refused under read mode (write_file, edit_file, rename_symbol).
+  +     Write,
+  +     /// Refused under read mode only when the command matches the existing
+  +     /// destructive-pattern classification in `safety.rs`. This is honest but
+  +     /// incomplete — e.g. plain `>` redirection is not classified as destructive,
+  +     /// so it passes through; the refusal message says so.
+  +     Bash,
+  ... (86 more lines)
+ ✓ (17.6s)
+            inner: tool,
+            counter: Arc::new(AtomicUsize::new(0)),
+            cap,
+  +     })
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // ReadModeGuardTool — mechanical /read mode enforcement
+  ... (13 more lines)
+  ▶ $ sed -n '20,30p' src/tools.rs ✓ (3ms)
+  ▶ edit src/tools.rs (3 → 3 lines)
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  -     SESSION_TOOL_CALL_CAP,
+  +     with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap,
+  +     with_truncation, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+ ✓ (17.6s)
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  -     SESSION_TOOL_CALL_CAP,
+  +     with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap,
+  +     with_truncation, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+  15 tools completed in 1m 57s (15 ✓)
+
+Now the actual wiring in build_tools:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (7 → 7 lines)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(Box::new(bash), max_tool_output),
+  +                 with_truncation(with_read_guard_bash(Box::new(bash)), max_tool_output),
+                    &failure_tracker,
+                ),
+                &hooks,
+ ✓ (17.6s)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(Box::new(bash), max_tool_output),
+  +                 with_truncation(with_read_guard_bash(Box::new(bash)), max_tool_output),
+                    &failure_tracker,
+                ),
+                &hooks,
+  ▶ edit src/tools.rs (14 → 20 lines)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(with_auto_check(write_tool), max_tool_output),
+  +                 with_truncation(
+  +                     with_read_guard(with_auto_check(write_tool)),
+  +                     max_tool_output,
+  +                 ),
+                    &failure_tracker,
+                ),
+                &hooks,
+            ),
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(with_smart_edit(with_auto_check(edit_tool)), max_tool_output),
+  +                 with_truncation(
+  +                     with_read_guard(with_smart_edit(with_auto_check(edit_tool))),
+  +                     max_tool_output,
+  +                 ),
+                    &failure_tracker,
+                ),
+  ... (1 more lines)
+ ✓ (1m 38s)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(with_auto_check(write_tool), max_tool_output),
+  +                 with_truncation(
+  +                     with_read_guard(with_auto_check(write_tool)),
+  +                     max_tool_output,
+  +                 ),
+                    &failure_tracker,
+  ... (13 more lines)
+  ▶ edit src/tools.rs (7 → 7 lines)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(rename_tool, max_tool_output),
+  +                 with_truncation(with_read_guard(rename_tool), max_tool_output),
+                    &failure_tracker,
+                ),
+                &hooks,
+ ✓ (1m 39s)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(rename_tool, max_tool_output),
+  +                 with_truncation(with_read_guard(rename_tool), max_tool_output),
+                    &failure_tracker,
+                ),
+                &hooks,
+  ▶ $ tail -20 src/tool_wrappers.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (49ms)
+  4 tools completed in 3m 46s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

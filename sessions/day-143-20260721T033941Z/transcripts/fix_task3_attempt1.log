@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'ReadModeGuard|with_read_guard|ReadGuardKind'  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat HE… ✓ (10ms)
+ ✓ (10.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && grep -n … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1090p' src/tool_wrap… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1008,1040p' src/tool_wra… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:1016..1066 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_session_cap_fresh_… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2990,3060p' src/tool_wra… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct MockTool\|fn tes… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn analyze_bash_com… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rm -rf\|\"rm \|'rm '\|a… ✓ (4ms)
+  11 tools completed in 49.0s (11 ✓)
+
+rm -rf / is flagged as destructive. Now let me verify git status/ls pass the safety check, and check the /read docs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"git status"\|"ls' src/… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (8 → 164 lines)
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_err());
+  +     }
+  + 
+  +     // === ReadModeGuardTool tests ===
+  +     //
+  +     // Read mode is a process global (commands_config::set_read_mode), so these
+  +     // tests are #[serial] and use an RAII guard to force read mode OFF at the
+  +     // end of each test — even when an assertion panics — to avoid poisoning
+  +     // other tests in the process.
+  + 
+  +     struct ReadModeReset;
+  +     impl Drop for ReadModeReset {
+  +         fn drop(&mut self) {
+  +             crate::commands_config::set_read_mode(false);
+  +         }
+  +     }
+  + 
+  +     #[tokio::test]
+  ... (141 more lines)
+ ✓ (1m 36s)
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_err());
+  +     }
+  + 
+  +     // === ReadModeGuardTool tests ===
+  +     //
+  +     // Read mode is a process global (commands_config::set_read_mode), so these
+  ... (13 more lines)
+  2 tools completed in 2m 5s (2 ✓)
+
+Now update CLAUDE.md's tool_wrappers.rs bullet. First check existing read-mode tests elsewhere for serial-safety consistency:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_read_mode" src/*.rs… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1630p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers.rs" CLAUD… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - do not convert to a process-wide static) and helper wrappers
+  + do not convert to a process-wide static; ReadModeGuardTool — mechanical `/read` mode enforcement at the tool layer: checks `is_read_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); transparent pass-through when read mode is off) and helper wrappers
+ ✓ (1m 18s)
+  - do not convert to a process-wide static) and helper wrappers
+  + do not convert to a process-wide static; ReadModeGuardTool — mechanical `/read` mode enforcement at the tool layer: checks `is_read_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); transparent pass-through when read mode is off) and helper wrappers
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test read_guard 2>&1 | gre… ✓ (49.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tools.rs ✓ (5ms)
+  9 tools completed in 5m 26s (9 ✓)
+
+Just an import reformat from cargo fmt. Committing the fix (leaving the pre-existing .yoyo/risk_weights.json dirt untouched):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (12 lines) ✓ (21ms)
+
+Done. The evaluator's two missing deliverables are now complete and committed:
+
+1. Tests added (5 new `#[tokio::test] #[serial] tests in src/tool_wrappers.rs`, all passing):
+• `test_read_guard_blocks_write_tools_when_read_mode_on — write_file/edit_file/rename_symbol` each return the honest refusal error ("read mode is active … /read off") under read mode
+• test_read_guard_passthrough_when_read_mode_off — transparent pass-through by default (product-safe)
+• test_read_guard_toggles_at_call_time_not_build_time — same wrapper instance tracks /read on→off→on without a rebuild, pinning the call-time-check requirement
+• `test_read_guard_bash_blocks_destructive_allows_readonly — rm -rf / refused; git status and ls -la` allowed under read mode
+• test_read_guard_bash_passthrough_when_read_mode_off — bash guard inert when read mode is off
+
+Since read mode is a process global, the tests use #[serial] (matching the existing read-mode tests in commands_config.rs) plus an RAII `ReadModeReset` guard that forces read mode OFF on drop — panic-safe cleanup, no cross-test pollution.
+
+**2. CLAUDE.md updated** — the tool_wrappers.rs bullet now documents ReadModeGuardTool: call-time check, write-tool refusal, bash blocking limited to the existing destructive-pattern classifier (with the honest >-redirection caveat), pass-through when off. docs/src/usage/commands.md makes no enforcement claim about /read, so CLAUDE.md is the sole doc touch — noted in the commit message per the task's 3-file-budget rule.
+
+Verification: cargo fmt clean, cargo clippy --all-targets -- -D warnings clean, cargo build ok, cargo test → 4403 + 89 passed, 0 failed.
+
+  watch: no files changed this turn — skipping
+
