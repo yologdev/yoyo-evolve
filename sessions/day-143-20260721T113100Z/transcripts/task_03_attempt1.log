@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'worktree add|worktree_parent|spawn_worktrees|fn create_spawn…' in src/commands_spawn.rs ✓ (3ms)
+  ▶ $ grep -n "worktree" src/commands_spawn.rs | head -50; git status --short ✓ (10ms)
+  ▶ $ grep -n "create_spawn_worktree\|\.yoyo/worktrees\|worktree_dir\|fn create_spawn"… ✓ (4ms)
+  ▶ read src/commands_spawn.rs:1600..1720 ✓ (1ms)
+  ▶ $ sed -n 2950,3050p src/commands_spawn.rs; grep -n "tempfile\|TempDir\|fn temp" sr… ✓ (7ms)
+  ▶ edit src/commands_spawn.rs (3 → 71 lines)
+  + /// Pre-flight symlink check for a worktree target path.
+  + ///
+  + /// Walks each already-existing component of `wt_path` below `repo_root` and
+  + /// refuses if any component is a symlink whose canonicalized target resolves
+  + /// OUTSIDE the canonicalized repo root — otherwise `git worktree add` would
+  + /// follow the link and write files outside the repository the user thinks
+  + /// they're isolated in (bug class transferred from Claude Code v2.1.212's
+  + /// fix log). Non-existent components are fine: they'll be created as real
+  + /// directories. Symlinks that resolve back inside the repo are allowed.
+  + ///
+  + /// Fails open (returns Ok) if the repo root itself can't be canonicalized —
+  + /// the check can't judge escape without a trustworthy root, and product
+  + /// behavior must not regress on exotic filesystems.
+  + fn check_worktree_path_escape(repo_root: &Path, wt_path: &Path) -> Result<(), String> {
+  +     let canon_root = match repo_root.canonicalize() {
+  +         Ok(r) => r,
+  +         Err(_) => return Ok(()),
+  +     };
+  +     let rel = match wt_path.strip_prefix(repo_root) {
+  +         Ok(r) => r,
+  ... (51 more lines)
+ ✓ (17.8s)
+  + /// Pre-flight symlink check for a worktree target path.
+  + ///
+  + /// Walks each already-existing component of `wt_path` below `repo_root` and
+  + /// refuses if any component is a symlink whose canonicalized target resolves
+  + /// OUTSIDE the canonicalized repo root — otherwise `git worktree add` would
+  + /// follow the link and write files outside the repository the user thinks
+  + /// they're isolated in (bug class transferred from Claude Code v2.1.212's
+  + /// fix log). Non-existent components are fine: they'll be created as real
+  ... (13 more lines)
+  6 tools completed in 1m 1s (6 ✓)
+
+Expected — now wire it into create_spawn_worktree:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 8 lines)
+        let dir_name = format!("spawn-{task_id}-{ts}");
+        let wt_path = root.join(".yoyo").join("worktrees").join(&dir_name);
+  + 
+  +     // Pre-flight: refuse if any existing path component is a symlink that
+  +     // resolves outside the repo root (worker writes would escape the repo).
+  +     check_worktree_path_escape(&root, &wt_path)?;
+    
+        // Make sure parent exists.
+ ✓ (1m 39s)
+        let dir_name = format!("spawn-{task_id}-{ts}");
+        let wt_path = root.join(".yoyo").join("worktrees").join(&dir_name);
+  + 
+  +     // Pre-flight: refuse if any existing path component is a symlink that
+  +     // resolves outside the repo root (worker writes would escape the repo).
+  +     check_worktree_path_escape(&root, &wt_path)?;
+    
+        // Make sure parent exists.
+
+Now the tests. Adding them near the other worktree tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (2 → 2 lines) ✓ (1m 46s)
+  ▶ edit src/commands_spawn.rs (2 → 78 lines)
+  +     #[test]
+  +     fn test_symlink_preflight_real_dir_passes() {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         let root = tmp.path();
+  +         std::fs::create_dir_all(root.join(".yoyo").join("worktrees")).expect("mkdir");
+  +         let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+  +         assert!(check_worktree_path_escape(root, &wt).is_ok());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_symlink_preflight_fresh_nonexistent_parent_passes() {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         let root = tmp.path();
+  +         // Nothing under root exists yet — the common fresh case.
+  +         let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+  +         assert!(check_worktree_path_escape(root, &wt).is_ok());
+  +     }
+  + 
+  +     #[cfg(unix)]
+  +     #[test]
+  ... (58 more lines)
+ ✓ (1m 41s)
+  +     #[test]
+  +     fn test_symlink_preflight_real_dir_passes() {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         let root = tmp.path();
+  +         std::fs::create_dir_all(root.join(".yoyo").join("worktrees")).expect("mkdir");
+  +         let wt = root.join(".yoyo").join("worktrees").join("spawn-1-123");
+  +         assert!(check_worktree_path_escape(root, &wt).is_ok());
+  +     }
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo t… ✓ (39.0s)
+  3 tools completed in 4m 28s (3 ✓)
+
+All spawn tests pass. Full suite plus the CLAUDE.md doc update:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED" | tail -5  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation, and completion handoff
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass), and completion handoff
+ ✓ (1m 34s)
+  - - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation, and completion handoff
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation (with a symlink pre-flight — `check_worktree_path_escape` refuses `git worktree add` when any existing component of the worktree path is a symlink resolving outside the canonicalized repo root, so worker writes can't escape the repo; in-repo symlinks and fresh non-existent parents pass), and completion handoff
+ ✓ (1m 34s)
+  ▶ $ git add -A && git commit -m "Day 143 (10:25): /spawn worktree symlink pre-flight… ✓ (25ms)
+  3 tools completed in 1m 48s (3 ✓)
+
+Done. Third transfer from Claude Code's fix log lands — the bug class was live here too, just untested.
+
+What I built (commit `bcfdeec4`):
+
+1. `check_worktree_path_escape(repo_root, wt_path)` in src/commands_spawn.rs — a pure helper that walks each existing component of the intended worktree path (<root>/.yoyo/worktrees/spawn-N-ts) below the repo root. If any component is a symlink (symlink_metadata) whose canonicalized target resolves outside the canonicalized repo root, it refuses with an honest one-liner naming the symlink, where it points, and what it resolves to. Design choices:
+   • **Fresh case unchanged**: first non-existent component ends the walk — create_dir_all makes real directories as before.
+   • In-repo symlinks allowed: not an escape, so no refusal.
+   • Fails open if the repo root itself can't canonicalize — the check can't judge escape without a trustworthy root, and product behavior must not regress on exotic filesystems.
+   • Dangling symlinks refused — git worktree add would follow them too.
+
+2. **Wired in** before create_dir_all in create_spawn_worktree; a refusal flows into the existing "worktree isolation unavailable → current dir" degradation path, so the user sees why.
+
+3. Five tests (three `#[cfg(unix)]`-gated as the task specified): real dir passes, fresh non-existent parent passes, escape symlink refused with target named, in-repo symlink allowed, and an end-to-end test asserting `create_spawn_worktree` refuses and nothing landed outside the repo.
+
+4. CLAUDE.md commands_spawn.rs bullet updated with one clause, appended inside the existing sentence without clobbering task_01's edits.
+
+Verified: `cargo fmt, clippy -D warnings` clean, 4412 + 89 tests passing.
+
+  watch: no files changed this turn — skipping
+

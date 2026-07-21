@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'set_plan_apply_active' in src/commands_plan.rs  ▶ search 'is_plan_mode|is_plan_apply_active' in src/tool_wrappers.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 3.1s (2 ✓)
+
+The second search found nothing — let me verify the actual file state:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_plan_mode\|active_bl… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B2 -A4 "set_plan_apply_… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_plan_apply_active(t… ✓ (216ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_plan_… ✓ (155ms)
+  4 tools completed in 17.3s (4 ✓)
+
+All checks pass. Writing the verdict:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 3s)
+
+**Verdict: PASS**
+
+Evidence gathered:
+• Implementation matches: active_blocking_mode() in `src/tool_wrappers.rs checks is_plan_mode() && !is_plan_apply_active() at call time, reusing the existing ReadGuardKind::Write`/Bash classification — extended the existing guard rather than duplicating, as the task preferred.
+• Apply exception is real: src/dispatch.rs:1217 sets set_plan_apply_active(true) around actual /plan apply execution, so the pass-through isn't dead code.
+• Tests: all 4 new plan-guard tests pass (ran them targeted — block on plan mode, pass-through during apply, pass-through when off, bash destructive blocked / git status allowed), with #[serial] + RAII `PlanModeReset` to avoid poisoning global state.
+• Errors are honest: refusals name the mode, the exit path (/plan apply / /plan off), and the > redirection caveat for bash.
+• Docs: CLAUDE.md `tool_wrappers.rs` bullet updated in the same commit.
+• Minor: .yoyo/risk_weights.json (harness state) swept into the diff — noted as cleanup feedback, not a failure.
+
+  watch: no files changed this turn — skipping
+

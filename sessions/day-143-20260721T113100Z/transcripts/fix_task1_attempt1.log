@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'detect_git_redirect|strip_quoted_regions' in src ✓ (10ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|^fn \|#\[cfg(te…  ▶ search 'guard|bash|worktree_path|build_agent|AgentConfig' in src/commands_spawn.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "worktree\|bash\|guard\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 780,880p src/commands_spa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct AgentConfig"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clone_agent_config\|fn … ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_confirm\|confirm" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ReadModeGuardTool\|with… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '969,1120p' src/tool_wrap… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,1000p' src/tools.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1060p' src/commands_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentConfig {" src/ | … ✓ (10ms)
+  ▶ $ ls ~/.cargo/registry/src/*/ | grep yoagent; grep -rn "pub fn.*tool" ~/.cargo/reg… ✓ (6ms)
+  ▶ $ grep -n "pub fn" /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b55… ✓ (6ms)
+  ▶ $ grep -rn "trait ToolMiddleware" -B5 -A40 /home/runner/.cargo/registry/src/index.…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (14ms)
+  ▶ $ sed -n '660,740p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_tool_middleware\|… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,90p' src/safety.rs && … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1560p' src/safety.r… ✓ (4ms)
+  21 tools completed in 3m 4s (21 ✓)
+
+Now I'll implement. Step 1: the pure detector in src/safety.rs.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (7 → 153 lines)
+  + // ---------------------------------------------------------------------------
+  + // Spawn worktree git-redirect detection (NOT part of SAFETY_CHECKS)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Replace the contents of single/double-quoted regions with spaces so that
+  + /// flag-looking text inside string literals (e.g. `git commit -m "use -C"`)
+  + /// is not mistaken for a real flag. The quote characters themselves are also
+  + /// replaced, so the returned string contains only unquoted shell text.
+  + /// Length is preserved for unquoted regions (tokens keep their boundaries).
+  + pub fn strip_quoted_regions(cmd: &str) -> String {
+  +     let mut out = String::with_capacity(cmd.len());
+  +     let mut chars = cmd.chars();
+  +     let mut in_single = false;
+  +     let mut in_double = false;
+  +     while let Some(c) = chars.next() {
+  +         if in_single {
+  +             // Single quotes: no escapes in shell; only `'` ends the region.
+  +             if c == '\'' {
+  +                 in_single = false;
+  +             }
+  ... (129 more lines)
+ ✓ (17.8s)
+  + // ---------------------------------------------------------------------------
+  + // Spawn worktree git-redirect detection (NOT part of SAFETY_CHECKS)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Replace the contents of single/double-quoted regions with spaces so that
+  + /// flag-looking text inside string literals (e.g. `git commit -m "use -C"`)
+  + /// is not mistaken for a real flag. The quote characters themselves are also
+  + /// replaced, so the returned string contains only unquoted shell text.
+  ... (13 more lines)
+
+Expected — this is exactly the dead-code failure that killed the last attempt. Now wire it immediately into commands_spawn.rs. First the middleware:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_spaw… ✓ (4ms)
+  ▶ edit src/commands_spawn.rs (4 → 45 lines)
+    use yoagent::types::{AgentMessage, Usage};
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Spawn worktree git-redirect guard
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Pure decision helper for the spawn worktree guard: returns `Some(reason)`
+  + /// when a bash tool call should be denied because the command redirects git
+  + /// outside the worker's isolated worktree (`git -C`, `--git-dir[=]`,
+  + /// `--work-tree[=]`, or `GIT_DIR=`/`GIT_WORK_TREE=` env prefixes). This is
+  + /// the bug class Claude Code v2.1.212 fixed: a spawn worker committing into
+  + /// the main checkout instead of its worktree. Unit-testable without a
+  + /// `ToolCallRequest` (which is `#[non_exhaustive]` in yoagent).
+  + fn spawn_guard_decision(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+  +     if tool_name != "bash" {
+  +         return None;
+  +     }
+  +     let cmd = args.get("command").and_then(|v| v.as_str())?;
+  +     let flag = crate::safety::detect_git_redirect(cmd)?;
+  +     Some(format!(
+  ... (25 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_spawn.rs.
+  2 tools completed in 10.0s (1 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+

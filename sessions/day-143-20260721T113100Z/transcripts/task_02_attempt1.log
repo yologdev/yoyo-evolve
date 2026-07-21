@@ -1,0 +1,169 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'ReadModeGuardTool|ReadGuardKind|with_read_guard' in src/tool_wrappers.rs  ▶ search 'is_plan_mode|is_plan_apply_active|set_plan_mode|set_plan_app…' in src/commands_plan.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; ls; grep -n "Re… ✓ (9ms)
+  ▶ read src/tool_wrappers.rs:940..1080 ✓ (2ms)
+  ▶ read src/commands_plan.rs:20..80  ▶ read src/commands_plan.rs:335..365 ✓ (1ms)
+ ✓ (1ms)
+  6 tools completed in 13.1s (6 ✓)
+
+Now let me see the existing read-guard tests and how the guard is wired in tools.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "read_guard\|ReadModeGuard… ✓ (8ms)
+  ▶ read src/tool_wrappers.rs:3200..3421 ✓ (2ms)
+  2 tools completed in 12.8s (2 ✓)
+
+All helpers are already pub. Let me check the /help plan text for any claim that would become false:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -A25 '"plan"' src/help_dat… ✓ (4ms)
+  ▶ edit src/tool_wrappers.rs (12 → 153 lines)
+            assert!(
+                result.is_ok(),
+                "read-mode guard must be a transparent pass-through when read mode is off"
+  +         );
+  +     }
+  + 
+  +     // === Plan-mode enforcement tests (same guard, sibling mode) ===
+  +     //
+  +     // Plan mode and the plan-apply flag are process globals
+  +     // (commands_plan::set_plan_mode / set_plan_apply_active), so these tests
+  +     // are #[serial] and use an RAII guard to force both OFF at the end of
+  +     // each test — even when an assertion panics.
+  + 
+  +     struct PlanModeReset;
+  +     impl Drop for PlanModeReset {
+  +         fn drop(&mut self) {
+  +             crate::commands_plan::set_plan_mode(false);
+  +             crate::commands_plan::set_plan_apply_active(false);
+  +         }
+  +     }
+  ... (127 more lines)
+ ✓ (1m 36s)
+            assert!(
+                result.is_ok(),
+                "read-mode guard must be a transparent pass-through when read mode is off"
+  +         );
+  +     }
+  + 
+  +     // === Plan-mode enforcement tests (same guard, sibling mode) ===
+  +     //
+  ... (13 more lines)
+  ▶ edit src/tool_wrappers.rs (65 → 114 lines)
+  - /// A wrapper that mechanically enforces `/read` mode at the tool layer.
+  + /// A wrapper that mechanically enforces `/read` mode and `/plan` mode at the
+  + /// tool layer.
+    ///
+  - /// `/read` was previously prompt-only (`READ_MODE_PROMPT` injected into the
+  - /// conversation) — a model that ignored the prompt could still write files.
+  - /// This wrapper checks `crate::commands_config::is_read_mode()` **at call
+  - /// time** (read mode toggles at runtime; snapshotting at build time would
+  - /// desync the guard from `/read on`/`/read off`) and returns an honest tool
+  - /// error instead of executing. When read mode is off (the default), it is a
+  - /// transparent pass-through.
+  + /// Both modes were previously prompt-only (`READ_MODE_PROMPT` /
+  + /// `PLAN_MODE_PROMPT` injected into the conversation) — a request, not a
+  + /// lock: a model that ignored the prompt could still write files. This
+  + /// wrapper checks `crate::commands_config::is_read_mode()` and
+  + /// `crate::commands_plan::is_plan_mode()` **at call time** (both toggle at
+  + /// runtime; snapshotting at build time would desync the guard from the mode
+  + /// commands) and returns an honest tool error instead of executing.
+  + ///
+  + /// Plan-mode exception: while `/plan apply` is executing
+  ... (86 more lines)
+ ✓ (1m 39s)
+  - /// A wrapper that mechanically enforces `/read` mode at the tool layer.
+  + /// A wrapper that mechanically enforces `/read` mode and `/plan` mode at the
+  + /// tool layer.
+    ///
+  - /// `/read` was previously prompt-only (`READ_MODE_PROMPT` injected into the
+  - /// conversation) — a model that ignored the prompt could still write files.
+  - /// This wrapper checks `crate::commands_config::is_read_mode()` **at call
+  - /// time** (read mode toggles at runtime; snapshotting at build time would
+  ... (13 more lines)
+  ▶ edit src/tool_wrappers.rs (15 → 16 lines)
+    // ---------------------------------------------------------------------------
+  - // ReadModeGuardTool — mechanical /read mode enforcement
+  + // ReadModeGuardTool — mechanical /read + /plan mode enforcement
+    // ---------------------------------------------------------------------------
+    
+  - /// How the read-mode guard classifies its wrapped tool.
+  + /// How the read/plan-mode guard classifies its wrapped tool.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(crate) enum ReadGuardKind {
+  -     /// Always refused under read mode (write_file, edit_file, rename_symbol).
+  +     /// Always refused while a blocking mode is on (write_file, edit_file,
+  +     /// rename_symbol).
+        Write,
+  -     /// Refused under read mode only when the command matches the existing
+  -     /// destructive-pattern classification in `safety.rs`. This is honest but
+  -     /// incomplete — e.g. plain `>` redirection is not classified as destructive,
+  -     /// so it passes through; the refusal message says so.
+  +     /// Refused while a blocking mode is on only when the command matches the
+  +     /// existing destructive-pattern classification in `safety.rs`. This is
+  +     /// honest but incomplete — e.g. plain `>` redirection is not classified
+  ... (3 more lines)
+ ✓ (1m 39s)
+    // ---------------------------------------------------------------------------
+  - // ReadModeGuardTool — mechanical /read mode enforcement
+  + // ReadModeGuardTool — mechanical /read + /plan mode enforcement
+    // ---------------------------------------------------------------------------
+    
+  - /// How the read-mode guard classifies its wrapped tool.
+  + /// How the read/plan-mode guard classifies its wrapped tool.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+  ... (13 more lines)
+  ▶ edit src/tool_wrappers.rs (12 → 13 lines)
+    /// Wrap a write-class tool (write_file, edit_file, rename_symbol) with
+  - /// read-mode enforcement: refused entirely while `/read` is on.
+  + /// read/plan-mode enforcement: refused entirely while `/read` is on, or while
+  + /// `/plan` is on and `/plan apply` is not executing.
+    pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+            inner: tool,
+  ···
+        })
+    }
+    
+  - /// Wrap the bash tool with read-mode enforcement: while `/read` is on,
+  - /// commands flagged by the destructive-pattern classifier are refused;
+  + /// Wrap the bash tool with read/plan-mode enforcement: while a blocking mode
+  + /// is on, commands flagged by the destructive-pattern classifier are refused;
+    /// read-only commands pass through.
+ ✓ (1m 39s)
+    /// Wrap a write-class tool (write_file, edit_file, rename_symbol) with
+  - /// read-mode enforcement: refused entirely while `/read` is on.
+  + /// read/plan-mode enforcement: refused entirely while `/read` is on, or while
+  + /// `/plan` is on and `/plan apply` is not executing.
+    pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+            inner: tool,
+  ···
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '1155,1185p' src/commands_p… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "use serial_test" src/comm… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mod tests" src/commands_p… ✓ (7ms)
+  ▶ edit src/commands_plan.rs (2 → 3 lines)
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+ ✓ (17.9s)
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+  ▶ edit src/commands_plan.rs (2 → 5 lines)
+        #[test]
+  +     #[serial]
+        fn test_plan_mode_toggle() {
+  +         // Plan mode is a process global also exercised by the tool-layer
+  +         // guard tests in tool_wrappers.rs — #[serial] prevents races.
+ ✓ (1m 40s)
+        #[test]
+  +     #[serial]
+        fn test_plan_mode_toggle() {
+  +         // Plan mode is a process global also exercised by the tool-layer
+  +         // guard tests in tool_wrappers.rs — #[serial] prevents races.
+  10 tools completed in 10m 1s (10 ✓)
+
+  watch: no files changed this turn — skipping
+

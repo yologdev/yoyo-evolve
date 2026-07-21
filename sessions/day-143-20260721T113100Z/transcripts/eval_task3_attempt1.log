@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The diff implements exactly what was asked: a pure helper check_worktree_path_escape using symlink_metadata/canonicalize (no shelling out), wired into create_spawn_worktree before git worktree add, with all three requested tempdir tests plus an end-to-end refusal test, unix-gated as required. Let me do one quick focused check that the new tests actually run and pass:
+  ▶ $ cargo test --quiet symlink_preflight -- --nocapture 2>&1 | tail -5; cargo test -… ✓ (371ms)
+  ▶ $ cargo test --lib symlink 2>&1 | tail -8 ✓ (113ms)
+  ▶ $ cargo test --bin yoyo symlink 2>&1 | tail -8 || cargo test symlink 2>&1 | grep -… ✓ (162ms)
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (1m 19s)
+  4 tools completed in 1m 40s (4 ✓)
+
+Verdict: **PASS**
+
+The implementation matches the task precisely:
+• check_worktree_path_escape is a small pure helper (paths in, Result out) using std::fs::symlink_metadata + Path::canonicalize — no shelling out
+• Wired into create_spawn_worktree before git worktree add
+• Non-existent components break out of the loop (fresh case unchanged); in-repo symlinks allowed; out-of-repo escapes refused with an honest error naming the symlink and its target
+• All three requested test fixtures plus an end-to-end refusal test exist, symlink tests gated #[cfg(unix)], and I verified 8/8 symlink tests pass
+• CLAUDE.md bullet updated by appending the pre-flight clause without clobbering the existing sentence (task_01 coordination respected)
+
+The `.yoyo/risk_weights.json timestamp bump in the diff is harness noise, not a concern. Verdict written to session_plan/eval_task_3.md`.
+
+  watch: no files changed this turn — skipping
+

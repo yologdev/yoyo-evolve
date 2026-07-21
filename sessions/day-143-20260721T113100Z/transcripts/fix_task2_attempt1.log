@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "plan" src/tool_wrappers… ✓ (4ms)
+  2 tools completed in 4.9s (2 ✓)
+
+The implementation is committed; only the CLAUDE.md bullet is stale. Let me update it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - ReadModeGuardTool — mechanical `/read` mode enforcement at the tool layer: checks `is_read_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); transparent pass-through when read mode is off)
+  + ReadModeGuardTool — mechanical `/read` AND `/plan` mode enforcement at the tool layer: checks `is_read_mode()` and `commands_plan::is_plan_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); the plan-mode block is a transparent pass-through while `/plan apply` is executing (`is_plan_apply_active()` — apply needs write access to carry out the plan); transparent pass-through when neither mode is on)
+ ✓ (1m 19s)
+  - ReadModeGuardTool — mechanical `/read` mode enforcement at the tool layer: checks `is_read_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); transparent pass-through when read mode is off)
+  + ReadModeGuardTool — mechanical `/read` AND `/plan` mode enforcement at the tool layer: checks `is_read_mode()` and `commands_plan::is_plan_mode()` at call time, refuses write-class tools (`write_file`, `edit_file`, `rename_symbol`) with an honest error, and blocks bash commands flagged by the existing destructive-pattern classifier in `safety.rs` (only those — plain `>` redirection is not caught, and the error says so); the plan-mode block is a transparent pass-through while `/plan apply` is executing (`is_plan_apply_active()` — apply needs write access to carry out the plan); transparent pass-through when neither mode is on)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAUDE.md && git commit … ✓ (18ms)
+  3 tools completed in 2m 51s (3 ✓)
+
+Done. The evaluator's only complaint was the missing CLAUDE.md update — the tool-layer implementation itself was already correct and committed.
+
+What I fixed:
+• Updated the tool_wrappers.rs bullet in CLAUDE.md (line 56) to accurately describe the current behavior: ReadModeGuardTool now enforces both /read AND /plan mode at call time (via is_read_mode() and commands_plan::is_plan_mode()), with the plan-mode block being a transparent pass-through while /plan apply is executing (is_plan_apply_active()).
+• Left /help plan untouched, per the evaluator's note that its "read-only" claim is now actually true.
+
+Verified: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test all pass (89 tests green, 0 failed). Committed as 32ea1edc. The lone remaining dirty file (.yoyo/risk_weights.json) is pre-existing uncommitted work unrelated to this task, so I left it alone.
+
+  watch: no files changed this turn — skipping
+
