@@ -20,9 +20,17 @@ use crate::format::{BOLD, CYAN, DIM, RESET, YELLOW};
 /// the model has made claims about this file that no outcome ever tested.
 pub(crate) const W_NEVER_GRADED: f64 = 2.0;
 
-/// Weight per recent snapshot where the reactive (`top_10`) and anticipatory
-/// (`emerging`) columns disagree about a file — an outcome touching it would
-/// settle which model is right.
+/// Maximum weight per recent snapshot where the reactive (`top_10`) and
+/// anticipatory (`emerging`) columns disagree about a file — an outcome
+/// touching it would settle which model is right.
+///
+/// Scaling (Day 144): a flat per-snapshot count made large multi-way ties
+/// (every disagreeing file scored identically), so each disagreeing snapshot
+/// now contributes `W_DISAGREE × magnitude` where magnitude ∈ (0, 1] is how
+/// strongly the claiming column ranks the file: top of its list = 1.0 (a
+/// full-throated claim the other column ignores — full weight), position
+/// `i` of `n` = `(n − i) / n` (proportional). `W_DISAGREE` remains the
+/// per-snapshot maximum.
 pub(crate) const W_DISAGREE: f64 = 1.0;
 
 /// Lower weight for staleness: last seen ≥ [`STALE_SNAPSHOT_GAP`] snapshots
@@ -35,6 +43,10 @@ pub(crate) const DISAGREE_WINDOW: usize = 3;
 /// A file last seen this many snapshots ago (or more) counts as stale.
 pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
 
+/// Two epistemic scores within this distance count as tied and fall through
+/// to the tie-break: current risk score (higher first), then path.
+pub(crate) const SCORE_EPSILON: f64 = 1e-6;
+
 /// Default number of entries shown in the report.
 const REPORT_TOP_N: usize = 10;
 
@@ -44,6 +56,10 @@ pub(crate) struct EpistemicEntry {
     pub(crate) score: f64,
     /// Human-readable reasons, e.g. "predicted 5×, never graded".
     pub(crate) reasons: Vec<String>,
+    /// Current risk score, used only to break epistemic-score ties.
+    /// `None` is the explicit abstention case: the risk model has no score
+    /// for this file — it sorts after scored files within a tie.
+    pub(crate) risk_score: Option<f64>,
 }
 
 /// Per-file aggregate built while scanning snapshots.
@@ -59,6 +75,8 @@ struct FileStats {
 
 /// Rank files by epistemic value — how little the graded outcomes have
 /// taught the model about them. Pure: reads only its arguments.
+/// `risk_scores` (path → current risk score, as returned by
+/// `commands_risk::top_risk_files`) is used only to break ties.
 ///
 /// Files whose every signal is satisfied (graded, columns agree, fresh)
 /// score 0 and are absent from the result — the model has nothing left to
@@ -66,12 +84,17 @@ struct FileStats {
 pub(crate) fn compute_epistemic_ranking(
     snapshots: &[ParsedSnapshot],
     events: &[GradedEvent],
+    risk_scores: &[(String, f64)],
 ) -> Vec<EpistemicEntry> {
     use std::collections::{HashMap, HashSet};
 
     if snapshots.is_empty() {
         return Vec::new();
     }
+
+    // Tie-break lookup: path → current risk score.
+    let score_by_path: HashMap<&str, f64> =
+        risk_scores.iter().map(|(p, s)| (p.as_str(), *s)).collect();
 
     // Every path that ever appeared in a graded outcome, with the latest
     // day it was graded (hits and surprises both count — each taught the
@@ -106,14 +129,24 @@ pub(crate) fn compute_epistemic_ranking(
     }
 
     // Column disagreement over the most recent DISAGREE_WINDOW snapshots:
-    // file appears in exactly one of (predicted, emerging).
+    // file appears in exactly one of (predicted, emerging). Each disagreeing
+    // snapshot contributes a magnitude in (0, 1] — how strongly the claiming
+    // column ranks the file (see W_DISAGREE docs) — so stronger unresolved
+    // claims outrank weaker ones instead of tying flat.
     let window_start = snapshots.len().saturating_sub(DISAGREE_WINDOW);
     let mut disagree_count: HashMap<&str, usize> = HashMap::new();
+    let mut disagree_magnitude: HashMap<&str, f64> = HashMap::new();
     for snap in &snapshots[window_start..] {
         let predicted: HashSet<&str> = snap.predicted.iter().map(String::as_str).collect();
         let emerging: HashSet<&str> = snap.emerging.iter().map(String::as_str).collect();
         for p in predicted.symmetric_difference(&emerging) {
+            let claiming = if predicted.contains(p) {
+                &snap.predicted
+            } else {
+                &snap.emerging
+            };
             *disagree_count.entry(p).or_insert(0) += 1;
+            *disagree_magnitude.entry(p).or_insert(0.0) += rank_magnitude(claiming, p);
         }
     }
 
@@ -133,9 +166,13 @@ pub(crate) fn compute_epistemic_ranking(
 
         if let Some(&d) = disagree_count.get(path.as_str()) {
             if d > 0 {
-                score += W_DISAGREE * d as f64;
+                let magnitude = disagree_magnitude
+                    .get(path.as_str())
+                    .copied()
+                    .unwrap_or(d as f64);
+                score += W_DISAGREE * magnitude;
                 reasons.push(format!(
-                    "reactive/emerging disagree in {d} of last {} snapshots",
+                    "reactive/emerging disagree in {d} of last {} snapshots (magnitude {magnitude:.2})",
                     snapshots.len().min(DISAGREE_WINDOW)
                 ));
             }
@@ -155,18 +192,44 @@ pub(crate) fn compute_epistemic_ranking(
                 path: path.clone(),
                 score,
                 reasons,
+                risk_score: score_by_path.get(path.as_str()).copied(),
             });
         }
     }
 
-    // Highest epistemic value first; tie-break by path for determinism.
+    // Highest epistemic value first. Scores within SCORE_EPSILON are tied
+    // and fall through to the current risk score (higher first) — a flat
+    // ranking steers the planner arbitrarily; risk makes the choice
+    // meaningful. A file the risk model has no score for (explicit
+    // abstention, `risk_score: None`) sorts after scored files within a
+    // tie; final fallback is path, for full determinism.
     entries.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.path.cmp(&b.path))
+        use std::cmp::Ordering;
+        if (a.score - b.score).abs() > SCORE_EPSILON {
+            return b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal);
+        }
+        match (a.risk_score, b.risk_score) {
+            (Some(ra), Some(rb)) => rb
+                .partial_cmp(&ra)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path)),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.path.cmp(&b.path),
+        }
     });
     entries
+}
+
+/// How strongly a column claims `path`: 1.0 for the top of the list, down to
+/// `1/len` for the last entry, 0.0 if absent. Both columns are ordered
+/// strongest-first (top_10 by risk score, emerging by momentum), so position
+/// is an honest proxy for claim strength.
+fn rank_magnitude(list: &[String], path: &str) -> f64 {
+    match list.iter().position(|p| p == path) {
+        Some(idx) if !list.is_empty() => (list.len() - idx) as f64 / list.len() as f64,
+        _ => 0.0,
+    }
 }
 
 /// Format the epistemic ranking as a report. Honest empty states — never a
@@ -205,6 +268,18 @@ pub(crate) fn format_epistemic_report(
             out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
         }
     }
+    // Honest ordering note: if any displayed neighbours are tied (within
+    // SCORE_EPSILON), say so — the order among them came from the tie-break,
+    // not the epistemic score.
+    let shown = &entries[..entries.len().min(REPORT_TOP_N)];
+    let has_tie = shown
+        .windows(2)
+        .any(|w| (w[0].score - w[1].score).abs() <= SCORE_EPSILON);
+    if has_tie {
+        out.push_str(&format!(
+            "\n  {DIM}note: tied scores are ordered by current risk score (higher first), then path{RESET}\n"
+        ));
+    }
     out.push_str(&format!(
         "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
     ));
@@ -225,7 +300,9 @@ pub(crate) fn handle_risk_epistemic() {
 
     let snapshots = parse_all_snapshots(&snapshot_content);
     let events = parse_graded_events(&validation_content);
-    let entries = compute_epistemic_ranking(&snapshots, &events);
+    // Current risk scores, used only to break epistemic ties.
+    let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
+    let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
     print!("{}", format_epistemic_report(&snapshots, &entries));
 }
 
@@ -254,7 +331,7 @@ mod tests {
         // a.rs predicted and graded; b.rs predicted, never graded.
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
         let pos_b = ranking.iter().position(|e| e.path == "src/b.rs");
         let pos_a = ranking.iter().position(|e| e.path == "src/a.rs");
         assert!(pos_b.is_some(), "never-graded file must appear");
@@ -275,7 +352,7 @@ mod tests {
         // c.rs appears in emerging but not top_10 — columns disagree.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/c.rs"])];
         let events = vec![graded(100, &["src/a.rs", "src/c.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
         let c = ranking
             .iter()
             .find(|e| e.path == "src/c.rs")
@@ -292,7 +369,7 @@ mod tests {
         // a.rs in both columns (agree) and graded — nothing left to learn.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
         assert!(
             !ranking.iter().any(|e| e.path == "src/a.rs"),
             "fully-graded, agreeing file must rank absent"
@@ -301,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_empty_snapshots_honest_message() {
-        let ranking = compute_epistemic_ranking(&[], &[]);
+        let ranking = compute_epistemic_ranking(&[], &[], &[]);
         assert!(ranking.is_empty());
         let report = format_epistemic_report(&[], &ranking);
         assert!(
@@ -314,7 +391,7 @@ mod tests {
     fn test_all_graded_honest_message() {
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
         let report = format_epistemic_report(&snapshots, &ranking);
         assert!(
             report.contains("no ungraded predictions"),
@@ -329,7 +406,7 @@ mod tests {
         for d in 101..107 {
             snapshots.push(snap(d, &["src/other.rs"], &[]));
         }
-        let ranking = compute_epistemic_ranking(&snapshots, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
         let stale = ranking
             .iter()
             .find(|e| e.path == "src/stale.rs")
@@ -356,7 +433,7 @@ mod tests {
             snap(103, &["src/x.rs"], &["src/x.rs"]),
         ];
         let events = vec![graded(104, &["src/d.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
         let d = ranking.iter().find(|e| e.path == "src/d.rs");
         assert!(
             d.is_none(),
@@ -368,7 +445,7 @@ mod tests {
     fn test_score_is_sum_of_signals() {
         // e.rs: never graded (2.0) + disagrees in 1 recent snapshot (1.0)
         let snapshots = vec![snap(100, &[], &["src/e.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
         let e = ranking
             .iter()
             .find(|en| en.path == "src/e.rs")
@@ -383,9 +460,114 @@ mod tests {
     #[test]
     fn test_report_lists_reasons() {
         let snapshots = vec![snap(100, &["src/b.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking);
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
+    }
+
+    #[test]
+    fn test_larger_disagreement_magnitude_ranks_higher() {
+        // Both files never graded and both disagree once, but top.rs sits at
+        // the top of the predicted column (magnitude 1.0) while bottom.rs is
+        // last (magnitude 0.5) — the stronger unresolved claim ranks higher.
+        let snapshots = vec![snap(100, &["src/top.rs", "src/bottom.rs"], &[])];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let pos_top = ranking
+            .iter()
+            .position(|e| e.path == "src/top.rs")
+            .expect("top must appear");
+        let pos_bottom = ranking
+            .iter()
+            .position(|e| e.path == "src/bottom.rs")
+            .expect("bottom must appear");
+        assert!(
+            pos_top < pos_bottom,
+            "larger-magnitude disagreement must rank higher"
+        );
+        let top = &ranking[pos_top];
+        let bottom = &ranking[pos_bottom];
+        assert!(
+            (top.score - (W_NEVER_GRADED + W_DISAGREE)).abs() < 1e-9,
+            "top-ranked claim gets full disagree weight, got {}",
+            top.score
+        );
+        assert!(
+            (bottom.score - (W_NEVER_GRADED + W_DISAGREE * 0.5)).abs() < 1e-9,
+            "bottom-ranked claim gets proportional weight, got {}",
+            bottom.score
+        );
+    }
+
+    #[test]
+    fn test_tie_break_by_risk_score_deterministic() {
+        // a.rs and z.rs have identical epistemic scores (each alone at the
+        // top of one column in its own snapshot, never graded). z.rs has the
+        // higher current risk score, so it must rank first despite sorting
+        // after a.rs alphabetically — and the ordering is stable across runs.
+        let snapshots = vec![snap(100, &["src/a.rs"], &[]), snap(101, &[], &["src/z.rs"])];
+        let risk_scores = vec![("src/a.rs".to_string(), 1.0), ("src/z.rs".to_string(), 9.0)];
+        let first = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+        assert!(
+            (first[0].score - first[1].score).abs() < SCORE_EPSILON,
+            "fixture must produce an epistemic tie, got {} vs {}",
+            first[0].score,
+            first[1].score
+        );
+        assert_eq!(first[0].path, "src/z.rs", "higher risk score wins the tie");
+        assert_eq!(first[1].path, "src/a.rs");
+        for _ in 0..5 {
+            let again = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+            let paths: Vec<&str> = again.iter().map(|e| e.path.as_str()).collect();
+            let expected: Vec<&str> = first.iter().map(|e| e.path.as_str()).collect();
+            assert_eq!(paths, expected, "ordering must be deterministic");
+        }
+    }
+
+    #[test]
+    fn test_tie_break_abstention_unscored_sorts_last() {
+        // Abstention case (Day 144): a tied file the risk model has NO score
+        // for is not silently absorbed — it explicitly sorts after scored
+        // files within the tie, then by path among fellow unscored files.
+        let snapshots = vec![
+            snap(100, &["src/a.rs"], &[]),
+            snap(101, &[], &["src/m.rs"]),
+            snap(102, &["src/z.rs"], &[]),
+        ];
+        // Only z.rs has a current risk score; a.rs and m.rs abstain.
+        let risk_scores = vec![("src/z.rs".to_string(), 0.5)];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+        let paths: Vec<&str> = ranking.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["src/z.rs", "src/a.rs", "src/m.rs"],
+            "scored file first within the tie, then unscored by path"
+        );
+    }
+
+    #[test]
+    fn test_report_notes_tie_break() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[]), snap(101, &["src/b.rs"], &[])];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        assert!(
+            (ranking[0].score - ranking[1].score).abs() < SCORE_EPSILON,
+            "fixture must tie"
+        );
+        let report = format_epistemic_report(&snapshots, &ranking);
+        assert!(
+            report.contains("ordered by current risk score"),
+            "report must note the tie-break honestly, got: {report}"
+        );
+    }
+
+    #[test]
+    fn test_report_no_tie_note_when_scores_distinct() {
+        let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let report = format_epistemic_report(&snapshots, &ranking);
+        assert!(
+            !report.contains("ordered by current risk score"),
+            "no tie → no tie note, got: {report}"
+        );
     }
 }
