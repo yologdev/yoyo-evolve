@@ -1,0 +1,74 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,450p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,100p' src/commands_ri… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '369,373p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 1 lines)
+  -         let ranking = compute_epistemic_ranking(&[], &[]);
+  +         let ranking = compute_epistemic_ranking(&[], &[], &[]);
+ ✓ (10.6s)
+  -         let ranking = compute_epistemic_ranking(&[], &[]);
+  +         let ranking = compute_epistemic_ranking(&[], &[], &[]);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/compute_epistemic_rank… ✓ (5ms)
+  5 tools completed in 27.2s (5 ✓)
+
+All fixed. Now running the full verification:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 18s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_report_notes_tie_b… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ordered by current risk… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 237,290p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,330p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,236p' src/commands_ri… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (11 → 23 lines)
+            for r in &e.reasons {
+                out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+            }
+  +     }
+  +     // Honest ordering note: if any displayed neighbours are tied (within
+  +     // SCORE_EPSILON), say so — the order among them came from the tie-break,
+  +     // not the epistemic score.
+  +     let shown = &entries[..entries.len().min(REPORT_TOP_N)];
+  +     let has_tie = shown
+  +         .windows(2)
+  +         .any(|w| (w[0].score - w[1].score).abs() <= SCORE_EPSILON);
+  +     if has_tie {
+  +         out.push_str(&format!(
+  +             "\n  {DIM}note: tied scores are ordered by current risk score (higher first), then path{RESET}\n"
+  +         ));
+        }
+ ✓ (1m 41s)
+            for r in &e.reasons {
+                out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+            }
+  +     }
+  +     // Honest ordering note: if any displayed neighbours are tied (within
+  +     // SCORE_EPSILON), say so — the order among them came from the tie-break,
+  +     // not the epistemic score.
+  +     let shown = &entries[..entries.len().min(REPORT_TOP_N)];
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test commands… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (51.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'test … ✓ (1m 8s)
+  11 tools completed in 5m 57s (11 ✓)
+
+All green. Let me also do the task's final sanity check — run the actual command:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk episte… ✓ (676ms)
+
+Fixed. Everything passes.
+
+What was broken:
+1. **Three stale 2-arg call sites** (lines 371, 399, 438 in `src/commands_risk_epistemic.rs tests) — older tests still called compute_epistemic_ranking(&snapshots, &[])` after the signature gained the third risk_scores: &[(String, f64)] parameter. Fixed by passing &[] (no risk scores — those tests don't exercise the tie-break).
+2. Missing tie-break note in the report — `test_report_notes_tie_break expected format_epistemic_report` to honestly note when displayed entries are tied, but the note was never implemented. Added tie detection over the shown entries (adjacent scores within SCORE_EPSILON) that appends: *"note: tied scores are ordered by current risk score (higher first), then path"*. The no-tie test still passes because magnitude scaling (1.0 vs 0.5) separates its fixture's scores.
+
+Verification:
+• cargo fmt ✓
+• cargo build ✓
+• cargo test — 4453 + 89 passed, 0 failed ✓
+• cargo clippy --all-targets -- -D warnings ✓
+• cargo run -- risk epistemic — the old flat 9-way 3.0 tie is gone; top entries now discriminate (2.9 / 2.8 / 2.7 / 2.5…) via magnitude-scaled disagreement ✓
+
+  watch: no files changed this turn — skipping
+

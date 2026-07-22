@@ -1,0 +1,251 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_risk_epistemic.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline … ✓ (5ms)
+ ✓ (9ms)
+  ▶ read src/commands_risk_epistemic.rs:99..344 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct GradedEvent\|str… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn top_risk_files\|fn c… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_epistemic_rank… ✓ (8ms)
+  ▶ edit src/commands_risk_epistemic.rs (9 → 114 lines)
+        #[test]
+        fn test_report_lists_reasons() {
+            let snapshots = vec![snap(100, &["src/b.rs"], &[])];
+  -         let ranking = compute_epistemic_ranking(&snapshots, &[]);
+  +         let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+            let report = format_epistemic_report(&snapshots, &ranking);
+            assert!(report.contains("src/b.rs"));
+            assert!(report.contains("never graded"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_larger_disagreement_magnitude_ranks_higher() {
+  +         // Both files never graded and both disagree once, but top.rs sits at
+  +         // the top of the predicted column (magnitude 1.0) while bottom.rs is
+  +         // last (magnitude 0.5) — the stronger unresolved claim ranks higher.
+  +         let snapshots = vec![snap(100, &["src/top.rs", "src/bottom.rs"], &[])];
+  +         let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+  +         let pos_top = ranking
+  +             .iter()
+  +             .position(|e| e.path == "src/top.rs")
+  ... (95 more lines)
+ ✓ (11.2s)
+        #[test]
+        fn test_report_lists_reasons() {
+            let snapshots = vec![snap(100, &["src/b.rs"], &[])];
+  -         let ranking = compute_epistemic_ranking(&snapshots, &[]);
+  +         let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+            let report = format_epistemic_report(&snapshots, &ranking);
+            assert!(report.contains("src/b.rs"));
+            assert!(report.contains("never graded"));
+  ... (13 more lines)
+  7 tools completed in 2m 27s (7 ✓)
+
+Tests written first — now the implementation. First the weight docs and new const:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_epistemic.rs (4 → 12 lines)
+  - /// Weight per recent snapshot where the reactive (`top_10`) and anticipatory
+  - /// (`emerging`) columns disagree about a file — an outcome touching it would
+  - /// settle which model is right.
+  + /// Maximum weight per recent snapshot where the reactive (`top_10`) and
+  + /// anticipatory (`emerging`) columns disagree about a file — an outcome
+  + /// touching it would settle which model is right.
+  + ///
+  + /// Scaling (Day 144): a flat per-snapshot count made large multi-way ties
+  + /// (every disagreeing file scored identically), so each disagreeing snapshot
+  + /// now contributes `W_DISAGREE × magnitude` where magnitude ∈ (0, 1] is how
+  + /// strongly the claiming column ranks the file: top of its list = 1.0 (a
+  + /// full-throated claim the other column ignores — full weight), position
+  + /// `i` of `n` = `(n − i) / n` (proportional). `W_DISAGREE` remains the
+  + /// per-snapshot maximum.
+    pub(crate) const W_DISAGREE: f64 = 1.0;
+ ✓ (11.2s)
+  - /// Weight per recent snapshot where the reactive (`top_10`) and anticipatory
+  - /// (`emerging`) columns disagree about a file — an outcome touching it would
+  - /// settle which model is right.
+  + /// Maximum weight per recent snapshot where the reactive (`top_10`) and
+  + /// anticipatory (`emerging`) columns disagree about a file — an outcome
+  + /// touching it would settle which model is right.
+  + ///
+  + /// Scaling (Day 144): a flat per-snapshot count made large multi-way ties
+  ... (7 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (13 → 21 lines)
+    /// A file last seen this many snapshots ago (or more) counts as stale.
+    pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
+  + 
+  + /// Two epistemic scores within this distance count as tied and fall through
+  + /// to the tie-break: current risk score (higher first), then path.
+  + pub(crate) const SCORE_EPSILON: f64 = 1e-6;
+    
+    /// Default number of entries shown in the report.
+    const REPORT_TOP_N: usize = 10;
+  ···
+        pub(crate) score: f64,
+        /// Human-readable reasons, e.g. "predicted 5×, never graded".
+        pub(crate) reasons: Vec<String>,
+  +     /// Current risk score, used only to break epistemic-score ties.
+  +     /// `None` is the explicit abstention case: the risk model has no score
+  +     /// for this file — it sorts after scored files within a tie.
+  +     pub(crate) risk_score: Option<f64>,
+    }
+ ✓ (11.0s)
+    /// A file last seen this many snapshots ago (or more) counts as stale.
+    pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
+  + 
+  + /// Two epistemic scores within this distance count as tied and fall through
+  + /// to the tie-break: current risk score (higher first), then path.
+  + pub(crate) const SCORE_EPSILON: f64 = 1e-6;
+    
+    /// Default number of entries shown in the report.
+  ... (10 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (10 → 13 lines)
+    /// Rank files by epistemic value — how little the graded outcomes have
+    /// taught the model about them. Pure: reads only its arguments.
+  + /// `risk_scores` (path → current risk score, as returned by
+  + /// `commands_risk::top_risk_files`) is used only to break ties.
+    ///
+    /// Files whose every signal is satisfied (graded, columns agree, fresh)
+    /// score 0 and are absent from the result — the model has nothing left to
+  ···
+    pub(crate) fn compute_epistemic_ranking(
+        snapshots: &[ParsedSnapshot],
+        events: &[GradedEvent],
+  +     risk_scores: &[(String, f64)],
+    ) -> Vec<EpistemicEntry> {
+ ✓ (11.2s)
+    /// Rank files by epistemic value — how little the graded outcomes have
+    /// taught the model about them. Pure: reads only its arguments.
+  + /// `risk_scores` (path → current risk score, as returned by
+  + /// `commands_risk::top_risk_files`) is used only to break ties.
+    ///
+    /// Files whose every signal is satisfied (graded, columns agree, fresh)
+    /// score 0 and are absent from the result — the model has nothing left to
+  ···
+  ... (5 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (11 → 21 lines)
+        // Column disagreement over the most recent DISAGREE_WINDOW snapshots:
+  -     // file appears in exactly one of (predicted, emerging).
+  +     // file appears in exactly one of (predicted, emerging). Each disagreeing
+  +     // snapshot contributes a magnitude in (0, 1] — how strongly the claiming
+  +     // column ranks the file (see W_DISAGREE docs) — so stronger unresolved
+  +     // claims outrank weaker ones instead of tying flat.
+        let window_start = snapshots.len().saturating_sub(DISAGREE_WINDOW);
+        let mut disagree_count: HashMap<&str, usize> = HashMap::new();
+  +     let mut disagree_magnitude: HashMap<&str, f64> = HashMap::new();
+        for snap in &snapshots[window_start..] {
+            let predicted: HashSet<&str> = snap.predicted.iter().map(String::as_str).collect();
+            let emerging: HashSet<&str> = snap.emerging.iter().map(String::as_str).collect();
+            for p in predicted.symmetric_difference(&emerging) {
+  +             let claiming = if predicted.contains(p) {
+  +                 &snap.predicted
+  +             } else {
+  +                 &snap.emerging
+  +             };
+                *disagree_count.entry(p).or_insert(0) += 1;
+  +             *disagree_magnitude.entry(p).or_insert(0.0) += rank_magnitude(claiming, p);
+  ... (2 more lines)
+ ✓ (11.1s)
+        // Column disagreement over the most recent DISAGREE_WINDOW snapshots:
+  -     // file appears in exactly one of (predicted, emerging).
+  +     // file appears in exactly one of (predicted, emerging). Each disagreeing
+  +     // snapshot contributes a magnitude in (0, 1] — how strongly the claiming
+  +     // column ranks the file (see W_DISAGREE docs) — so stronger unresolved
+  +     // claims outrank weaker ones instead of tying flat.
+        let window_start = snapshots.len().saturating_sub(DISAGREE_WINDOW);
+        let mut disagree_count: HashMap<&str, usize> = HashMap::new();
+  ... (13 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (9 → 13 lines)
+            if let Some(&d) = disagree_count.get(path.as_str()) {
+                if d > 0 {
+  -                 score += W_DISAGREE * d as f64;
+  +                 let magnitude = disagree_magnitude
+  +                     .get(path.as_str())
+  +                     .copied()
+  +                     .unwrap_or(d as f64);
+  +                 score += W_DISAGREE * magnitude;
+                    reasons.push(format!(
+  -                     "reactive/emerging disagree in {d} of last {} snapshots",
+  +                     "reactive/emerging disagree in {d} of last {} snapshots (magnitude {magnitude:.2})",
+                        snapshots.len().min(DISAGREE_WINDOW)
+                    ));
+                }
+ ✓ (11.1s)
+            if let Some(&d) = disagree_count.get(path.as_str()) {
+                if d > 0 {
+  -                 score += W_DISAGREE * d as f64;
+  +                 let magnitude = disagree_magnitude
+  +                     .get(path.as_str())
+  +                     .copied()
+  +                     .unwrap_or(d as f64);
+  +                 score += W_DISAGREE * magnitude;
+  ... (6 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (18 → 44 lines)
+                    path: path.clone(),
+                    score,
+                    reasons,
+  +                 risk_score: score_by_path.get(path.as_str()).copied(),
+                });
+            }
+        }
+    
+  -     // Highest epistemic value first; tie-break by path for determinism.
+  +     // Highest epistemic value first. Scores within SCORE_EPSILON are tied
+  +     // and fall through to the current risk score (higher first) — a flat
+  +     // ranking steers the planner arbitrarily; risk makes the choice
+  +     // meaningful. A file the risk model has no score for (explicit
+  +     // abstention, `risk_score: None`) sorts after scored files within a
+  +     // tie; final fallback is path, for full determinism.
+        entries.sort_by(|a, b| {
+  -         b.score
+  -             .partial_cmp(&a.score)
+  -             .unwrap_or(std::cmp::Ordering::Equal)
+  -             .then_with(|| a.path.cmp(&b.path))
+  ... (27 more lines)
+ ✓ (11.2s)
+                    path: path.clone(),
+                    score,
+                    reasons,
+  +                 risk_score: score_by_path.get(path.as_str()).copied(),
+                });
+            }
+        }
+    
+  ... (13 more lines)
+  ▶ edit src/commands_risk_epistemic.rs (3 → 9 lines)
+        if snapshots.is_empty() {
+            return Vec::new();
+        }
+  + 
+  +     // Tie-break lookup: path → current risk score.
+  +     let score_by_path: HashMap<&str, f64> = risk_scores
+  +         .iter()
+  +         .map(|(p, s)| (p.as_str(), *s))
+  +         .collect();
+ ✓ (11.1s)
+        if snapshots.is_empty() {
+            return Vec::new();
+        }
+  + 
+  +     // Tie-break lookup: path → current risk score.
+  +     let score_by_path: HashMap<&str, f64> = risk_scores
+  +         .iter()
+  +         .map(|(p, s)| (p.as_str(), *s))
+  +         .collect();
+  ▶ edit src/commands_risk_epistemic.rs (3 → 5 lines)
+        let snapshots = parse_all_snapshots(&snapshot_content);
+        let events = parse_graded_events(&validation_content);
+  -     let entries = compute_epistemic_ranking(&snapshots, &events);
+  +     // Current risk scores, used only to break epistemic ties.
+  +     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
+  +     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
+ ✓ (11.2s)
+        let snapshots = parse_all_snapshots(&snapshot_content);
+        let events = parse_graded_events(&validation_content);
+  -     let entries = compute_epistemic_ranking(&snapshots, &events);
+  +     // Current risk scores, used only to break epistemic ties.
+  +     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
+  +     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/compute_epistemic_rank… ✓ (5ms)
+  9 tools completed in 2m 21s (9 ✓)
+
+  watch: no files changed this turn — skipping
+

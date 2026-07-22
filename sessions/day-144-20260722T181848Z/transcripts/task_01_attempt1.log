@@ -1,0 +1,115 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "auto_save_on_exit" src/commands_session.rs | head; git status --short  ▶ read src/commands_session.rs:340..430 ✓ (1ms)
+ ✓ (8ms)
+  ▶ read src/commands_session.rs:429..489  ▶ read src/commands_session.rs:1055..1115 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -rn "save_messages" src/ | grep -v test; echo ---; grep -rn "restore_messag… ✓ (15ms)
+  ▶ read src/commands_session.rs:670..720  ▶ $ grep -rn "restore_messages\|Message {" src/commands_stash.rs | head; echo ---; g… ✓ (2ms)
+ ✓ (7ms)
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null; grep -rn "fn restore_mess… ✓ (6ms)
+  ▶ $ sed -n 530,560p /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557… ✓ (5ms)
+  ▶ $ grep -rn "AgentMessage::Llm(Message::User" src/*.rs | head -5; grep -rn "Content… ✓ (7ms)
+  ▶ edit src/commands_session.rs (2 → 65 lines)
+  +     /// Build a test agent carrying one user message so the auto-save path
+  +     /// actually attempts a write (empty conversations short-circuit).
+  +     fn agent_with_one_message() -> yoagent::agent::Agent {
+  +         use yoagent::provider::AnthropicProvider;
+  +         let mut agent = yoagent::agent::Agent::from_provider(
+  +             AnthropicProvider,
+  +             yoagent::provider::ModelConfig::mock(),
+  +         )
+  +         .with_system_prompt("test")
+  +         .with_api_key("test-key");
+  +         agent.append_message(AgentMessage::Llm(Message::User {
+  +             content: vec![Content::Text {
+  +                 text: "hello".to_string(),
+  +             }],
+  +             timestamp: 0,
+  +         }));
+  +         agent
+  +     }
+  + 
+  +     #[test]
+  ... (45 more lines)
+ ✓ (11.7s)
+  +     /// Build a test agent carrying one user message so the auto-save path
+  +     /// actually attempts a write (empty conversations short-circuit).
+  +     fn agent_with_one_message() -> yoagent::agent::Agent {
+  +         use yoagent::provider::AnthropicProvider;
+  +         let mut agent = yoagent::agent::Agent::from_provider(
+  +             AnthropicProvider,
+  +             yoagent::provider::ModelConfig::mock(),
+  +         )
+  ... (13 more lines)
+  11 tools completed in 1m 8s (11 ✓)
+
+Red confirmed — the testable inner function doesn't exist yet. Now the green:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (26 → 61 lines)
+    /// Auto-save the current conversation to `.yoyo/last-session.json`.
+    /// Creates the `.yoyo/` directory if it doesn't exist.
+  - /// Silently ignores errors (best-effort crash recovery).
+  + /// A failed save is reported with one stderr warning (never a panic).
+    pub fn auto_save_on_exit(agent: &Agent) {
+        auto_save_on_exit_in(agent, std::path::Path::new("."));
+  + }
+  + 
+  + /// Outcome of an auto-save attempt. Separating this from the printing lets
+  + /// tests assert that a failed save is surfaced, not swallowed — "nothing to
+  + /// save", "saved", and "save failed" are three distinct answers (the absence
+  + /// case gets its own value, never absorbed by a neighbor).
+  + #[derive(Debug)]
+  + enum AutoSaveOutcome {
+  +     NothingToSave,
+  +     Saved { message_count: usize },
+  +     Failed { path: String, err: String },
+    }
+    
+    /// Like [`auto_save_on_exit`] but writes session files under an explicit `root`
+  ... (53 more lines)
+ ✓ (1m 43s)
+    /// Auto-save the current conversation to `.yoyo/last-session.json`.
+    /// Creates the `.yoyo/` directory if it doesn't exist.
+  - /// Silently ignores errors (best-effort crash recovery).
+  + /// A failed save is reported with one stderr warning (never a panic).
+    pub fn auto_save_on_exit(agent: &Agent) {
+        auto_save_on_exit_in(agent, std::path::Path::new("."));
+  + }
+  + 
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo t… ✓ (39.4s)
+  2 tools completed in 2m 30s (2 ✓)
+
+Module tests green (58 passed, including the two new ones). Full suite now:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -2 && cargo test 2>&1 | tail -5 ✓ (1m 5s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | awk '{s+=$4; f+=$6} END {print "passe… ✓ (52.3s)
+  2 tools completed in 2m 4s (2 ✓)
+
+All green — 4537 tests pass, clippy clean. Committing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 144 (17:18): Fix fail-silent session auto-save … ✓ (15ms)
+
+Done. Task 1 complete and committed (c5763058).
+
+What changed (src/commands_session.rs only):
+
+1. **Red-green**: wrote test_auto_save_failure_is_surfaced_not_swallowed first — it blocks the save destination by making .yoyo a file in a temp dir, and asserts the failure comes back as an explicit outcome. Confirmed red (function didn't exist), then implemented.
+
+2. **The fix**: split auto_save_on_exit_in into a testable inner auto_save_on_exit_result returning a three-valued `AutoSaveOutcome — NothingToSave / Saved / Failed` — so the absence case is its own value, never absorbed (the Day 144 lesson, applied at build time this round). The outer function prints:
+   • success path: byte-identical message to before
+   • failure path (new): one honest stderr line — warning: could not auto-save session to <path>: <err> — session not saved — no panic, exit proceeds
+
+3. Twin-arm audit (Day 142 lesson): checked every sibling save path in the file — handle_save, handle_load, handle_mark, handle_jump all already report errors via Err branches. `auto_save_on_exit_in` was the only swallow; no other fix needed.
+
+4. Also updated the stale doc comment that literally advertised the bug ("Silently ignores errors").
+
+Verified: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, cargo test` — 4537 passed, 0 failed. The two new tests (failure surfaced + success round-trip with a real one-message agent via append_message) are in the suite.
+
+Small note: the pre-existing uncommitted .yoyo/risk_weights.json change rode along in the git add -A commit per the task instructions — it's an auto-maintained state file, harmless.
+
+The satisfying part: this was the exact bug class Claude Code fixed publicly (silent transcript-write loss), found in my own code by reading a rival's fix log. Silence on exit now means exactly one thing: nothing to save.
+
+  watch: no files changed this turn — skipping
+
