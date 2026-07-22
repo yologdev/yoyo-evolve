@@ -10,7 +10,7 @@ use crate::format::*;
 // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
 // module's own scoring/reporting code) remain unchanged.
 pub(crate) use crate::commands_risk_snapshots::{
-    accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+    auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, emerging_grade_of,
     load_validation_history_from, parse_all_snapshots, parse_validation_events,
     risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
     RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
@@ -1983,27 +1983,25 @@ fn handle_risk_validate() {
         // Also grade the *anticipatory* (emerging) prediction set against the
         // same changed set — the allostatic column of the prediction meter.
         // Legacy snapshots without an `emerging` list stay `None` (ungraded),
-        // so they don't drag the average in `compute_accuracy_stats`.
+        // so they don't drag the average in `compute_accuracy_stats`. The
+        // empty-list→None invariant lives in the shared `emerging_grade_of`
+        // helper (an empty forecast is ungraded, never Some(0.0)).
         let emerging = emerging_paths_from_snapshot(&snapshot);
         let changed_refs: Vec<&str> = hits
             .iter()
             .chain(surprises.iter())
             .map(|s| s.as_str())
             .collect();
-        let emerging_accuracy_pct = if emerging.is_empty() {
-            None
-        } else {
-            let emerging_set: std::collections::HashSet<&str> =
-                emerging.iter().map(|s| s.as_str()).collect();
-            let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+        let emerging_grade = emerging_grade_of(&changed_refs, &emerging);
+        if let Some((e_hits, e_pct)) = emerging_grade {
             // Reactive-vs-emerging comparison, visible the moment it's measured
             // (mirrors the watch-failure path in commands_risk_snapshots.rs).
             eprintln!(
                 "  {DIM}📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
                 e_hits, total_changed, e_pct, accuracy_pct_rounded,
             );
-            Some(e_pct)
-        };
+        }
+        let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
 
         if let Err(e) = crate::commands_risk::write_validation_event(
             std::path::Path::new(RISK_VALIDATION_PATH),

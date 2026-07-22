@@ -298,6 +298,23 @@ pub(crate) fn accuracy_of(
     (hits, pct_rounded)
 }
 
+/// Grade the anticipatory (emerging) prediction list. An empty list is
+/// absence of a forecast, not a 0% one — it must grade as None (ungraded),
+/// never Some(0.0). Verified Day 144: the recent 0.0% green events graded
+/// against POPULATED lists (quiet-because-right); the #623 hypothesis of
+/// quiet-because-silent did not hold — this helper pins the invariant anyway
+/// so the previously-triplicated inline logic can't drift. Returns
+/// `Some((hits, pct))` so the watch-failure path can surface the hit count;
+/// call sites that only need the pct take `.map(|(_, pct)| pct)`.
+pub(crate) fn emerging_grade_of(changed: &[&str], emerging: &[String]) -> Option<(usize, f64)> {
+    if emerging.is_empty() {
+        return None;
+    }
+    let emerging_set: std::collections::HashSet<&str> =
+        emerging.iter().map(|s| s.as_str()).collect();
+    Some(accuracy_of(changed, &emerging_set))
+}
+
 /// Return true if a validation event referencing this snapshot's git hash
 /// already exists in the validations JSONL content. Only green-outcome events
 /// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
@@ -373,13 +390,7 @@ pub(crate) fn record_green_validation_to(
 
     // Legacy snapshots without an emerging list stay None (ungraded) —
     // distinct from Some(0.0), so they don't drag the emerging average.
-    let emerging_pct = if emerging.is_empty() {
-        None
-    } else {
-        let emerging_set: std::collections::HashSet<&str> =
-            emerging.iter().map(|s| s.as_str()).collect();
-        Some(accuracy_of(&changed_refs, &emerging_set).1)
-    };
+    let emerging_pct = emerging_grade_of(&changed_refs, emerging).map(|(_, pct)| pct);
 
     let mut hits: Vec<String> = Vec::new();
     let mut surprises: Vec<String> = Vec::new();
@@ -493,14 +504,8 @@ fn auto_validate_after_failure_to(
     // an emerging list (older snapshots have none → None, so the reader can tell
     // "no emerging data" from "0% accurate").
     let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
-    let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
-        (0, None)
-    } else {
-        let emerging_set: std::collections::HashSet<&str> =
-            last.emerging.iter().map(|s| s.as_str()).collect();
-        let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
-        (e_hits, Some(e_pct))
-    };
+    let emerging_grade = emerging_grade_of(&changed_refs, &last.emerging);
+    let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
 
     let day: u32 = std::fs::read_to_string("DAY_COUNT")
         .ok()
@@ -530,7 +535,7 @@ fn auto_validate_after_failure_to(
         total_changed,
         accuracy_pct_rounded,
     );
-    if let Some(e_pct) = emerging_accuracy_pct {
+    if let Some((emerging_hits, e_pct)) = emerging_grade {
         // Allostatic-vs-homeostatic comparison, visible the moment it's measured.
         eprintln!(
             "{DIM}     📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
@@ -1438,6 +1443,37 @@ mod tests {
         let (zh, zp) = accuracy_of(&empty, &reactive);
         assert_eq!(zh, 0);
         assert!((zp - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_emerging_grade_of_empty_list_is_ungraded_none() {
+        // An empty emerging list is absence of a forecast, not a 0% one — it
+        // must grade as None (ungraded), never Some(0.0). Some(0.0) would drag
+        // the anticipatory average with grades that were never predictions.
+        let changed = ["src/a.rs"];
+        assert_eq!(emerging_grade_of(&changed, &[]), None);
+    }
+
+    #[test]
+    fn test_emerging_grade_of_populated_no_overlap_is_real_zero() {
+        // A populated list with no overlap on the changed files is a REAL
+        // graded zero — the forecast existed and missed. Distinct from the
+        // empty-list None above.
+        let changed = ["src/a.rs", "src/b.rs"];
+        let emerging = vec!["src/z.rs".to_string(), "src/y.rs".to_string()];
+        let (hits, pct) = emerging_grade_of(&changed, &emerging).expect("populated list grades");
+        assert_eq!(hits, 0);
+        assert!((pct - 0.0).abs() < 0.001, "0/2 = Some(0.0), a real zero");
+    }
+
+    #[test]
+    fn test_emerging_grade_of_populated_with_overlap() {
+        // Overlap grades via the same accuracy_of math as the reactive column.
+        let changed = ["src/a.rs", "src/b.rs", "src/c.rs"];
+        let emerging = vec!["src/a.rs".to_string(), "src/x.rs".to_string()];
+        let (hits, pct) = emerging_grade_of(&changed, &emerging).expect("populated list grades");
+        assert_eq!(hits, 1, "only a.rs was both changed and forecast");
+        assert!((pct - 33.3).abs() < 0.001, "1/3 rounds to 33.3");
     }
 
     #[test]
