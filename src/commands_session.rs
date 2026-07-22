@@ -376,28 +376,63 @@ pub fn handle_compact(agent: &mut Agent, input: &str) {
 
 /// Auto-save the current conversation to `.yoyo/last-session.json`.
 /// Creates the `.yoyo/` directory if it doesn't exist.
-/// Silently ignores errors (best-effort crash recovery).
+/// A failed save is reported with one stderr warning (never a panic).
 pub fn auto_save_on_exit(agent: &Agent) {
     auto_save_on_exit_in(agent, std::path::Path::new("."));
+}
+
+/// Outcome of an auto-save attempt. Separating this from the printing lets
+/// tests assert that a failed save is surfaced, not swallowed — "nothing to
+/// save", "saved", and "save failed" are three distinct answers (the absence
+/// case gets its own value, never absorbed by a neighbor).
+#[derive(Debug)]
+enum AutoSaveOutcome {
+    NothingToSave,
+    Saved { message_count: usize },
+    Failed { path: String, err: String },
 }
 
 /// Like [`auto_save_on_exit`] but writes session files under an explicit `root`
 /// directory instead of the process CWD. This avoids `set_current_dir` in tests.
 fn auto_save_on_exit_in(agent: &Agent, root: &std::path::Path) {
-    if agent.messages().is_empty() {
-        return;
-    }
-    if let Ok(json) = agent.save_messages() {
-        // Ensure .yoyo/ directory exists
-        let yoyo_dir = root.join(".yoyo");
-        let _ = std::fs::create_dir_all(&yoyo_dir);
-        let save_path = root.join(AUTO_SAVE_SESSION_PATH);
-        if std::fs::write(&save_path, &json).is_ok() {
+    match auto_save_on_exit_result(agent, root) {
+        AutoSaveOutcome::NothingToSave => {}
+        AutoSaveOutcome::Saved { message_count } => {
             eprintln!(
-                "{DIM}  session auto-saved to {AUTO_SAVE_SESSION_PATH} ({} messages){RESET}",
-                agent.messages().len()
+                "{DIM}  session auto-saved to {AUTO_SAVE_SESSION_PATH} ({message_count} messages){RESET}"
             );
         }
+        AutoSaveOutcome::Failed { path, err } => {
+            eprintln!("warning: could not auto-save session to {path}: {err} — session not saved");
+        }
+    }
+}
+
+/// Attempt the auto-save and report what happened, without printing.
+fn auto_save_on_exit_result(agent: &Agent, root: &std::path::Path) -> AutoSaveOutcome {
+    if agent.messages().is_empty() {
+        return AutoSaveOutcome::NothingToSave;
+    }
+    let save_path = root.join(AUTO_SAVE_SESSION_PATH);
+    let json = match agent.save_messages() {
+        Ok(json) => json,
+        Err(e) => {
+            return AutoSaveOutcome::Failed {
+                path: save_path.display().to_string(),
+                err: e.to_string(),
+            }
+        }
+    };
+    // Ensure .yoyo/ directory exists; a failure here surfaces via the write below.
+    let _ = std::fs::create_dir_all(root.join(".yoyo"));
+    match std::fs::write(&save_path, &json) {
+        Ok(()) => AutoSaveOutcome::Saved {
+            message_count: agent.messages().len(),
+        },
+        Err(e) => AutoSaveOutcome::Failed {
+            path: save_path.display().to_string(),
+            err: e.to_string(),
+        },
     }
 }
 
@@ -1086,6 +1121,71 @@ mod tests {
             !tmp_dir.path().join(AUTO_SAVE_SESSION_PATH).exists(),
             "Should not save empty conversations"
         );
+    }
+
+    /// Build a test agent carrying one user message so the auto-save path
+    /// actually attempts a write (empty conversations short-circuit).
+    fn agent_with_one_message() -> yoagent::agent::Agent {
+        use yoagent::provider::AnthropicProvider;
+        let mut agent = yoagent::agent::Agent::from_provider(
+            AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("test")
+        .with_api_key("test-key");
+        agent.append_message(AgentMessage::Llm(Message::User {
+            content: vec![Content::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 0,
+        }));
+        agent
+    }
+
+    #[test]
+    fn test_auto_save_failure_is_surfaced_not_swallowed() {
+        // Day 144: "fail-soft is fail-silent" — a failed auto-save must be
+        // reported, not silently indistinguishable from "nothing to save".
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_autosave_fail_")
+            .tempdir()
+            .unwrap();
+        // Make `.yoyo` a FILE so create_dir_all/write must fail.
+        std::fs::write(tmp_dir.path().join(".yoyo"), "not a directory").unwrap();
+
+        let agent = agent_with_one_message();
+        match auto_save_on_exit_result(&agent, tmp_dir.path()) {
+            AutoSaveOutcome::Failed { path, err } => {
+                assert!(
+                    path.contains("last-session.json"),
+                    "failure should name the destination path, got: {path}"
+                );
+                assert!(!err.is_empty(), "failure should carry the OS error");
+            }
+            other => {
+                panic!("expected Failed outcome when the save path is blocked, got: {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_auto_save_success_writes_file_and_reports_saved() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_autosave_ok_")
+            .tempdir()
+            .unwrap();
+
+        let agent = agent_with_one_message();
+        match auto_save_on_exit_result(&agent, tmp_dir.path()) {
+            AutoSaveOutcome::Saved { message_count } => {
+                assert_eq!(message_count, 1);
+                assert!(
+                    tmp_dir.path().join(AUTO_SAVE_SESSION_PATH).exists(),
+                    "auto-save file should exist after a Saved outcome"
+                );
+            }
+            other => panic!("expected Saved outcome, got: {other:?}"),
+        }
     }
 
     #[test]
