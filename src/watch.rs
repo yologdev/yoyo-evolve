@@ -1170,10 +1170,8 @@ pub fn run_watch_command(cmd: &str) -> (bool, String) {
     use std::io::BufRead;
     use std::process::{Command, Stdio};
 
-    let progress = watch_progress_mode(
-        io::stderr().is_terminal(),
-        crate::format::is_plain_output(),
-    );
+    let progress =
+        watch_progress_mode(io::stderr().is_terminal(), crate::format::is_plain_output());
 
     let child = Command::new("sh")
         .args(["-c", cmd])
