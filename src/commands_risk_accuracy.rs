@@ -77,6 +77,14 @@ pub(crate) struct AccuracyStats {
     /// accuracy — momentum-flagged files that changed WITHOUT breaking.
     /// `None` when no green-day event carries an emerging grade.
     pub(crate) emerging_green_avg_pct: Option<f64>,
+    /// Failure-day events with NO emerging grade (`emerging_accuracy_pct ==
+    /// None` — legacy pre-emerging lines or empty-emerging snapshots).
+    /// Derived: `failure_samples - emerging_failure_samples`. Rendered so a
+    /// reader can tell "quiet meter" from "starved meter".
+    pub(crate) emerging_failure_ungraded: usize,
+    /// Green-day events with NO emerging grade. Derived:
+    /// `green_samples - emerging_green_samples`.
+    pub(crate) emerging_green_ungraded: usize,
     /// Event counts per severity tag (e.g. `"revert"`, `"watch_failure"`).
     /// Legacy severity-less events are counted under `"untagged"`.
     pub(crate) severity_counts: std::collections::BTreeMap<String, usize>,
@@ -147,6 +155,8 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             emerging_failure_avg_pct: None,
             emerging_green_samples: 0,
             emerging_green_avg_pct: None,
+            emerging_failure_ungraded: 0,
+            emerging_green_ungraded: 0,
             severity_counts: std::collections::BTreeMap::new(),
         };
     }
@@ -274,6 +284,12 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         Some(emerging_green_graded.iter().sum::<f64>() / emerging_green_graded.len() as f64)
     };
 
+    // Ungraded counts (derived, per side): events with no emerging grade at
+    // all. Without these the report can't distinguish "the anticipatory
+    // meter is quiet" from "the anticipatory meter has almost no samples".
+    let emerging_failure_ungraded = failure_samples - emerging_failure_samples;
+    let emerging_green_ungraded = green_samples - emerging_green_samples;
+
     // Per-severity event counts — legacy severity-less events land in
     // "untagged" so the historical lines stay visible without a fake tag.
     let mut severity_counts: std::collections::BTreeMap<String, usize> =
@@ -301,6 +317,8 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         emerging_failure_avg_pct,
         emerging_green_samples,
         emerging_green_avg_pct,
+        emerging_failure_ungraded,
+        emerging_green_ungraded,
         severity_counts,
     }
 }
@@ -353,8 +371,16 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
     let emerging_failure_line = match stats.emerging_failure_avg_pct {
         Some(pct) => {
             let rounded = (pct * 10.0).round() / 10.0;
+            let ungraded_note = if stats.emerging_failure_ungraded > 0 {
+                format!(
+                    ", {} ungraded — no emerging forecast recorded",
+                    stats.emerging_failure_ungraded
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "  {BOLD}emerging recall{RESET} (failure days, {} graded): {rounded:.0}% — momentum-flagged files were the ones that broke",
+                "  {BOLD}emerging recall{RESET} (failure days, {} graded{ungraded_note}): {rounded:.0}% — momentum-flagged files were the ones that broke",
                 stats.emerging_failure_samples
             )
         }
@@ -365,8 +391,16 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
     let emerging_green_line = match stats.emerging_green_avg_pct {
         Some(pct) => {
             let rounded = (pct * 10.0).round() / 10.0;
+            let ungraded_note = if stats.emerging_green_ungraded > 0 {
+                format!(
+                    ", {} ungraded — no emerging forecast recorded",
+                    stats.emerging_green_ungraded
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "  {BOLD}emerging false-alarm signal{RESET} (green days, {} graded): {rounded:.0}% — momentum-flagged files changed without breaking",
+                "  {BOLD}emerging false-alarm signal{RESET} (green days, {} graded{ungraded_note}): {rounded:.0}% — momentum-flagged files changed without breaking",
                 stats.emerging_green_samples
             )
         }
@@ -629,6 +663,168 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_accuracy_stats_emerging_ungraded_counts_per_side() {
+        // 3 failure-day events (2 graded, 1 None) + 2 green-day events
+        // (1 graded, 1 None). Ungraded counts must be derived per side and
+        // None events must contribute NO 0.0 sample to either average.
+        let events = vec![
+            ValidationEvent {
+                day: 140,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(100.0),
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(60.0),
+                severity: Some("revert".to_string()),
+            },
+            ValidationEvent {
+                day: 142,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None, // legacy line, no forecast
+                severity: None,
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(40.0),
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None, // empty emerging list → ungraded
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.emerging_failure_samples, 2);
+        assert_eq!(stats.emerging_failure_ungraded, 1);
+        assert_eq!(stats.emerging_green_samples, 1);
+        assert_eq!(stats.emerging_green_ungraded, 1);
+        // Pin the filter_map behavior: a None grade is EXCLUDED, not a 0.0
+        // sample — the averages must be exactly the graded values' means.
+        let f_avg = stats.emerging_failure_avg_pct.expect("failure side graded");
+        assert!(
+            (f_avg - 80.0).abs() < 0.1,
+            "None must not drag the failure avg toward 0: {f_avg}"
+        );
+        let g_avg = stats.emerging_green_avg_pct.expect("green side graded");
+        assert!(
+            (g_avg - 40.0).abs() < 0.1,
+            "None must not drag the green avg toward 0: {g_avg}"
+        );
+    }
+
+    #[test]
+    fn test_format_accuracy_report_ungraded_clause_when_present() {
+        // Failure side: 1 graded + 2 ungraded; green side: 1 graded + 1 ungraded.
+        let events = vec![
+            ValidationEvent {
+                day: 140,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(75.0),
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: None,
+            },
+            ValidationEvent {
+                day: 142,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: Some("revert".to_string()),
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(40.0),
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 143,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("1 graded, 2 ungraded — no emerging forecast recorded"),
+            "failure line must count its ungraded events: {report}"
+        );
+        assert!(
+            report.contains("1 graded, 1 ungraded — no emerging forecast recorded"),
+            "green line must count its ungraded events: {report}"
+        );
+    }
+
+    #[test]
+    fn test_format_accuracy_report_no_ungraded_clause_on_clean_data() {
+        // Every event graded → no ungraded noise, exact pre-change wording.
+        let events = vec![
+            ValidationEvent {
+                day: 140,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(75.0),
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 141,
+                hit_count: 1,
+                total_changed: 2,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(40.0),
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.emerging_failure_ungraded, 0);
+        assert_eq!(stats.emerging_green_ungraded, 0);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            !report.contains("ungraded"),
+            "clean data must render without the ungraded clause: {report}"
+        );
+        assert!(
+            report.contains("(failure days, 1 graded):"),
+            "zero-ungraded wording must be byte-identical to today's: {report}"
+        );
+        assert!(
+            report.contains("(green days, 1 graded):"),
+            "zero-ungraded wording must be byte-identical to today's: {report}"
+        );
+    }
+
+    #[test]
     fn test_compute_accuracy_trend_improving() {
         let events = vec![
             ValidationEvent {
@@ -881,6 +1077,8 @@ mod tests {
             emerging_failure_avg_pct: None,
             emerging_green_samples: 0,
             emerging_green_avg_pct: None,
+            emerging_failure_ungraded: 12,
+            emerging_green_ungraded: 0,
             severity_counts: std::collections::BTreeMap::new(),
         };
         let report = format_accuracy_report(&stats);
