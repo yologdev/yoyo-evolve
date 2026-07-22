@@ -1,0 +1,203 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_empty() { None }" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging" src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging" src/commands_… ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:280..420 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:470..555  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1975..2035 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_of\|commands_r… ✓ (7ms)
+  8 tools completed in 30.0s (8 ✓)
+
+All three call sites confirmed. Following red-green: I'll write the tests first, then the helper, then replace the three inline blocks. Adding tests next to the existing accuracy_of test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:1405..1445 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (2 → 33 lines)
+  +     #[test]
+  +     fn test_emerging_grade_of_empty_list_is_ungraded_none() {
+  +         // An empty emerging list is absence of a forecast, not a 0% one — it
+  +         // must grade as None (ungraded), never Some(0.0). Some(0.0) would drag
+  +         // the anticipatory average with grades that were never predictions.
+  +         let changed = ["src/a.rs"];
+  +         assert_eq!(emerging_grade_of(&changed, &[]), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_emerging_grade_of_populated_no_overlap_is_real_zero() {
+  +         // A populated list with no overlap on the changed files is a REAL
+  +         // graded zero — the forecast existed and missed. Distinct from the
+  +         // empty-list None above.
+  +         let changed = ["src/a.rs", "src/b.rs"];
+  +         let emerging = vec!["src/z.rs".to_string(), "src/y.rs".to_string()];
+  +         let (hits, pct) = emerging_grade_of(&changed, &emerging).expect("populated list grades");
+  +         assert_eq!(hits, 0);
+  +         assert!((pct - 0.0).abs() < 0.001, "0/2 = Some(0.0), a real zero");
+  +     }
+  ... (13 more lines)
+ ✓ (11.4s)
+  +     #[test]
+  +     fn test_emerging_grade_of_empty_list_is_ungraded_none() {
+  +         // An empty emerging list is absence of a forecast, not a 0% one — it
+  +         // must grade as None (ungraded), never Some(0.0). Some(0.0) would drag
+  +         // the anticipatory average with grades that were never predictions.
+  +         let changed = ["src/a.rs"];
+  +         assert_eq!(emerging_grade_of(&changed, &[]), None);
+  +     }
+  ... (13 more lines)
+  2 tools completed in 27.1s (2 ✓)
+
+Red confirmed — tests fail because the helper doesn't exist yet. Now the green step, adding the helper right after accuracy_of:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 22 lines)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Grade the anticipatory (emerging) prediction list. An empty list is
+  + /// absence of a forecast, not a 0% one — it must grade as None (ungraded),
+  + /// never Some(0.0). Verified Day 144: the recent 0.0% green events graded
+  + /// against POPULATED lists (quiet-because-right); the #623 hypothesis of
+  + /// quiet-because-silent did not hold — this helper pins the invariant anyway
+  + /// so the previously-triplicated inline logic can't drift. Returns
+  + /// `Some((hits, pct))` so the watch-failure path can surface the hit count;
+  + /// call sites that only need the pct take `.map(|(_, pct)| pct)`.
+  + pub(crate) fn emerging_grade_of(changed: &[&str], emerging: &[String]) -> Option<(usize, f64)> {
+  +     if emerging.is_empty() {
+  +         return None;
+  +     }
+  +     let emerging_set: std::collections::HashSet<&str> =
+  +         emerging.iter().map(|s| s.as_str()).collect();
+  +     Some(accuracy_of(changed, &emerging_set))
+  ... (1 more lines)
+ ✓ (17.9s)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Grade the anticipatory (emerging) prediction list. An empty list is
+  + /// absence of a forecast, not a 0% one — it must grade as None (ungraded),
+  + /// never Some(0.0). Verified Day 144: the recent 0.0% green events graded
+  ... (13 more lines)
+
+Expected — dead until the call sites use it. Replacing all three inline blocks now:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (9 → 3 lines)
+        // Legacy snapshots without an emerging list stay None (ungraded) —
+        // distinct from Some(0.0), so they don't drag the emerging average.
+  -     let emerging_pct = if emerging.is_empty() {
+  -         None
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             emerging.iter().map(|s| s.as_str()).collect();
+  -         Some(accuracy_of(&changed_refs, &emerging_set).1)
+  -     };
+  +     let emerging_pct = emerging_grade_of(&changed_refs, emerging).map(|(_, pct)| pct);
+ ✓ (1m 45s)
+        // Legacy snapshots without an emerging list stay None (ungraded) —
+        // distinct from Some(0.0), so they don't drag the emerging average.
+  -     let emerging_pct = if emerging.is_empty() {
+  -         None
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             emerging.iter().map(|s| s.as_str()).collect();
+  -         Some(accuracy_of(&changed_refs, &emerging_set).1)
+  -     };
+  +     let emerging_pct = emerging_grade_of(&changed_refs, emerging).map(|(_, pct)| pct);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (13 → 7 lines)
+        // an emerging list (older snapshots have none → None, so the reader can tell
+        // "no emerging data" from "0% accurate").
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  -         (0, None)
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             last.emerging.iter().map(|s| s.as_str()).collect();
+  -         let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -         (e_hits, Some(e_pct))
+  -     };
+  +     let emerging_grade = emerging_grade_of(&changed_refs, &last.emerging);
+  +     let emerging_accuracy_pct = emerging_grade.map(|(_, pct)| pct);
+ ✓ (11.3s)
+        // an emerging list (older snapshots have none → None, so the reader can tell
+        // "no emerging data" from "0% accurate").
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  -         (0, None)
+  -     } else {
+  -         let emerging_set: std::collections::HashSet<&str> =
+  -             last.emerging.iter().map(|s| s.as_str()).collect();
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (7 → 7 lines)
+  -     if let Some(e_pct) = emerging_accuracy_pct {
+  +     if let Some((emerging_hits, e_pct)) = emerging_grade {
+            // Allostatic-vs-homeostatic comparison, visible the moment it's measured.
+            eprintln!(
+                "{DIM}     📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+ ✓ (1m 46s)
+  -     if let Some(e_pct) = emerging_accuracy_pct {
+  +     if let Some((emerging_hits, e_pct)) = emerging_grade {
+            // Allostatic-vs-homeostatic comparison, visible the moment it's measured.
+            eprintln!(
+                "{DIM}     📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+  3 tools completed in 3m 58s (3 ✓)
+
+Now the third call site in commands_risk.rs — replace the inline block and route the import through the existing re-export:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (24 → 22 lines)
+            // Also grade the *anticipatory* (emerging) prediction set against the
+            // same changed set — the allostatic column of the prediction meter.
+            // Legacy snapshots without an `emerging` list stay `None` (ungraded),
+  -         // so they don't drag the average in `compute_accuracy_stats`.
+  +         // so they don't drag the average in `compute_accuracy_stats`. The
+  +         // empty-list→None invariant lives in the shared `emerging_grade_of`
+  +         // helper (an empty forecast is ungraded, never Some(0.0)).
+            let emerging = emerging_paths_from_snapshot(&snapshot);
+            let changed_refs: Vec<&str> = hits
+                .iter()
+                .chain(surprises.iter())
+                .map(|s| s.as_str())
+                .collect();
+  -         let emerging_accuracy_pct = if emerging.is_empty() {
+  -             None
+  -         } else {
+  -             let emerging_set: std::collections::HashSet<&str> =
+  -                 emerging.iter().map(|s| s.as_str()).collect();
+  -             let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  +         let emerging_grade = emerging_grade_of(&changed_refs, &emerging);
+  ... (11 more lines)
+ ✓ (11.6s)
+            // Also grade the *anticipatory* (emerging) prediction set against the
+            // same changed set — the allostatic column of the prediction meter.
+            // Legacy snapshots without an `emerging` list stay `None` (ungraded),
+  -         // so they don't drag the average in `compute_accuracy_stats`.
+  +         // so they don't drag the average in `compute_accuracy_stats`. The
+  +         // empty-list→None invariant lives in the shared `emerging_grade_of`
+  +         // helper (an empty forecast is ungraded, never Some(0.0)).
+            let emerging = emerging_paths_from_snapshot(&snapshot);
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 1 lines)
+  -     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, emerging_grade_of,
+ ✓ (1m 46s)
+  -     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, emerging_grade_of,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 9,20p src/commands_risk.r… ✓ (19.1s)
+  3 tools completed in 2m 28s (3 ✓)
+
+Clippy is clean. Running the full test suite:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 && car… ✓ (1m 6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_of" CLAUDE.md ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average).
+  + legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average). Day 144: all three grading call sites (green, watch-failure, CLI validate) route the emerging column through one shared `emerging_grade_of` helper — an empty emerging list grades as ungraded (`None`), never `Some(0.0)`, pinned by tests so the previously-triplicated inline logic can't drift.
+ ✓ (1m 21s)
+  - legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average).
+  + legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average). Day 144: all three grading call sites (green, watch-failure, CLI validate) route the emerging column through one shared `emerging_grade_of` helper — an empty emerging list grades as ungraded (`None`), never `Some(0.0)`, pinned by tests so the previously-triplicated inline logic can't drift.
+  3 tools completed in 2m 36s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

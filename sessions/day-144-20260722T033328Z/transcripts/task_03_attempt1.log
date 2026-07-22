@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the relevant code first.
+  ▶ search 'PLAN_SUBCOMMANDS|fn handle_plan|_ =>' in src/commands_plan.rs  ▶ search 'fn spawn_near_miss' in src/commands_spawn.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ grep -n "PLAN_SUBCOMMANDS\|fn handle_plan\|_ =>" src/commands_plan.rs | head  ▶ read src/commands_spawn.rs:1120..1190 ✓ (1ms)
+ ✓ (6ms)
+  ▶ read src/commands_plan.rs:350..410  ▶ read src/commands_plan.rs:700..840 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -n "pub fn closest_match" -A 5 src/commands.rs; echo ---; grep -n "handle_p… ✓ (7ms)
+  ▶ $ grep -n "fn test" src/commands_plan.rs | head -50 ✓ (3ms)
+  ▶ $ grep -n "use crate::format" src/commands_plan.rs | head -3; grep -n "YELLOW\|GRE… ✓ (5ms)
+  ▶ read src/commands_plan.rs:1204..1229 ✓ (1ms)
+  ▶ edit src/commands_plan.rs (2 → 32 lines)
+  +     #[test]
+  +     fn test_plan_near_miss_catches_typos() {
+  +         // A typo'd subcommand must not launch a full planning run on the
+  +         // literal typo (Day-142 bug class: wildcard fallbacks doing something).
+  +         assert_eq!(plan_near_miss("aply"), Some("apply"));
+  +         assert_eq!(plan_near_miss("statsu"), Some("status"));
+  +         assert_eq!(plan_near_miss("shwo"), Some("show"));
+  +         assert_eq!(plan_near_miss("cleer"), Some("clear"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_plan_near_miss_leaves_real_tasks_alone() {
+  +         // One-word tasks not near any subcommand are legitimate.
+  +         assert_eq!(plan_near_miss("refactor"), None);
+  +         // Multi-word args are real tasks — never intercepted.
+  +         assert_eq!(plan_near_miss("fix the login bug"), None);
+  +         assert_eq!(plan_near_miss("apply the migration"), None);
+  +         // Empty arg is handled by the usage arm, not the guard.
+  +         assert_eq!(plan_near_miss(""), None);
+  +     }
+  ... (12 more lines)
+ ✓ (11.8s)
+  +     #[test]
+  +     fn test_plan_near_miss_catches_typos() {
+  +         // A typo'd subcommand must not launch a full planning run on the
+  +         // literal typo (Day-142 bug class: wildcard fallbacks doing something).
+  +         assert_eq!(plan_near_miss("aply"), Some("apply"));
+  +         assert_eq!(plan_near_miss("statsu"), Some("status"));
+  +         assert_eq!(plan_near_miss("shwo"), Some("show"));
+  +         assert_eq!(plan_near_miss("cleer"), Some("clear"));
+  ... (13 more lines)
+  11 tools completed in 58.3s (11 ✓)
+
+Red confirmed. Now the helper and the guard wiring:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (1 → 21 lines)
+  + /// Near-miss typo guard for `/plan`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "aply" → "apply") is almost certainly a typo — launching a
+  + /// full LLM planning run on that literal word burns tokens and can clobber a
+  + /// stored plan flow. Returns the suggested subcommand when the guard should
+  + /// fire. Multi-word arguments (real tasks) and words far from any subcommand
+  + /// are never touched. Candidates derive from `PLAN_SUBCOMMANDS`, never a
+  + /// hand-typed list.
+  + pub fn plan_near_miss(arg: &str) -> Option<&'static str> {
+  +     if arg.is_empty() || arg.contains(char::is_whitespace) {
+  +         return None;
+  +     }
+  +     // Exact subcommands are handled by earlier match arms.
+  +     if PLAN_SUBCOMMANDS.contains(&arg) {
+  +         return None;
+  +     }
+  +     crate::commands::closest_match(arg, PLAN_SUBCOMMANDS, 2)
+  + }
+  + 
+  ... (1 more lines)
+ ✓ (18.2s)
+  + /// Near-miss typo guard for `/plan`'s free-text argument.
+  + ///
+  + /// A single word that isn't a known subcommand but sits within edit distance 2
+  + /// of one (e.g. "aply" → "apply") is almost certainly a typo — launching a
+  + /// full LLM planning run on that literal word burns tokens and can clobber a
+  + /// stored plan flow. Returns the suggested subcommand when the guard should
+  + /// fire. Multi-word arguments (real tasks) and words far from any subcommand
+  + /// are never touched. Candidates derive from `PLAN_SUBCOMMANDS`, never a
+  ... (13 more lines)
+
+Now wire it into handle_plan before the fall-through:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (4 → 13 lines)
+            _ => {}
+  +     }
+  + 
+  +     // Near-miss typo guard: a single word close to a known subcommand is
+  +     // almost certainly a typo — don't launch a full planning run on it.
+  +     if let Some(suggestion) = plan_near_miss(arg) {
+  +         println!(
+  +             "{YELLOW}  Unknown subcommand '{arg}' — did you mean '{suggestion}'? Use /plan \"{arg}\" if you meant it as a task.{RESET}\n"
+  +         );
+  +         return PlanResult::Handled;
+        }
+    
+        // Fall through to single-shot planning
+ ✓ (1m 42s)
+            _ => {}
+  +     }
+  + 
+  +     // Near-miss typo guard: a single word close to a known subcommand is
+  +     // almost certainly a typo — don't launch a full planning run on it.
+  +     if let Some(suggestion) = plan_near_miss(arg) {
+  +         println!(
+  +             "{YELLOW}  Unknown subcommand '{arg}' — did you mean '{suggestion}'? Use /plan \"{arg}\" if you meant it as a task.{RESET}\n"
+  ... (5 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo t… ✓ (1m 24s)
+  ▶ $ cargo test plan_near_miss 2>&1 | tail -6 && cargo build 2>&1 | tail -2 ✓ (305ms)
+  ▶ $ cargo test plan_near_miss --bin yoyo 2>&1 | tail -8 ✓ (144ms)
+  4 tools completed in 3m 19s (4 ✓)
+
+All green. Now the docs — update the /plan section in commands.md:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/plan" docs/src/usage/commands.md | head -20 ✓ (4ms)
+  ▶ read docs/src/usage/commands.md:336..346 ✓ (0ms)
+  ▶ edit docs/src/usage/commands.md (2 → 7 lines)
+    - Auto-escalation only fires when *neither* flag is given, and is conservative: when
+      unsure, it stays shallow.
+  + 
+  + **Typo guard:** a single word close to a known subcommand (e.g. `/plan aply`,
+  + `/plan statsu`) gets a did-you-mean suggestion instead of being planned as a
+  + literal task. Real one-word tasks (`/plan refactor`) and multi-word tasks are
+  + never intercepted.
+ ✓ (1m 20s)
+    - Auto-escalation only fires when *neither* flag is given, and is conservative: when
+      unsure, it stays shallow.
+  + 
+  + **Typo guard:** a single word close to a known subcommand (e.g. `/plan aply`,
+  + `/plan statsu`) gets a did-you-mean suggestion instead of being planned as a
+  + literal task. Real one-word tasks (`/plan refactor`) and multi-word tasks are
+  + never intercepted.
+  3 tools completed in 1m 34s (3 ✓)
+
+Final verification and check the pre-existing uncommitted file before committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ git status --short; echo ---; git diff --stat ✓ (9ms)
+  ▶ $ git diff .yoyo/risk_weights.json📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (15ms)
+  2 tools completed in 1.7s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
