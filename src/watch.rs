@@ -1132,18 +1132,48 @@ pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
     }
 }
 
+/// What live progress the watch-command streamer should print while
+/// collecting output. Pure decision helper so both modes are unit-testable
+/// (mirrors the plain-output gating on Spinner/ToolProgressTimer in
+/// `format/tools.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WatchProgress {
+    /// Animated `\r` repaint with a live line counter (tty, plain output off).
+    Repaint,
+    /// One static announcement line, no repaints (screen-reader mode on a tty).
+    StaticLine,
+    /// Nothing (stderr is not a terminal).
+    Silent,
+}
+
+/// Decide how to render live watch-command progress. `\r` repaints are only
+/// allowed on a terminal with plain (screen-reader) output off.
+pub(crate) fn watch_progress_mode(is_tty: bool, plain_output: bool) -> WatchProgress {
+    if !is_tty {
+        WatchProgress::Silent
+    } else if plain_output {
+        WatchProgress::StaticLine
+    } else {
+        WatchProgress::Repaint
+    }
+}
+
 /// Run a watch command and return (success, output).
 ///
 /// Streams output line-by-line in real time: when stderr is a terminal,
 /// prints a compact progress indicator (`⟳ 42 lines...`) so the user
-/// sees something happening during long test/build runs.  The full
-/// combined stdout+stderr is still collected and returned for the agent
-/// to analyse.
+/// sees something happening during long test/build runs — or, in plain
+/// (screen-reader) mode, a single static announcement line with no `\r`
+/// repaints.  The full combined stdout+stderr is still collected and
+/// returned for the agent to analyse.
 pub fn run_watch_command(cmd: &str) -> (bool, String) {
     use std::io::BufRead;
     use std::process::{Command, Stdio};
 
-    let is_tty = io::stderr().is_terminal();
+    let progress = watch_progress_mode(
+        io::stderr().is_terminal(),
+        crate::format::is_plain_output(),
+    );
 
     let child = Command::new("sh")
         .args(["-c", cmd])
@@ -1178,10 +1208,20 @@ pub fn run_watch_command(cmd: &str) -> (bool, String) {
             match line {
                 Ok(l) => {
                     stdout_lines.push(l);
-                    if is_tty {
-                        let count = stdout_lines.len();
-                        eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
-                        let _ = io::stderr().flush();
+                    match progress {
+                        WatchProgress::Repaint => {
+                            let count = stdout_lines.len();
+                            eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
+                            let _ = io::stderr().flush();
+                        }
+                        WatchProgress::StaticLine => {
+                            // Announce once, when output starts arriving —
+                            // no repaints for screen readers.
+                            if stdout_lines.len() == 1 {
+                                eprintln!("{}", crate::format::plain_watch_progress_line());
+                            }
+                        }
+                        WatchProgress::Silent => {}
                     }
                 }
                 Err(_) => break,
@@ -1191,8 +1231,9 @@ pub fn run_watch_command(cmd: &str) -> (bool, String) {
 
     let stderr_lines = stderr_handle.join().unwrap_or_default();
 
-    // Clear the progress indicator if we printed one.
-    if is_tty && !stdout_lines.is_empty() {
+    // Clear the progress indicator if we repainted one (plain mode's static
+    // line needs no clearing — clearing would itself be a `\r` repaint).
+    if progress == WatchProgress::Repaint && !stdout_lines.is_empty() {
         eprint!("\r{DIM}                          {RESET}\r");
         let _ = io::stderr().flush();
     }

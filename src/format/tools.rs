@@ -42,6 +42,13 @@ pub fn plain_tool_progress_line(tool_name: &str) -> String {
     format!("  running {tool_name}...")
 }
 
+/// The single plain line the watch-command streamer prints in plain-output
+/// mode when output starts arriving (replaces the `\r`-repainted live line
+/// counter). No `\r`, no ANSI escapes.
+pub fn plain_watch_progress_line() -> String {
+    "  collecting watch output...".to_string()
+}
+
 pub const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Get the spinner frame for a given tick index (wraps around).
@@ -520,6 +527,7 @@ mod tests {
             plain_spinner_line(),
             plain_tool_progress_line("bash"),
             plain_tool_progress_line("web_search"),
+            plain_watch_progress_line(),
         ];
         for line in &lines {
             assert!(!line.contains('\r'), "plain line contains \\r: {line:?}");
