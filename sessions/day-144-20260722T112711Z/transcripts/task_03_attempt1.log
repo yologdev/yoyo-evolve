@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'print!("\\r\|print!("\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\\r' src/ --include='*… ✓ (12ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\\r' src/prompt.rs src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1160,1215p src/watch.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1140,1200p src/watch.rs &… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1173,1192p src/watch.rs |… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1173..1203 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p src/format/tools.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'eprint!\|print!(' src/… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\\x1b\[[0-9]*[AKGJFEH]… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'clear\|\\x1b' src/banne… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'x1b\|clear' src/banner.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,530p src/format/tools… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1684,1700p src/watch.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/tools.rs (5 → 12 lines)
+    /// once a tool exceeds the display threshold. No `\r`, no ANSI escapes.
+    pub fn plain_tool_progress_line(tool_name: &str) -> String {
+        format!("  running {tool_name}...")
+  + }
+  + 
+  + /// The single plain line the watch-command streamer prints in plain-output
+  + /// mode when output starts arriving (replaces the `\r`-repainted live line
+  + /// counter). No `\r`, no ANSI escapes.
+  + pub fn plain_watch_progress_line() -> String {
+  +     "  collecting watch output...".to_string()
+    }
+ ✓ (17.4s)
+    /// once a tool exceeds the display threshold. No `\r`, no ANSI escapes.
+    pub fn plain_tool_progress_line(tool_name: &str) -> String {
+        format!("  running {tool_name}...")
+  + }
+  + 
+  + /// The single plain line the watch-command streamer prints in plain-output
+  + /// mode when output starts arriving (replaces the `\r`-repainted live line
+  + /// counter). No `\r`, no ANSI escapes.
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/tools.rs (5 → 6 lines)
+                plain_spinner_line(),
+                plain_tool_progress_line("bash"),
+                plain_tool_progress_line("web_search"),
+  +             plain_watch_progress_line(),
+            ];
+ ✓ (17.6s)
+                plain_spinner_line(),
+                plain_tool_progress_line("bash"),
+                plain_tool_progress_line("web_search"),
+  +             plain_watch_progress_line(),
+            ];
+  16 tools completed in 2m 1s (16 ✓)
+
+Now the watch.rs decision helper + wiring:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (11 → 40 lines)
+  + /// What live progress the watch-command streamer should print while
+  + /// collecting output. Pure decision helper so both modes are unit-testable
+  + /// (mirrors the plain-output gating on Spinner/ToolProgressTimer in
+  + /// `format/tools.rs`).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum WatchProgress {
+  +     /// Animated `\r` repaint with a live line counter (tty, plain output off).
+  +     Repaint,
+  +     /// One static announcement line, no repaints (screen-reader mode on a tty).
+  +     StaticLine,
+  +     /// Nothing (stderr is not a terminal).
+  +     Silent,
+  + }
+  + 
+  + /// Decide how to render live watch-command progress. `\r` repaints are only
+  + /// allowed on a terminal with plain (screen-reader) output off.
+  + pub(crate) fn watch_progress_mode(is_tty: bool, plain_output: bool) -> WatchProgress {
+  +     if !is_tty {
+  +         WatchProgress::Silent
+  +     } else if plain_output {
+  ... (18 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1130..1148 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (12 → 42 lines)
+  + /// What live progress the watch-command streamer should print while
+  + /// collecting output. Pure decision helper so both modes are unit-testable
+  + /// (mirrors the plain-output gating on Spinner/ToolProgressTimer in
+  + /// `format/tools.rs`).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum WatchProgress {
+  +     /// Animated `\r` repaint with a live line counter (tty, plain output off).
+  +     Repaint,
+  +     /// One static announcement line, no repaints (screen-reader mode on a tty).
+  +     StaticLine,
+  +     /// Nothing (stderr is not a terminal).
+  +     Silent,
+  + }
+  + 
+  + /// Decide how to render live watch-command progress. `\r` repaints are only
+  + /// allowed on a terminal with plain (screen-reader) output off.
+  + pub(crate) fn watch_progress_mode(is_tty: bool, plain_output: bool) -> WatchProgress {
+  +     if !is_tty {
+  +         WatchProgress::Silent
+  +     } else if plain_output {
+  ... (26 more lines)
+ ✓ (11.0s)
+  + /// What live progress the watch-command streamer should print while
+  + /// collecting output. Pure decision helper so both modes are unit-testable
+  + /// (mirrors the plain-output gating on Spinner/ToolProgressTimer in
+  + /// `format/tools.rs`).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum WatchProgress {
+  +     /// Animated `\r` repaint with a live line counter (tty, plain output off).
+  +     Repaint,
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (8 → 18 lines)
+                    Ok(l) => {
+                        stdout_lines.push(l);
+  -                     if is_tty {
+  -                         let count = stdout_lines.len();
+  -                         eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
+  -                         let _ = io::stderr().flush();
+  +                     match progress {
+  +                         WatchProgress::Repaint => {
+  +                             let count = stdout_lines.len();
+  +                             eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
+  +                             let _ = io::stderr().flush();
+  +                         }
+  +                         WatchProgress::StaticLine => {
+  +                             // Announce once, when output starts arriving —
+  +                             // no repaints for screen readers.
+  +                             if stdout_lines.len() == 1 {
+  +                                 eprintln!("{}", crate::format::plain_watch_progress_line());
+  +                             }
+  +                         }
+  +                         WatchProgress::Silent => {}
+  ... (2 more lines)
+ ✓ (10.4s)
+                    Ok(l) => {
+                        stdout_lines.push(l);
+  -                     if is_tty {
+  -                         let count = stdout_lines.len();
+  -                         eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
+  -                         let _ = io::stderr().flush();
+  +                     match progress {
+  +                         WatchProgress::Repaint => {
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (2 → 3 lines)
+  -     // Clear the progress indicator if we printed one.
+  -     if is_tty && !stdout_lines.is_empty() {
+  +     // Clear the progress indicator if we repainted one (plain mode's static
+  +     // line needs no clearing — clearing would itself be a `\r` repaint).
+  +     if progress == WatchProgress::Repaint && !stdout_lines.is_empty() {
+ ✓ (1m 46s)
+  -     // Clear the progress indicator if we printed one.
+  -     if is_tty && !stdout_lines.is_empty() {
+  +     // Clear the progress indicator if we repainted one (plain mode's static
+  +     // line needs no clearing — clearing would itself be a `\r` repaint).
+  +     if progress == WatchProgress::Repaint && !stdout_lines.is_empty() {
+  5 tools completed in 2m 30s (4 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+

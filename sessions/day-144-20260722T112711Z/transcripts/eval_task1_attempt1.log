@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The diff matches the task precisely: a pure detect_git_redirection_escape detector in src/safety.rs with both-sides boundary tests (env assignments refused, lookalikes/quoted mentions pass, `-C inside/relative pass, outside refused, --git-dir/--work-tree` both forms, multibyte safety), tool-layer wiring in StreamingBashTool gated on pinned cwd with an honest refusal message, no-pinned-cwd zero-change test, and the CLAUDE.md spawn caveat updated honestly (still confinement, not a sandbox). Let me do one quick sanity check that the guard logic handles the git -C sub -C /outside peek-without-consume case correctly, then write the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet detect_git_re… ✓ (310ms)
+
+The filter only hit one test binary. Let me target the lib tests directly:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib --quiet git_esc… ✓ (107ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib git_escape 2>&1… ✓ (105ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test git_escape 2>&1 | gre… ✓ (140ms)
+  3 tools completed in 10.7s (3 ✓)
+
+All 7 detector unit tests pass (the earlier tail -3 had just cut off the main binary's output). Evidence is complete — writing the verdict:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 3s)
+
+**Verdict: PASS**
+
+The implementation matches the task fully:
+
+1. Pure detector (`detect_git_redirection_escape in src/safety.rs): blanket-refuses GIT_DIR=/GIT_WORK_TREE= env assignments (token-anchored — FOO_GIT_DIR=` and quoted mentions pass), path-resolves -C/--git-dir/--work-tree targets against the confinement root (canonicalized or lexically normalized, so .. escapes on non-existent paths are caught), and names the exact matched token in the reason. 7 unit tests cover both sides of every boundary, including the git -C sub -C /outside multi-flag case, /usr/bin/git basename resolution, compound commands, and multibyte safety (#250 class) — all verified passing.
+
+2. Tool wiring (src/tools.rs): guard runs only when self.cwd is pinned (spawn workers), with an honest refusal explaining the confinement. The no-pinned-cwd test pins the product-safe default — ordinary sessions get zero behavior change.
+
+3. Docs: CLAUDE.md's spawn section updated in the same commit, honestly noting the git redirection class is now blocked while non-git absolute-path writes can still escape (confinement, not a sandbox).
+
+The .yoyo/risk_weights.json churn is unrelated auto-generated state — mentioned as cleanup feedback, not a fail reason. Verdict written to session_plan/eval_task_1.md.
+
+  watch: no files changed this turn — skipping
+

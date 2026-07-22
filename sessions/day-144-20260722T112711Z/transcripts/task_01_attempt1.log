@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_write_command" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat ✓ (8ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1600..1800  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:200..320 ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/safety.rs && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ReadModeGuardTool\|refu… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2560,2680p src/tools.rs &… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2685,2693p src/safety.rs … ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (7 → 154 lines)
+            // Multi-byte UTF-8 near operators must not panic (#250 class).
+            assert!(detect_write_command("echo ✓ > données.txt").is_some());
+            assert!(detect_write_command("grep '✓ > ok' fichier").is_none());
+  +     }
+  + 
+  +     // === detect_git_redirection_escape (spawn worktree confinement) ===
+  + 
+  +     /// A confinement root that exists on disk (canonicalization must work)
+  +     /// and an absolute path guaranteed to be outside it.
+  +     fn escape_test_root() -> std::path::PathBuf {
+  +         let root = std::env::temp_dir().join("yoyo_git_escape_test_root");
+  +         std::fs::create_dir_all(&root).expect("create test confinement root");
+  +         std::fs::canonicalize(&root).expect("canonicalize test root")
+  +     }
+  + 
+  +     #[test]
+  +     fn test_git_escape_env_assignments_refused() {
+  +         let root = escape_test_root();
+  +         for (cmd, var) in [
+  +             ("GIT_DIR=/x git status", "GIT_DIR"),
+  ... (132 more lines)
+ ✓ (10.7s)
+            // Multi-byte UTF-8 near operators must not panic (#250 class).
+            assert!(detect_write_command("echo ✓ > données.txt").is_some());
+            assert!(detect_write_command("grep '✓ > ok' fichier").is_none());
+  +     }
+  + 
+  +     // === detect_git_redirection_escape (spawn worktree confinement) ===
+  + 
+  +     /// A confinement root that exists on disk (canonicalization must work)
+  ... (13 more lines)
+  9 tools completed in 1m 43s (9 ✓)
+
+Red confirmed — the tests exist and the detector doesn't. Now the wiring tests in src/tools.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 59 lines)
+  +     #[tokio::test]
+  +     async fn test_streaming_bash_pinned_cwd_refuses_git_redirection_escape() {
+  +         // A pinned-cwd bash (spawn worker confinement) must refuse git
+  +         // redirection outside the confinement root, with an honest error.
+  +         let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+  +         let tool = StreamingBashTool::default().with_cwd(tmp.to_string_lossy().to_string());
+  +         for cmd in [
+  +             "git -C /definitely/not/inside status",
+  +             "git --git-dir=/other/.git log",
+  +             "GIT_DIR=/x git status",
+  +             "GIT_WORK_TREE=/y git add .",
+  +         ] {
+  +             let ctx = test_tool_context(None);
+  +             let err = tool
+  +                 .execute(serde_json::json!({ "command": cmd }), ctx)
+  +                 .await
+  +                 .expect_err(&format!("`{cmd}` must be refused under pinned cwd"));
+  +             let msg = format!("{err:?}");
+  +             assert!(
+  +                 msg.contains("confined"),
+  ... (39 more lines)
+ ✓ (10.8s)
+  +     #[tokio::test]
+  +     async fn test_streaming_bash_pinned_cwd_refuses_git_redirection_escape() {
+  +         // A pinned-cwd bash (spawn worker confinement) must refuse git
+  +         // redirection outside the confinement root, with an honest error.
+  +         let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+  +         let tool = StreamingBashTool::default().with_cwd(tmp.to_string_lossy().to_string());
+  +         for cmd in [
+  +             "git -C /definitely/not/inside status",
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (2 → 104 lines)
+        detect_redirection(&stripped)
+  + }
+  + 
+  + /// Detect git commands that redirect their repository or work tree outside a
+  + /// confinement root — the spawn-worktree escape class (`git -C <abs-outside>`,
+  + /// `--git-dir`, `--work-tree`, `GIT_DIR=` / `GIT_WORK_TREE=` env assignments).
+  + ///
+  + /// Used only when bash has a pinned cwd (spawn worker confinement in
+  + /// `StreamingBashTool`); ordinary sessions never call this. Returns
+  + /// `Some(reason)` naming exactly what matched. Quoted regions are stripped
+  + /// first, so `echo 'git -C /x'` passes; env-var matching is token-anchored,
+  + /// so filenames like `my-GIT_DIR-notes.txt` pass.
+  + ///
+  + /// Env assignments are blanket-refused (they redirect git for every
+  + /// subsequent command); `-C` / `--git-dir` / `--work-tree` paths are resolved
+  + /// against the root (canonicalized when they exist, lexically normalized
+  + /// otherwise) and refused only when they land outside it — so `git -C .`,
+  + /// `git -C sub`, and absolute paths inside the root all pass.
+  + pub fn detect_git_redirection_escape(
+  +     cmd: &str,
+  ... (84 more lines)
+ ✓ (17.1s)
+        detect_redirection(&stripped)
+  + }
+  + 
+  + /// Detect git commands that redirect their repository or work tree outside a
+  + /// confinement root — the spawn-worktree escape class (`git -C <abs-outside>`,
+  + /// `--git-dir`, `--work-tree`, `GIT_DIR=` / `GIT_WORK_TREE=` env assignments).
+  + ///
+  + /// Used only when bash has a pinned cwd (spawn worker confinement in
+  ... (13 more lines)
+  2 tools completed in 1m 12s (2 ✓)
+
+Dead-code warnings just mean the wiring isn't in yet. Wiring into StreamingBashTool::execute:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 21 lines)
+            let command = params["command"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
+  + 
+  +         // Pinned-cwd confinement (spawn workers): refuse git redirection
+  +         // outside the confinement root (`git -C <abs-outside>`, `--git-dir`,
+  +         // `--work-tree`, `GIT_DIR=`/`GIT_WORK_TREE=`). Enforcement lives at
+  +         // the tool layer — the branch a misbehaving worker actually travels.
+  +         // No pinned cwd (all ordinary sessions) → zero behavior change.
+  +         if let Some(ref cwd) = self.cwd {
+  +             if let Some(reason) =
+  +                 crate::safety::detect_git_redirection_escape(command, std::path::Path::new(cwd))
+  +             {
+  +                 return Err(ToolError::Failed(format!(
+  +                     "Command refused: {reason}. This bash session is confined to {cwd}; \
+  +                      git may not be redirected outside it."
+  +                 )));
+  +             }
+  +         }
+    
+  ... (1 more lines)
+ ✓ (1m 39s)
+            let command = params["command"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
+  + 
+  +         // Pinned-cwd confinement (spawn workers): refuse git redirection
+  +         // outside the confinement root (`git -C <abs-outside>`, `--git-dir`,
+  +         // `--work-tree`, `GIT_DIR=`/`GIT_WORK_TREE=`). Enforcement lives at
+  +         // the tool layer — the branch a misbehaving worker actually travels.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (52.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "git_e… ✓ (51.9s)
+  3 tools completed in 3m 31s (3 ✓)
+
+All green. Now clippy and the CLAUDE.md update:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enforced default confin… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, but absolute paths / `git -C /abs` can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  + when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but non-git absolute-path writes can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+ ✓ (1m 3s)
+  - when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, but absolute paths / `git -C /abs` can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  + when a worktree exists, the worker's bash cwd is pinned to it via `spawn_bash_cwd` → `AgentConfig.bash_cwd` → `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but non-git absolute-path writes can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safety.rs — " CLAUDE.md… ✓ (3ms)
+  4 tools completed in 1m 36s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

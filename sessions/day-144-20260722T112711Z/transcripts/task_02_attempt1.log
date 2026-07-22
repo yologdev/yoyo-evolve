@@ -1,0 +1,173 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the existing rm parsing in safety.rs first.
+  ▶ search 'rm -rf|rm_|recursive' in src/safety.rs  ▶ $ grep -n "fn analyze_bash_command" -A 60 src/safety.rs | head -100 ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ grep -n "SAFETY_CHECKS\|fn check_" src/safety.rs | head -60 ✓ (3ms)
+  ▶ read src/safety.rs:263..353 ✓ (1ms)
+  ▶ read src/safety.rs:30..76  ▶ $ grep -n "mod tests" src/safety.rs; grep -n "fn test_rm" src/safety.rs | head ✓ (1ms)
+ ✓ (5ms)
+  ▶ read src/safety.rs:2355..2395 ✓ (1ms)
+  ▶ read src/safety.rs:2428..2453 ✓ (1ms)
+  8 tools completed in 1m 45s (8 ✓)
+
+Adding the failing tests after test_rm_system_dirs_with_trailing_variants:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (2 → 55 lines)
+  +     #[test]
+  +     fn test_rm_rf_unresolved_variable_flagged() {
+  +         // Day 144: `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR becomes
+  +         // `rm -rf /` (or cwd). Recursive-force rm on an unexpanded variable
+  +         // must require confirmation, and the reason must name the variable.
+  +         let msg = analyze_bash_command("rm -rf $DIR").expect("rm -rf $DIR should be flagged");
+  +         assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+  +         assert!(msg.contains("unresolved variable"), "reason: {msg}");
+  + 
+  +         let msg =
+  +             analyze_bash_command("rm -rf \"$DIR\"").expect("rm -rf \"$DIR\" should be flagged");
+  +         assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+  + 
+  +         let msg = analyze_bash_command("rm -rf ${DIR}/build")
+  +             .expect("rm -rf ${DIR}/build should be flagged");
+  +         assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+  + 
+  +         // Combined short flags where `r` doesn't directly follow `-`
+  +         let msg = analyze_bash_command("rm -fr $X").expect("rm -fr $X should be flagged");
+  +         assert!(msg.contains("$X"), "reason should name $X: {msg}");
+  ... (35 more lines)
+ ✓ (1m 36s)
+  +     #[test]
+  +     fn test_rm_rf_unresolved_variable_flagged() {
+  +         // Day 144: `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR becomes
+  +         // `rm -rf /` (or cwd). Recursive-force rm on an unexpanded variable
+  +         // must require confirmation, and the reason must name the variable.
+  +         let msg = analyze_bash_command("rm -rf $DIR").expect("rm -rf $DIR should be flagged");
+  +         assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+  +         assert!(msg.contains("unresolved variable"), "reason: {msg}");
+  ... (13 more lines)
+  ▶ $ cargo test --quiet safety::tests::test_rm_rf_unresolved 2>&1 | tail -30 ✓ (164ms)
+  ▶ edit src/safety.rs (3 → 5 lines)
+            // Variable in a *later* command past a separator is not the rm target
+  -         assert!(analyze_bash_command("rm -rf /tmp/x && echo $HOME").is_none());
+  -         assert!(analyze_bash_command("rm -rf /tmp/x; echo $HOME").is_none());
+  +         // ($HOME itself is already caught by the long-standing bare-target
+  +         // check, so use a neutral variable here)
+  +         assert!(analyze_bash_command("rm -rf /tmp/x && echo $OTHER").is_none());
+  +         assert!(analyze_bash_command("rm -rf /tmp/x; echo $OTHER").is_none());
+ ✓ (1m 38s)
+            // Variable in a *later* command past a separator is not the rm target
+  -         assert!(analyze_bash_command("rm -rf /tmp/x && echo $HOME").is_none());
+  -         assert!(analyze_bash_command("rm -rf /tmp/x; echo $HOME").is_none());
+  +         // ($HOME itself is already caught by the long-standing bare-target
+  +         // check, so use a neutral variable here)
+  +         assert!(analyze_bash_command("rm -rf /tmp/x && echo $OTHER").is_none());
+  +         assert!(analyze_bash_command("rm -rf /tmp/x; echo $OTHER").is_none());
+  3 tools completed in 3m 30s (3 ✓)
+
+Tests fail as expected. Now the implementation — extending check_rm_destruction:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (13 → 23 lines)
+            if is_rm_boundary(cmd, abs_pos) {
+                let after_rm = &cmd[abs_pos..];
+  +             let tokens: Vec<&str> = after_rm.split_whitespace().collect();
+  +             // Combined short flags like `-fr` / `-Rf` where `r` doesn't
+  +             // directly follow `-` (the substring checks below miss them).
+  +             let combined_rf = tokens.iter().any(|t| {
+  +                 t.starts_with('-')
+  +                     && !t.starts_with("--")
+  +                     && t.bytes().any(|b| b == b'r' || b == b'R')
+  +                     && t.bytes().any(|b| b == b'f')
+  +             });
+                // Check if it has recursive + force flags
+                let has_r = after_rm.contains("-r")
+                    || after_rm.contains("-R")
+  -                 || after_rm.contains("--recursive");
+  -             let has_f = after_rm.contains("-f") || after_rm.contains("--force");
+  +                 || after_rm.contains("--recursive")
+  +                 || combined_rf;
+  +             let has_f = after_rm.contains("-f") || after_rm.contains("--force") || combined_rf;
+    
+  ... (2 more lines)
+ ✓ (1m 45s)
+            if is_rm_boundary(cmd, abs_pos) {
+                let after_rm = &cmd[abs_pos..];
+  +             let tokens: Vec<&str> = after_rm.split_whitespace().collect();
+  +             // Combined short flags like `-fr` / `-Rf` where `r` doesn't
+  +             // directly follow `-` (the substring checks below miss them).
+  +             let combined_rf = tokens.iter().any(|t| {
+  +                 t.starts_with('-')
+  +                     && !t.starts_with("--")
+  ... (13 more lines)
+  ▶ edit src/safety.rs (6 → 5 lines)
+                    // Check for " /" at end of command (bare root) or " / " (root as arg)
+                    // Also check "~" and "$HOME" as standalone args
+                    // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
+  -                 let tokens: Vec<&str> = after_rm.split_whitespace().collect();
+                    for raw_token in &tokens {
+ ✓ (1m 37s)
+                    // Check for " /" at end of command (bare root) or " / " (root as arg)
+                    // Also check "~" and "$HOME" as standalone args
+                    // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
+  -                 let tokens: Vec<&str> = after_rm.split_whitespace().collect();
+                    for raw_token in &tokens {
+  ▶ edit src/safety.rs (7 → 63 lines)
+  +                 }
+  +                 // Day 144: recursive-force rm on an unresolved shell variable.
+  +                 // `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR expands
+  +                 // to `rm -rf /` (or cwd). Guarded expansions (`${VAR:?}`) abort
+  +                 // on empty by design and pass. Scanning stops at command
+  +                 // separators so variables in later commands aren't rm targets.
+  +                 if has_f {
+  +                     for raw_token in tokens.iter().skip(1) {
+  +                         if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
+  +                             break;
+  +                         }
+  +                         if !raw_token.starts_with('-') {
+  +                             if let Some(var) = find_unguarded_variable(raw_token) {
+  +                                 return Some(format!(
+  +                                     "Destructive command: rm -rf target contains unresolved variable {var} — an empty expansion would delete from cwd or /"
+  +                                 ));
+  +                             }
+  +                         }
+  +                         if raw_token.ends_with(';') {
+  +                             break;
+  ... (43 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/safety.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/safety.rs (18 → 74 lines)
+                                return Some(format!(
+                                    "Destructive command: {severity}recursive delete targeting system directory '{token}'"
+                                ));
+  +                         }
+  +                     }
+  +                 }
+  +                 // Day 144: recursive-force rm on an unresolved shell variable.
+  +                 // `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR expands
+  +                 // to `rm -rf /` (or cwd). Guarded expansions (`${VAR:?}`) abort
+  +                 // on empty by design and pass. Scanning stops at command
+  +                 // separators so variables in later commands aren't rm targets.
+  +                 if has_f {
+  +                     for raw_token in tokens.iter().skip(1) {
+  +                         if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
+  +                             break;
+  +                         }
+  +                         if !raw_token.starts_with('-') {
+  +                             if let Some(var) = find_unguarded_variable(raw_token) {
+  +                                 return Some(format!(
+  +                                     "Destructive command: rm -rf target contains unresolved variable {var} — an empty expansion would delete from cwd or /"
+  ... (48 more lines)
+ ✓ (1m 46s)
+                                return Some(format!(
+                                    "Destructive command: {severity}recursive delete targeting system directory '{token}'"
+                                ));
+  +                         }
+  +                     }
+  +                 }
+  +                 // Day 144: recursive-force rm on an unresolved shell variable.
+  +                 // `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR expands
+  ... (13 more lines)
+  4 tools completed in 5m 38s (3 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+

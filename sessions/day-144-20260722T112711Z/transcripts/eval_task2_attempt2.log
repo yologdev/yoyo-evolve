@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The diff directly implements the task: extends `check_rm_destruction in src/safety.rs (reusing the existing rm parsing rather than adding a parallel matcher), adds find_unguarded_variable with the ${VAR:?} guarded-expansion pass-through, includes all requested flagged/not-flagged test cases with the reason naming the specific variable, and updates docs/src/troubleshooting/safety.md. It even fixed a real adjacent gap (rm -fr /` previously slipped past the substring flag check) with its own test. Harness confirms build+tests pass.
+
+Let me do one quick spot-check that the behavior works end-to-end via the existing tests targeting this feature, and verify no product-surface red flags (it's a product-kind task adding a safety check — appropriate).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib safety::tests::… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_rm_rf_unresolved… ✓ (138ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_rm 2>… ✓ (140ms)
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 3s)
+  4 tools completed in 1m 21s (4 ✓)
+
+Verdict: **PASS**
+
+• The implementation matches the task exactly: extends the existing check_rm_destruction rm parsing rather than adding a parallel matcher, flags rm -rf $DIR, "$DIR", ${DIR}/build, `rm -fr $X with a reason naming the specific variable, and passes the ${VAR:?}` guarded idiom plus all not-flagged boundary cases (literal path, non-rm, non-recursive-force).
+• Verified the new tests run and pass (test_rm_rf_unresolved_variable_flagged, ..._not_flagged, `test_rm_combined_fr_flags_bare_root` — 5 rm tests green).
+• Docs updated in docs/src/troubleshooting/safety.md in the same commit, including the escape hatch.
+• Bonus fix with its own test: rm -fr / previously evaded the substring flag check.
+• Minor: .yoyo/risk_weights.json timestamp bump is unrelated churn — noted as cleanup feedback, not a failure.
+
+Verdict written to session_plan/eval_task_2.md.
+
+  watch: no files changed this turn — skipping
+

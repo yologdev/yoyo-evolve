@@ -1,0 +1,60 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'unresolved variable|VAR:\?|unexpanded' in src/safety.rs ✓ (2ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat efe908ba && grep… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\|^##" docs/src/troub… ✓ (5ms)
+  ▶ read docs/src/troubleshooting/safety.md:64..119 ✓ (1ms)
+  ▶ read docs/src/troubleshooting/safety.md (63 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,400p' src/safety.rs ✓ (4ms)
+  ▶ edit docs/src/troubleshooting/safety.md (1 → 26 lines)
+  + ## Runtime bash safety analysis
+  + 
+  + Beyond the evolution-loop layers above, yoyo analyzes every bash command
+  + before running it (`src/safety.rs`) and asks for confirmation on
+  + destructive patterns like `rm -rf /` or piping `find` into `xargs rm`.
+  + 
+  + One check worth calling out: **recursive-force `rm` on an unresolved
+  + shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,
+  + but if `BUILD_DIR` is empty or unset it expands to `rm -rf /` (or wipes
+  + the current directory). yoyo flags any `rm -rf` / `rm -fr` /
+  + `rm -r -f` whose target contains an unexpanded variable (`$VAR`,
+  + `${VAR}`, `${VAR}/sub`, …) and names the specific variable in the
+  + warning, e.g.:
+  + 
+  + ```
+  + rm -rf target contains unresolved variable $BUILD_DIR — an empty
+  + expansion would delete from cwd or /
+  + ```
+  + 
+  + The escape hatch is the guarded-expansion idiom: `${VAR:?}` (or
+  ... (6 more lines)
+ ✓ (1m 27s)
+  + ## Runtime bash safety analysis
+  + 
+  + Beyond the evolution-loop layers above, yoyo analyzes every bash command
+  + before running it (`src/safety.rs`) and asks for confirmation on
+  + destructive patterns like `rm -rf /` or piping `find` into `xargs rm`.
+  + 
+  + One check worth calling out: **recursive-force `rm` on an unresolved
+  + shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 22s)
+  9 tools completed in 3m 26s (9 ✓)
+
+All checks pass. Committing the docs fix so the evaluator sees it in the diff:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add docs/src/troubleshooting… ✓ (15ms)
+
+Done. The evaluator's only complaint was the missing docs deliverable — the safety.rs check itself was already correct and committed.
+
+What I did:
+• Added a "Runtime bash safety analysis" section to docs/src/troubleshooting/safety.md describing:
+  • the new check: recursive-force rm (rm -rf / rm -fr / rm -r -f) targeting an unexpanded shell variable is flagged, with the specific variable named in the warning (matching the actual reason string in src/safety.rs)
+  • the ${VAR:?} guarded-expansion escape hatch, which passes the check because the shell aborts on an empty variable
+  • a note that existing destructive-pattern rules still apply on top
+
+Verified: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (89 passed, 0 failed) all green. Committed as 6c9796a0`, touching only the docs file. The pre-existing unrelated .yoyo/risk_weights.json modification was left untouched.
+
+  watch: no files changed this turn — skipping
+
