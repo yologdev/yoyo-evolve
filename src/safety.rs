@@ -1697,6 +1697,108 @@ pub fn detect_write_command(cmd: &str) -> Option<String> {
     detect_redirection(&stripped)
 }
 
+/// Detect git commands that redirect their repository or work tree outside a
+/// confinement root — the spawn-worktree escape class (`git -C <abs-outside>`,
+/// `--git-dir`, `--work-tree`, `GIT_DIR=` / `GIT_WORK_TREE=` env assignments).
+///
+/// Used only when bash has a pinned cwd (spawn worker confinement in
+/// `StreamingBashTool`); ordinary sessions never call this. Returns
+/// `Some(reason)` naming exactly what matched. Quoted regions are stripped
+/// first, so `echo 'git -C /x'` passes; env-var matching is token-anchored,
+/// so filenames like `my-GIT_DIR-notes.txt` pass.
+///
+/// Env assignments are blanket-refused (they redirect git for every
+/// subsequent command); `-C` / `--git-dir` / `--work-tree` paths are resolved
+/// against the root (canonicalized when they exist, lexically normalized
+/// otherwise) and refused only when they land outside it — so `git -C .`,
+/// `git -C sub`, and absolute paths inside the root all pass.
+pub fn detect_git_redirection_escape(
+    cmd: &str,
+    confinement_root: &std::path::Path,
+) -> Option<String> {
+    let stripped = strip_quoted_regions(cmd);
+    let root = std::fs::canonicalize(confinement_root)
+        .unwrap_or_else(|_| lexical_normalize(confinement_root));
+
+    // Env-prefix assignments anywhere in the command (incl. `export X=`):
+    // token-anchored so `FOO_GIT_DIR=` or a filename containing the name pass.
+    for token in stripped.split_whitespace() {
+        for var in ["GIT_DIR", "GIT_WORK_TREE"] {
+            if let Some(rest) = token.strip_prefix(var) {
+                if rest.starts_with('=') {
+                    return Some(format!(
+                        "`{var}=` redirects git outside the pinned worktree"
+                    ));
+                }
+            }
+        }
+    }
+
+    for segment in stripped.split([';', '|', '&', '\n', '(', ')', '`']) {
+        let mut tokens = segment.split_whitespace();
+        // Locate the command token, skipping wrappers and env assignments.
+        let cmd_token = tokens.find(|t| !COMMAND_WRAPPERS.contains(t) && !t.contains('='));
+        let Some(cmd_token) = cmd_token else { continue };
+        // Basename, so `/usr/bin/git` is still git.
+        let base = cmd_token.rsplit('/').next().unwrap_or(cmd_token);
+        if base != "git" {
+            continue;
+        }
+        let mut tokens = tokens.peekable();
+        while let Some(t) = tokens.next() {
+            let (flag, path) = if t == "-C" || t == "--git-dir" || t == "--work-tree" {
+                match tokens.peek() {
+                    Some(p) => (t, (*p).to_string()),
+                    None => continue,
+                }
+            } else if let Some(p) = t.strip_prefix("--git-dir=") {
+                ("--git-dir", p.to_string())
+            } else if let Some(p) = t.strip_prefix("--work-tree=") {
+                ("--work-tree", p.to_string())
+            } else {
+                continue;
+            };
+            if path_escapes_root(&path, &root) {
+                return Some(format!(
+                    "`git {flag} {path}` points outside the pinned worktree"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// True when `path` (absolute, or relative to `root`) resolves outside `root`.
+/// Existing paths are canonicalized (symlink-aware); non-existent ones are
+/// lexically normalized so `..` escapes are still caught.
+fn path_escapes_root(path: &str, root: &std::path::Path) -> bool {
+    let p = std::path::Path::new(path);
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    };
+    let resolved = std::fs::canonicalize(&joined).unwrap_or_else(|_| lexical_normalize(&joined));
+    !resolved.starts_with(root)
+}
+
+/// Resolve `.` and `..` components without touching the filesystem.
+/// `..` at the root stays at the root (matching shell semantics for `/..`).
+fn lexical_normalize(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2689,5 +2791,152 @@ mod tests {
         // Multi-byte UTF-8 near operators must not panic (#250 class).
         assert!(detect_write_command("echo ✓ > données.txt").is_some());
         assert!(detect_write_command("grep '✓ > ok' fichier").is_none());
+    }
+
+    // === detect_git_redirection_escape (spawn worktree confinement) ===
+
+    /// A confinement root that exists on disk (canonicalization must work)
+    /// and an absolute path guaranteed to be outside it.
+    fn escape_test_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join("yoyo_git_escape_test_root");
+        std::fs::create_dir_all(&root).expect("create test confinement root");
+        std::fs::canonicalize(&root).expect("canonicalize test root")
+    }
+
+    #[test]
+    fn test_git_escape_env_assignments_refused() {
+        let root = escape_test_root();
+        for (cmd, var) in [
+            ("GIT_DIR=/x git status", "GIT_DIR"),
+            ("GIT_WORK_TREE=/y git add .", "GIT_WORK_TREE"),
+            ("export GIT_DIR=/x", "GIT_DIR"),
+            // Even a relative target is refused: env redirection is blanket-blocked.
+            ("GIT_DIR=.git git log", "GIT_DIR"),
+            ("cd sub && GIT_WORK_TREE=/y git commit", "GIT_WORK_TREE"),
+        ] {
+            let reason = detect_git_redirection_escape(cmd, &root)
+                .unwrap_or_else(|| panic!("`{cmd}` must be refused"));
+            assert!(
+                reason.contains(var),
+                "reason for `{cmd}` must name {var}, got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_escape_env_lookalikes_pass() {
+        let root = escape_test_root();
+        // Token-boundary: filenames / other vars merely containing the name.
+        for cmd in [
+            "cat my-GIT_DIR-notes.txt",
+            "FOO_GIT_DIR=/x git status",
+            "echo 'GIT_DIR=/x git status'",
+            "echo \"set GIT_WORK_TREE=/y first\"",
+            "grep GIT_DIR src/safety.rs",
+        ] {
+            assert_eq!(
+                detect_git_redirection_escape(cmd, &root),
+                None,
+                "`{cmd}` must pass"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_escape_dash_c_outside_root_refused() {
+        let root = escape_test_root();
+        for cmd in [
+            "git -C /definitely/not/inside status",
+            "git -C /etc log --oneline",
+            // Multiple -C: any escaping one refuses.
+            "git -C sub -C /outside status",
+            // Full-path git binary is still git.
+            "/usr/bin/git -C /outside status",
+            // Later segment of a compound command.
+            "echo ok && git -C /outside push",
+        ] {
+            let reason = detect_git_redirection_escape(cmd, &root)
+                .unwrap_or_else(|| panic!("`{cmd}` must be refused"));
+            assert!(
+                reason.contains("-C"),
+                "reason for `{cmd}` must name -C, got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_escape_dash_c_inside_or_relative_passes() {
+        let root = escape_test_root();
+        let inside = root.join("subdir");
+        let inside_str = inside.to_string_lossy();
+        for cmd in [
+            "git status".to_string(),
+            "git -C . status".to_string(),
+            "git -C sub log".to_string(),
+            "git -C sub/dir diff".to_string(),
+            format!("git -C {inside_str} status"),
+            format!("git -C {} status", root.to_string_lossy()),
+            // Quoted mention of the pattern is not a command.
+            "echo 'git -C /outside status'".to_string(),
+            // -C belongs to a different command entirely.
+            "cc -C file.c".to_string(),
+        ] {
+            assert_eq!(
+                detect_git_redirection_escape(&cmd, &root),
+                None,
+                "`{cmd}` must pass"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_escape_git_dir_flag() {
+        let root = escape_test_root();
+        // Outside the root: refused, both `=` and space forms.
+        for cmd in [
+            "git --git-dir=/other/.git status",
+            "git --git-dir /other/.git log",
+            "git --git-dir=../../elsewhere/.git status",
+        ] {
+            let reason = detect_git_redirection_escape(cmd, &root)
+                .unwrap_or_else(|| panic!("`{cmd}` must be refused"));
+            assert!(
+                reason.contains("--git-dir"),
+                "reason for `{cmd}` must name --git-dir, got: {reason}"
+            );
+        }
+        // Inside the root (relative or absolute): passes.
+        let inside = root.join(".git");
+        for cmd in [
+            "git --git-dir=.git status".to_string(),
+            format!("git --git-dir={} status", inside.to_string_lossy()),
+        ] {
+            assert_eq!(
+                detect_git_redirection_escape(&cmd, &root),
+                None,
+                "`{cmd}` must pass"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_escape_work_tree_flag_is_twin_of_git_dir() {
+        // Day-142 lesson: --work-tree is the flag twin of GIT_WORK_TREE.
+        let root = escape_test_root();
+        let reason = detect_git_redirection_escape("git --work-tree=/other add .", &root)
+            .expect("--work-tree outside root must be refused");
+        assert!(reason.contains("--work-tree"), "got: {reason}");
+        assert_eq!(
+            detect_git_redirection_escape("git --work-tree=. status", &root),
+            None
+        );
+    }
+
+    #[test]
+    fn test_git_escape_multibyte_safe() {
+        let root = escape_test_root();
+        // Multi-byte UTF-8 must not panic (#250 class).
+        assert!(detect_git_redirection_escape("git -C /données✓ status", &root).is_some());
+        assert!(detect_git_redirection_escape("echo '✓ git -C /x'", &root).is_none());
     }
 }

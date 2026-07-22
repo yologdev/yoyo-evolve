@@ -197,6 +197,22 @@ impl AgentTool for StreamingBashTool {
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
 
+        // Pinned-cwd confinement (spawn workers): refuse git redirection
+        // outside the confinement root (`git -C <abs-outside>`, `--git-dir`,
+        // `--work-tree`, `GIT_DIR=`/`GIT_WORK_TREE=`). Enforcement lives at
+        // the tool layer — the branch a misbehaving worker actually travels.
+        // No pinned cwd (all ordinary sessions) → zero behavior change.
+        if let Some(ref cwd) = self.cwd {
+            if let Some(reason) =
+                crate::safety::detect_git_redirection_escape(command, std::path::Path::new(cwd))
+            {
+                return Err(ToolError::Failed(format!(
+                    "Command refused: {reason}. This bash session is confined to {cwd}; \
+                     git may not be redirected outside it."
+                )));
+            }
+        }
+
         // Check deny patterns (hard block — always denied, no override)
         for pattern in &self.deny_patterns {
             if command.contains(pattern.as_str()) {
@@ -2658,6 +2674,63 @@ mod tests {
             "Expected pwd output to contain '{}', got: {}",
             canonical_tmp,
             text
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_pinned_cwd_refuses_git_redirection_escape() {
+        // A pinned-cwd bash (spawn worker confinement) must refuse git
+        // redirection outside the confinement root, with an honest error.
+        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let tool = StreamingBashTool::default().with_cwd(tmp.to_string_lossy().to_string());
+        for cmd in [
+            "git -C /definitely/not/inside status",
+            "git --git-dir=/other/.git log",
+            "GIT_DIR=/x git status",
+            "GIT_WORK_TREE=/y git add .",
+        ] {
+            let ctx = test_tool_context(None);
+            let err = tool
+                .execute(serde_json::json!({ "command": cmd }), ctx)
+                .await
+                .expect_err(&format!("`{cmd}` must be refused under pinned cwd"));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("confined"),
+                "error for `{cmd}` should explain confinement, got: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_pinned_cwd_allows_confined_git_and_normal_commands() {
+        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let tool = StreamingBashTool::default().with_cwd(tmp.to_string_lossy().to_string());
+        // Relative -C stays confined (cwd is pinned); plain commands untouched.
+        for cmd in ["echo hello", "git -C sub status 2>/dev/null || true"] {
+            let ctx = test_tool_context(None);
+            let result = tool
+                .execute(serde_json::json!({ "command": cmd }), ctx)
+                .await;
+            assert!(result.is_ok(), "`{cmd}` must be allowed under pinned cwd");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_no_cwd_skips_git_redirection_guard() {
+        // Product-safe default: without a pinned cwd (all ordinary sessions),
+        // the guard must not fire at all.
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let result = tool
+            .execute(
+                serde_json::json!({ "command": "git -C /nonexistent-dir-xyz status 2>/dev/null || true" }),
+                ctx,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "unpinned bash must not run the git-escape guard"
         );
     }
 
