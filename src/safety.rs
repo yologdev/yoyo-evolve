@@ -285,17 +285,26 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
         let abs_pos = search_from + pos;
         if is_rm_boundary(cmd, abs_pos) {
             let after_rm = &cmd[abs_pos..];
+            let tokens: Vec<&str> = after_rm.split_whitespace().collect();
+            // Combined short flags like `-fr` / `-Rf` where `r` doesn't
+            // directly follow `-` (the substring checks below miss them).
+            let combined_rf = tokens.iter().any(|t| {
+                t.starts_with('-')
+                    && !t.starts_with("--")
+                    && t.bytes().any(|b| b == b'r' || b == b'R')
+                    && t.bytes().any(|b| b == b'f')
+            });
             // Check if it has recursive + force flags
             let has_r = after_rm.contains("-r")
                 || after_rm.contains("-R")
-                || after_rm.contains("--recursive");
-            let has_f = after_rm.contains("-f") || after_rm.contains("--force");
+                || after_rm.contains("--recursive")
+                || combined_rf;
+            let has_f = after_rm.contains("-f") || after_rm.contains("--force") || combined_rf;
 
             if has_r {
                 // Check for " /" at end of command (bare root) or " / " (root as arg)
                 // Also check "~" and "$HOME" as standalone args
                 // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
-                let tokens: Vec<&str> = after_rm.split_whitespace().collect();
                 for raw_token in &tokens {
                     // Strip trailing closers from nested constructs first, so
                     // `/)]}` (subscript/test-bracket nesting) compares as `/`.
@@ -338,9 +347,65 @@ fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                         }
                     }
                 }
+                // Day 144: recursive-force rm on an unresolved shell variable.
+                // `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR expands
+                // to `rm -rf /` (or cwd). Guarded expansions (`${VAR:?}`) abort
+                // on empty by design and pass. Scanning stops at command
+                // separators so variables in later commands aren't rm targets.
+                if has_f {
+                    for raw_token in tokens.iter().skip(1) {
+                        if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
+                            break;
+                        }
+                        if !raw_token.starts_with('-') {
+                            if let Some(var) = find_unguarded_variable(raw_token) {
+                                return Some(format!(
+                                    "Destructive command: rm -rf target contains unresolved variable {var} — an empty expansion would delete from cwd or /"
+                                ));
+                            }
+                        }
+                        if raw_token.ends_with(';') {
+                            break;
+                        }
+                    }
+                }
             }
         }
         search_from = abs_pos + 3;
+    }
+    None
+}
+
+/// Find an unguarded shell variable reference in a token, returning its display
+/// form (e.g. `$BUILD_DIR`). `${VAR:?...}` guarded expansions are skipped —
+/// they abort on empty by design. `$(...)` command substitution is not a
+/// variable reference. All scanned characters are ASCII, so byte indexing here
+/// always lands on char boundaries.
+fn find_unguarded_variable(token: &str) -> Option<String> {
+    let bytes = token.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let braced = bytes.get(j) == Some(&b'{');
+        if braced {
+            j += 1;
+        }
+        let name_start = j;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            j += 1;
+        }
+        if j > name_start {
+            let name = &token[name_start..j];
+            let guarded = braced && token[j..].starts_with(":?");
+            if !guarded {
+                return Some(format!("${name}"));
+            }
+        }
+        i = j.max(i + 1);
     }
     None
 }
@@ -2438,6 +2503,61 @@ mod tests {
             let msg = analyze_bash_command(&format!("rm -rf {dir}/*"));
             assert!(msg.is_some(), "should catch: rm -rf {dir}/*");
         }
+    }
+
+    #[test]
+    fn test_rm_rf_unresolved_variable_flagged() {
+        // Day 144: `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR becomes
+        // `rm -rf /` (or cwd). Recursive-force rm on an unexpanded variable
+        // must require confirmation, and the reason must name the variable.
+        let msg = analyze_bash_command("rm -rf $DIR").expect("rm -rf $DIR should be flagged");
+        assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+        assert!(msg.contains("unresolved variable"), "reason: {msg}");
+
+        let msg =
+            analyze_bash_command("rm -rf \"$DIR\"").expect("rm -rf \"$DIR\" should be flagged");
+        assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+
+        let msg = analyze_bash_command("rm -rf ${DIR}/build")
+            .expect("rm -rf ${DIR}/build should be flagged");
+        assert!(msg.contains("$DIR"), "reason should name $DIR: {msg}");
+
+        // Combined short flags where `r` doesn't directly follow `-`
+        let msg = analyze_bash_command("rm -fr $X").expect("rm -fr $X should be flagged");
+        assert!(msg.contains("$X"), "reason should name $X: {msg}");
+
+        // `rm -r -f` split flags
+        assert!(analyze_bash_command("rm -r -f $TARGET").is_some());
+        // Long flags
+        assert!(analyze_bash_command("rm --recursive --force $TARGET").is_some());
+    }
+
+    #[test]
+    fn test_rm_rf_unresolved_variable_not_flagged() {
+        // Literal path: behaves exactly as before (both sides of the boundary)
+        assert!(analyze_bash_command("rm -rf /tmp/literal-dir").is_none());
+        // Guarded-expansion idiom: ${VAR:?} aborts on empty by design
+        assert!(analyze_bash_command("rm -rf \"${DIR:?}/build\"").is_none());
+        assert!(analyze_bash_command("rm -rf ${DIR:?msg}/build").is_none());
+        // Not an rm at all
+        assert!(analyze_bash_command("echo $DIR").is_none());
+        // Not recursive-force
+        assert!(analyze_bash_command("rm file.txt").is_none());
+        // Variable in a *later* command past a separator is not the rm target
+        // ($HOME itself is already caught by the long-standing bare-target
+        // check, so use a neutral variable here)
+        assert!(analyze_bash_command("rm -rf /tmp/x && echo $OTHER").is_none());
+        assert!(analyze_bash_command("rm -rf /tmp/x; echo $OTHER").is_none());
+        // Command substitution `$(...)` is not a variable reference
+        assert!(analyze_bash_command("rm -rf /tmp/$(uname)").is_none());
+    }
+
+    #[test]
+    fn test_rm_combined_fr_flags_bare_root() {
+        // `rm -fr /` previously slipped past has_r's substring check ("-fr"
+        // contains no "-r"); combined short-flag parsing now catches it.
+        assert!(analyze_bash_command("rm -fr /").is_some());
+        assert!(analyze_bash_command("rm -Rf /").is_some());
     }
 
     #[test]
