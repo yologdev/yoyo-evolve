@@ -342,6 +342,11 @@ ask for it. When this happens you'll see a dim note:
 - Auto-escalation only fires when *neither* flag is given, and is conservative: when
   unsure, it stays shallow.
 
+**Typo guard:** a single word close to a known subcommand (e.g. `/plan aply`,
+`/plan statsu`) gets a did-you-mean suggestion instead of being planned as a
+literal task. Real one-word tasks (`/plan refactor`) and multi-word tasks are
+never intercepted.
+
 ### `/spawn` — Subagent
 
 The `/spawn` command creates a fresh AI agent with its own independent context window, sends it your task, runs it to completion, and injects the result back into your main conversation.

@@ -370,6 +370,26 @@ pub const PLAN_SUBCOMMANDS: &[&str] = &[
     "--shallow",
 ];
 
+/// Near-miss typo guard for `/plan`'s free-text argument.
+///
+/// A single word that isn't a known subcommand but sits within edit distance 2
+/// of one (e.g. "aply" → "apply") is almost certainly a typo — launching a
+/// full LLM planning run on that literal word burns tokens and can clobber a
+/// stored plan flow. Returns the suggested subcommand when the guard should
+/// fire. Multi-word arguments (real tasks) and words far from any subcommand
+/// are never touched. Candidates derive from `PLAN_SUBCOMMANDS`, never a
+/// hand-typed list.
+pub fn plan_near_miss(arg: &str) -> Option<&'static str> {
+    if arg.is_empty() || arg.contains(char::is_whitespace) {
+        return None;
+    }
+    // Exact subcommands are handled by earlier match arms.
+    if PLAN_SUBCOMMANDS.contains(&arg) {
+        return None;
+    }
+    crate::commands::closest_match(arg, PLAN_SUBCOMMANDS, 2)
+}
+
 /// Parse a `/plan` command and extract the task description.
 /// Returns None if no task was provided or if the input is a mode toggle keyword.
 pub fn parse_plan_task(input: &str) -> Option<String> {
@@ -797,6 +817,15 @@ pub async fn handle_plan(
         _ => {}
     }
 
+    // Near-miss typo guard: a single word close to a known subcommand is
+    // almost certainly a typo — don't launch a full planning run on it.
+    if let Some(suggestion) = plan_near_miss(arg) {
+        println!(
+            "{YELLOW}  Unknown subcommand '{arg}' — did you mean '{suggestion}'? Use /plan \"{arg}\" if you meant it as a task.{RESET}\n"
+        );
+        return PlanResult::Handled;
+    }
+
     // Fall through to single-shot planning
     let task = match parse_plan_task(input) {
         Some(t) => t,
@@ -1221,6 +1250,36 @@ mod tests {
         assert!(PLAN_SUBCOMMANDS.contains(&"clear"));
         assert!(PLAN_SUBCOMMANDS.contains(&"status"));
         assert!(PLAN_SUBCOMMANDS.contains(&"step"));
+    }
+
+    #[test]
+    fn test_plan_near_miss_catches_typos() {
+        // A typo'd subcommand must not launch a full planning run on the
+        // literal typo (Day-142 bug class: wildcard fallbacks doing something).
+        assert_eq!(plan_near_miss("aply"), Some("apply"));
+        assert_eq!(plan_near_miss("statsu"), Some("status"));
+        assert_eq!(plan_near_miss("shwo"), Some("show"));
+        assert_eq!(plan_near_miss("cleer"), Some("clear"));
+    }
+
+    #[test]
+    fn test_plan_near_miss_leaves_real_tasks_alone() {
+        // One-word tasks not near any subcommand are legitimate.
+        assert_eq!(plan_near_miss("refactor"), None);
+        // Multi-word args are real tasks — never intercepted.
+        assert_eq!(plan_near_miss("fix the login bug"), None);
+        assert_eq!(plan_near_miss("apply the migration"), None);
+        // Empty arg is handled by the usage arm, not the guard.
+        assert_eq!(plan_near_miss(""), None);
+    }
+
+    #[test]
+    fn test_plan_near_miss_ignores_exact_subcommands() {
+        // Exact subcommands match earlier arms and must never be flagged —
+        // derive from the authoritative constant, not a hand-typed list.
+        for sub in PLAN_SUBCOMMANDS {
+            assert_eq!(plan_near_miss(sub), None, "exact '{sub}' flagged");
+        }
     }
 
     #[test]
