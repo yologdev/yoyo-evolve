@@ -85,6 +85,31 @@ These files can only be changed by human maintainers. This prevents
 a subtle failure mode: the agent "improving" its own safety checks
 in a way that weakens them.
 
+## Runtime bash safety analysis
+
+Beyond the evolution-loop layers above, yoyo analyzes every bash command
+before running it (`src/safety.rs`) and asks for confirmation on
+destructive patterns like `rm -rf /` or piping `find` into `xargs rm`.
+
+One check worth calling out: **recursive-force `rm` on an unresolved
+shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,
+but if `BUILD_DIR` is empty or unset it expands to `rm -rf /` (or wipes
+the current directory). yoyo flags any `rm -rf` / `rm -fr` /
+`rm -r -f` whose target contains an unexpanded variable (`$VAR`,
+`${VAR}`, `${VAR}/sub`, …) and names the specific variable in the
+warning, e.g.:
+
+```
+rm -rf target contains unresolved variable $BUILD_DIR — an empty
+expansion would delete from cwd or /
+```
+
+The escape hatch is the guarded-expansion idiom: `${VAR:?}` (or
+`${VAR:?message}`) makes the shell abort if the variable is empty or
+unset, so `rm -rf "${BUILD_DIR:?}/build"` passes this check — the
+expansion can never silently widen the blast radius. Existing
+destructive-pattern rules still apply on top.
+
 ## What happens in practice
 
 A typical evolution session:
