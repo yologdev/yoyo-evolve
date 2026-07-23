@@ -185,6 +185,22 @@ fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usiz
     Some((hit_rate, stats.total_validations, trend_label))
 }
 
+/// Honest one-line note for `/status` when the prediction meter is
+/// precision-only (zero failure-day / recall-graded events). Reads the live
+/// validation history; returns `None` when the meter has recall data or when
+/// there are no events at all. See
+/// `commands_risk_accuracy::recall_coverage_note` for the polarity rationale.
+pub(crate) fn recall_coverage_note() -> Option<String> {
+    recall_coverage_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+}
+
+/// Inner implementation with configurable path (for testing).
+fn recall_coverage_note_from(path: &std::path::Path) -> Option<String> {
+    let events = load_validation_history_from(path);
+    let stats = compute_accuracy_stats(&events);
+    crate::commands_risk_accuracy::recall_coverage_note(&stats)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
