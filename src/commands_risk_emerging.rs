@@ -40,6 +40,19 @@ fn compute_momentum(count_7d: u32, count_30d: u32) -> f64 {
     }
 }
 
+/// Minimum number of changes over the long (30-day) window before a file's
+/// momentum is trusted as signal rather than noise.
+///
+/// **Why:** the momentum formula `(c7/7)/(c30/30)` *saturates* whenever a file's
+/// only changes fall inside the 7-day window (`c7 == c30`): it collapses to the
+/// constant `30/7 ≈ 4.29` for ANY magnitude, so a 1-touch file and a 2-touch file
+/// tie at the very top of the emerging ranking and the anticipatory column can't
+/// discriminate among them. Below this floor a momentum score is statistically
+/// meaningless, so we treat the file as *not eligible* for the emerging list —
+/// an explicit third value (excluded), not a saturated-high absorption into the
+/// top bucket. Files at exactly the floor are admitted (the guard is "below MIN").
+const MIN_MOMENTUM_SAMPLES: u32 = 3;
+
 /// Detect files whose risk trajectory is accelerating — moderate absolute risk
 /// but changing faster recently than their own baseline. These are files that
 /// are **about to become** fragile, the first genuinely allostatic signal.
@@ -79,6 +92,17 @@ fn detect_emerging_risks_from(
 
         let c7 = *c7_map.get(risk.path.as_str()).unwrap_or(&0);
         let c30 = *c30_map.get(risk.path.as_str()).unwrap_or(&0);
+
+        // Min-sample floor: below MIN_MOMENTUM_SAMPLES total changes over 30 days,
+        // the momentum ratio is statistically meaningless (and saturates to a
+        // constant when c7 == c30). Exclude such files explicitly — they are not
+        // eligible for the emerging list, rather than being absorbed at a saturated
+        // high momentum into the top of the ranking. `c30` is the long-window count;
+        // when it's 0 the file trivially can't meet the floor.
+        if c30 < MIN_MOMENTUM_SAMPLES {
+            continue;
+        }
+
         let momentum = compute_momentum(c7, c30);
 
         if momentum < threshold {
@@ -168,6 +192,123 @@ pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_momentum_saturates_when_all_changes_recent() {
+        // Pins the DEGENERATE behavior the min-sample floor targets: when a file's
+        // only changes fall inside the 7-day window (7d-count == 30d-count), the
+        // momentum formula collapses to the same constant (30/7 ≈ 4.29) for ANY
+        // magnitude. So compute_momentum(2,2) == compute_momentum(1,1): a 1-touch
+        // file and a 2-touch file are indistinguishable at the top of the ranking.
+        let m1 = compute_momentum(1, 1);
+        let m2 = compute_momentum(2, 2);
+        assert!(
+            (m1 - m2).abs() < 1e-9,
+            "momentum saturates: expected {m1} == {m2}"
+        );
+        // And that constant is 30/7 ≈ 4.2857
+        assert!((m1 - 30.0 / 7.0).abs() < 1e-9, "expected ~4.29, got {m1}");
+    }
+
+    #[test]
+    fn test_low_sample_files_are_damped_or_excluded() {
+        // After the fix, a below-floor file (1-2 total changes) must NOT outrank a
+        // file with a genuine burst against a longer baseline. The below-floor file
+        // is excluded entirely (explicit third value: None → not eligible), so the
+        // genuine burst file ranks alone at the top rather than tying with noise.
+        let risks = vec![
+            FileRisk {
+                path: "src/top.rs".into(),
+                score: 0.9,
+                signals: vec![],
+                test_density: 0.0,
+            },
+            FileRisk {
+                path: "src/burst.rs".into(),
+                score: 0.4,
+                // 5-in-7d vs 8-in-30d: genuine acceleration, well above the floor.
+                signals: vec![],
+                test_density: 0.0,
+            },
+            FileRisk {
+                path: "src/noise.rs".into(),
+                score: 0.3,
+                // 2-in-7d vs 2-in-30d: saturated 4.29 momentum but only 2 samples.
+                signals: vec![],
+                test_density: 0.0,
+            },
+        ];
+
+        let counts_7 = vec![
+            ("src/top.rs".into(), 3u32),
+            ("src/burst.rs".into(), 5),
+            ("src/noise.rs".into(), 2),
+        ];
+        let counts_30 = vec![
+            ("src/top.rs".into(), 10u32),
+            ("src/burst.rs".into(), 8),
+            ("src/noise.rs".into(), 2),
+        ];
+        let revert_counts = std::collections::HashMap::new();
+
+        let emerging =
+            detect_emerging_risks_from(&risks, &counts_7, &counts_30, &revert_counts, 1.5, 1);
+
+        // The below-floor noise file must be excluded; the burst file survives.
+        assert!(
+            emerging.iter().all(|e| e.path != "src/noise.rs"),
+            "below-floor (2-sample) file must be excluded, not tie at the top"
+        );
+        assert_eq!(
+            emerging.len(),
+            1,
+            "only the genuine-burst file should remain"
+        );
+        assert_eq!(emerging[0].path, "src/burst.rs");
+    }
+
+    #[test]
+    fn test_min_momentum_samples_boundary_passes() {
+        // Near-miss / boundary test (Day-122 lesson: test the input that should PASS
+        // the guard, not just the one it trips). A file with EXACTLY
+        // MIN_MOMENTUM_SAMPLES total changes over 30 days is eligible — the floor is
+        // "below MIN excluded", so == MIN is admitted.
+        let risks = vec![
+            FileRisk {
+                path: "src/top.rs".into(),
+                score: 0.9,
+                signals: vec![],
+                test_density: 0.0,
+            },
+            FileRisk {
+                path: "src/boundary.rs".into(),
+                score: 0.3,
+                signals: vec![],
+                test_density: 0.0,
+            },
+        ];
+
+        // 3-in-7d vs exactly MIN_MOMENTUM_SAMPLES-in-30d → eligible, high momentum.
+        let counts_7 = vec![
+            ("src/top.rs".into(), 2u32),
+            ("src/boundary.rs".into(), MIN_MOMENTUM_SAMPLES),
+        ];
+        let counts_30 = vec![
+            ("src/top.rs".into(), 10u32),
+            ("src/boundary.rs".into(), MIN_MOMENTUM_SAMPLES),
+        ];
+        let revert_counts = std::collections::HashMap::new();
+
+        let emerging =
+            detect_emerging_risks_from(&risks, &counts_7, &counts_30, &revert_counts, 1.5, 1);
+
+        assert_eq!(
+            emerging.len(),
+            1,
+            "a file with exactly MIN_MOMENTUM_SAMPLES changes must be eligible"
+        );
+        assert_eq!(emerging[0].path, "src/boundary.rs");
+    }
 
     #[test]
     fn test_compute_momentum_normal() {
