@@ -244,6 +244,12 @@ pub fn handle_status(
     if let Some(verdict) = crate::commands_risk::reflex_effectiveness_summary() {
         println!("  reflex:  {verdict}");
     }
+    // When the prediction meter is precision-only (zero failure-day / recall-graded
+    // events), surface an honest one-line note so the starving recall half isn't
+    // hidden behind the green precision number. Inert when there's no risk data.
+    if let Some(note) = crate::commands_risk::recall_coverage_note() {
+        println!("  {DIM}{note}{RESET}");
+    }
     println!("{RESET}");
 }
 

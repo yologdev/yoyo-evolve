@@ -23,7 +23,7 @@ pub(crate) use crate::commands_risk_snapshots::{
 // inside the report module itself, so they aren't re-exported.)
 pub(crate) use crate::commands_risk_report::{
     file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
-    risk_context_for_files,
+    recall_coverage_note, risk_context_for_files,
 };
 
 // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.

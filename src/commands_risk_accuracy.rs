@@ -467,6 +467,41 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
     report
 }
 
+/// Honest one-line note surfacing recall starvation for `/status`.
+///
+/// The reflex/prediction meter grades two polarities: recall (failure-day
+/// events — did the risk list contain the file that broke?) and the
+/// false-alarm signal (green-day events — did a flagged file change without
+/// breaking?). When ALL accumulated events are green-day only, the meter is
+/// measuring **precision only, never recall** — a reader glancing at a green
+/// number in `/status` would wrongly believe the prediction meter is working.
+///
+/// This helper makes the starving half legible (Day 145; Day-140 lesson:
+/// "one-sided self-measurement measures recall and never precision").
+///
+/// Three explicit states (Day-144 abstention discipline — the absent case is
+/// a chosen third value, not absorbed into a neighbor):
+/// - failure samples > 0 → meter is balanced (or has recall data) → `None`
+///   (don't nag).
+/// - failure samples == 0 AND green samples > 0 → precision-only → the note.
+/// - no events at all (both zero) → nothing to say → `None` (silence for
+///   product users with no risk data).
+pub(crate) fn recall_coverage_note(stats: &AccuracyStats) -> Option<String> {
+    if stats.failure_samples > 0 {
+        // Recall has at least one graded event — the meter is not starving.
+        return None;
+    }
+    if stats.green_samples == 0 {
+        // No events at all — inert, say nothing.
+        return None;
+    }
+    let n = stats.green_samples;
+    let day_word = if n == 1 { "day" } else { "days" };
+    Some(format!(
+        "recall ungraded — 0 failure-day events ({n} green-{day_word} only)"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1277,6 +1312,82 @@ mod tests {
             mixed.best_day.map(|(d, _)| d),
             Some(142),
             "a green day's 100% is false-alarm evidence, not a best prediction day"
+        );
+    }
+
+    #[test]
+    fn test_recall_coverage_note_when_no_failure_events() {
+        // All green-day events, zero failure-day events → the meter is
+        // measuring precision only. The note must name the precision-only
+        // state and the green count so /status can't hide it behind a number.
+        let events = vec![
+            ValidationEvent {
+                day: 145,
+                hit_count: 1,
+                total_changed: 3,
+                accuracy_pct: 33.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 145,
+                hit_count: 0,
+                total_changed: 2,
+                accuracy_pct: 0.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 0);
+        assert_eq!(stats.green_samples, 2);
+        let note = recall_coverage_note(&stats).expect("note present when recall starved");
+        assert!(note.contains("recall ungraded"), "note: {note}");
+        assert!(note.contains("0 failure-day"), "note: {note}");
+        assert!(note.contains("2 green-days"), "note: {note}");
+    }
+
+    #[test]
+    fn test_recall_coverage_note_absent_when_failure_events_exist() {
+        // Once a failure-day (recall-graded) event exists the meter is no
+        // longer precision-only — don't nag.
+        let events = vec![
+            ValidationEvent {
+                day: 145,
+                hit_count: 2,
+                total_changed: 3,
+                accuracy_pct: 66.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 145,
+                hit_count: 0,
+                total_changed: 2,
+                accuracy_pct: 0.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert!(stats.failure_samples > 0);
+        assert!(
+            recall_coverage_note(&stats).is_none(),
+            "no note once recall has data"
+        );
+    }
+
+    #[test]
+    fn test_recall_coverage_note_silent_when_no_events_at_all() {
+        // Abstention discipline (Day 144): "no answer" is an explicit third
+        // state, not absorbed into the precision-only note. Zero events → inert
+        // (product users with no risk data see nothing).
+        let stats = compute_accuracy_stats(&[]);
+        assert_eq!(stats.failure_samples, 0);
+        assert_eq!(stats.green_samples, 0);
+        assert!(
+            recall_coverage_note(&stats).is_none(),
+            "silent when there are zero events"
         );
     }
 }
