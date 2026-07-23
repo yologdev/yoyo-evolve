@@ -53,6 +53,27 @@ pub(crate) const MIN_VALIDATION_EVENTS: usize = 5;
 /// learned = (1 - LEARNING_RATE) * default + LEARNING_RATE * computed
 const LEARNING_RATE: f64 = 0.3;
 
+/// Tolerance under which a newly-learned weight is treated as unchanged from the
+/// value already on disk. A planner-fallback session that re-learns weights can
+/// produce sub-`WEIGHT_WRITE_EPSILON` floating-point drift in every weight; without
+/// this gate that drift rewrites `risk_weights.json`, `git` sees a diff, and the
+/// fallback manufactures a fake "1/1 ✅" commit that ships no real improvement.
+const WEIGHT_WRITE_EPSILON: f64 = 1e-3;
+
+/// Return `true` iff any weight in `new` differs from the corresponding weight in
+/// `old` by more than `epsilon` — i.e. the learned weights are meaningfully
+/// different from what is already on disk and are worth persisting.
+///
+/// This is the pure decision the write path consults so that a no-op re-learn
+/// produces no file change (and therefore no `git` diff / noise commit). The
+/// "nothing meaningfully changed" case is an explicit `false` return, never a
+/// silent fall-through (abstention discipline, Day 144).
+fn weights_changed_meaningfully(old: &[f64; 7], new: &[f64; 7], epsilon: f64) -> bool {
+    old.iter()
+        .zip(new.iter())
+        .any(|(o, n)| (o - n).abs() > epsilon)
+}
+
 /// Load learned weights from `.yoyo/risk_weights.json`, falling back to `RISK_WEIGHTS`.
 ///
 /// Validates that the file contains exactly 7 weights that sum to approximately 1.0
@@ -307,6 +328,15 @@ fn learn_weights_from_history_to(
 
     let weights = compute_adjusted_weights(&detailed);
 
+    // Idempotency gate: if the freshly-learned weights are within
+    // WEIGHT_WRITE_EPSILON of what's already on disk, skip the write entirely.
+    // Rewriting sub-epsilon drift produces a `git` diff and a fake "success"
+    // commit in planner-fallback sessions — an explicit no-op is the honest path.
+    let existing = load_learned_weights_from(weights_path);
+    if !weights_changed_meaningfully(&existing, &weights, WEIGHT_WRITE_EPSILON) {
+        return;
+    }
+
     // Build output JSON
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -440,6 +470,108 @@ mod tests {
         // Size (index 2) was present in hits too, but also in non-hit predictions
         // Both should be > 0 and the total should sum to ~1.0
         assert!(churn_weight > 0.0, "churn weight should be positive");
+    }
+
+    // ── Idempotent-write (planner-fallback no-op) tests ──
+
+    #[test]
+    fn test_weights_unchanged_within_epsilon_skips_write() {
+        // Identical maps → not meaningfully changed.
+        let old = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+        assert!(
+            !weights_changed_meaningfully(&old, &old, WEIGHT_WRITE_EPSILON),
+            "identical weights must not be a meaningful change"
+        );
+
+        // Sub-epsilon floating-point drift in every weight → still no change.
+        let drift = 5e-4; // < WEIGHT_WRITE_EPSILON (1e-3)
+        let new = old.map(|w| w + drift);
+        assert!(
+            !weights_changed_meaningfully(&old, &new, WEIGHT_WRITE_EPSILON),
+            "sub-epsilon drift must not count as a meaningful change"
+        );
+    }
+
+    #[test]
+    fn test_weights_changed_beyond_epsilon_writes() {
+        let old = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+        // One weight differs by more than epsilon → meaningful change.
+        let mut new = old;
+        new[0] += 1e-2; // 0.01 > 1e-3
+        assert!(
+            weights_changed_meaningfully(&old, &new, WEIGHT_WRITE_EPSILON),
+            "a > epsilon difference must count as a meaningful change"
+        );
+    }
+
+    #[test]
+    fn test_weights_boundary_at_epsilon_near_miss() {
+        let epsilon = 1e-3;
+        // Construct old/new so the delta is *exactly* representable as epsilon:
+        // start from 0.0 so no prior rounding error accumulates.
+        let old = [0.0_f64; 7];
+
+        // Exactly at epsilon: the comparison is strictly `> epsilon`, so a delta
+        // *equal to* epsilon is NOT meaningful (the near-miss side, Day 122).
+        let mut at = old;
+        at[0] = epsilon;
+        assert!(
+            (at[0] - old[0]).abs() == epsilon,
+            "test precondition: delta is exactly epsilon"
+        );
+        assert!(
+            !weights_changed_meaningfully(&old, &at, epsilon),
+            "a delta exactly at epsilon must NOT count as meaningful (near-miss)"
+        );
+
+        // Just above epsilon: meaningful.
+        let mut above = old;
+        above[0] = epsilon + 1e-6;
+        assert!(
+            weights_changed_meaningfully(&old, &above, epsilon),
+            "a delta just above epsilon must count as meaningful"
+        );
+    }
+
+    #[test]
+    fn test_learn_weights_second_run_is_noop() {
+        // A second learn with the same inputs must not rewrite the file:
+        // the on-disk bytes stay byte-identical, so `git` sees no diff and the
+        // planner-fallback stops manufacturing noise commits.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+        let weights_path = dir.path().join("weights.json");
+
+        let mut snap_lines = Vec::new();
+        let mut val_lines = Vec::new();
+        for day in 100..106 {
+            snap_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T12:00:00Z","day":{},"git_hash":"abc{}","top_10":[{{"path":"src/hot.rs","score":0.9,"signals":["▲churn","▲size"]}},{{"path":"src/cold.rs","score":0.5,"signals":["▲size"]}}]}}"#,
+                day - 90, day, day
+            ));
+            val_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T13:00:00Z","day":{},"trigger":"watch_failure","hits":["src/hot.rs"],"surprises":["src/other.rs"],"predicted_count":10,"accuracy_pct":50.0}}"#,
+                day - 90, day
+            ));
+        }
+        std::fs::write(&snap_path, snap_lines.join("\n") + "\n").expect("write snapshots");
+        std::fs::write(&val_path, val_lines.join("\n") + "\n").expect("write validations");
+
+        // First run creates the file.
+        learn_weights_from_history_to(&val_path, &snap_path, &weights_path);
+        assert!(weights_path.exists(), "weights file should be created");
+        let first = std::fs::read_to_string(&weights_path).expect("read weights");
+
+        // Second run with identical inputs must leave the bytes untouched
+        // (the `last_updated` timestamp would otherwise differ, so this also
+        // proves the write was skipped, not just re-written to the same value).
+        learn_weights_from_history_to(&val_path, &snap_path, &weights_path);
+        let second = std::fs::read_to_string(&weights_path).expect("read weights again");
+        assert_eq!(
+            first, second,
+            "a re-learn with unchanged weights must not rewrite the file"
+        );
     }
 
     #[test]
