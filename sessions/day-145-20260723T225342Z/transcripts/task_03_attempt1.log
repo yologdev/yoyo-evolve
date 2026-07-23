@@ -1,0 +1,176 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the two files I need to modify.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compute_accuracy_stats\… ✓ (6ms)
+
+The stats already carry failure_samples and green_samples. Let me look at the AccuracyStats struct and the reflex_effectiveness_summary in commands_info.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:30..130 ✓ (1ms)
+
+Now let me look at the reflex_effectiveness_summary in commands_info.rs and how it's used in handle_status.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reflex_effectiveness_su… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:235..275 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me see how I can get validation events from a public function to compute the note. Let me check how reflex_effectiveness_summary reads its data.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn reflex_ef… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs:165..205 ✓ (0ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Now I understand the pattern. Let me add the recall_coverage_note helper to commands_risk_accuracy.rs. First let me look at the end of that file / where functions live and the tests module.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:460..470 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll add the recall_coverage_note helper after format_accuracy_report (before the tests module).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (5 → 40 lines)
+        report
+  + }
+  + 
+  + /// Honest one-line note surfacing recall starvation for `/status`.
+  + ///
+  + /// The reflex/prediction meter grades two polarities: recall (failure-day
+  + /// events — did the risk list contain the file that broke?) and the
+  + /// false-alarm signal (green-day events — did a flagged file change without
+  + /// breaking?). When ALL accumulated events are green-day only, the meter is
+  + /// measuring **precision only, never recall** — a reader glancing at a green
+  + /// number in `/status` would wrongly believe the prediction meter is working.
+  + ///
+  + /// This helper makes the starving half legible (Day 145; Day-140 lesson:
+  + /// "one-sided self-measurement measures recall and never precision").
+  + ///
+  + /// Three explicit states (Day-144 abstention discipline — the absent case is
+  + /// a chosen third value, not absorbed into a neighbor):
+  + /// - failure samples > 0 → meter is balanced (or has recall data) → `None`
+  + ///   (don't nag).
+  + /// - failure samples == 0 AND green samples > 0 → precision-only → the note.
+  ... (19 more lines)
+ ✓ (17.4s)
+        report
+  + }
+  + 
+  + /// Honest one-line note surfacing recall starvation for `/status`.
+  + ///
+  + /// The reflex/prediction meter grades two polarities: recall (failure-day
+  + /// events — did the risk list contain the file that broke?) and the
+  + /// false-alarm signal (green-day events — did a flagged file change without
+  ... (13 more lines)
+
+Expected — it's unused until I wire it up. Let me add the tests first, then wire it into commands_info.rs. Let me look at how tests construct AccuracyStats — check if there's a helper for building ValidationEvents.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn ev\|ValidationEvent … ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:513..558 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I understand the ValidationEvent shape. Green events have severity: Some("watch_success"), failure events have other severity or None. Let me add the tests before the closing } of the tests module.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 76 lines)
+  +     #[test]
+  +     fn test_recall_coverage_note_when_no_failure_events() {
+  +         // All green-day events, zero failure-day events → the meter is
+  +         // measuring precision only. The note must name the precision-only
+  +         // state and the green count so /status can't hide it behind a number.
+  +         let events = vec![
+  +             ValidationEvent {
+  +                 day: 145,
+  +                 hit_count: 1,
+  +                 total_changed: 3,
+  +                 accuracy_pct: 33.0,
+  +                 emerging_accuracy_pct: None,
+  +                 severity: Some("watch_success".to_string()),
+  +             },
+  +             ValidationEvent {
+  +                 day: 145,
+  +                 hit_count: 0,
+  +                 total_changed: 2,
+  +                 accuracy_pct: 0.0,
+  +                 emerging_accuracy_pct: None,
+  ... (56 more lines)
+ ✗ (0ms)
+    │ old_text matches 54 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs. Include more surrounding context to make the match unique.
+
+Let me find the exact last lines of the file to anchor the edit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:1305..1320 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (7 → 83 lines)
+                mixed.best_day.map(|(d, _)| d),
+                Some(142),
+                "a green day's 100% is false-alarm evidence, not a best prediction day"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_recall_coverage_note_when_no_failure_events() {
+  +         // All green-day events, zero failure-day events → the meter is
+  +         // measuring precision only. The note must name the precision-only
+  +         // state and the green count so /status can't hide it behind a number.
+  +         let events = vec![
+  +             ValidationEvent {
+  +                 day: 145,
+  +                 hit_count: 1,
+  +                 total_changed: 3,
+  +                 accuracy_pct: 33.0,
+  +                 emerging_accuracy_pct: None,
+  +                 severity: Some("watch_success".to_string()),
+  +             },
+  ... (62 more lines)
+ ✓ (17.7s)
+                mixed.best_day.map(|(d, _)| d),
+                Some(142),
+                "a green day's 100% is false-alarm evidence, not a best prediction day"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_recall_coverage_note_when_no_failure_events() {
+  ... (13 more lines)
+  2 tools completed in 31.4s (2 ✓)
+
+Now wire it into /status. I need a public accessor in commands_risk that reads the validation history and returns the note. Let me add a recall_coverage_note() wrapper in commands_risk_report.rs (which has RISK_VALIDATION_PATH imported) and re-export via commands_risk, then call it from commands_info.rs.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prediction_accuracy_sum… ✓ (4ms)
+
+Let me add the wrapper function in commands_risk_report.rs right after prediction_accuracy_summary_from.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (3 → 19 lines)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + /// Honest one-line note for `/status` when the prediction meter is
+  + /// precision-only (zero failure-day / recall-graded events). Reads the live
+  + /// validation history; returns `None` when the meter has recall data or when
+  + /// there are no events at all. See
+  + /// `commands_risk_accuracy::recall_coverage_note` for the polarity rationale.
+  + pub(crate) fn recall_coverage_note() -> Option<String> {
+  +     recall_coverage_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  + }
+  + 
+  + /// Inner implementation with configurable path (for testing).
+  + fn recall_coverage_note_from(path: &std::path::Path) -> Option<String> {
+  +     let events = load_validation_history_from(path);
+  +     let stats = compute_accuracy_stats(&events);
+  +     crate::commands_risk_accuracy::recall_coverage_note(&stats)
+    }
+ ✓ (17.7s)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + /// Honest one-line note for `/status` when the prediction meter is
+  + /// precision-only (zero failure-day / recall-graded events). Reads the live
+  + /// validation history; returns `None` when the meter has recall data or when
+  + /// there are no events at all. See
+  ... (11 more lines)
+
+Now check that commands_risk re-exports from commands_risk_report, so commands_risk::recall_coverage_note is reachable. Line 25 imports several items. Let me add it.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:24..30 ✓ (1ms)
+
+  watch: no files changed this turn — skipping
+
