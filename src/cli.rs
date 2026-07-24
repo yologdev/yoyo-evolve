@@ -928,10 +928,16 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         file_config.get("system_prompt").cloned(),
     );
 
-    // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt
-    if let Some(project_context) = load_project_context() {
-        system_prompt.push_str("\n\n# Project Instructions\n\n");
-        system_prompt.push_str(&project_context);
+    // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt.
+    // Safe mode (--safe-mode) skips this so a user can troubleshoot whether their
+    // own project instruction files (CLAUDE.md, YOYO.md, AGENTS.md, .cursorrules,
+    // .github/copilot-instructions.md) are the source of misbehavior.
+    let safe_mode = args.iter().any(|a| a == "--safe-mode");
+    if !safe_mode {
+        if let Some(project_context) = load_project_context() {
+            system_prompt.push_str("\n\n# Project Instructions\n\n");
+            system_prompt.push_str(&project_context);
+        }
     }
 
     // Append repo map for structural codebase awareness
@@ -1095,7 +1101,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         },
         no_tools: args.iter().any(|a| a == "--no-tools"),
         lite,
-        safe_mode: args.iter().any(|a| a == "--safe-mode"),
+        safe_mode,
     });
 
     // Conflict check: --allowed-tools and --disallowed-tools are mutually exclusive
@@ -3131,6 +3137,33 @@ command = "server-two"
         let args = vec!["yoyo".to_string()];
         let config = parse_args(&args).expect("should parse");
         assert!(!config.safe_mode);
+    }
+
+    #[test]
+    #[serial]
+    fn test_safe_mode_near_miss_not_accepted() {
+        // Day 122: near-miss flags must NOT prefix-match --safe-mode.
+        // `--safe` and `--safemode` are typos, not the real flag — they should
+        // leave safe_mode false (and be surfaced as unknown flags elsewhere).
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        for typo in ["--safe", "--safemode", "--safe_mode"] {
+            let args = vec!["yoyo".to_string(), typo.to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert!(
+                !config.safe_mode,
+                "typo `{typo}` must not activate safe mode"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_safe_mode_in_known_flags() {
+        // Exact flag is recognized so it isn't warned as unknown; the near-miss
+        // typos above are NOT in KNOWN_FLAGS.
+        assert!(KNOWN_FLAGS.contains(&"--safe-mode"));
+        assert!(!KNOWN_FLAGS.contains(&"--safe"));
+        assert!(!KNOWN_FLAGS.contains(&"--safemode"));
     }
 
     #[test]

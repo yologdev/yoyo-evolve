@@ -1761,7 +1761,9 @@ pub fn detect_write_command(cmd: &str) -> Option<String> {
         // explicit dry run (`-n` / `--dry-run`), which touches nothing.
         if base == "rsync" {
             let dry_run = segment.split_whitespace().any(|t| {
-                t == "-n" || t == "--dry-run" || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
+                t == "-n"
+                    || t == "--dry-run"
+                    || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
             });
             if !dry_run {
                 return Some("`rsync` copies files to the destination".to_string());
@@ -2889,9 +2891,9 @@ mod tests {
             "sed -n '5p' file", // sed without -i is read-only
             "dd if=/dev/sda",   // dd without of= writes nothing
             "man mv",
-            "rsync -n -a src/ dst/",       // rsync --dry-run does not write
+            "rsync -n -a src/ dst/",        // rsync --dry-run does not write
             "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
-            "grep rsync file",             // rsync as an argument, not command
+            "grep rsync file",              // rsync as an argument, not command
         ];
         for cmd in &negatives {
             assert_eq!(
