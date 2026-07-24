@@ -1069,6 +1069,45 @@ const SIGNATURE_BLOCK_MAX_CHARS: usize = 2000;
 /// Sentinel path used to identify the signature block entry in auto-context results.
 const SIGNATURE_SENTINEL: &str = "[signatures]";
 
+/// Truncate a file's content for auto-context injection.
+///
+/// Files longer than `AUTO_CONTEXT_MAX_LINES` are cut to the first
+/// `AUTO_CONTEXT_MAX_LINES` lines with a note; files longer than
+/// `AUTO_CONTEXT_LARGE_FILE` get a slightly different note. Shorter files are
+/// returned unchanged.
+///
+/// The line slice is clamped with `.min(total_lines)` so it can never index
+/// out of bounds — the previous inline version silently depended on the
+/// invariant `AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`, which is an
+/// unstated relationship between two independently-tunable constants three
+/// lines apart. Lowering `AUTO_CONTEXT_LARGE_FILE` below `AUTO_CONTEXT_MAX_LINES`
+/// would have turned the "large file" branch into an out-of-bounds panic on any
+/// file whose line count fell in the gap. The clamp removes that dependency.
+fn truncate_file_content(content: String) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+    // Clamp so `lines[..take]` is always in bounds regardless of constant values.
+    let take = AUTO_CONTEXT_MAX_LINES.min(total_lines);
+
+    if total_lines > AUTO_CONTEXT_LARGE_FILE {
+        let mut text: String = lines[..take].join("\n");
+        text.push_str(&format!(
+            "\n\n[… truncated — file has {} lines, showing first {}]",
+            total_lines, AUTO_CONTEXT_MAX_LINES
+        ));
+        text
+    } else if total_lines > AUTO_CONTEXT_MAX_LINES {
+        let mut text: String = lines[..take].join("\n");
+        text.push_str(&format!(
+            "\n\n[… truncated at {} of {} lines]",
+            AUTO_CONTEXT_MAX_LINES, total_lines
+        ));
+        text
+    } else {
+        content
+    }
+}
+
 /// Build a compact signature block for the given file paths from the repo map.
 ///
 /// Lists function/struct/enum/trait/type signatures for each matched file,
@@ -1229,27 +1268,7 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
             Err(_) => continue,
         };
 
-        let lines: Vec<&str> = content.lines().collect();
-        let total_lines = lines.len();
-
-        let truncated = if total_lines > AUTO_CONTEXT_LARGE_FILE {
-            // Large file: take first MAX_LINES with a note
-            let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
-            text.push_str(&format!(
-                "\n\n[… truncated — file has {} lines, showing first {}]",
-                total_lines, AUTO_CONTEXT_MAX_LINES
-            ));
-            text
-        } else if total_lines > AUTO_CONTEXT_MAX_LINES {
-            let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
-            text.push_str(&format!(
-                "\n\n[… truncated at {} of {} lines]",
-                AUTO_CONTEXT_MAX_LINES, total_lines
-            ));
-            text
-        } else {
-            content
-        };
+        let truncated = truncate_file_content(content);
 
         out.push((path.clone(), truncated));
     }
@@ -2862,6 +2881,79 @@ mod tests {
     #[test]
     fn test_format_auto_context_empty() {
         assert!(format_auto_context(&[], "hello").is_none());
+    }
+
+    // --- truncate_file_content: panic-proofing the auto-context line slice ---
+    //
+    // Day 146 (dream chosen-experiment): guessed a multi-byte slice panic in the
+    // auto-context path. The specific guess was wrong (the char/line iteration is
+    // UTF-8 safe), but the read surfaced a latent slice-index fragility: the
+    // `lines[..AUTO_CONTEXT_MAX_LINES]` slice was only in-bounds because of the
+    // *unstated* invariant `AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`
+    // between two independently-tunable constants three lines apart. These tests
+    // pin the now-clamped behavior so a future retune can't reintroduce the panic.
+
+    #[test]
+    fn test_truncate_file_content_short_file_unchanged() {
+        let content = "line one\nline two\nline three".to_string();
+        assert_eq!(truncate_file_content(content.clone()), content);
+    }
+
+    #[test]
+    fn test_truncate_file_content_exactly_max_lines_unchanged() {
+        // Exactly AUTO_CONTEXT_MAX_LINES lines: not "greater than", so unchanged.
+        let content = (0..AUTO_CONTEXT_MAX_LINES)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = truncate_file_content(content.clone());
+        assert_eq!(out, content);
+        assert!(!out.contains("truncated"));
+    }
+
+    #[test]
+    fn test_truncate_file_content_just_over_max_truncates() {
+        let content = (0..AUTO_CONTEXT_MAX_LINES + 5)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = truncate_file_content(content);
+        assert!(out.contains("truncated"));
+        // Body keeps exactly the first MAX_LINES lines.
+        assert!(out.starts_with("line 0\n"));
+        assert!(out.contains(&format!("line {}", AUTO_CONTEXT_MAX_LINES - 1)));
+        assert!(!out.contains(&format!("line {}\n", AUTO_CONTEXT_MAX_LINES)));
+    }
+
+    #[test]
+    fn test_truncate_file_content_large_file_note() {
+        let content = (0..AUTO_CONTEXT_LARGE_FILE + 10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = truncate_file_content(content);
+        assert!(out.contains("file has"));
+        assert!(out.contains("showing first"));
+    }
+
+    #[test]
+    fn test_truncate_file_content_multibyte_content_no_panic() {
+        // Original Day-146 hypothesis, pinned: file content is arbitrary Unicode.
+        // Build a long file whose truncation boundary sits amid multi-byte chars.
+        let content = (0..AUTO_CONTEXT_MAX_LINES + 20)
+            .map(|i| format!("✓ 世界 café — línea {i} 🐙"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Must not panic (line-based truncation is char-safe; the slice is clamped).
+        let out = truncate_file_content(content);
+        assert!(out.contains("truncated"));
+        assert!(out.contains("🐙"));
+    }
+
+    #[test]
+    fn test_truncate_file_content_empty_string() {
+        // Edge: empty content -> zero lines -> clamp take = 0, no panic, unchanged.
+        assert_eq!(truncate_file_content(String::new()), String::new());
     }
 
     #[test]

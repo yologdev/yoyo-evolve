@@ -992,10 +992,13 @@ mod tests {
     fn test_anthropic_preset_claude_opus_5_hits_fleet_arm() {
         // claude-opus-5 must resolve to the yoagent preset (authoritative
         // pricing), not fall through to the generic passthrough path.
-        let preset = anthropic_preset("claude-opus-5")
-            .expect("claude-opus-5 should map to a fleet preset");
+        let preset =
+            anthropic_preset("claude-opus-5").expect("claude-opus-5 should map to a fleet preset");
         let expected = ModelConfig::claude_opus_5();
-        assert_eq!(preset.cost.input_per_million, expected.cost.input_per_million);
+        assert_eq!(
+            preset.cost.input_per_million,
+            expected.cost.input_per_million
+        );
         assert_eq!(
             preset.cost.output_per_million,
             expected.cost.output_per_million
@@ -1006,7 +1009,10 @@ mod tests {
         let dated = anthropic_preset("claude-opus-5-20260724")
             .expect("dated claude-opus-5 variant should still map to the preset");
         assert_eq!(dated.id, "claude-opus-5-20260724");
-        assert_eq!(dated.cost.input_per_million, expected.cost.input_per_million);
+        assert_eq!(
+            dated.cost.input_per_million,
+            expected.cost.input_per_million
+        );
     }
 
     #[test]
