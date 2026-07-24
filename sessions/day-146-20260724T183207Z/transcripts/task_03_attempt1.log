@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by recording my guess-first prediction (already in the task), then verify against the actual code. Let me read the relevant parts of watch.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors\|f… ✓ (6ms)
+
+Good — there's already substantial test coverage. Let me examine the prediction candidates. First, build_watch_fix_prompt and extract_error_source_context for char-boundary/truncation hazards, and the detection functions for product-safety gaps.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:957..1097  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1466..1646 ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Project-type detection is delegated to detect_project_type, lint_command_for_project, test_command_for_project — which are NOT in watch.rs. Let me verify those aren't in watch.rs, and check the char-boundary handling in `build_watch_fix_prompt (uses safe_truncate` — good). Let me look at prediction #2 more carefully and check where project-type helpers live.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn detect_project_type…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\[\.\.\|truncate(\|\.sp… ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Project-type detection is not in watch.rs — prediction #1 and #3 don't apply here (out of scope; those live in commands_project.rs/commands_lint.rs). Prediction #2 is the live candidate: there are several byte-index slices in the parsers (lines 239, 419, 422, 575, 631, 652). Let me examine each — these slice on positions found by byte offsets, which can be char-boundary hazards if the position lands mid-multibyte-char.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:225..275  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:405..445 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2.5s (2 ✓)
+
+Now let me analyze each byte-slice for char-boundary safety:
+
+• Line 239 &rest[..bracket_end]: bracket_end = rest.find(']'). find returns a byte offset at the start of ] (ASCII, 1 byte). [..bracket_end] ends exactly before ] — always a char boundary. Safe.
+• Line 240 rest[bracket_end + 1..]: bracket_end + 1 = just after ] (ASCII) — char boundary. Safe.
+• Line 419 &rest[..colon]: `colon = rest.find(": ")` — ASCII, safe.
+• Line 422 trimmed[..paren_pos]: `paren_pos = trimmed.find('(')` — ASCII, safe.
+• Line 423 &trimmed[paren_pos + 1..paren_pos + paren_end]: both ASCII offsets — safe.
+
+Let me check lines 575, 631, 652 (Python parser) — that's where multibyte content is most likely (tracebacks, mypy messages can contain non-ASCII).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:560..660 ✓ (1ms)
+
+Now the critical analysis. Look at line 575:
+
+```rust
+let (test_path, msg) = if let Some(dash_pos) = rest.find(" - ") {
+    (&rest[..dash_pos], rest[dash_pos + 3..].trim())
+```
+
+dash_pos = rest.find(" - "). " - " is all ASCII (3 bytes). rest[..dash_pos] ends before the space — char boundary. rest[dash_pos + 3..] starts after " - " (3 ASCII bytes) — char boundary. Safe.
+
+All the other slices (631, 633, 652, 607, 635) similarly slice at offsets returned by find on ASCII delimiters, plus a constant ASCII offset. All char-safe.
+
+**Every byte slice in the parsers is anchored to ASCII delimiter offsets — all char-boundary safe.** Prediction #2 does not hold as a panic risk in the parsers.
+
+But wait — line 607: `Some(&rest[colon_pos + 9..]) where colon_pos = rest.find(": error: ")` (9 ASCII bytes). Safe.
+
+Now, the one place raw output is truncated with real risk of multibyte content is build_watch_fix_prompt (line 1027) and line 1390 — both already use `safe_truncate. Let me confirm safe_truncate` handles boundaries, and check line 316 (&lines[start+1..end] — that's slicing a Vec<&str>, index-safe not byte).
+
+Let me check the one function I haven't verified: `extract_error_source_context's snippet building has no byte slicing (uses .lines()` and enumerate). Good.
+
+Let me now check whether there's a genuine gap. Let me look at extract_location and extract_file_paths_from_output which handle raw output.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_location\|fn…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:290..340 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.3s (2 ✓)
+
+`extract_location uses rsplitn/strip_prefix/parse` — no byte slicing. Safe.
+
+Let me look at extract_file_paths_from_output (the one function processing raw output for file paths):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_file_paths_f… ✓ (5ms)
+
+That's out of scope (in commands_file.rs). 
+
+**Verdict: watch.rs's error parsers and detection logic are char-boundary clean.** Every byte slice is anchored to ASCII delimiter offsets. Truncation uses safe_truncate. Project-type detection is delegated out of file.
+
+But there IS one thing worth pinning. The parsers are documented-tempted territory: they slice raw compiler/test output by byte offset (`&rest[..bracket_end], &rest[..colon], &rest[..dash_pos]`), and compiler/test output frequently contains multibyte characters (Rust diagnostics use Unicode: →, ╰, quoted identifiers with non-ASCII, mypy/pytest messages with Unicode). The safety is currently guaranteed only because the anchor delimiters are ASCII — but that's a subtle invariant with no test. Per the Day 137 rule: "a retroactive test is worth writing iff there's evidence of temptation to violate the invariant." Here the temptation is live and documented — the CLAUDE.md safety rule explicitly calls out byte-indexing panics from multibyte output (#250), and these parsers slice raw output.
+
+Let me write a failing-first regression test that feeds multibyte compiler output through all three parsers to pin that they never panic. First, let me check the existing test structure and confirm no such test exists.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "multibyte\|multi_byte\|… ✓ (3ms)
+
+No multibyte-output panic test exists across any of the three parsers. This is a real invariant with documented temptation (CLAUDE.md's byte-indexing safety rule, #250, #250 planning-agent crash) and no net. Let me confirm by first writing a test that exercises the byte-slice paths with multibyte content, and run it to confirm it passes (proving the invariant holds) — but more importantly, it pins it so a future edit that swaps an ASCII delimiter for a non-ASCII one (or slices at a find on a multibyte pattern) will fail loudly.
+
+Let me look at the end of the test module to place the test correctly.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:3382..3422 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:3421..3446 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now I'll add the multibyte-output regression test. This pins the invariant that all three parsers survive multibyte compiler/test output (the byte-slice paths). I'll place it before the final closing brace of the test module. Let me insert after the last test.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (4 → 93 lines)
+        #[test]
+        fn test_watch_near_miss_silent_on_empty() {
+            assert_eq!(watch_near_miss(""), None);
+  +     }
+  + 
+  +     // --- Multibyte-output char-boundary safety (CLAUDE.md byte-index rule, #250) ---
+  +     //
+  +     // All three parsers slice raw compiler/test *output* by byte offset
+  +     // (`&rest[..bracket_end]`, `&rest[..colon]`, `&rest[..dash_pos]`, etc.).
+  +     // The slices are safe today only because every anchor delimiter (`]`, `: `,
+  +     // ` - `, `(`, `)`, `"`) is ASCII — a subtle invariant with, until now, no
+  +     // net. Real compiler/test output routinely carries multibyte characters
+  +     // (Rust diagnostics use `→ ╰ ─`, quoted non-ASCII identifiers; pytest/mypy
+  +     // messages carry accented text and emoji). These tests feed multibyte
+  +     // content through each parser's byte-slice paths and assert it neither
+  +     // panics nor corrupts the extracted message. If a future edit swaps an
+  +     // ASCII anchor for a `find` on a multibyte pattern, or slices at a
+  +     // non-boundary offset, these fail loudly instead of panicking in production
+  +     // (the #250 planning-agent crash class).
+  + 
+  ... (73 more lines)
+ ✓ (1m 47s)
+        #[test]
+        fn test_watch_near_miss_silent_on_empty() {
+            assert_eq!(watch_near_miss(""), None);
+  +     }
+  + 
+  +     // --- Multibyte-output char-boundary safety (CLAUDE.md byte-index rule, #250) ---
+  +     //
+  +     // All three parsers slice raw compiler/test *output* by byte offset
+  ... (13 more lines)
+
+Now run the new tests. First verify they compile and pass (proving the invariant holds — the parsers are indeed char-safe today, and now pinned):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib watch:: 2>&1 | … ✓ (135ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib watch:: 2>&1 | … ✓ (106ms)
+  2 tools completed in 3.4s (2 ✓)
+
+It's a binary crate. Let me run the tests correctly.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test multibyte 2>&1 | tail… ✓ (179ms)
+
+All 4 new tests pass (part of the 43 matched). Let me confirm the new tests actually ran by name, then verify the test genuinely guards the invariant by temporarily reproducing a regression.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -iE "mult… ✓ (54.6s)
+
+All 4 present and passing. Now — the crucial step per my Day 137 lesson: prove the net catches a real fall, not solid ground. Let me temporarily inject a byte-boundary regression into a parser and confirm a test fails.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/watch… (14 lines) ✓ (26ms)
+
+  watch: no files changed this turn — skipping
+

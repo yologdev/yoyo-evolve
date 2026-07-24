@@ -1,0 +1,118 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current detect_write_command implementation to enumerate exactly which write verbs it catches.
+  ▶ search 'fn detect_write_command' in src/safety.rs ✓ (3ms)
+  ▶ read src/safety.rs:1738..1898 ✓ (2ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me find the `WRITE_VERBS` constant to enumerate exactly what's caught.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'WRITE_VERBS|COMMAND_WRAPPERS' in src/safety.rs ✓ (3ms)
+  ▶ search 'WRITE_VERBS|COMMAND_WRAPPERS' ✓ (10.9s)
+  2 tools completed in 17.9s (2 ✓)
+
+The constants are defined elsewhere. Let me search case-insensitively.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'write_verbs|command_wrappers' in src/safety.rs ✓ (2ms)
+  ▶ search 'WRITE_VERBS' in src/safety.rs ✓ (2ms)
+  ▶ read src/safety.rs:1624..1704 ✓ (1ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now I have the full picture. WRITE_VERBS catches: `touch, mkdir, mv, cp, tee, truncate, install, ln. Plus special handling for sed -i, dd of=, rsync`, and redirection.
+
+Guess-first verification against candidates:
+• `chmod/chown` — NOT in list. Mutate filesystem metadata (permissions/ownership). Genuinely uncaught.
+• patch — NOT in list. Applies diffs = writes files. Genuinely uncaught.
+• rm/`unlink/shred` — delete-class, arguably different (not in scope of "write").
+
+My prediction was correct: there's at least one uncaught write-capable synonym. chmod/chown are the strongest candidates — they mutate the filesystem and a confined/read-mode context would want them blocked. Let me pick `chmod`/`chown` as a pair (they're the same class — permission/ownership mutation) — actually, the task says ONE command. Let me pick the single most impactful: chmod is the more commonly-used filesystem mutation. But `chmod + chown` are so tightly coupled (same mechanism, same risk) that adding them together is arguably one atomic change to the write-verb list.
+
+Let me stick to scope discipline. I'll verify the near-miss handling exists (quoted strings, filenames). Let me write the failing tests first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_detect_write_command|detect_write_command\(' in src/safety.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'detect_write_command' in src/safety.rs ✓ (2ms)
+  ▶ read src/safety.rs:2836..2946 ✓ (1ms)
+  3 tools completed in 6.3s (2 ✓, 1 ✗)
+
+I now understand the test structure. My decision: **chmod and chown** are the strongest uncaught candidates. They're a single class (filesystem permission/ownership mutation) that a confined/read-mode context would definitely want blocked. Since they share the identical mechanism and risk, adding both to WRITE_VERBS is one atomic change — but to honor strict scope discipline ("one verb"), I'll pick the single most impactful.
+
+Actually, chmod and chown are genuinely one bug of the same class. But the task is explicit: "ONE command only." I'll go with `chmod` as the single verb (most commonly used for filesystem mutation), and note chown as the sibling in the journal. Let me write the failing tests first.
+
+Let me add chmod to the positives/negatives fixture tables (red first, then green).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (4 → 7 lines)
+                "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
+                "rsync src/ user@host:/dst/",       // rsync to a remote still writes
+                "sudo rsync -av a b",               // wrapper-unwrapped rsync
+  +             "chmod +x script.sh",               // chmod mutates file permissions
+  +             "chmod 644 file",                   // numeric mode form
+  +             "sudo chmod -R 755 dir",            // wrapper-unwrapped chmod
+            ];
+ ✓ (1m 38s)
+                "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
+                "rsync src/ user@host:/dst/",       // rsync to a remote still writes
+                "sudo rsync -av a b",               // wrapper-unwrapped rsync
+  +             "chmod +x script.sh",               // chmod mutates file permissions
+  +             "chmod 644 file",                   // numeric mode form
+  +             "sudo chmod -R 755 dir",            // wrapper-unwrapped chmod
+            ];
+
+Now the near-miss negatives:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (4 → 7 lines)
+                "rsync -n -a src/ dst/",        // rsync --dry-run does not write
+                "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
+                "grep rsync file",              // rsync as an argument, not command
+  +             "echo 'chmod +x x'",            // chmod inside single quotes
+  +             "grep chmod script.sh",         // chmod as a search argument
+  +             "ls /etc/chmod",               // path merely containing chmod
+            ];
+ ✓ (1m 40s)
+                "rsync -n -a src/ dst/",        // rsync --dry-run does not write
+                "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
+                "grep rsync file",              // rsync as an argument, not command
+  +             "echo 'chmod +x x'",            // chmod inside single quotes
+  +             "grep chmod script.sh",         // chmod as a search argument
+  +             "ls /etc/chmod",               // path merely containing chmod
+            ];
+
+Let me confirm the positives test fails now (red state) before adding the fix.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test detect_write_command … ✓ (168ms)
+
+Red confirmed — chmod is genuinely uncaught, and the negatives already pass (near-miss handled by the existing token-boundary logic). Now the green fix: add chmod to `WRITE_VERBS`.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (3 → 3 lines)
+    const WRITE_VERBS: &[&str] = &[
+  -     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln",
+  +     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod",
+    ];
+ ✓ (1m 42s)
+    const WRITE_VERBS: &[&str] = &[
+  -     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln",
+  +     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod",
+    ];
+
+`chmod reuses the exact token-boundary path already used for touch/mv`/etc. (basename match against WRITE_VERBS), so the near-misses (quoted, as-argument, in-path) are handled by the same proven logic. Let me verify.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test detect_write_command … ✓ (166ms)
+
+Green. Now full verification suite.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 50s)
+
+All green: fmt clean, clippy clean, build passes, all tests pass. Now update the CLAUDE.md `safety.rs bullet to add chmod` to the listed write verbs.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`' in CLAUDE.md ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `sed -i`, `dd of=`, `install`, `ln`, plus `>`/`>>` redirection outside quoted regions
+  + write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `chmod`, `sed -i`, `dd of=`, `install`, `ln`, `rsync` (non-dry-run), plus `>`/`>>` redirection outside quoted regions
+ ✓ (1m 22s)
+  - write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `sed -i`, `dd of=`, `install`, `ln`, plus `>`/`>>` redirection outside quoted regions
+  + write verbs at token boundaries: `touch`, `mkdir`, `mv`, `cp`, `tee`, `truncate`, `chmod`, `sed -i`, `dd of=`, `install`, `ln`, `rsync` (non-dry-run), plus `>`/`>>` redirection outside quoted regions
+  2 tools completed in 1m 26s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

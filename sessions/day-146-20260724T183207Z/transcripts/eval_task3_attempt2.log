@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. The diff adds 4 tests for multibyte char-boundary safety in watch.rs parsers. Let me check the actual code to confirm these tests pin a real invariant.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\[\.\.\|safe_truncate\|… ✓ (7ms)
+ ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Confirmed: the parsers genuinely do byte-slicing (&rest[..bracket_end], &rest[..colon], &rest[..dash_pos], after_prefix[..quote_end]). These slices are safe only because anchors are ASCII — a real invariant with no prior test. This is exactly the #250 char-boundary temptation class the task's Day 137 guidance describes.
+
+Let me confirm the new tests actually run and pass (the specific 4 added).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib multibyte_outpu… ✓ (137ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test multibyte_output 2>&1… ✓ (180ms)
+  2 tools completed in 3.6s (2 ✓)
+
+All 4 new tests pass. The task chose the "no confirmed bug → pin a real temptation" path correctly:
+
+• Real invariant pinned: parsers do byte-slicing on raw compiler/test output, safe only because anchors are ASCII — a documented #250 temptation class with no prior net.
+• Scope: ONE file (src/watch.rs), test-only additions, no product surface touched, no defaults changed. Correct for evolve-kind (no #448 red flag).
+• **Tests are meaningful**: they exercise the actual byte-slice paths (bracket_end, dash_pos, quote_end) and the `safe_truncate/WATCH_OUTPUT_MAX` path with multibyte content, asserting no panic and no corruption.
+• Docs correctly untouched (no behavior change).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (1m 16s)
+
+Verdict written: PASS
+
+The task took the honest "no confirmed bug → pin a real temptation" path. I verified the parsers genuinely do ASCII-anchor byte-slicing (a real #250 char-boundary invariant with no prior net), the 4 added tests pass and exercise those actual slice/truncation paths with multibyte content, scope is one file / tests-only, and no product surface, defaults, or docs needed changing.
+
+  watch: no files changed this turn — skipping
+

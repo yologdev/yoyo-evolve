@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the fix against the task description.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:405..450 ✓ (1ms)
+
+The fix is exactly as described. The saw_semicolon flag tracks whether the terminator was consumed, and the fallback only re-appends ; if it was present. The tests cover the 6 required cases. Build and tests already pass.
+
+One minor note: line 422 uses &entity[2..] byte-slicing, but entity always starts with the ASCII &#, so byte index 2 is always a valid char boundary — safe. The fix itself is correct.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines) ✓ (1m 6s)
+
+Verdict: PASS
+
+The diff implements the fix precisely as specified — a saw_semicolon flag tracks whether the `; terminator was consumed, and the unparseable-fallback branch only re-appends ;` when the terminator was actually present (line 436-438). This eliminates the phantom-semicolon corruption of web-search/docs output.
+
+All six required tests are present and cover the invariant "decode never invents characters":
+• "a &#zz b" → `"a &#zz b" (no phantom ;`)
+• "x &#" → "x &#"
+• "&#xZZ" → "&#xZZ" (malformed hex)
+• "&#65;" → "A" (valid terminated)
+• "&#65" → "A" (unterminated-but-parseable, pinned explicitly)
+• pass-through regression already existed
+
+The pre-existing &entity[2..] slice is on the guaranteed-ASCII &# prefix, so it's UTF-8-safe. Product-safe bug fix, no CLI/config/startup surface touched. Build and tests pass.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current decode_html_entities implementation to understand the bug.
+  ▶ search 'fn decode_html_entities' in src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:383..473 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+I can see the bug clearly. On line 432, decoded.push(';') unconditionally appends ; in the fallback branch, even when no ; was consumed. Note also &entity[2..] on line 420 is byte indexing — but entity starts with &# (ASCII, 2 bytes), so it's safe there. Still, I'll fix the phantom semicolon.
+
+Let me record the guess-first prediction, then write the tests and fix.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test.*decode_html' in src/format/mod.rs ✓ (3ms)
+  ▶ read src/format/mod.rs:1515..1565 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Interesting — line 1517-1518 assert that unterminated-but-with-`; invalid entities keep the ;`. That's correct because those inputs have a terminator. The bug is only when there's no ; in the input. Let me add the new tests first (red), then apply the fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (5 → 29 lines)
+        fn test_decode_html_entities_incomplete() {
+            // Ampersand not part of an entity
+            assert_eq!(decode_html_entities("a & b"), "a & b");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_decode_html_entities_no_phantom_semicolon() {
+  +         // Invariant: decode never invents characters that weren't in the input.
+  +         // An unterminated (no ';') AND unparseable numeric entity must not gain
+  +         // a phantom ';'. Regression for the Day-146 phantom-semicolon bug.
+  +         assert_eq!(decode_html_entities("a &#zz b"), "a &#zz b");
+  +         assert_eq!(decode_html_entities("x &#"), "x &#");
+  +         // Malformed hex with no terminator: also no phantom ';'.
+  +         assert_eq!(decode_html_entities("&#xZZ"), "&#xZZ");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_decode_html_entities_terminated_still_decodes() {
+  +         // A valid, terminated entity still decodes.
+  +         assert_eq!(decode_html_entities("&#65;"), "A");
+  ... (8 more lines)
+ ✓ (1m 41s)
+        fn test_decode_html_entities_incomplete() {
+            // Ampersand not part of an entity
+            assert_eq!(decode_html_entities("a & b"), "a & b");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_decode_html_entities_no_phantom_semicolon() {
+  +         // Invariant: decode never invents characters that weren't in the input.
+  ... (13 more lines)
+
+Now the fix. Track whether a ; terminator was consumed, and only re-emit it in the fallback branch when it was actually present.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (26 → 32 lines)
+            if c == '&' && chars.peek() == Some(&'#') {
+                let mut entity = String::from("&#");
+                chars.next(); // consume '#'
+  +             let mut saw_semicolon = false;
+                while let Some(&nc) = chars.peek() {
+                    if nc == ';' {
+                        chars.next();
+  +                     saw_semicolon = true;
+                        break;
+                    }
+                    entity.push(nc);
+  ···
+                if let Some(ch) = parsed.and_then(char::from_u32) {
+                    decoded.push(ch);
+                } else {
+  -                 // Failed to decode — emit original
+  +                 // Failed to decode — re-emit the original text faithfully.
+  +                 // Only append ';' if the terminator was actually present in the
+  +                 // input; otherwise we'd invent a phantom character (Day-146 bug).
+                    decoded.push_str(&entity);
+  ... (6 more lines)
+ ✓ (1m 41s)
+            if c == '&' && chars.peek() == Some(&'#') {
+                let mut entity = String::from("&#");
+                chars.next(); // consume '#'
+  +             let mut saw_semicolon = false;
+                while let Some(&nc) = chars.peek() {
+                    if nc == ';' {
+                        chars.next();
+  +                     saw_semicolon = true;
+  ... (13 more lines)
+
+Now let me record the guess-first prediction to the risk meter, then run the full check suite.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (14 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test decode_html 2>&1 | ta… ✓ (140ms)
+  3 tools completed in 24.9s (3 ✓)
+
+All 10 decode tests pass. Let me run the full test suite and do a quick manual repro.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (53.5s)
+  2 tools completed in 2m 2s (2 ✓)
+
+All 4469 + 89 tests pass. Now a manual repro to confirm the phantom ; is gone:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/r… (31 lines) ✓ (83ms)
+
+Manual repro confirms: no phantom ;, valid entities still decode, unterminated-parseable &#65 decodes to A. Let me verify the diff and commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "---" &&… ✓ (31ms)
+
+Done. Committed cleanly.
+
+## Summary
+
+Fixed the phantom-semicolon bug in `decode_html_entities` (src/format/mod.rs).
+
+The bug: When a numeric HTML entity was both unterminated (no ;) and unparseable, the fallback else branch unconditionally did decoded.push(';'), inventing a character that was never in the input:
+• decode_html_entities("a &#zz b") → "a &#zz b;" ❌
+• decode_html_entities("x &#") → "x &#;" ❌
+
+This corrupted user-facing text since the function runs on web-search output and docs descriptions.
+
+The fix: Added a saw_semicolon: bool that records whether the loop actually consumed a ; terminator. The fallback branch now re-emits the original text faithfully and appends ; only if the terminator was present in the input.
+
+Tests (written red-first, then green): Six new assertions pinning the invariant "decode never invents characters that weren't in the input" — phantom-; cases (`&#zz, &#, &#xZZ), terminated-decode still works (&#65; → A), and the unterminated-but-parseable case (&#65 → A`, explicitly pinned to HTML-parser-lenient behavior).
+
+**Guess-first (dream chosen-experiment):** Before fixing, I recorded a prediction to `memory/learnings.jsonl: when the graded validation lands, src/format/mod.rs` will confirm as a genuine risk (real user-facing bug), not a false alarm. This was the self-driven slot pointed at my epistemic blind spot — touch where the model is blindest, guess first, grade after.
+
+Verification: cargo fmt ✅ · `cargo clippy --all-targets -- -D warnings ✅ · cargo build ✅ · cargo test` (4469 + 89 pass) ✅ · standalone manual repro confirms no phantom ;.
+
+A real bug lived in the file I understood least. That's the dream working — curiosity steered me to a genuine fix, not a comfortable one.
+
+  watch: no files changed this turn — skipping
+

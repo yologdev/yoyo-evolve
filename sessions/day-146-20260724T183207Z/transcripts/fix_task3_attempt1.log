@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll investigate the byte-slicing landmine at src/watch.rs:240 that the evaluator flagged.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:200..280 ✓ (1ms)
+
+I can see the landmine at line 240. It's dead code that introduces a byte-slicing hazard. Let me remove it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 2 lines)
+                    let code = &rest[..bracket_end];
+  -                 let _probe = &rest[..3]; // REGRESSION: fixed byte offset can split a multibyte char
+                    let msg = rest[bracket_end + 1..].trim_start_matches(':').trim();
+ ✓ (1m 44s)
+                    let code = &rest[..bracket_end];
+  -                 let _probe = &rest[..3]; // REGRESSION: fixed byte offset can split a multibyte char
+                    let msg = rest[bracket_end + 1..].trim_start_matches(':').trim();
+
+Now let me check the char-boundary tests that were added, to make sure they still validate real behavior after removing the landmine.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'char_boundary|multibyte|multi_byte|is_char_boundary' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (*.rs) ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "---" &&… ✓ (9ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The task was already committed. Let me look at the char-boundary tests that were added in that commit to verify they're sound.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show f7c00cdd --stat && echo… ✓ (10ms)
+
+The tests use multibyte content in error messages. Let me verify these tests still pass now that the landmine is removed (they'd have panicked with the &rest[..3] if the code hit a multibyte char in position 0-3, but the error codes E0308 are ASCII).
+
+Let me view the full added tests to confirm they're valid and pin a real invariant.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show f7c00cdd -- src/watch.r… ✓ (7ms)
+
+These are legitimate char-boundary tests pinning a real invariant (multibyte compiler output must not panic through the parsers and prompt builder). They're valuable to keep. The only problematic change was the dead `_probe` landmine, which I've removed.
+
+Now let me verify the full build/test/clippy/fmt suite passes.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 5s)
+  2 tools completed in 1m 27s (2 ✓)
+
+All green. Let me run the specific watch multibyte tests to confirm they pass without the landmine.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test multibyte 2>&1 | tail… ✓ (210ms)
+
+All the multibyte char-boundary tests pass. Let me confirm the final diff.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/watch.rs ✓ (5ms)
+
+Done. Here's what I fixed:
+
+## Summary
+
+The evaluator rejected the task because it introduced a byte-slicing landmine at src/watch.rs:240:
+
+```rust
+let _probe = &rest[..3]; // REGRESSION: fixed byte offset can split a multibyte char
+```
+
+This was dead, unused code that reintroduced the exact #250 multibyte-panic hazard the task and CLAUDE.md explicitly forbid. It passed tests only because the sample error codes started with ASCII bytes, but a real error line with a multibyte char in the first 3 bytes would panic in production.
+
+Fix: Removed the single offending line. The production code is now back to a clean state — parse_rust_errors uses only rest.find(']')-derived indices (which land on valid char boundaries since ] is ASCII), no fixed byte offsets.
+
+What I kept: The added char-boundary tests are legitimate and valuable — they pin the real invariant that multibyte compiler/tsc/pytest output must not panic through parse_rust_errors, parse_typescript_errors, `parse_python_errors, and build_watch_fix_prompt`. These are exactly the kind of "pin an invariant there is documented temptation to violate" tests the task called for, so the final result is: no production behavior change, plus a net strung under a genuinely tempting byte-slicing surface.
+
+Verification (all green):
+• cargo fmt ✅
+• `cargo clippy --all-targets -- -D warnings` ✅
+• cargo build ✅
+• cargo test — 89 passed, 0 failed ✅ (all 4 multibyte tests pass without the landmine)
+
+The final diff is a single-line deletion.
+
+  watch: no files changed this turn — skipping
+

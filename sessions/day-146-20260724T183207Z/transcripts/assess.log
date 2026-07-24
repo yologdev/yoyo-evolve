@@ -1,0 +1,74 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying my codebase, running self-tests, and gathering context. Let me kick off several independent investigations in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (5ms)
+ ✓ (7ms)
+ ✓ (162ms)
+  3 tools completed in 1.3s (3 ✓)
+
+Build passes. Let me run tests and gather more context in parallel.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -180 journals/JOURNAL.md ✓ (7ms)
+ ✓ (53.2s)
+  2 tools completed in 54.5s (2 ✓)
+
+Tests pass (89 tests). Now let me check evolution history, memory, and the trajectory's suggested blind spots in parallel.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 memory/active_learnings… ✓ (10ms)
+ ✓ (511ms)
+ ✓ (632ms)
+  3 tools completed in 3.3s (3 ✓)
+
+All evolve runs are green. No agent-self open issues. The meter now has 52 snapshots and 16 validations — it's actually eating. Let me look at the trajectory-flagged blind-spot files and test the binary. The dream wants me to point the self-driven slot at a file the model is blindest about — src/format/mod.rs, src/safety.rs, or src/watch.rs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "what is 2+2? respond in on…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (522ms)
+ ✓ (4.2s)
+  2 tools completed in 5.4s (2 ✓)
+
+Binary works, epistemic view works. The top blind spot is src/format/mod.rs (predicted 4×, never graded, columns disagree). Let me examine it and safety.rs for real bugs — this is the dream's chosen-experiment target. Let me look at format/mod.rs's functions that handle text truncation and hints (historically bug-prone areas).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn " src/format/mod.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\[\.\.\|\.truncate(\|sp… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+The truncation helpers look well-tested. Let me look at the functions that are NOT well-tested but do string work — format_tool_summary, contextual_hint, decode_html_entities, context_usage_label. Let me examine these for edge cases, since the epistemic model flags this file.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:383..453  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:705..820 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.3s (2 ✓)
+
+I notice something worth flagging in decode_html_entities. At line 420, `let num_str = &entity[2..]; — entity starts as "&#"` (both ASCII, so [2..] is safe). But there's a subtle bug: when a numeric entity fails to parse (line 431-432), it re-emits entity + ; — but if the loop broke because the stream ended without a ; (no ; found), it still appends a ; that was never there. Let me verify this edge case and also check the `format_tool_summary` function.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:499..634 ✓ (1ms)
+
+Now let me confirm the decode_html_entities bug hypothesis. When input ends with an unterminated numeric entity like `"&#39" (no semicolon), the loop consumes to end-of-string, parse succeeds (39` → '), so it emits '. But for a malformed one like "&#zz" (unterminated AND unparseable), it emits entity + ; — adding a phantom ;. Let me verify with a quick test.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (38 lines) ✓ (101ms)
+
+Confirmed a real bug: decode_html_entities("a &#zz b") → "a &#zz b;" — it invents a phantom semicolon that was never in the input. When a numeric entity is unterminated (no ;) AND unparseable, the fallback unconditionally appends ;. This corrupts terminal output text that happens to contain &# followed by non-numeric characters. This is exactly the kind of blind-spot bug the epistemic model flagged in format/mod.rs.
+
+This is a strong candidate for the dream's chosen-experiment slot. Now let me quickly check my yopedia keys and do brief competitor research, then check the trajectory's other flagged file for a second candidate.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOPEDIA_AGENT_TOKEN set: $…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "decode_html_entities" s… ✓ (2ms)
+ ✓ (6ms)
+  2 tools completed in 1.3s (2 ✓)
+
+`decode_html_entities is used in commands_web.rs (web search output) and docs.rs` — real user-facing text where &#zz sequences could appear in web content. The phantom ; corrupts what users see. This is a confirmed, real, user-facing bug in the epistemically-blindest file. Yopedia keys are set. Let me recall prior research and do a quick competitor check.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ web search 'Claude Code vs Aider vs Cursor 2026 coding agent features co…' ✓ (1.6s)
+
+Good competitive picture. Notably: Codex's sandboxed VM async "ticket-in, PR-out" flow, Cursor's Shadow Workspace pre-indexing, and repo-map-based context (Aider) are the key differentiators. yoyo already has spawn/PR, repo-map, and risk-based context. Nothing rises to a novel yopedia-worthy insight beyond what I've stored — the field has consolidated on "harness quality" (context gathering, tool calls, guardrails), which matches my existing focus. I'll skip ingesting noise.
+
+Let me quickly check the second-flagged file (safety.rs) briefly and then write the assessment.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 -- journals… ✓ (5ms)
+
+Now I have a complete picture. Let me write the assessment.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (59 lines) ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (3ms)
+  2 tools completed in 1m 25s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
