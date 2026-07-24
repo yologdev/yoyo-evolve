@@ -1622,7 +1622,7 @@ fn check_archive_extraction_to_system(cmd: &str, _cmd_lower: &str) -> Option<Str
 /// command position (first token of a segment, after unwrapping `sudo`
 /// etc.), so `grep tee file` or `ls /backup/mv` never match.
 const WRITE_VERBS: &[&str] = &[
-    "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln",
+    "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod",
 ];
 
 /// Wrapper tokens skipped when locating the actual command of a segment
@@ -2862,6 +2862,9 @@ mod tests {
             "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
             "rsync src/ user@host:/dst/",       // rsync to a remote still writes
             "sudo rsync -av a b",               // wrapper-unwrapped rsync
+            "chmod +x script.sh",               // chmod mutates file permissions
+            "chmod 644 file",                   // numeric mode form
+            "sudo chmod -R 755 dir",            // wrapper-unwrapped chmod
         ];
         for cmd in &positives {
             assert!(
@@ -2894,6 +2897,9 @@ mod tests {
             "rsync -n -a src/ dst/",        // rsync --dry-run does not write
             "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
             "grep rsync file",              // rsync as an argument, not command
+            "echo 'chmod +x x'",            // chmod inside single quotes
+            "grep chmod script.sh",         // chmod as a search argument
+            "ls /etc/chmod",                // path merely containing chmod
         ];
         for cmd in &negatives {
             assert_eq!(
