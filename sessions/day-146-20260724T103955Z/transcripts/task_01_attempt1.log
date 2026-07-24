@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the guess — reading the route_command code path in dispatch.rs.
+  ▶ search 'fn route_command' in src/dispatch.rs  ▶ search 'enum CommandRoute' in src/dispatch.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/dispatch.rs:138..258 ✓ (1ms)
+  3 tools completed in 3.7s (3 ✓)
+
+The guess is confirmed by reading the code. route_command("/status ") (trailing space) won't match "/status" exactly, falls to route_command_prefix, which checks `cmd = "status"` in its prefix match — but "status" is NOT in that prefix block. Let me see the tail of the prefix block and the fallback to confirm it returns UnknownSlash.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:257..317 ✓ (1ms)
+
+Guess confirmed. /status  → falls through → prefix block has cmd = "status" → no match → UnknownSlash. Now let me look at the doc comment above `route_command` and the existing test module.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:128..138  ▶ search 'route_command\("' in src/dispatch.rs ✓ (2ms)
+ ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'route_command' in src/dispatch.rs (*.rs) ✓ (3ms)
+  3 tools completed in 7.3s (2 ✓, 1 ✗)
+
+Let me look at the test module around line 1549-1560 to find a good spot to add tests.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1546..1571 ✓ (1ms)
+
+Now I'll add the failing tests first (red), then apply the fix (green). Let me add a new test after test_route_info_commands.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (5 → 28 lines)
+            assert_eq!(route_command("/profile"), CommandRoute::Profile);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_route_trailing_whitespace() {
+  +         // A stray trailing space on a no-arg exact-match command must still
+  +         // route correctly — users type trailing spaces constantly. Before the
+  +         // trim_end() fix these fell through to route_command_prefix (which has
+  +         // no "status"/"version"/... entry) and returned UnknownSlash.
+  +         assert_eq!(route_command("/status "), CommandRoute::Status);
+  +         assert_eq!(route_command("/version "), CommandRoute::Version);
+  +         assert_eq!(route_command("/doctor  "), CommandRoute::Doctor);
+  +         // Argument-bearing exact matches must also tolerate a trailing space.
+  +         assert_eq!(route_command("/tokens detail "), CommandRoute::Tokens);
+  +         // The `/clear!` force variant must survive trimming.
+  +         assert_eq!(route_command("/clear! "), CommandRoute::ClearForce);
+  +         // A genuine typo + trailing space must STILL be UnknownSlash so the
+  +         // "did you mean" suggestion path fires.
+  +         assert_eq!(route_command("/staus "), CommandRoute::UnknownSlash);
+  +         // A leading space means it isn't a command at all — preserve that.
+  ... (7 more lines)
+ ✓ (1m 39s)
+            assert_eq!(route_command("/profile"), CommandRoute::Profile);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_route_trailing_whitespace() {
+  +         // A stray trailing space on a no-arg exact-match command must still
+  +         // route correctly — users type trailing spaces constantly. Before the
+  +         // trim_end() fix these fell through to route_command_prefix (which has
+  ... (13 more lines)
+
+Let me run the specific test to confirm red (failure) before the fix.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib test_route_trai… ✓ (145ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_route_trailing_w… ✓ (147ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Red confirmed — /status  returns UnknownSlash, exactly as the guess predicted. (Also notable: there's already a test_route_trailing_whitespace_exact_match test that passes — let me check what it covers so I don't create a conflict.)
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_route_trailing_whitespace_exact_match' in src/dispatch.rs (*.rs) ✓ (3ms)
+  ▶ read src/dispatch.rs:1846..1876 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Important — there's an **existing test that pins the buggy behavior**: test_route_trailing_whitespace_exact_match asserts /quit , /version , `/cost  → UnknownSlash`. This is a documented-tempted invariant that my fix intentionally reverses. My fix makes these route correctly (the correct product behavior), so I must update that stale test to reflect the corrected behavior.
+
+Now let me apply the fix — trim_end() at the top of route_command.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 10 lines)
+    pub(crate) fn route_command(input: &str) -> CommandRoute {
+  +     // Trim trailing whitespace before exact-matching: users type stray trailing
+  +     // spaces constantly (`/status `), and without this those no-arg commands fell
+  +     // through to route_command_prefix — which has no "status"/"version"/... entry —
+  +     // and returned UnknownSlash for a command that plainly exists. We trim ONLY the
+  +     // trailing side: a leading space means it isn't a command at all (preserve
+  +     // NotACommand), and argument-bearing commands are unaffected because their args
+  +     // come from split_whitespace, which already ignores trailing spaces.
+  +     let input = input.trim_end();
+        match input {
+ ✓ (1m 39s)
+    pub(crate) fn route_command(input: &str) -> CommandRoute {
+  +     // Trim trailing whitespace before exact-matching: users type stray trailing
+  +     // spaces constantly (`/status `), and without this those no-arg commands fell
+  +     // through to route_command_prefix — which has no "status"/"version"/... entry —
+  +     // and returned UnknownSlash for a command that plainly exists. We trim ONLY the
+  +     // trailing side: a leading space means it isn't a command at all (preserve
+  +     // NotACommand), and argument-bearing commands are unaffected because their args
+  +     // come from split_whitespace, which already ignores trailing spaces.
+  +     let input = input.trim_end();
+        match input {
+
+Now update the stale test that pinned the buggy behavior to reflect the corrected behavior.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (12 → 14 lines)
+        #[test]
+        fn test_route_trailing_whitespace_exact_match() {
+  -         // Exact matches require exact strings — trailing space means no exact match.
+  -         // Commands only in the exact-match arm (not in prefix table) become UnknownSlash.
+  -         assert_eq!(route_command("/quit "), CommandRoute::UnknownSlash);
+  -         assert_eq!(route_command("/version "), CommandRoute::UnknownSlash);
+  -         assert_eq!(route_command("/cost "), CommandRoute::UnknownSlash);
+  -         // But commands that ARE in the prefix table still route correctly with trailing space
+  +         // Trailing whitespace is now trimmed before exact-matching, so no-arg
+  +         // exact-match commands route correctly even with a stray trailing space
+  +         // (previously these fell through to the prefix table and became
+  +         // UnknownSlash — a bug users hit constantly).
+  +         assert_eq!(route_command("/quit "), CommandRoute::Quit);
+  +         assert_eq!(route_command("/version "), CommandRoute::Version);
+  +         assert_eq!(route_command("/cost "), CommandRoute::Cost);
+  +         // Commands that ARE in the prefix table still route correctly with trailing space.
+            assert_eq!(route_command("/diff "), CommandRoute::Diff);
+            assert_eq!(route_command("/model "), CommandRoute::Model);
+            assert_eq!(route_command("/grep "), CommandRoute::Grep);
+ ✓ (1m 43s)
+        #[test]
+        fn test_route_trailing_whitespace_exact_match() {
+  -         // Exact matches require exact strings — trailing space means no exact match.
+  -         // Commands only in the exact-match arm (not in prefix table) become UnknownSlash.
+  -         assert_eq!(route_command("/quit "), CommandRoute::UnknownSlash);
+  -         assert_eq!(route_command("/version "), CommandRoute::UnknownSlash);
+  -         assert_eq!(route_command("/cost "), CommandRoute::UnknownSlash);
+  -         // But commands that ARE in the prefix table still route correctly with trailing space
+  ... (11 more lines)
+
+Let me also check the module doc comment around line 7 and line 1248 (a comment about UnknownSlash) to keep them accurate, then run the tests.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1252..1258 ✓ (0ms)
+
+That comment is still accurate. Now let me run the full check.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test test_rou… ✓ (1.1s)
+
+All route tests green. Now the full suite + clippy.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 19s)
+
+All green — clippy clean, build clean, full test suite passes. Now record the DREAM experiment grading in dream_log.jsonl (dream-scope safe, one file only).
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 dreams/dream_log.jsonl ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+
