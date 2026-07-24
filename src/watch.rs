@@ -237,7 +237,6 @@ pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
         {
             if let Some(bracket_end) = rest.find(']') {
                 let code = &rest[..bracket_end];
-                let _probe = &rest[..3]; // REGRESSION: fixed byte offset can split a multibyte char
                 let msg = rest[bracket_end + 1..].trim_start_matches(':').trim();
                 let is_warning = line.starts_with("warning");
 
