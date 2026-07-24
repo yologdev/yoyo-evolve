@@ -905,6 +905,16 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    /// Serializes tests that touch the process-wide `LAST_WARNED_THRESHOLD`
+    /// static. `cargo test` runs tests in parallel threads by default, so
+    /// without this lock one test's `store(...)` could land between another
+    /// test's `reset_context_budget_warning()` and its assertion — a real,
+    /// schedule-dependent flake we saw in CI. Hold the guard for the whole
+    /// test body to guarantee mutual exclusion. `unwrap_or_else(into_inner)`
+    /// recovers from poisoning so one failing test doesn't cascade.
+    #[cfg(test)]
+    static BUDGET_WARNING_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // === truncate_with_ellipsis tests ===
 
     #[test]
@@ -1893,6 +1903,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_below_60_returns_none() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         assert!(context_budget_warning(0, 100_000).is_none());
         assert!(context_budget_warning(10_000, 100_000).is_none()); // 10%
@@ -1902,6 +1915,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_60_threshold() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let warn = context_budget_warning(60_000, 100_000);
         assert!(warn.is_some(), "should warn at 60%");
@@ -1912,6 +1928,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_80_threshold() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let warn = context_budget_warning(80_000, 100_000);
         assert!(warn.is_some(), "should warn at 80%");
@@ -1924,6 +1943,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_90_threshold() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let warn = context_budget_warning(90_000, 100_000);
         assert!(warn.is_some(), "should warn at 90%");
@@ -1935,6 +1957,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_95_threshold() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let warn = context_budget_warning(95_000, 100_000);
         assert!(warn.is_some(), "should warn at 95%");
@@ -1945,6 +1970,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_same_threshold_no_repeat() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         // First call at 60% should warn
         let first = context_budget_warning(60_000, 100_000);
