@@ -1757,6 +1757,16 @@ pub fn detect_write_command(cmd: &str) -> Option<String> {
         if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
             return Some("`dd of=...` writes to a file".to_string());
         }
+        // `rsync` copies files (a `cp` synonym) — it writes unless it's an
+        // explicit dry run (`-n` / `--dry-run`), which touches nothing.
+        if base == "rsync" {
+            let dry_run = segment.split_whitespace().any(|t| {
+                t == "-n" || t == "--dry-run" || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
+            });
+            if !dry_run {
+                return Some("`rsync` copies files to the destination".to_string());
+            }
+        }
     }
 
     detect_redirection(&stripped)
@@ -2847,6 +2857,9 @@ mod tests {
             "FOO=1 tee /tmp/x",                 // env assignment skipped
             "/usr/bin/touch x",                 // full-path invocation
             "find . -name '*.o' | xargs touch", // xargs fan-out
+            "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
+            "rsync src/ user@host:/dst/",       // rsync to a remote still writes
+            "sudo rsync -av a b",               // wrapper-unwrapped rsync
         ];
         for cmd in &positives {
             assert!(
@@ -2876,6 +2889,9 @@ mod tests {
             "sed -n '5p' file", // sed without -i is read-only
             "dd if=/dev/sda",   // dd without of= writes nothing
             "man mv",
+            "rsync -n -a src/ dst/",       // rsync --dry-run does not write
+            "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
+            "grep rsync file",             // rsync as an argument, not command
         ];
         for cmd in &negatives {
             assert_eq!(
