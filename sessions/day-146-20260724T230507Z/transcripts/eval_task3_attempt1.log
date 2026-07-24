@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the key claim: that recall_coverage_note exists and implements the three-state logic correctly.
+  ▶ search 'fn recall_coverage_note' in src/commands_risk_accuracy.rs  ▶ search 'failure_samples|green_samples' in src/commands_risk_accuracy.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.1s (2 ✓)
+
+The test uses stats.failure_samples and stats.green_samples but search found none. Let me check the field names.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_accuracy.rs:504..544  ▶ search 'failure_samples' in src/commands_risk_accuracy.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.1s (2 ✓)
+
+The fields exist (my earlier regex with | didn't work as intended). Let me verify green_samples exists and check that the note text matches the assertion "measures precision only".
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'green_samples:' in src/commands_risk_accuracy.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 HEAD 2>/d… ✓ (4ms)
+ ✓ (185ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Let me see the top of the accuracy report to confirm the honest line renders (the current log is all-green per the task).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 cargo run -- risk acc… ✓ (150ms)
+
+The honest asymmetry line renders correctly against the real all-green log. The implementation matches the task:
+
+• `recall_coverage_note` owns the three-state logic (failure>0 → None; both zero → None; green-only → note) ✓
+• One honest line printed in format_accuracy_report, green-day output unchanged ✓
+• Two tests: green-only asserts the note present + no recall %; failure-present asserts note absent (near-miss side) ✓
+• Scope: only commands_risk_accuracy.rs + CLAUDE.md doc update ✓
+• No new grading/persistence machinery ✓
+• Evolve-kind, no product-surface changes ✓
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines)
+  + Verdict: PASS
+  + Reason: `recall_coverage_note` correctly implements the three-state abstention logic (failure>0 → None, both-zero → None, green-only → honest note), `format_accuracy_report` prints the single asymmetry line, and both red-green tests (green-only present, failure-present absent) are in place. Manual `yoyo risk accuracy` against the real all-green log prints "recall ungraded — 0 failure-day events (17 green-days only) — this measures precision only, not recall." Scope stayed within the accuracy file + a matching CLAUDE.md doc update; no grading/persistence changed.
+ ✓ (1m 19s)
+
+Verdict: PASS
+
+The diff implements exactly what the task asked — a reporting-honesty fix, not a grading change. recall_coverage_note owns the three-state logic, one honest line renders in format_accuracy_report, and both red-green tests are present. I verified the feature works by running yoyo risk accuracy against the real all-green log, which prints the "measures precision only, not recall" line. Scope stayed within commands_risk_accuracy.rs plus a matching CLAUDE.md doc update.
+
+  watch: no files changed this turn — skipping
+

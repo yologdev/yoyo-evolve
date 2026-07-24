@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the actual state of the code to understand what needs to be done.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "anthropic_preset" src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "claude-opus-5\|claude_… ✓ (6ms)
+ ✓ (9ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Confirmed — nothing is implemented. Let me look at the actual anthropic_preset function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:270..310  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "claude_opus_5\|claude_… ✓ (1ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo -path "*yoagent*/s… ✓ (71ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find / -path "*yoagent*/src/mode… ✓ (5.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude_opus_5\|claude_o… ✓ (3ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.13.2/src/provider/model.rs:455..480 ✓ (1ms)
+  6 tools completed in 17.0s (6 ✓)
+
+Now let me look at the existing preset test and the providers list.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "anthropic_preset\|claud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude-opus-4-8\|claude… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.1s (2 ✓)
+
+There's no existing preset test in agent_builder.rs. Let me check the providers.rs list and existing tests structure.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:45..60  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[test\]\|#… ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now I have everything I need. Let me make all three changes plus the test.
+
+**1. agent_builder.rs — add the preset branch:**
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (4 → 6 lines)
+        let mut config = if model.starts_with("claude-fable-5") {
+            ModelConfig::claude_fable_5()
+  +     } else if model.starts_with("claude-opus-5") {
+  +         ModelConfig::claude_opus_5()
+        } else if model.starts_with("claude-opus-4-8") {
+            ModelConfig::claude_opus_4_8()
+ ✓ (1m 46s)
+        let mut config = if model.starts_with("claude-fable-5") {
+            ModelConfig::claude_fable_5()
+  +     } else if model.starts_with("claude-opus-5") {
+  +         ModelConfig::claude_opus_5()
+        } else if model.starts_with("claude-opus-4-8") {
+            ModelConfig::claude_opus_4_8()
+
+Also update the doc comment above the fn to include opus-5:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:265..273 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (2 → 2 lines)
+  - /// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  - /// claude-haiku-4-5) ship with authoritative pricing,
+  + /// The fleet models (claude-fable-5, claude-opus-5, claude-opus-4-8,
+  + /// claude-sonnet-5, claude-haiku-4-5) ship with authoritative pricing,
+ ✓ (1m 49s)
+  - /// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  - /// claude-haiku-4-5) ship with authoritative pricing,
+  + /// The fleet models (claude-fable-5, claude-opus-5, claude-opus-4-8,
+  + /// claude-sonnet-5, claude-haiku-4-5) ship with authoritative pricing,
+  2 tools completed in 1m 54s (2 ✓)
+
+**2. providers.rs — add to list (newest flagship first):**
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (2 → 3 lines)
+            "anthropic" => &[
+  +             "claude-opus-5",
+                "claude-fable-5",
+ ✓ (1m 45s)
+            "anthropic" => &[
+  +             "claude-opus-5",
+                "claude-fable-5",
+
+**3. Now the test in agent_builder.rs.** Let me check the existing test module imports:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:954..994 ✓ (1ms)
+
+Let me add the test near the other tests. I'll add it right after the test module's helper fn:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 2 lines)
+        #[test]
+        fn test_agent_config_struct_fields() {
+  -         // AgentConfig should hold all the fields needed to build an agent
+ ✓ (1m 46s)
+        #[test]
+        fn test_agent_config_struct_fields() {
+  -         // AgentConfig should hold all the fields needed to build an agent
+
+That accidentally removed a comment line. Let me revert that and add the test properly instead:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (2 → 24 lines)
+  +     #[test]
+  +     fn test_anthropic_preset_claude_opus_5_hits_fleet_arm() {
+  +         // claude-opus-5 must resolve to the yoagent preset (authoritative
+  +         // pricing), not fall through to the generic passthrough path.
+  +         let preset = anthropic_preset("claude-opus-5")
+  +             .expect("claude-opus-5 should map to a fleet preset");
+  +         let expected = ModelConfig::claude_opus_5();
+  +         assert_eq!(preset.cost.input_per_million, expected.cost.input_per_million);
+  +         assert_eq!(
+  +             preset.cost.output_per_million,
+  +             expected.cost.output_per_million
+  +         );
+  +         assert_eq!(preset.context_window, expected.context_window);
+  +         assert_eq!(preset.id, "claude-opus-5");
+  +         // A dated variant keeps the requested id but still hits the fleet arm.
+  +         let dated = anthropic_preset("claude-opus-5-20260724")
+  +             .expect("dated claude-opus-5 variant should still map to the preset");
+  +         assert_eq!(dated.id, "claude-opus-5-20260724");
+  +         assert_eq!(dated.cost.input_per_million, expected.cost.input_per_million);
+  +     }
+  ... (4 more lines)
+ ✓ (1m 47s)
+  +     #[test]
+  +     fn test_anthropic_preset_claude_opus_5_hits_fleet_arm() {
+  +         // claude-opus-5 must resolve to the yoagent preset (authoritative
+  +         // pricing), not fall through to the generic passthrough path.
+  +         let preset = anthropic_preset("claude-opus-5")
+  +             .expect("claude-opus-5 should map to a fleet preset");
+  +         let expected = ModelConfig::claude_opus_5();
+  +         assert_eq!(preset.cost.input_per_million, expected.cost.input_per_million);
+  ... (13 more lines)
+
+**4. Update CLAUDE.md.** Let me find the exact cost.rs bullet line:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude-fable-5, opus-4-… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - fleet-model pricing (claude-fable-5, opus-4-8, sonnet-5, haiku-4-5)
+  + fleet-model pricing (claude-fable-5, opus-5, opus-4-8, sonnet-5, haiku-4-5)

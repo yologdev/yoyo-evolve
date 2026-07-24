@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task requirements quickly.
+  ▶ $ grep -n "claude_opus_5\|claude_opus_4_8" ~/.cargo/registry/src/*/yoagent-*/src/m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude-opus-5\|claude_o… ✓ (6ms)
+ ✓ (3ms)
+  ▶ $ find / -path '*yoagent-*/src/model.rs' 2>/dev/null | head; cd /home/runner/work/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '274,290p' src/agent_buil… ✓ (3ms)
+ ✓ (5.8s)
+  4 tools completed in 12.4s (4 ✓)
+
+The branch is correctly placed. Note the ordering: claude-opus-5 comes before claude-opus-4-8, which is correct because claude-opus-4-8 doesn't start with claude-opus-5 and vice versa — no prefix conflict. Let me verify the `id` reassignment logic works with the test and confirm the preset factory exists.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib test_anthropic_… ✓ (144ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_anthropic_preset… ✓ (155ms)
+  2 tools completed in 4.0s (2 ✓)
+
+All requirements met. Test passes, branch correctly placed (no prefix conflict since opus-5 ≠ opus-4-8), providers list updated, CLAUDE.md doc updated. The .yoyo/risk_weights.json change is harness-generated noise, not scope creep.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 8s)
+
+Verdict: **PASS**
+
+The diff correctly implements all four task steps:
+1. agent_builder.rs — Added else if model.starts_with("claude-opus-5") arm returning ModelConfig::claude_opus_5(), placed before the claude-opus-4-8 arm with no prefix conflict (the two prefixes are mutually exclusive).
+2. providers.rs — Added "claude-opus-5" at the top of the Anthropic known-models list.
+3. Test — test_anthropic_preset_claude_opus_5_hits_fleet_arm verifies the branch is hit (id, cost, context window, plus a dated-variant case) and passes.
+4. CLAUDE.md — `format/cost.rs bullet now enumerates opus-5`.
+
+Scope is clean; the only extra change is harness-generated risk_weights.json noise, not a task concern.
+
+  watch: no files changed this turn — skipping
+

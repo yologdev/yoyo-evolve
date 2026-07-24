@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the two files and the relevant structures.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "failure_hit_rate_pct\|f… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:330..470 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now I understand the structure. The failure_line already prints "(no failure-day events yet)" when `failure_hit_rate_pct is None`. But the task asks for an EXPLICIT asymmetry line: when there ARE green events but ZERO failure events, make the precision-only nature explicit. Let me look at the test section and `prediction_accuracy_summary`.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:470..540 ✓ (1ms)
+
+There's already a recall_coverage_note helper for /status. The task wants the same honesty specifically in format_accuracy_report. The existing failure_line shows "(no failure-day events yet)" but that's easy to miss and doesn't state the crucial fact: the meter is measuring precision only. Let me add an explicit asymmetry line in `format_accuracy_report, reusing recall_coverage_note`'s logic condition.
+
+Let me check prediction_accuracy_summary in the report file first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prediction_accuracy_sum… ✓ (4ms)
+
+The recall_coverage_note already exists and is wired to report. The cleanest, in-scope move is to inject the explicit asymmetry line into format_accuracy_report itself, reusing recall_coverage_note(stats). Let me write the test first (red-green), then make the edit.
+
+Let me look at an existing test that builds a set of green-only events to model mine on.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch_success\|watch_fa… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:657..702 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I have the pattern. Let me write the tests first. I'll add them near the other format_accuracy_report tests. First, let me choose a distinctive marker string for the honest asymmetry line: "measures precision only".
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (2 → 73 lines)
+  +     #[test]
+  +     fn test_format_accuracy_report_recall_never_graded_when_green_only() {
+  +         // DREAM meter honesty: when ALL events are green-day (watch_success)
+  +         // and ZERO failure-day events exist, the report must STATE that recall
+  +         // has never been graded — the number measures precision only. A reader
+  +         // must not mistake green-day precision for the whole picture.
+  +         let events = vec![
+  +             ValidationEvent {
+  +                 day: 145,
+  +                 hit_count: 1,
+  +                 total_changed: 3,
+  +                 accuracy_pct: 33.3,
+  +                 emerging_accuracy_pct: None,
+  +                 severity: Some("watch_success".to_string()),
+  +             },
+  +             ValidationEvent {
+  +                 day: 146,
+  +                 hit_count: 0,
+  +                 total_changed: 2,
+  +                 accuracy_pct: 0.0,
+  ... (53 more lines)
+ ✓ (1m 44s)
+  +     #[test]
+  +     fn test_format_accuracy_report_recall_never_graded_when_green_only() {
+  +         // DREAM meter honesty: when ALL events are green-day (watch_success)
+  +         // and ZERO failure-day events exist, the report must STATE that recall
+  +         // has never been graded — the number measures precision only. A reader
+  +         // must not mistake green-day precision for the whole picture.
+  +         let events = vec![
+  +             ValidationEvent {
+  ... (13 more lines)
+
+Let me run the specific tests to confirm they fail (red).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib recall_never_gr… ✓ (263ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test recall_never_graded_w… ✓ (151ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Red confirmed — the "measures precision only" line is missing. Now add the honest asymmetry line to format_accuracy_report. I'll insert it right after the report is built (after the four polarity lines) so it's prominent.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (2 → 17 lines)
+        let mut report =
+            format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+  + 
+  +     // DREAM meter honesty (Day 146; Day-140 lesson: "one-sided self-measurement
+  +     // measures recall and never precision"). Recall grades only on failure days
+  +     // — a real breakage validated against the risk list. Green-day events grade
+  +     // the false-alarm signal (precision). When the whole graded set is green-day
+  +     // only, the meter has NEVER exercised recall: a reader must not mistake
+  +     // green-day precision for the whole picture. State the asymmetry explicitly
+  +     // — the abstention ("recall never graded") is a chosen third value, not
+  +     // silence (Day-144 abstention discipline). `recall_coverage_note` owns the
+  +     // three-state logic (failure>0 → None; both zero → None; green-only → note).
+  +     if let Some(note) = recall_coverage_note(stats) {
+  +         report.push_str(&format!(
+  +             "  {YELLOW}⚠ {note} — this measures precision only, not recall.{RESET}\n"
+  +         ));
+  +     }
+ ✓ (1m 49s)
+        let mut report =
+            format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+  + 
+  +     // DREAM meter honesty (Day 146; Day-140 lesson: "one-sided self-measurement
+  +     // measures recall and never precision"). Recall grades only on failure days
+  +     // — a real breakage validated against the risk list. Green-day events grade
+  +     // the false-alarm signal (precision). When the whole graded set is green-day
+  +     // only, the meter has NEVER exercised recall: a reader must not mistake
+  ... (9 more lines)
+
+Now I need to check the YELLOW import is present in this file.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::format\|YELL… ✓ (4ms)
+
+`YELLOW is available via format::*`. Now run the tests.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_accuracy_repor… ✓ (185ms)
+
+Both pass. Now the full check suite and manual sanity check.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (2m 0s)
+
+All green. Now the manual sanity check against the real (all-green) log.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c watch_success .yoyo/risk… ✓ (184ms)
+
+The honest asymmetry line now prints against the real log: 17 green events, 0 failure events, and it explicitly states this measures precision only. This is exactly the DREAM meter honesty the task called for.
+
+Let me verify the task file scope — I touched only src/commands_risk_accuracy.rs. The task listed commands_risk_report.rs as AND/OR — the report already has its own `recall_coverage_note for /status, and I placed the honest line where /risk accuracy` renders. No change needed there. Now check docs for accuracy.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "failure_hit_rate_pct\|r… ✓ (4ms)
+
+Let me append a short Day-146 note to the commands_risk_accuracy.rs line in CLAUDE.md.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 2 lines)
+     Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  - - `commands_risk_epistemic.rs`
+  + - Day 146: `format_accuracy_report` now prints one honest asymmetry line (`recall_coverage_note` owns the three-state logic) when the graded set is green-day only — "recall ungraded — 0 failure-day events (N green-days only) — this measures precision only, not recall" — so a green-day precision number can't be misread as the whole picture (DREAM meter honesty; recall grades only on failure days, which recent 0-revert sessions haven't produced). The line is absent the moment ≥1 failure-day event exists.
+ ✓ (1m 28s)
+     Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  - - `commands_risk_epistemic.rs`
+  + - Day 146: `format_accuracy_report` now prints one honest asymmetry line (`recall_coverage_note` owns the three-state logic) when the graded set is green-day only — "recall ungraded — 0 failure-day events (N green-days only) — this measures precision only, not recall" — so a green-day precision number can't be misread as the whole picture (DREAM meter honesty; recall grades only on failure days, which recent 0-revert sessions haven't produced). The line is absent the moment ≥1 failure-day event exists.
+
+Wait — that edit replaced the wrong anchor. Let me verify the surrounding text is still correct.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '94,96p' CLAUDE.md ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+

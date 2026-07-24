@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key aspects of the diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AUTO_CONTEXT_MAX_LINES\… ✓ (6ms)
+
+The diff is coherent. Let me verify the extracted function matches and check the git log for the guess-first commit protocol.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (6ms)
+
+The task follows the guess-first protocol correctly:
+• Guess documented in code comment (lines 2887-2894): multi-byte slice panic in auto-context. Guess was wrong (line iteration is UTF-8 safe).
+• Honest outcome: found a latent slice-index fragility (unstated invariant between two constants) and added a clamp + pinning tests — exactly the Day-137 "documented-tempted invariant" justification the task permits.
+• Scope: 2 source files (agent_builder.rs is trivial fmt churn from Task 1's fleet work; commands_project.rs is the real change), no refactor beyond extracting one function.
+• Multi-byte test pins the original hypothesis. Tests exercise the clamp behavior including empty-string edge.
+
+The agent_builder.rs change is unrelated whitespace-only test formatting (likely cargo fmt sweep) — cosmetic, not a concern. This is an evolve-kind task with no product-surface changes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 7s)
+
+Verdict: PASS
+
+The task correctly implements the guess-first probe protocol:
+• The guess (multi-byte slice panic) was documented in-code and turned out to be an honest miss — the line iteration is already UTF-8 safe.
+• The read surfaced a real latent fragility: `lines[..AUTO_CONTEXT_MAX_LINES] was only in-bounds due to an unstated invariant between two independently-tunable constants. The fix extracts truncate_file_content with a .min(total_lines)` clamp.
+• Pinning tests are justified per the Day-137 "documented-tempted invariant" rule, and include the original multi-byte hypothesis plus edge cases (empty, exactly-max, just-over-max, large-file).
+• Scope respected (2 files; agent_builder.rs is trivial fmt churn from Task 1). Evolve-kind, no product-surface change. Build/tests green.
+
+  watch: no files changed this turn — skipping
+

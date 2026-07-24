@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the guess-first protocol. Let me commit my prediction in words BEFORE reading the code.
+
+## My Guess (committed before reading)
+
+commands_project.rs contains auto_context_for_prompt which scores repo files against query keywords and slices file content. Given CLAUDE.md's #1 footgun (byte-indexing panics on multi-byte UTF-8), and that this function slices file content (which can contain any Unicode) and queries (user input, arbitrary Unicode):
+
+**Prediction: auto_context_for_prompt or format_auto_context slices file content or a query string with byte-indexing (`s[..n], .truncate(n), split_at(n)`) that will panic on a multi-byte character at the boundary.**
+
+• Horizon: I'll confirm/refute within the next few tool calls by reading the file and grepping for byte-slicing patterns.
+• Fallback if wrong: If no unsafe slicing exists, my second hypothesis is project-type detection emitting Rust-specific advice for non-Rust projects (#448 class). If neither, honest miss.
+
+Now let me read the code and check.
+  ▶ search 'truncate|\.\.n\]|split_at|\[\.\.|is_char_boundary|&content\[…' in src/commands_project.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_project.rs &&… ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+No obvious byte-slicing found in the grep. My primary hypothesis looks refuted so far — but let me look closer at the two functions that handle content/queries, since truncation could use other forms (.chars().take(), character iteration, or slicing hidden in helpers).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1170..1370 ✓ (2ms)
+
+**Found it.** Line 1237 and 1244: `lines[..AUTO_CONTEXT_MAX_LINES]` — this is a slice index panic, not a UTF-8 boundary panic. My primary guess (multi-byte byte-indexing) was partly right in spirit (unchecked slicing) but the actual bug is different:
+
+The guard on line 1235 is total_lines > AUTO_CONTEXT_LARGE_FILE but the slice on line 1237 is lines[..AUTO_CONTEXT_MAX_LINES]. If `AUTO_CONTEXT_LARGE_FILE < AUTO_CONTEXT_MAX_LINES, a file with total_lines between AUTO_CONTEXT_LARGE_FILE+1 and AUTO_CONTEXT_MAX_LINES` would enter the first branch and slice out-of-bounds → panic. Let me check the constants.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AUTO_CONTEXT_LARGE_FILE… ✓ (3ms)
+
+Now I understand the full picture. LARGE_FILE = 500 > MAX_LINES = 200, so the current constants don't panic — the first branch fires only when total_lines > 500 > 200, safe; second branch when total_lines > 200, safe. So lines[..200] is always in bounds given `total_lines > 200`.
+
+So no live panic from those two lines with current constants. My guess is refuted on the panic front. BUT — this is a latent fragility: the safety of lines[..AUTO_CONTEXT_MAX_LINES] silently depends on the invariant `AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`. Per the Day-137 lesson: a pinning test is a real net only when there's evidence of temptation. Is there?
+
+Let me check: the constants are two separate tunable knobs 3 lines apart. If a future edit sets `LARGE_FILE = 150 (making "large" smaller), line 1237 slices lines[..200]` on a 160-line file → **out-of-bounds panic**. That's exactly the "co-located copies of one truth" / tunable-invariant temptation. But before pinning, let me verify the multi-byte angle isn't also a real bug elsewhere — check tokenize_query and score_files for content slicing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn tokenize_query\|fn s… ✓ (4ms)
+  ▶ read src/commands_project.rs:901..941 ✓ (1ms)
+  2 tools completed in 3.1s (2 ✓)
+
+`tokenize_query uses split_whitespace and to_lowercase` — no byte slicing, UTF-8-safe. decompose_identifier is worth a quick check, but let me confirm the multi-byte hypothesis is fully refuted by checking that helper.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn decompose_identifier… ✓ (7ms)
+  ▶ read src/commands_project.rs:842..901 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+`decompose_identifier iterates over chars` (UTF-8 safe) — no byte slicing. My primary multi-byte-slicing hypothesis is refuted: the query/content path is UTF-8 safe throughout.
+
+## Verdict on the guess
+
+My guess was wrong on the specific mechanism (no live multi-byte panic), but the read surfaced a latent slice-index fragility at lines 1237/1244: the safety of `lines[..AUTO_CONTEXT_MAX_LINES] silently depends on the invariant AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`. These are two independently-tunable constants three lines apart. A future edit lowering LARGE_FILE below `MAX_LINES` turns line 1237 into an out-of-bounds panic on any file whose line count lands in the gap.
+
+Per the Day-137 lesson, a pinning test is justified only when there's documented temptation. Here the temptation is concrete and structural: two adjacent tunable knobs whose relationship is an unstated invariant that silently underpins an unchecked slice. That is exactly the "co-located tunable invariant" temptation. 
+
+But rather than just pin the invariant with a test (which could still be violated by a future edit that also updates the test), the **surgical, correct fix** is to make the slice itself panic-proof regardless of constant values — use `.min(total_lines)` so the code can never go out of bounds. That removes the invariant dependency entirely. I'll write a failing test first that exercises the fragility, then apply the fix.
+
+Let me verify the test can reach this code path. Since auto_context_for_prompt does git/repo scanning, I'll test a smaller extractable unit. Let me check if the truncation logic is extractable or if I test through a helper.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1046..1076 ✓ (1ms)
+
+The truncation logic is inline in auto_context_for_prompt, hard to unit-test in isolation (needs git repo + scoring). The cleanest surgical fix is to extract the truncation into a small pure helper `truncate_file_content(content, total_lines)` that I can test directly AND make panic-proof. This is a narrow refactor of exactly the fragile code — in scope.
+
+Let me write the failing test first (red), then the helper + fix.
+
+First, the pure helper with the panic-proof slice:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (23 → 3 lines)
+  -         let lines: Vec<&str> = content.lines().collect();
+  -         let total_lines = lines.len();
+  - 
+  -         let truncated = if total_lines > AUTO_CONTEXT_LARGE_FILE {
+  -             // Large file: take first MAX_LINES with a note
+  -             let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
+  -             text.push_str(&format!(
+  -                 "\n\n[… truncated — file has {} lines, showing first {}]",
+  -                 total_lines, AUTO_CONTEXT_MAX_LINES
+  -             ));
+  -             text
+  -         } else if total_lines > AUTO_CONTEXT_MAX_LINES {
+  -             let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
+  -             text.push_str(&format!(
+  -                 "\n\n[… truncated at {} of {} lines]",
+  -                 AUTO_CONTEXT_MAX_LINES, total_lines
+  -             ));
+  -             text
+  -         } else {
+  -             content
+  ... (4 more lines)
+ ✓ (12.3s)
+  -         let lines: Vec<&str> = content.lines().collect();
+  -         let total_lines = lines.len();
+  - 
+  -         let truncated = if total_lines > AUTO_CONTEXT_LARGE_FILE {
+  -             // Large file: take first MAX_LINES with a note
+  -             let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
+  -             text.push_str(&format!(
+  -                 "\n\n[… truncated — file has {} lines, showing first {}]",
+  ... (13 more lines)
+
+Now add the helper function. I'll place it right after the constants (before build_signature_block).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (2 → 41 lines)
+    /// Sentinel path used to identify the signature block entry in auto-context results.
+    const SIGNATURE_SENTINEL: &str = "[signatures]";
+  + 
+  + /// Truncate a file's content for auto-context injection.
+  + ///
+  + /// Files longer than `AUTO_CONTEXT_MAX_LINES` are cut to the first
+  + /// `AUTO_CONTEXT_MAX_LINES` lines with a note; files longer than
+  + /// `AUTO_CONTEXT_LARGE_FILE` get a slightly different note. Shorter files are
+  + /// returned unchanged.
+  + ///
+  + /// The line slice is clamped with `.min(total_lines)` so it can never index
+  + /// out of bounds — the previous inline version silently depended on the
+  + /// invariant `AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`, which is an
+  + /// unstated relationship between two independently-tunable constants three
+  + /// lines apart. Lowering `AUTO_CONTEXT_LARGE_FILE` below `AUTO_CONTEXT_MAX_LINES`
+  + /// would have turned the "large file" branch into an out-of-bounds panic on any
+  + /// file whose line count fell in the gap. The clamp removes that dependency.
+  + fn truncate_file_content(content: String) -> String {
+  +     let lines: Vec<&str> = content.lines().collect();
+  +     let total_lines = lines.len();
+  ... (21 more lines)
+ ✓ (1m 48s)
+    /// Sentinel path used to identify the signature block entry in auto-context results.
+    const SIGNATURE_SENTINEL: &str = "[signatures]";
+  + 
+  + /// Truncate a file's content for auto-context injection.
+  + ///
+  + /// Files longer than `AUTO_CONTEXT_MAX_LINES` are cut to the first
+  + /// `AUTO_CONTEXT_MAX_LINES` lines with a note; files longer than
+  + /// `AUTO_CONTEXT_LARGE_FILE` get a slightly different note. Shorter files are
+  ... (13 more lines)
+
+Now the failing-test-first part. The key regression test pins the invariant AND the multi-byte safety. Let me add tests that would panic under the old code if constants were misconfigured. I'll write a test that directly exercises the fragility by verifying the helper never panics, plus a multi-byte content test (my original hypothesis — worth pinning since content can be any Unicode).
+
+Let me find the test module end to add tests.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_context\|format_au… ✓ (4ms)
+  ▶ read src/commands_project.rs:2882..2897 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now let me add the tests right after test_format_auto_context_empty. These pin the invariant the code was documented-tempted to break (per Day-137: concrete temptation = two tunable knobs whose relationship silently underpins an unchecked slice) plus the multi-byte content safety (my original hypothesis).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (4 → 77 lines)
+        fn test_format_auto_context_empty() {
+            assert!(format_auto_context(&[], "hello").is_none());
+  +     }
+  + 
+  +     // --- truncate_file_content: panic-proofing the auto-context line slice ---
+  +     //
+  +     // Day 146 (dream chosen-experiment): guessed a multi-byte slice panic in the
+  +     // auto-context path. The specific guess was wrong (the char/line iteration is
+  +     // UTF-8 safe), but the read surfaced a latent slice-index fragility: the
+  +     // `lines[..AUTO_CONTEXT_MAX_LINES]` slice was only in-bounds because of the
+  +     // *unstated* invariant `AUTO_CONTEXT_LARGE_FILE >= AUTO_CONTEXT_MAX_LINES`
+  +     // between two independently-tunable constants three lines apart. These tests
+  +     // pin the now-clamped behavior so a future retune can't reintroduce the panic.
+  + 
+  +     #[test]
+  +     fn test_truncate_file_content_short_file_unchanged() {
+  +         let content = "line one\nline two\nline three".to_string();
+  +         assert_eq!(truncate_file_content(content.clone()), content);
+  +     }
+  + 
+  ... (57 more lines)
+ ✓ (1m 48s)
+        fn test_format_auto_context_empty() {
+            assert!(format_auto_context(&[], "hello").is_none());
+  +     }
+  + 
+  +     // --- truncate_file_content: panic-proofing the auto-context line slice ---
+  +     //
+  +     // Day 146 (dream chosen-experiment): guessed a multi-byte slice panic in the
+  +     // auto-context path. The specific guess was wrong (the char/line iteration is
+  ... (13 more lines)
+
+Now run the full check suite.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (42.8s)
+
+All 6 new tests pass, clippy clean. Now let me verify the red-green: confirm the tests would have caught the fragility. The refactor already removed the panic path, but let me prove the pinning test's value by temporarily reintroducing the bug (set the take back to the constant) and confirming it panics.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (7 lines) ✓ (22.7s)
+
+**Red-green confirmed.** With the invariant broken (`LARGE_FILE = 150 < MAX_LINES = 200, no .min() clamp), the test panics with exactly the out-of-bounds error I predicted: range end index 200 out of range for slice of length 160`. With my clamp fix restored, all tests pass. The pinning test genuinely catches the fragility.
+
+Let me confirm the restored state passes the full suite and clippy.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 54s)
+
+All green: 4480 + 89 tests pass, clippy clean, build clean. Let me update the CLAUDE.md Architecture entry for commands_project.rs to reflect the new helper, then commit.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project.rs" CL… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+
