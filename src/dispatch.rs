@@ -136,6 +136,14 @@ pub(crate) enum CommandRoute {
 /// This extracts the pattern-matching logic from [`dispatch_command`] so it can
 /// be tested without constructing a full [`DispatchContext`].
 pub(crate) fn route_command(input: &str) -> CommandRoute {
+    // Trim trailing whitespace before exact-matching: users type stray trailing
+    // spaces constantly (`/status `), and without this those no-arg commands fell
+    // through to route_command_prefix — which has no "status"/"version"/... entry —
+    // and returned UnknownSlash for a command that plainly exists. We trim ONLY the
+    // trailing side: a leading space means it isn't a command at all (preserve
+    // NotACommand), and argument-bearing commands are unaffected because their args
+    // come from split_whitespace, which already ignores trailing spaces.
+    let input = input.trim_end();
     match input {
         "/quit" | "/exit" => CommandRoute::Quit,
         "/version" => CommandRoute::Version,
@@ -1561,6 +1569,29 @@ mod tests {
     }
 
     #[test]
+    fn test_route_trailing_whitespace() {
+        // A stray trailing space on a no-arg exact-match command must still
+        // route correctly — users type trailing spaces constantly. Before the
+        // trim_end() fix these fell through to route_command_prefix (which has
+        // no "status"/"version"/... entry) and returned UnknownSlash.
+        assert_eq!(route_command("/status "), CommandRoute::Status);
+        assert_eq!(route_command("/version "), CommandRoute::Version);
+        assert_eq!(route_command("/doctor  "), CommandRoute::Doctor);
+        // Argument-bearing exact matches must also tolerate a trailing space.
+        assert_eq!(route_command("/tokens detail "), CommandRoute::Tokens);
+        // The `/clear!` force variant must survive trimming.
+        assert_eq!(route_command("/clear! "), CommandRoute::ClearForce);
+        // A genuine typo + trailing space must STILL be UnknownSlash so the
+        // "did you mean" suggestion path fires.
+        assert_eq!(route_command("/staus "), CommandRoute::UnknownSlash);
+        // A leading space means it isn't a command at all — preserve that.
+        assert_eq!(route_command(" /status"), CommandRoute::NotACommand);
+        // Prefix commands with args keep working (their args come from
+        // split_whitespace, which already ignores trailing spaces).
+        assert_eq!(route_command("/grep foo "), CommandRoute::Grep);
+    }
+
+    #[test]
     fn test_route_model() {
         assert_eq!(route_command("/model"), CommandRoute::Model);
         assert_eq!(route_command("/model sonnet"), CommandRoute::Model);
@@ -1823,12 +1854,14 @@ mod tests {
 
     #[test]
     fn test_route_trailing_whitespace_exact_match() {
-        // Exact matches require exact strings — trailing space means no exact match.
-        // Commands only in the exact-match arm (not in prefix table) become UnknownSlash.
-        assert_eq!(route_command("/quit "), CommandRoute::UnknownSlash);
-        assert_eq!(route_command("/version "), CommandRoute::UnknownSlash);
-        assert_eq!(route_command("/cost "), CommandRoute::UnknownSlash);
-        // But commands that ARE in the prefix table still route correctly with trailing space
+        // Trailing whitespace is now trimmed before exact-matching, so no-arg
+        // exact-match commands route correctly even with a stray trailing space
+        // (previously these fell through to the prefix table and became
+        // UnknownSlash — a bug users hit constantly).
+        assert_eq!(route_command("/quit "), CommandRoute::Quit);
+        assert_eq!(route_command("/version "), CommandRoute::Version);
+        assert_eq!(route_command("/cost "), CommandRoute::Cost);
+        // Commands that ARE in the prefix table still route correctly with trailing space.
         assert_eq!(route_command("/diff "), CommandRoute::Diff);
         assert_eq!(route_command("/model "), CommandRoute::Model);
         assert_eq!(route_command("/grep "), CommandRoute::Grep);
