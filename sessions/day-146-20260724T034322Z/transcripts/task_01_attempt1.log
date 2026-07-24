@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by recording the guess FIRST, as the task demands.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run -q -- risk epistemic 2… ✓ (681ms)
+
+Confirmed: src/safety.rs is #1 with "reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.50)". The ranking has chosen the file. Let me examine the safety analyzer to find a genuine gap.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_write_command… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1738..1868 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Let me look at `WRITE_VERBS and detect_redirection` to understand the current coverage and find a genuine gap.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WRITE_VERBS\|COMMAND_WR… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1624..1744 ✓ (4ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Now I can see the surface clearly. Let me analyze the WRITE_VERBS list against my "synonyms" lesson. Looking for genuine gaps:
+
+1. `rsync` — writes/copies files, a cp synonym, not in WRITE_VERBS.
+2. **`rename** — the rename/prename` util renames files (mv synonym).
+3. `chmod`/`chown` — modify file metadata (write-class).
+4. **`>|** — the bash noclobber-override redirection form (>| forces overwrite) — detect_redirection handles > and >> but >| has a | after >` which... let me check. > | would be caught as > then whitespace-skip finds |? No — >| is > immediately followed by |.
+
+Let me test the >| case — it's a real redirection form that overwrites even with noclobber set, and it's a genuine write.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_redirection\|>|\… ✓ (4ms)
+
+Let me trace the >| case carefully through detect_redirection. At >, `op=">", then j points at |. The check is bytes.get(j) == Some(&b'&') — | is not &, so it falls through. Then whitespace-skip: | is not whitespace. So target = stripped[j..].split_whitespace().next()` = "|filename" or "|". 
+
+Let me verify this empirically with a quick test harness.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (6 lines) ✓ (5ms)
+
+Let me look at how existing detect_write_command tests are structured so I match the style, and probe the >| case.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "det… (2 lines) ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:2827..2927 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now I understand the full picture. Let me identify the genuine gap. The >| noclobber-override redirection is a real bash write form that `detect_redirection currently mishandles — at >, it reads target as |filename (with the |` glued on) rather than recognizing it as a write. Let me verify empirically by writing a probe test.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (14 lines) ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f src/sa… (15 lines) ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib probe_gap -- --… ✓ (107ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test probe_gap -- --nocapt… ✓ (20.6s)
+  4 tools completed in 31.3s (4 ✓)
+
+Excellent — real data. Findings:
+• **>| (noclobber-override redirect)**: caught, but the target is misreported as '|' instead of the actual file 'out.txt'. It's flagged (safe), but the honest-error message is wrong — a real bug.
+• **`rsync**: NOT flagged — a genuine gap. rsync -a src/ dst/ writes to dst/`, a clear cp synonym.
+• `rename`/`chmod`: not flagged (arguably lower priority / metadata-only).
+
+The strongest, most falsifiable choice matching my "synonyms" lesson is `rsync` — a file-copying tool (cp synonym) that writes to the filesystem and is completely missed. But rsync can also be read-only-ish (rsync --dry-run). Let me pick rsync and handle the near-miss (--dry-run and rsync as a mere argument).
+
+Actually, let me reconsider: the >| misreported target is also a real bug in the same function. But the task says ONE improvement. rsync is the cleaner "synonym" fix directly matching the archived lesson. Let me first remove the probe, then write the failing test for rsync.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (21ms)
+
+Now let me consider rsync's semantics for a correct near-miss test. `rsync -a src/ dst/ writes. But rsync -n/rsync --dry-run does NOT write. And rsync` with only one arg (or --help) doesn't write. This makes rsync more nuanced than the simple verbs. 
+
+Given scope discipline and the need for a correct improvement with a clean near-miss, I'll flag rsync as a write verb unless it carries `-n/--dry-run. This mirrors the existing sed -i / dd of=` conditional handling. Let me write the failing test first (red-green-refactor).
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (3 → 6 lines)
+                "/usr/bin/touch x",                 // full-path invocation
+                "find . -name '*.o' | xargs touch", // xargs fan-out
+  +             "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
+  +             "rsync src/ user@host:/dst/",       // rsync to a remote still writes
+  +             "sudo rsync -av a b",               // wrapper-unwrapped rsync
+            ];
+ ✓ (1m 37s)
+                "/usr/bin/touch x",                 // full-path invocation
+                "find . -name '*.o' | xargs touch", // xargs fan-out
+  +             "rsync -a src/ dst/",               // rsync writes to dst (cp synonym)
+  +             "rsync src/ user@host:/dst/",       // rsync to a remote still writes
+  +             "sudo rsync -av a b",               // wrapper-unwrapped rsync
+            ];
+
+Now the near-miss negatives (rsync --dry-run must still pass, and rsync as an argument):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (3 → 6 lines)
+                "dd if=/dev/sda",   // dd without of= writes nothing
+                "man mv",
+  +             "rsync -n -a src/ dst/",       // rsync --dry-run does not write
+  +             "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
+  +             "grep rsync file",             // rsync as an argument, not command
+            ];
+ ✓ (1m 40s)
+                "dd if=/dev/sda",   // dd without of= writes nothing
+                "man mv",
+  +             "rsync -n -a src/ dst/",       // rsync --dry-run does not write
+  +             "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
+  +             "grep rsync file",             // rsync as an argument, not command
+            ];
+
+Tests are red (as expected — rsync not yet handled). Now implement the fix in `detect_write_command, mirroring the sed -i` conditional pattern.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (4 → 14 lines)
+            if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
+                return Some("`dd of=...` writes to a file".to_string());
+  +         }
+  +         // `rsync` copies files (a `cp` synonym) — it writes unless it's an
+  +         // explicit dry run (`-n` / `--dry-run`), which touches nothing.
+  +         if base == "rsync" {
+  +             let dry_run = segment.split_whitespace().any(|t| {
+  +                 t == "-n" || t == "--dry-run" || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
+  +             });
+  +             if !dry_run {
+  +                 return Some("`rsync` copies files to the destination".to_string());
+  +             }
+            }
+        }
+ ✓ (1m 39s)
+            if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
+                return Some("`dd of=...` writes to a file".to_string());
+  +         }
+  +         // `rsync` copies files (a `cp` synonym) — it writes unless it's an
+  +         // explicit dry run (`-n` / `--dry-run`), which touches nothing.
+  +         if base == "rsync" {
+  +             let dry_run = segment.split_whitespace().any(|t| {
+  +                 t == "-n" || t == "--dry-run" || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
+  ... (6 more lines)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the test module to find the un-guarded tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reset_context_budget_wa… ✓ (5ms)
+
+I can see the three un-guarded tests. Let me view them and fix each.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:1985..2015 ✓ (1ms)
+
+Let me check the exact guard pattern used in the guarded tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:1972..1979 ✓ (1ms)
+
+Now I'll add the guard to the three un-guarded tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (2 → 5 lines)
+        fn test_context_budget_warning_escalates() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+ ✓ (1m 58s)
+        fn test_context_budget_warning_escalates() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (2 → 5 lines)
+        fn test_context_budget_warning_reset_rearms() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+ ✓ (1m 54s)
+        fn test_context_budget_warning_reset_rearms() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (2 → 5 lines)
+        fn test_context_budget_warning_zero_max_returns_none() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+ ✓ (1m 56s)
+        fn test_context_budget_warning_zero_max_returns_none() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+  3 tools completed in 5m 57s (3 ✓)
+
+Now let me verify no other test touches the static un-guarded:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reset_context_budget_wa… ✓ (4ms)
+
+All 10 tests now acquire the lock. Let me verify each test function that calls reset_context_budget_warning has a preceding `_guard line. All the reset` calls are now at lines 1909, 1921, 1934, 1949, 1963, 1976, 1990, 2004/2008, 2018 — each preceded by the lock acquisition. Now let me build and test:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do cargo tes… ✓ (705ms)
+  2 tools completed in 23.7s (2 ✓)
+
+All passing across 5 runs. Let me run the full test suite once to confirm nothing else broke:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 16s)
+
+All green. Let me also confirm fmt check passes:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (974ms)
+
+All checks pass. 
+
+## Summary
+
+The evaluator's finding was correct: three tests mutated the process-wide `LAST_WARNED_THRESHOLD static without acquiring BUDGET_WARNING_TEST_LOCK`, so they still raced the guarded tests (a mutex only excludes threads that also hold it). I added the guard acquisition to all three:
+
+• `test_context_budget_warning_escalates`
+• test_context_budget_warning_reset_rearms
+• `test_context_budget_warning_zero_max_returns_none`
+
+Each now starts with the same recovery-safe lock pattern used by the other tests:
+```rust
+let _guard = BUDGET_WARNING_TEST_LOCK
+    .lock()
+    .unwrap_or_else(|e| e.into_inner());
+reset_context_budget_warning();
+```
+
+I verified all 10 tests touching the static (grepped every reference — 1909, 1921, 1934, 1949, 1963, 1976, 1990, 2004/2008, 2018) are now guarded, with no un-guarded mutators remaining. Production code and the static are unchanged — test-only serialization.
+
+Verification (all clean):
+• cargo fmt -- --check ✅
+• cargo clippy --all-targets -- -D warnings ✅
+• `cargo build` ✅
+• cargo test — 4465 + 89 passed, 0 failed ✅
+• Ran the format budget tests 5× at --test-threads=8 — passed every time, race closed.
+
+  watch: no files changed this turn — skipping
+

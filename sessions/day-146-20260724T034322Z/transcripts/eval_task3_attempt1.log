@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The task explicitly says: "prefer the in-module mutex. Do not add a crate." But the diff uses use serial_test::serial; — a crate dependency. Let me check what's actually going on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial_test\|serial" Ca… ✓ (7ms)
+
+`serial_test` is already a pre-existing dependency in Cargo.toml (used elsewhere in the file at lines 2202+). The use serial_test::serial; import at line 906 is pre-existing too — not added by this diff. Let me confirm the diff only added the mutex + guards, and check all budget-warning tests are guarded.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== all tests referencing … ✓ (4ms)
+
+Found the problem. Three tests that touch the shared static are NOT guarded:
+
+• `test_context_budget_warning_escalates` (line 1986)
+• test_context_budget_warning_reset_rearms (line 1997)
+• `test_context_budget_warning_zero_max_returns_none` (line 2008)
+
+The task explicitly warned: "Do NOT miss one — a single un-guarded test that mutates the static reintroduces the race." Both _escalates and _reset_rearms call context_budget_warning with warning thresholds that `.store(...)` into the static, so they race. This directly reintroduces the exact flake the task was meant to fix.
+
+Let me confirm those unguarded tests actually mutate the static.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1985,2015p' src/format/m… ✓ (3ms)
+
+Confirmed. Three tests (_escalates, _reset_rearms, _zero_max_returns_none) call reset_context_budget_warning() and mutate/read LAST_WARNED_THRESHOLD but were not guarded with the mutex. _escalates and _reset_rearms are especially damaging — they assert on the static's state and can be raced by/into the guarded tests, since holding the mutex in one test does not exclude an unguarded test running concurrently on another thread.
+
+The task explicitly and repeatedly warned against missing any test. This is a clear miss that reintroduces the exact race being fixed. The tests happen to pass now (the flake is schedule-dependent), but the fix is incomplete and does not actually close the race.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_3.md (2 lines) ✓ (1m 17s)
+
+Verdict: FAIL
+
+The diff correctly guards 6 of the budget-warning tests with the new BUDGET_WARNING_TEST_LOCK mutex, but misses three that also mutate the shared LAST_WARNED_THRESHOLD static:
+
+• test_context_budget_warning_escalates (line 1986)
+• `test_context_budget_warning_reset_rearms` (line 1997)
+• test_context_budget_warning_zero_max_returns_none (line 2008)
+
+Since a mutex only serializes threads that acquire it, these un-guarded tests can still run concurrently with the guarded ones — reintroducing the exact schedule-dependent race the task set out to eliminate. _escalates and _reset_rearms assert on the static's carried-over state, so they're the most exposed. The task explicitly warned "Do NOT miss one — a single un-guarded test that mutates the static reintroduces the race."
+
+(Note: serial_test was already a pre-existing dependency used elsewhere in the file, so its import is not an incorrectly-added crate.)
+
+Tests pass now only because the flake is non-deterministic — the fix is incomplete. Verdict written to session_plan/eval_task_3.md.
+
+  watch: no files changed this turn — skipping
+

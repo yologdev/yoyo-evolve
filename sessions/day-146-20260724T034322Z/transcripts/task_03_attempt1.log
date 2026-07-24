@@ -1,0 +1,144 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the flaky context-budget-warning tests. Let me first find the relevant tests and the static.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LAST_WARNED_THRESHOLD\|… ✓ (6ms)
+
+Found 9 tests. Let me see the exact test bodies to add guards.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:1890..1990 ✓ (1ms)
+
+Now let me find the top of the test module to add the mutex, and confirm there are no other tests referencing the static.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/format/m… ✓ (6ms)
+
+Exactly 9 tests, all within the test module. Let me look at the top of the test module to place the mutex.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:903..915 ✓ (1ms)
+
+Interesting — `serial_test is already a dev-dependency. But the task says prefer the in-module mutex, don't add a crate. serial_test is already available. However, the tests currently don't use #[serial]`. Using the in-module mutex is cleaner and matches the task's preferred approach. Let me add the mutex after use statements.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (4 → 14 lines)
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// Serializes tests that touch the process-wide `LAST_WARNED_THRESHOLD`
+  +     /// static. `cargo test` runs tests in parallel threads by default, so
+  +     /// without this lock one test's `store(...)` could land between another
+  +     /// test's `reset_context_budget_warning()` and its assertion — a real,
+  +     /// schedule-dependent flake we saw in CI. Hold the guard for the whole
+  +     /// test body to guarantee mutual exclusion. `unwrap_or_else(into_inner)`
+  +     /// recovers from poisoning so one failing test doesn't cascade.
+  +     #[cfg(test)]
+  +     static BUDGET_WARNING_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    
+        // === truncate_with_ellipsis tests ===
+ ✓ (18.7s)
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// Serializes tests that touch the process-wide `LAST_WARNED_THRESHOLD`
+  +     /// static. `cargo test` runs tests in parallel threads by default, so
+  +     /// without this lock one test's `store(...)` could land between another
+  +     /// test's `reset_context_budget_warning()` and its assertion — a real,
+  +     /// schedule-dependent flake we saw in CI. Hold the guard for the whole
+  ... (6 more lines)
+
+Expected — now let me add the guard to each of the 9 tests. Let me add them one at a time.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (3 → 6 lines)
+        fn test_context_budget_warning_below_60_returns_none() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            assert!(context_budget_warning(0, 100_000).is_none());
+ ✓ (1m 46s)
+        fn test_context_budget_warning_below_60_returns_none() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            assert!(context_budget_warning(0, 100_000).is_none());
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (4 → 7 lines)
+        fn test_context_budget_warning_60_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(60_000, 100_000);
+            assert!(warn.is_some(), "should warn at 60%");
+ ✓ (1m 44s)
+        fn test_context_budget_warning_60_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(60_000, 100_000);
+            assert!(warn.is_some(), "should warn at 60%");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (4 → 7 lines)
+        fn test_context_budget_warning_80_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(80_000, 100_000);
+            assert!(warn.is_some(), "should warn at 80%");
+ ✓ (1m 46s)
+        fn test_context_budget_warning_80_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(80_000, 100_000);
+            assert!(warn.is_some(), "should warn at 80%");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (4 → 7 lines)
+        fn test_context_budget_warning_90_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(90_000, 100_000);
+            assert!(warn.is_some(), "should warn at 90%");
+ ✓ (1m 47s)
+        fn test_context_budget_warning_90_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(90_000, 100_000);
+            assert!(warn.is_some(), "should warn at 90%");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (4 → 7 lines)
+        fn test_context_budget_warning_95_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(95_000, 100_000);
+            assert!(warn.is_some(), "should warn at 95%");
+ ✓ (1m 43s)
+        fn test_context_budget_warning_95_threshold() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            let warn = context_budget_warning(95_000, 100_000);
+            assert!(warn.is_some(), "should warn at 95%");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (3 → 6 lines)
+        fn test_context_budget_warning_same_threshold_no_repeat() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            // First call at 60% should warn
+ ✓ (1m 46s)
+        fn test_context_budget_warning_same_threshold_no_repeat() {
+  +         let _guard = BUDGET_WARNING_TEST_LOCK
+  +             .lock()
+  +             .unwrap_or_else(|e| e.into_inner());
+            reset_context_budget_warning();
+            // First call at 60% should warn
+  6 tools completed in 10m 52s (6 ✓)
+
+  watch: no files changed this turn — skipping
+

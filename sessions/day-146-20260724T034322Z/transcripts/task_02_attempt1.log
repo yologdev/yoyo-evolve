@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current structure of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|struct Confi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_args\|fn warn_… ✓ (6ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Interesting — it looks like safe_mode already exists. Let me check the current state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs:80..120  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs:218..230  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs:348..368 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  3 tools completed in 1.4s (3 ✓)
+
+The Config field and global flag already exist. Let me check how much of the parsing and honoring is already done in cli.rs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode\|safe-mode\|… ✓ (10ms)
+
+The --safe-mode flag appears to be fully implemented already — parsing, Config field, global flag, honoring at all load sites in main.rs (MCP, skills, hooks, permissions, custom commands via commands.rs, context via main.rs:675), help text, and tests. Let me verify what's actually there and check for gaps against the task spec.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:670..690  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:3115..3135 ✓ (0ms)
+ ✓ (1ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The --safe-mode flag is already fully implemented and honored across all load sites — this task was already completed in a prior session. Let me verify what the task spec asks for vs what exists, and identify any genuine gap. Two things stand out from the task spec:
+
+1. Near-miss test (Day 122): The spec explicitly asks to pin that --safe or --safemode is NOT accepted as --safe-mode. Let me check if that test exists.
+2. Project context files skip — let me verify main.rs:675 area actually skips context loading, not just prints a warning.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safemode\|--safe\b\|nea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|p… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.5s (2 ✓)
+
+There's no near-miss test for --safe-mode, and I need to verify project-context loading is actually skipped. Let me check where project context is loaded relative to safe_mode.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_project_context\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "load_project_context"… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|i… ✓ (3ms)
+  3 tools completed in 5.3s (3 ✓)
+
+Found a gap. Line 932 in cli.rs loads project context but does NOT check safe_mode. Let me look at that block.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:920..960 ✓ (1ms)
+
+This is the real gap: at line 932, parse_args builds the system prompt and injects project context (CLAUDE.md, YOYO.md, etc.) without checking safe_mode. The task explicitly requires safe mode to skip project context files. Since safe_mode is determined at line 1098 (after this block), I need to compute it before line 932 and gate the load.
+
+Let me check exactly where safe_mode value is used and confirm it's parsed from args (a simple .any() check I can hoist).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1094..1104 ✓ (1ms)
+
+Now let me write the near-miss test first (TDD), then fix the project-context gate. Let me start with the test that verifies --safe and --safemode are NOT accepted.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 35 lines)
+            let args = vec!["yoyo".to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert!(!config.safe_mode);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_safe_mode_near_miss_not_accepted() {
+  +         // Day 122: near-miss flags must NOT prefix-match --safe-mode.
+  +         // `--safe` and `--safemode` are typos, not the real flag — they should
+  +         // leave safe_mode false (and be surfaced as unknown flags elsewhere).
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         for typo in ["--safe", "--safemode", "--safe_mode"] {
+  +             let args = vec!["yoyo".to_string(), typo.to_string()];
+  +             let config = parse_args(&args).expect("should parse");
+  +             assert!(
+  +                 !config.safe_mode,
+  +                 "typo `{typo}` must not activate safe mode"
+  +             );
+  +         }
+  ... (11 more lines)
+ ✓ (1m 41s)
+            let args = vec!["yoyo".to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert!(!config.safe_mode);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_safe_mode_near_miss_not_accepted() {
+  ... (13 more lines)
+
+Now fix the real gap: gate the project-context load at line 932 on safe mode. I'll compute a local safe_mode before that block.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (5 → 11 lines)
+  -     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt
+  -     if let Some(project_context) = load_project_context() {
+  -         system_prompt.push_str("\n\n# Project Instructions\n\n");
+  -         system_prompt.push_str(&project_context);
+  +     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt.
+  +     // Safe mode (--safe-mode) skips this so a user can troubleshoot whether their
+  +     // own project instruction files (CLAUDE.md, YOYO.md, AGENTS.md, .cursorrules,
+  +     // .github/copilot-instructions.md) are the source of misbehavior.
+  +     let safe_mode = args.iter().any(|a| a == "--safe-mode");
+  +     if !safe_mode {
+  +         if let Some(project_context) = load_project_context() {
+  +             system_prompt.push_str("\n\n# Project Instructions\n\n");
+  +             system_prompt.push_str(&project_context);
+  +         }
+        }
+ ✓ (1m 47s)
+  -     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt
+  -     if let Some(project_context) = load_project_context() {
+  -         system_prompt.push_str("\n\n# Project Instructions\n\n");
+  -         system_prompt.push_str(&project_context);
+  +     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt.
+  +     // Safe mode (--safe-mode) skips this so a user can troubleshoot whether their
+  +     // own project instruction files (CLAUDE.md, YOYO.md, AGENTS.md, .cursorrules,
+  +     // .github/copilot-instructions.md) are the source of misbehavior.
+  ... (7 more lines)
+
+Now update line 1098 to reuse the local safe_mode var for consistency (avoids re-scanning args):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 4 lines)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+            lite,
+  -         safe_mode: args.iter().any(|a| a == "--safe-mode"),
+  +         safe_mode,
+        });
+ ✓ (1m 45s)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+            lite,
+  -         safe_mode: args.iter().any(|a| a == "--safe-mode"),
+  +         safe_mode,
+        });
+
+Now let me verify the repo map (line 938) is also user-config-derived — should safe mode skip it? The task lists context files, skills, hooks, MCP, custom commands. Repo map is structural codebase awareness (not user customization), so I'll leave it. Let me run the checks.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (26.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test safe_mode 2>&1 | tail… ✓ (22.1s)
+  2 tools completed in 53.6s (2 ✓)
+
+All 5 safe_mode tests pass. Let me run the full test suite and fmt check.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 && car… ✓ (1m 6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (53.1s)
+  2 tools completed in 2m 2s (2 ✓)
+
+All green: 4465 + 89 tests pass, clippy clean, fmt clean. Let me update docs. The help text already lists --safe-mode. Let me check CLAUDE.md and README for a flags section.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe-mode\|--screen-rea… ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+

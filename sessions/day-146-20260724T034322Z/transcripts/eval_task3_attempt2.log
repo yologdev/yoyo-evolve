@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The task explicitly said: do NOT add a crate, use an in-module mutex, prefer over `serial_test. But the diff shows use serial_test::serial;` at the top. Let me check what the diff actually did vs the task requirements.
+
+The diff adds the in-module mutex BUDGET_WARNING_TEST_LOCK and guards each test with it — that matches the task. But there's a pre-existing use serial_test::serial; line. Let me verify whether that's pre-existing or introduced, and whether the mutex approach was correctly applied.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial_test\|BUDGET_WAR… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 1.8s (2 ✓)
+
+The use serial_test::serial; is pre-existing (not in the diff — the diff shows it as unchanged context). So `serial_test` was already a dev-dependency. Let me verify all budget-warning tests are guarded — the task warned "do not miss one."
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_context_budget\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "BUDGET_WARNING_TEST_LOC… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 1.3s (2 ✓)
+
+All 9 test functions touching context_budget_warning/reset_context_budget_warning are guarded (9 guards + 1 static definition = 10 references). Each guard sits at the very top of its test body, before `reset_context_budget_warning()`, held for the whole scope. No production code changed. Every assertion is preserved.
+
+The serial_test import is pre-existing (not introduced by this diff) and its presence is harmless. The implementation matches the task precisely.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (1m 17s)
+
+Verdict: PASS
+
+All 9 test functions that touch the process-wide `LAST_WARNED_THRESHOLD static now acquire the in-module BUDGET_WARNING_TEST_LOCK mutex (with unwrap_or_else(into_inner)` poison recovery) at the top of each body, held for the whole scope — closing the parallel-thread race exactly as the task specified. No production code changed, no assertions weakened, scoped to the test module in one file. The serial_test import is pre-existing context (not introduced by the diff), so no new crate was added.
+
+  watch: no files changed this turn — skipping
+

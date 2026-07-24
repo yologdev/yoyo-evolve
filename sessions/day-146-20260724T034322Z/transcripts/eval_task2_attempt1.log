@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key claims in the diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe.mode\|safe_mode" s… ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 1.2s (2 ✓)
+
+There's more state than the diff shows. Let me check whether --safe-mode is in KNOWN_FLAGS and look at the full context.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '188,240p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 1.4s (2 ✓)
+
+The committed diff (HEAD~1) differs from the shown diff. The shown diff didn't include `--safe-mode in KNOWN_FLAGS, but it IS there. Also cli_config.rs has set_safe_mode/is_safe_mode` but wasn't in the shown diff. Let me check the actual committed diff and whether the flag is honored.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat && echo "--… ✓ (9ms)
+
+The committed diff only touches src/cli.rs and src/safety.rs — NOT cli_config.rs. So the safe_mode field, set_safe_mode/is_safe_mode in cli_config.rs already existed before this task. This is a pre-existing partial implementation. Let me verify what this commit actually added and check KNOWN_FLAGS was already present.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/cli.rs | gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:src/cli.rs | gre… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 1.3s (2 ✓)
+
+So --safe-mode in KNOWN_FLAGS, the Config field, set_safe_mode/is_safe_mode, and the parse-positive test already existed before this commit. This commit's actual contribution: (1) gating the project-context load with if !safe_mode, (2) adding near-miss + known-flags tests, (3) unrelated safety.rs fmt cleanup.
+
+Now the key question: is the flag actually HONORED at load sites? Let me check what the diff gates and how much is honored, and check for --help text.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_safe_mode\|safe_mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe-mode\|safe_mode" s… ✓ (6ms)
+ ✓ (9ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now this is much clearer. The --safe-mode flag was ALREADY substantially implemented across main.rs, commands.rs, repl.rs, help.rs, and cli_config.rs in prior work. This task's commit adds the one missing load-site gate: the project-context (CLAUDE.md/YOYO.md) load in cli.rs, which was the one honoring site reachable from cli.rs. Plus the near-miss tests.
+
+Let me verify the flag actually works end-to-end by running the binary with --print-system-prompt to confirm project context is skipped in safe mode.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/release/yoyo target/de… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== NORMAL ===" && ANTHROP… ✓ (1.2s)
+  2 tools completed in 5.7s (2 ✓)
+
+The flag works end-to-end: normal launch includes "Project Instructions" (project context), --safe-mode skips it. The other load sites (skills, MCP, hooks, commands) were already gated via is_safe_mode() in main.rs/commands.rs/repl.rs. Help text exists. Let me quickly confirm the near-miss behavior.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ANTHROPIC_API_KEY=test ./target/… ✓ (575ms)
+
+Confirmed: --safe is warned as unknown (not prefix-matched to --safe-mode). Everything checks out:
+
+• Project-context load gated with if !safe_mode (the load site reachable from cli.rs) — verified working via --print-system-prompt (1 → 0).
+• Skills, MCP, hooks, custom commands already gated via is_safe_mode() in main.rs/commands.rs/repl.rs.
+• --safe-mode in KNOWN_FLAGS; near-miss typos warned as unknown — verified.
+• Help text present in help.rs.
+• Near-miss + known-flags tests added.
+• The safety.rs changes are unrelated fmt cleanup (harmless).
+
+Product-safe: default off, no disk writes.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 5s)
+
+**Verdict: PASS**
+
+The --safe-mode flag is correctly implemented and honored end-to-end. I verified via the running binary that --print-system-prompt includes the "Project Instructions" section normally (count 1) but skips it under `--safe-mode (count 0). The remaining load sites (skills, MCP, hooks, custom commands) were already gated through is_safe_mode()` in main.rs/commands.rs/repl.rs from prior work, help text exists in help.rs, and near-miss typos like --safe are correctly warned as unknown flags rather than prefix-matched. The stray safety.rs edits are unrelated formatting cleanup and harmless. Product-safe: default off, no disk writes.
+
+  watch: no files changed this turn — skipping
+
