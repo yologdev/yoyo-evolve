@@ -237,6 +237,7 @@ pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
         {
             if let Some(bracket_end) = rest.find(']') {
                 let code = &rest[..bracket_end];
+                let _probe = &rest[..3]; // REGRESSION: fixed byte offset can split a multibyte char
                 let msg = rest[bracket_end + 1..].trim_start_matches(':').trim();
                 let is_warning = line.starts_with("warning");
 
@@ -3442,5 +3443,94 @@ E       assert 3 == 4
     #[test]
     fn test_watch_near_miss_silent_on_empty() {
         assert_eq!(watch_near_miss(""), None);
+    }
+
+    // --- Multibyte-output char-boundary safety (CLAUDE.md byte-index rule, #250) ---
+    //
+    // All three parsers slice raw compiler/test *output* by byte offset
+    // (`&rest[..bracket_end]`, `&rest[..colon]`, `&rest[..dash_pos]`, etc.).
+    // The slices are safe today only because every anchor delimiter (`]`, `: `,
+    // ` - `, `(`, `)`, `"`) is ASCII — a subtle invariant with, until now, no
+    // net. Real compiler/test output routinely carries multibyte characters
+    // (Rust diagnostics use `→ ╰ ─`, quoted non-ASCII identifiers; pytest/mypy
+    // messages carry accented text and emoji). These tests feed multibyte
+    // content through each parser's byte-slice paths and assert it neither
+    // panics nor corrupts the extracted message. If a future edit swaps an
+    // ASCII anchor for a `find` on a multibyte pattern, or slices at a
+    // non-boundary offset, these fail loudly instead of panicking in production
+    // (the #250 planning-agent crash class).
+
+    #[test]
+    fn parse_rust_errors_multibyte_output_does_not_panic() {
+        // `error[EXXXX]:` line whose message is loaded with multibyte chars,
+        // plus Rust's Unicode diagnostic gutter glyphs (→ ╰ ─ │).
+        let output = "\
+error[E0308]: mismatched types — expected ` Résumé`, found `naïve` ✓ 日本語
+  --> src/café.rs:42:5
+   │
+42 │     let x: Résumé = naïve();
+   │            ─────── 型が違います
+   ╰─→ note: consider changing this";
+        // Must not panic on any byte-slice path.
+        let errs = parse_rust_errors(output);
+        assert_eq!(errs.len(), 1, "should parse exactly one error");
+        assert_eq!(errs[0].code.as_deref(), Some("E0308"));
+        // Message extraction must round-trip the multibyte text intact.
+        assert!(
+            errs[0].message.contains("Résumé") && errs[0].message.contains("naïve"),
+            "multibyte message corrupted: {:?}",
+            errs[0].message,
+        );
+    }
+
+    #[test]
+    fn parse_typescript_errors_multibyte_output_does_not_panic() {
+        // tsc format with multibyte in the file path AND the message.
+        let output =
+            "src/café.ts(12,7): error TS2345: Argument «naïve» is not assignable — 型不一致 ✗";
+        let errs = parse_typescript_errors(output);
+        assert_eq!(errs.len(), 1, "should parse exactly one TS error");
+        assert_eq!(errs[0].code.as_deref(), Some("TS2345"));
+        assert!(
+            errs[0].message.contains("naïve") && errs[0].message.contains("型不一致"),
+            "multibyte TS message corrupted: {:?}",
+            errs[0].message,
+        );
+    }
+
+    #[test]
+    fn parse_python_errors_multibyte_output_does_not_panic() {
+        // pytest FAILED line and a traceback whose error message carry
+        // multibyte text — exercises `rest[..dash_pos]` and the traceback
+        // `after_prefix[..quote_end]` byte slices.
+        let output = "\
+FAILED tests/test_café.py::test_naïve - AssertionError: 期待値 ≠ 実際値 ✗
+Traceback (most recent call last):
+  File \"src/café.py\", line 7, in résumé
+ValueError: naïve — 不正な入力 ✗";
+        let errs = parse_python_errors(output);
+        assert!(!errs.is_empty(), "should parse at least one Python error");
+        // The FAILED line's message must round-trip the multibyte text.
+        assert!(
+            errs.iter().any(|e| e.message.contains("期待値")),
+            "multibyte pytest message corrupted: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn build_watch_fix_prompt_multibyte_output_does_not_panic() {
+        // End-to-end: multibyte raw output through the full prompt builder,
+        // including the WATCH_OUTPUT_MAX truncation path (safe_truncate must
+        // never split a multibyte char). Pad with multibyte content well past
+        // the truncation threshold.
+        let big = "café → naïve ✓ 日本語 ".repeat(2000); // >> WATCH_OUTPUT_MAX bytes
+        let output = format!("error[E0308]: mismatched types — {big}");
+        // Must not panic on truncation or parsing.
+        let prompt = build_watch_fix_prompt("cargo build", &output);
+        assert!(
+            prompt.contains("cargo build"),
+            "prompt should reference the watch command",
+        );
     }
 }
