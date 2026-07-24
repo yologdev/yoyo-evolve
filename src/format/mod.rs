@@ -409,9 +409,11 @@ pub fn decode_html_entities(s: &str) -> String {
         if c == '&' && chars.peek() == Some(&'#') {
             let mut entity = String::from("&#");
             chars.next(); // consume '#'
+            let mut saw_semicolon = false;
             while let Some(&nc) = chars.peek() {
                 if nc == ';' {
                     chars.next();
+                    saw_semicolon = true;
                     break;
                 }
                 entity.push(nc);
@@ -427,9 +429,13 @@ pub fn decode_html_entities(s: &str) -> String {
             if let Some(ch) = parsed.and_then(char::from_u32) {
                 decoded.push(ch);
             } else {
-                // Failed to decode — emit original
+                // Failed to decode — re-emit the original text faithfully.
+                // Only append ';' if the terminator was actually present in the
+                // input; otherwise we'd invent a phantom character (Day-146 bug).
                 decoded.push_str(&entity);
-                decoded.push(';');
+                if saw_semicolon {
+                    decoded.push(';');
+                }
             }
         } else {
             decoded.push(c);
@@ -1522,6 +1528,30 @@ mod tests {
     fn test_decode_html_entities_incomplete() {
         // Ampersand not part of an entity
         assert_eq!(decode_html_entities("a & b"), "a & b");
+    }
+
+    #[test]
+    fn test_decode_html_entities_no_phantom_semicolon() {
+        // Invariant: decode never invents characters that weren't in the input.
+        // An unterminated (no ';') AND unparseable numeric entity must not gain
+        // a phantom ';'. Regression for the Day-146 phantom-semicolon bug.
+        assert_eq!(decode_html_entities("a &#zz b"), "a &#zz b");
+        assert_eq!(decode_html_entities("x &#"), "x &#");
+        // Malformed hex with no terminator: also no phantom ';'.
+        assert_eq!(decode_html_entities("&#xZZ"), "&#xZZ");
+    }
+
+    #[test]
+    fn test_decode_html_entities_terminated_still_decodes() {
+        // A valid, terminated entity still decodes.
+        assert_eq!(decode_html_entities("&#65;"), "A");
+    }
+
+    #[test]
+    fn test_decode_html_entities_unterminated_but_parseable() {
+        // Unterminated-but-parseable numeric entity: HTML parsers commonly
+        // accept these. We decode it (no ';' required to parse the digits).
+        assert_eq!(decode_html_entities("&#65"), "A");
     }
 
     // --- Section header and divider tests ---
