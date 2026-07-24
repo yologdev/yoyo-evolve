@@ -44,6 +44,7 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
 pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
         "anthropic" => &[
+            "claude-opus-5",
             "claude-fable-5",
             "claude-opus-4-8",
             "claude-sonnet-5",

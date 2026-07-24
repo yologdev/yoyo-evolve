@@ -263,8 +263,8 @@ pub(crate) fn insert_client_headers(config: &mut ModelConfig) {
 
 /// Look up a yoagent 0.9 fleet preset for an Anthropic model name.
 ///
-/// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
-/// claude-haiku-4-5) ship with authoritative pricing, context-window, and
+/// The fleet models (claude-fable-5, claude-opus-5, claude-opus-4-8,
+/// claude-sonnet-5, claude-haiku-4-5) ship with authoritative pricing, context-window, and
 /// max-output defaults inside yoagent's presets — that's where truth lives,
 /// so we start from the preset instead of a hand-rolled config. Dated
 /// variants (e.g. "claude-opus-4-8-20260301") match by prefix and keep the
@@ -275,6 +275,8 @@ pub(crate) fn insert_client_headers(config: &mut ModelConfig) {
 pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
     let mut config = if model.starts_with("claude-fable-5") {
         ModelConfig::claude_fable_5()
+    } else if model.starts_with("claude-opus-5") {
+        ModelConfig::claude_opus_5()
     } else if model.starts_with("claude-opus-4-8") {
         ModelConfig::claude_opus_4_8()
     } else if model.starts_with("claude-sonnet-5") {
@@ -984,6 +986,27 @@ mod tests {
             lite: false,
             bash_cwd: None,
         }
+    }
+
+    #[test]
+    fn test_anthropic_preset_claude_opus_5_hits_fleet_arm() {
+        // claude-opus-5 must resolve to the yoagent preset (authoritative
+        // pricing), not fall through to the generic passthrough path.
+        let preset = anthropic_preset("claude-opus-5")
+            .expect("claude-opus-5 should map to a fleet preset");
+        let expected = ModelConfig::claude_opus_5();
+        assert_eq!(preset.cost.input_per_million, expected.cost.input_per_million);
+        assert_eq!(
+            preset.cost.output_per_million,
+            expected.cost.output_per_million
+        );
+        assert_eq!(preset.context_window, expected.context_window);
+        assert_eq!(preset.id, "claude-opus-5");
+        // A dated variant keeps the requested id but still hits the fleet arm.
+        let dated = anthropic_preset("claude-opus-5-20260724")
+            .expect("dated claude-opus-5 variant should still map to the preset");
+        assert_eq!(dated.id, "claude-opus-5-20260724");
+        assert_eq!(dated.cost.input_per_million, expected.cost.input_per_million);
     }
 
     #[test]

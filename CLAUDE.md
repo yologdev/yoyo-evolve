@@ -72,7 +72,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering
 - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
-- `format/cost.rs` — pricing, cost display, token formatting; fleet-model pricing (claude-fable-5, opus-4-8, sonnet-5, haiku-4-5) is read at runtime from yoagent 0.9's preset `ModelConfig.cost` via `agent_builder::anthropic_preset` (preset is the source of truth), all other models use the local pricing table
+- `format/cost.rs` — pricing, cost display, token formatting; fleet-model pricing (claude-fable-5, opus-5, opus-4-8, sonnet-5, haiku-4-5) is read at runtime from yoagent 0.9's preset `ModelConfig.cost` via `agent_builder::anthropic_preset` (preset is the source of truth), all other models use the local pricing table
 - `format/markdown.rs` — MarkdownRenderer for streaming markdown output
 - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter; plain-output (screen reader) switch: `set_plain_output`/`is_plain_output` (AtomicBool, set by `--screen-reader` in `cli.rs`, which also enables the existing no-color path) — when on, Spinner prints one static "running <tool>…" line and ToolProgressTimer never repaints (no `\r`, no ANSI cursor escapes); default off, byte-identical to prior behavior
 - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
