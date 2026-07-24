@@ -427,6 +427,21 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
 
     let mut report =
         format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+
+    // DREAM meter honesty (Day 146; Day-140 lesson: "one-sided self-measurement
+    // measures recall and never precision"). Recall grades only on failure days
+    // — a real breakage validated against the risk list. Green-day events grade
+    // the false-alarm signal (precision). When the whole graded set is green-day
+    // only, the meter has NEVER exercised recall: a reader must not mistake
+    // green-day precision for the whole picture. State the asymmetry explicitly
+    // — the abstention ("recall never graded") is a chosen third value, not
+    // silence (Day-144 abstention discipline). `recall_coverage_note` owns the
+    // three-state logic (failure>0 → None; both zero → None; green-only → note).
+    if let Some(note) = recall_coverage_note(stats) {
+        report.push_str(&format!(
+            "  {YELLOW}⚠ {note} — this measures precision only, not recall.{RESET}\n"
+        ));
+    }
     report.push_str(&format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
          {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
@@ -651,6 +666,80 @@ mod tests {
         let stats = compute_accuracy_stats(&events);
         assert_eq!(stats.emerging_samples, 0);
         assert!(stats.emerging_avg_pct.is_none());
+    }
+
+    #[test]
+    fn test_format_accuracy_report_recall_never_graded_when_green_only() {
+        // DREAM meter honesty: when ALL events are green-day (watch_success)
+        // and ZERO failure-day events exist, the report must STATE that recall
+        // has never been graded — the number measures precision only. A reader
+        // must not mistake green-day precision for the whole picture.
+        let events = vec![
+            ValidationEvent {
+                day: 145,
+                hit_count: 1,
+                total_changed: 3,
+                accuracy_pct: 33.3,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+            ValidationEvent {
+                day: 146,
+                hit_count: 0,
+                total_changed: 2,
+                accuracy_pct: 0.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 0, "no failure-day events in fixture");
+        assert!(stats.green_samples > 0, "green events present in fixture");
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("measures precision only"),
+            "green-only log must state recall was never graded: {report}"
+        );
+        // Must NOT fabricate a recall percentage.
+        assert!(
+            !report.contains("of breakages were on the risk list"),
+            "no recall percentage should be claimed with zero failure events: {report}"
+        );
+    }
+
+    #[test]
+    fn test_format_accuracy_report_no_recall_note_when_failure_events_present() {
+        // Near-miss side (Day-122 lesson): once ANY failure-day event exists,
+        // the honest "precision only" line must be ABSENT — recall IS being
+        // graded, so the asymmetry warning would be wrong.
+        let events = vec![
+            ValidationEvent {
+                day: 145,
+                hit_count: 2,
+                total_changed: 4,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            },
+            ValidationEvent {
+                day: 146,
+                hit_count: 1,
+                total_changed: 3,
+                accuracy_pct: 33.3,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_success".to_string()),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert!(
+            stats.failure_samples > 0,
+            "failure event present in fixture"
+        );
+        let report = format_accuracy_report(&stats);
+        assert!(
+            !report.contains("measures precision only"),
+            "recall-not-graded note must be absent when a failure event exists: {report}"
+        );
     }
 
     #[test]
