@@ -1984,6 +1984,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_escalates() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let w60 = context_budget_warning(60_000, 100_000);
         assert!(w60.is_some());
@@ -1995,6 +1998,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_reset_rearms() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         let w1 = context_budget_warning(60_000, 100_000);
         assert!(w1.is_some());
@@ -2006,6 +2012,9 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_zero_max_returns_none() {
+        let _guard = BUDGET_WARNING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
         assert!(context_budget_warning(100, 0).is_none());
     }
