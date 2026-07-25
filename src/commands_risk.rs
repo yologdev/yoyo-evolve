@@ -1501,21 +1501,58 @@ fn parse_git_log_name_only(output: &str) -> Vec<CommitEntry> {
     entries
 }
 
+/// Whole-word forms that mean "this commit repaired something that was broken".
+///
+/// Exact token match only — deliberately NOT a substring or suffix test, because
+/// `prefix`/`suffix`/`postfix`/`infix`/`affix`/`fixture` all end in "fix" and none
+/// of them are repairs. See `message_claims_repair`.
+const REPAIR_TOKENS: &[&str] = &[
+    "fix",
+    "fixes",
+    "fixed",
+    "fixing",
+    "fixup",
+    "hotfix",
+    "hotfixes",
+    "bugfix",
+    "bugfixes",
+    "revert",
+    "reverts",
+    "reverted",
+    "reverting",
+];
+
+/// True when a commit message claims to repair breakage.
+///
+/// Splits the message into lowercase alphanumeric tokens (so `fix:`, `fixes #12`,
+/// `bug-fix`, `fixup!` and git's own `Revert "..."` all tokenize to a repair word)
+/// and requires an EXACT token match against `REPAIR_TOKENS`.
+///
+/// The previous implementation used `msg.contains("fix")`, which graded
+/// "add test fixtures" and "rename prefix helper" as break-fixes — phantom
+/// breakage fed straight into the failure-day half of the prediction meter,
+/// where it inflates `broke_files` with files that never broke. Granularity bug,
+/// not a pattern bug (Day 131): the fix is token matching, not more exceptions.
+fn message_claims_repair(message: &str) -> bool {
+    message
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| {
+            let lower = tok.to_ascii_lowercase();
+            REPAIR_TOKENS.contains(&lower.as_str())
+        })
+}
+
 /// Classify commits and return the set of files that "broke" —
 /// i.e., appeared in revert or fix commits.
 ///
-/// KNOWN GRANULARITY BUG (follow-up to the Day 147 parser fix): the `contains`
-/// checks below match substrings, so "prefix", "suffix", "fixture" and every
-/// `eval-fix` harness commit are all classified as breakage. Deliberately left
-/// alone here — the parser fix (which made this red branch reachable at all)
-/// was scoped separately from re-tightening the classifier to token matching.
+/// Classification is delegated to `message_claims_repair`, which matches whole
+/// tokens. The earlier substring version (fixed Day 147) counted "prefix",
+/// "suffix" and "fixture" commits as breakage, inflating this set with files
+/// that never broke.
 fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
     let mut broke = std::collections::HashSet::new();
     for entry in entries {
-        let msg_lower = entry.message.to_lowercase();
-        let is_revert = msg_lower.contains("revert");
-        let is_fix = msg_lower.contains("fix");
-        if is_revert || is_fix {
+        if message_claims_repair(&entry.message) {
             for f in &entry.files {
                 broke.insert(f.clone());
             }
@@ -2537,6 +2574,71 @@ src/abcdef1.rs
         assert!(broke.contains("src/parser.rs"));
         assert!(broke.contains("src/docs.rs"));
         assert!(!broke.contains("src/tests.rs"));
+    }
+
+    #[test]
+    fn test_message_claims_repair_fixture_table() {
+        // (message, expected) — the near-miss side matters as much as the hit side.
+        let cases: &[(&str, bool)] = &[
+            // ── real repair claims ──
+            ("abc1234 fix: handle empty input", true),
+            ("abc1234 Fix typo in docs", true),
+            ("abc1234 fixes #123", true),
+            ("abc1234 fixed the parser", true),
+            ("abc1234 fixing flaky test", true),
+            ("abc1234 hotfix for release", true),
+            ("abc1234 bugfix: off-by-one", true),
+            ("abc1234 bug-fix in the loop", true),
+            ("abc1234 fixup! earlier commit", true),
+            ("abc1234 Revert \"add feature\"", true),
+            ("abc1234 reverted the risky change", true),
+            ("abc1234 reverts the merge", true),
+            // ── near misses: contain "fix"/"revert" as a substring only ──
+            ("abc1234 add test fixtures for the parser", false),
+            ("abc1234 rename prefix handling", false),
+            ("abc1234 strip the suffix from paths", false),
+            ("abc1234 support postfix operators", false),
+            ("abc1234 affix a header to the report", false),
+            ("abc1234 document infix notation", false),
+            ("abc1234 Add tests", false),
+        ];
+        for (msg, expected) in cases {
+            assert_eq!(
+                message_claims_repair(msg),
+                *expected,
+                "message_claims_repair({msg:?}) should be {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_broke_files_ignores_fix_substrings() {
+        // A "fixtures" commit is NOT a break-fix — grading it as one poisons
+        // the failure-day half of the prediction meter with phantom breakage.
+        let entries = vec![
+            CommitEntry {
+                message: "abc1234 add test fixtures for the risk parser".to_string(),
+                files: vec!["src/fixtures.rs".to_string()],
+            },
+            CommitEntry {
+                message: "def5678 rename prefix helper".to_string(),
+                files: vec!["src/prefix.rs".to_string()],
+            },
+            CommitEntry {
+                message: "ghi9012 fix: off-by-one in the loop".to_string(),
+                files: vec!["src/loop.rs".to_string()],
+            },
+        ];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            !broke.contains("src/fixtures.rs"),
+            "\"fixtures\" must not count as a fix"
+        );
+        assert!(
+            !broke.contains("src/prefix.rs"),
+            "\"prefix\" must not count as a fix"
+        );
+        assert!(broke.contains("src/loop.rs"), "a real fix must still count");
     }
 
     #[test]
