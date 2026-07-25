@@ -3995,7 +3995,23 @@ src/abcdef1.rs
     // or to name the wrong files, so `compute_validation` grades nothing and
     // the "recall ungraded — 0 failure-day events" note stays on.
     //
-    // Graded: <PENDING> — fill in honestly at the end. A MISS is a success.
+    // Graded: MISSED — the whole chain ran clean on the first try. Against the
+    // verbatim 3-commit log the parser returned 3 entries, `classify_broke_files`
+    // returned a non-empty set of exactly the repair-claiming commit's own three
+    // files (and did NOT sweep in the other commits' files), `compute_validation`
+    // graded 1 hit / 2 surprises, the untagged event round-tripped through
+    // `write_validation_event` → `load_validation_history_from`, `is_green_event`
+    // correctly called it a failure day, `failure_hit_rate_pct` came back
+    // Some(33.3), `recall_coverage_note` switched off, and the report rendered a
+    // real recall number. Both halves of my guess were wrong: the substring match
+    // on the subject line did fire, and attributing the repairing commit's own
+    // files as the broken set is in fact the intended semantics here (the commit
+    // that says "fix" touches what was broken), not the misattribution I feared.
+    // So no bug to fix — what this buys is the thing last night's learning
+    // demanded: the red branch is no longer "reachable in principle", it is
+    // exercised with a pinned outcome. The zero in `/risk accuracy` is now an
+    // explained observation (no failure day has occurred) rather than an
+    // unexamined one (the path might be dead).
     // ================================================================
 
     /// Verbatim capture — NOT hand-written. Produced by:
