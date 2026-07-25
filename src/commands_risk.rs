@@ -1423,15 +1423,34 @@ struct CommitEntry {
     files: Vec<String>,
 }
 
+/// True when `line` has the shape of a `git log --oneline` commit header:
+/// 7–40 lowercase-hex chars, a single space, then a non-empty subject.
+///
+/// Deliberately conservative — a file path essentially never matches this
+/// (paths have no space after a bare hex token).  `deadbeef.rs`,
+/// `src/abcdef1.rs`, `memory/learnings.jsonl` all correctly return false.
+fn looks_like_oneline_commit_header(line: &str) -> bool {
+    let Some((hash, rest)) = line.split_once(' ') else {
+        return false;
+    };
+    if rest.trim().is_empty() {
+        return false;
+    }
+    let len = hash.len();
+    (7..=40).contains(&len) && hash.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Parse `git log --name-only --oneline` output into structured entries.
 ///
-/// Each commit is one message line followed by zero or more blank-separated
-/// file paths, then a blank line.  Example:
+/// Each commit is one `<hash> <subject>` header line followed by zero or more
+/// file paths.  Real git output has NO blank line between commits, so a new
+/// commit is detected by the header shape (see
+/// `looks_like_oneline_commit_header`); blank lines are also honoured as
+/// separators for tolerance.  Example:
 /// ```text
 /// abc1234 Fix clippy warnings
 /// src/foo.rs
 /// src/bar.rs
-///
 /// def5678 Revert "add feature"
 /// src/baz.rs
 /// ```
@@ -1453,8 +1472,17 @@ fn parse_git_log_name_only(output: &str) -> Vec<CommitEntry> {
             continue;
         }
 
-        if current_msg.is_none() {
-            // First non-blank line of a commit: "hash message..."
+        if looks_like_oneline_commit_header(trimmed) {
+            // New commit header: flush the previous entry, start a fresh one.
+            if let Some(msg) = current_msg.take() {
+                entries.push(CommitEntry {
+                    message: msg,
+                    files: std::mem::take(&mut current_files),
+                });
+            }
+            current_msg = Some(trimmed.to_string());
+        } else if current_msg.is_none() {
+            // Leading line that doesn't look like a header: treat as the message.
             current_msg = Some(trimmed.to_string());
         } else {
             // Subsequent non-blank line: file path
@@ -1475,6 +1503,12 @@ fn parse_git_log_name_only(output: &str) -> Vec<CommitEntry> {
 
 /// Classify commits and return the set of files that "broke" —
 /// i.e., appeared in revert or fix commits.
+///
+/// KNOWN GRANULARITY BUG (follow-up to the Day 147 parser fix): the `contains`
+/// checks below match substrings, so "prefix", "suffix", "fixture" and every
+/// `eval-fix` harness commit are all classified as breakage. Deliberately left
+/// alone here — the parser fix (which made this red branch reachable at all)
+/// was scoped separately from re-tightening the classifier to token matching.
 fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
     let mut broke = std::collections::HashSet::new();
     for entry in entries {
@@ -2363,6 +2397,106 @@ src/baz.rs
         let entries = parse_git_log_name_only(log);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].files, vec!["src/a.rs"]);
+    }
+
+    /// Verbatim shape of real `git log --oneline --name-only` output:
+    /// git emits NO blank line between commits.  Captured from this repo on
+    /// Day 147 (`git log --oneline --name-only -n 3 | cat -A`).
+    const REAL_GIT_LOG: &str = "\
+c618ce4c Day 146: bump skill-evolve counter (4)
+.skill_evolve_counter
+2a7d20d8 Day 146 (22:03): session wrap-up
+.yoyo/risk_snapshots.jsonl
+.yoyo/risk_validations.jsonl
+936e1f2b Day 146 (22:03): update learnings
+memory/learnings.jsonl
+";
+
+    #[test]
+    fn test_parse_git_log_name_only_real_output_no_blank_separators() {
+        let entries = parse_git_log_name_only(REAL_GIT_LOG);
+        assert_eq!(
+            entries.len(),
+            3,
+            "git --oneline emits no blank separators; each hash header starts a commit"
+        );
+        assert_eq!(entries[0].files, vec![".skill_evolve_counter"]);
+        assert_eq!(
+            entries[1].files,
+            vec![".yoyo/risk_snapshots.jsonl", ".yoyo/risk_validations.jsonl"]
+        );
+        assert_eq!(entries[2].files, vec!["memory/learnings.jsonl"]);
+        // No commit subject line may ever leak into a files list.
+        for e in &entries {
+            for f in &e.files {
+                assert!(
+                    !looks_like_oneline_commit_header(f),
+                    "commit header leaked into files: {f}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_git_log_name_only_commit_count_is_honest() {
+        // `commit_count` in the validation report is exactly this length.
+        assert_eq!(parse_git_log_name_only(REAL_GIT_LOG).len(), 3);
+    }
+
+    #[test]
+    fn test_classify_broke_files_reachable_when_revert_is_not_first_commit() {
+        // The bug that killed recall grading: only the FIRST commit's message
+        // was ever inspected, so a revert in commit #2 was invisible.
+        let log = "\
+9999999 Day 147: add a feature
+src/feature.rs
+abc1234 Revert \"something\"
+src/foo.rs
+";
+        let entries = parse_git_log_name_only(log);
+        assert_eq!(entries.len(), 2);
+        let broke = classify_broke_files(&entries);
+        assert_eq!(broke.len(), 1, "expected exactly src/foo.rs, got {broke:?}");
+        assert!(broke.contains("src/foo.rs"));
+    }
+
+    #[test]
+    fn test_looks_like_oneline_commit_header_near_misses() {
+        // Fires: real --oneline headers (short and full-length hashes).
+        assert!(looks_like_oneline_commit_header(
+            "abc1234 Fix clippy warnings"
+        ));
+        assert!(looks_like_oneline_commit_header(
+            "c618ce4c Day 146: bump skill-evolve counter (4)"
+        ));
+        assert!(looks_like_oneline_commit_header(
+            "0123456789abcdef0123456789abcdef01234567 full sha subject"
+        ));
+
+        // Near misses that must stay FILE PATHS, not headers:
+        assert!(!looks_like_oneline_commit_header("deadbeef.rs"));
+        assert!(!looks_like_oneline_commit_header("src/abcdef1.rs"));
+        assert!(!looks_like_oneline_commit_header("memory/learnings.jsonl"));
+        assert!(!looks_like_oneline_commit_header(".skill_evolve_counter"));
+        assert!(!looks_like_oneline_commit_header("abc123 too short hash"));
+        assert!(!looks_like_oneline_commit_header("abcdefg1 non hex char"));
+        assert!(!looks_like_oneline_commit_header("abc1234")); // no subject
+        assert!(!looks_like_oneline_commit_header("abc1234 ")); // empty subject
+        assert!(!looks_like_oneline_commit_header(""));
+    }
+
+    #[test]
+    fn test_parse_git_log_name_only_hashlike_path_and_midline_hash() {
+        // A hash-like file name and a commit subject mentioning a hash mid-line
+        // must both parse correctly.
+        let log = "\
+abc1234 Revert commit deadbeef1 in parser
+deadbeef.rs
+src/abcdef1.rs
+";
+        let entries = parse_git_log_name_only(log);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].files, vec!["deadbeef.rs", "src/abcdef1.rs"]);
     }
 
     #[test]
