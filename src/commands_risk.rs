@@ -3997,4 +3997,153 @@ src/abcdef1.rs
     //
     // Graded: <PENDING> — fill in honestly at the end. A MISS is a success.
     // ================================================================
+
+    /// Verbatim capture — NOT hand-written. Produced by:
+    ///
+    /// ```text
+    /// git log --oneline --name-only -3 faeb5fa8
+    /// ```
+    ///
+    /// run in this repo on Day 147 and pasted unedited. `faeb5fa8` is the
+    /// Day-147 commit that fixed `parse_git_log_name_only` itself, so the log
+    /// exercises the real shapes: a repair-claiming subject, a subject with a
+    /// parenthesised counter, and a subject containing a colon and digits.
+    /// A hand-written fixture would pin my belief about the input; this pins
+    /// the input.
+    const VERBATIM_GIT_LOG_3: &str = "\
+faeb5fa8 Day 147 (02:34): Fix the git-log parser that silently collapses every validation into one commit (recall path is dead) (Task 1)
+.yoyo/risk_weights.json
+CLAUDE.md
+src/commands_risk.rs
+c618ce4c Day 146: bump skill-evolve counter (4)
+.skill_evolve_counter
+2a7d20d8 Day 146 (22:03): session wrap-up
+.yoyo/risk_snapshots.jsonl
+.yoyo/risk_validations.jsonl
+";
+
+    /// END-TO-END REACHABILITY PROOF for the failure-day (red) grading branch.
+    ///
+    /// Day 147 made this branch *reachable* by fixing the git-log parser, but
+    /// nothing had ever driven it, so `/risk accuracy`'s "recall ungraded —
+    /// 0 failure-day events" was an unexplained zero rather than a fact about
+    /// the world. This drives a synthetic failure day through the REAL chain —
+    /// no re-implemented logic:
+    ///
+    ///   parse_git_log_name_only → classify_broke_files → compute_validation
+    ///     → write_validation_event (tempdir) → load_validation_history_from
+    ///     → compute_accuracy_stats → recall_coverage_note / report
+    ///
+    /// and asserts the claims nobody had verified.
+    #[test]
+    fn test_failure_day_red_branch_fires_end_to_end() {
+        // --- 1. Real parser on verbatim input ------------------------------
+        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_3);
+        assert_eq!(
+            entries.len(),
+            3,
+            "commit boundaries must be detected by header shape — a collapsed \
+             count is the exact Day-147 bug that made this branch dead"
+        );
+        assert_eq!(entries[1].files, vec![".skill_evolve_counter".to_string()]);
+
+        // --- 2. The gate the red branch depends on -------------------------
+        let broke = classify_broke_files(&entries);
+        assert!(
+            !broke.is_empty(),
+            "the repair-claiming commit must yield a non-empty broken set"
+        );
+        assert!(broke.contains("src/commands_risk.rs"));
+        assert!(broke.contains("CLAUDE.md"));
+        assert!(broke.contains(".yoyo/risk_weights.json"));
+        // Files from the NON-repair commits must not be swept in.
+        assert!(
+            !broke.contains(".skill_evolve_counter"),
+            "only the repairing commit's files count as breakage"
+        );
+
+        // --- 3. Validation with one hit and one surprise -------------------
+        let predicted: Vec<String> = vec![
+            "src/commands_risk.rs".to_string(), // hit
+            "src/watch.rs".to_string(),         // clean
+        ];
+        let result = compute_validation(&predicted, &broke, None, entries.len());
+        assert_eq!(result.hits, vec!["src/commands_risk.rs".to_string()]);
+        assert_eq!(result.clean, vec!["src/watch.rs".to_string()]);
+        assert_eq!(
+            result.surprises.len(),
+            2,
+            "CLAUDE.md and .yoyo/risk_weights.json broke but weren't predicted"
+        );
+        assert_eq!(result.commit_count, 3);
+
+        // --- 4. Persist the untagged (CLI red-path) event to a TEMPDIR -----
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("risk_validations.jsonl");
+        let hits: Vec<String> = result.hits.clone();
+        let surprises: Vec<String> = result.surprises.iter().map(|(f, _)| f.clone()).collect();
+        let total_changed = hits.len() + surprises.len();
+        let accuracy_pct = (hits.len() as f64 / total_changed as f64) * 100.0;
+        write_validation_event(
+            &path,
+            147,
+            "cli",
+            &hits,
+            &surprises,
+            (accuracy_pct * 10.0).round() / 10.0,
+            None, // no emerging forecast in this synthetic snapshot
+            None, // untagged severity — the shape handle_risk_validate writes
+            None,
+        )
+        .expect("write validation event");
+
+        // --- 5. Read back with the real parser and grade -------------------
+        let events = load_validation_history_from(&path);
+        assert_eq!(events.len(), 1, "one graded event must round-trip");
+        let ev = &events[0];
+        assert_eq!(ev.hit_count, 1);
+        assert_eq!(ev.total_changed, 3);
+        assert!(
+            !crate::commands_risk_accuracy::is_green_event(ev),
+            "an untagged (severity: None) event is a FAILURE-day event — if this \
+             ever flips, every CLI-graded red event silently becomes green"
+        );
+
+        let stats = crate::commands_risk_accuracy::compute_accuracy_stats(&events);
+        assert!(
+            stats.failure_samples >= 1,
+            "the failure-day branch must actually count this event"
+        );
+        assert!(
+            stats.failure_hit_rate_pct.is_some(),
+            "recall must be graded, not None, once a failure-day event exists"
+        );
+        let recall = stats.failure_hit_rate_pct.unwrap();
+        assert!(
+            (recall - 100.0 / 3.0).abs() < 0.01,
+            "recall should be 1 hit / 3 broken files, got {recall}"
+        );
+        assert_eq!(stats.green_samples, 0);
+
+        // --- 6. The user-visible zero must switch off ----------------------
+        assert!(
+            crate::commands_risk_accuracy::recall_coverage_note(&stats).is_none(),
+            "the 'recall ungraded — 0 failure-day events' note must disappear \
+             the moment one failure-day event is graded"
+        );
+
+        let report = crate::commands_risk_accuracy::format_accuracy_report(&stats);
+        assert!(
+            !report.contains("(no failure-day events yet)"),
+            "report still claims no failure-day events:\n{report}"
+        );
+        assert!(
+            report.contains("recall"),
+            "report must render a recall line:\n{report}"
+        );
+        assert!(
+            report.contains("33%"),
+            "report must render the real recall number:\n{report}"
+        );
+    }
 }
