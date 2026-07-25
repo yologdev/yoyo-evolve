@@ -1362,6 +1362,37 @@ pub async fn run_repl(
                 })
                 .await;
             }
+
+            // ── Terminal-state marker (issue #631) ──
+            // Say out loud whether this turn believes it finished or handed
+            // back mid-work. Silent-and-ambiguous is what users were reading
+            // as "maybe type continue?"; a stated belief can be wrong, but it
+            // can also be argued with.
+            //
+            // `did_work` proxy: the turn touched at least one file. That's the
+            // cheapest signal reachable here — imprecise for read-only turns
+            // (a paused exploration turn prints nothing), but the error is
+            // toward silence, which is the product-safe direction.
+            if !is_quiet() {
+                let did_work = session_changes.snapshot().len() > changes_before.len();
+                let end = classify_turn_end(
+                    &last_text,
+                    agent.follow_up_queue_len(),
+                    did_work,
+                    had_error,
+                    auto_continue_count,
+                    max_continues,
+                );
+                if let Some(line) = format_turn_end(
+                    end,
+                    did_work,
+                    auto_continue_count,
+                    max_continues,
+                    crate::format::is_plain_output(),
+                ) {
+                    eprintln!("{DIM}  {line}{RESET}");
+                }
+            }
         }
 
         // Clear plan-apply flag after prompt + auto-continue finishes
@@ -1443,6 +1474,90 @@ pub(crate) fn get_max_auto_continues(
 /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
 pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
     queue_pending > 0 || looks_incomplete(text)
+}
+
+/// Why a turn ended, as far as yoyo can tell.
+///
+/// This is a *stated belief*, not ground truth — a belief that is printed can
+/// be argued with; a silent one can't (issue #631).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnEnd {
+    /// Nothing pending, no error, and the turn closed with real prose.
+    Done,
+    /// The turn stopped while work still looked outstanding: an error, a
+    /// non-empty follow-up queue, or tool activity with no closing summary.
+    Paused,
+    /// The auto-continue budget ran out with work still queued.
+    BudgetSpent,
+}
+
+/// Minimum length (chars, trimmed) of closing text we accept as a "summary".
+/// Shorter than this after tool activity reads as "stopped mid-work" — the
+/// model went quiet rather than wrapping up.
+const MIN_SUMMARY_CHARS: usize = 20;
+
+/// Classify why the turn ended, from data already in hand at the end of the
+/// auto-continue loop. Pure — no I/O, no globals — so it can be table-tested.
+///
+/// Provider-agnostic: `queue_pending == 0` is the norm for providers that
+/// don't populate a follow-up queue, and never on its own reads as "paused".
+pub(crate) fn classify_turn_end(
+    final_text: &str,
+    queue_pending: usize,
+    used_tools: bool,
+    had_error: bool,
+    continues_used: u32,
+    max_continues: u32,
+) -> TurnEnd {
+    // Budget exhaustion is only meaningful when work is demonstrably still
+    // queued — otherwise "used all continues" just means a long, finished turn.
+    if max_continues > 0 && continues_used >= max_continues && queue_pending > 0 {
+        return TurnEnd::BudgetSpent;
+    }
+    if had_error || queue_pending > 0 {
+        return TurnEnd::Paused;
+    }
+    // Tool activity that ends with (near-)silence is the shape the user
+    // described: work happened, no wrap-up followed.
+    if used_tools && final_text.trim().chars().count() < MIN_SUMMARY_CHARS {
+        return TurnEnd::Paused;
+    }
+    TurnEnd::Done
+}
+
+/// Render the one-line terminal-state marker, or `None` when nothing should
+/// be printed.
+///
+/// `did_work` is the "this turn actually did something" gate — a plain
+/// conversational reply should not be stamped `✓ done`. When `plain` is set
+/// (screen-reader mode) the glyphs are dropped for words.
+pub(crate) fn format_turn_end(
+    end: TurnEnd,
+    did_work: bool,
+    continues_used: u32,
+    max_continues: u32,
+    plain: bool,
+) -> Option<String> {
+    if !did_work {
+        return None;
+    }
+    Some(match end {
+        TurnEnd::Done => {
+            let mark = if plain { "done:" } else { "✓ done —" };
+            format!("{mark} nothing queued")
+        }
+        TurnEnd::Paused => {
+            let mark = if plain { "stopped:" } else { "⏸ stopped" };
+            format!("{mark} no summary — type \"continue\" if this looks unfinished")
+        }
+        TurnEnd::BudgetSpent => {
+            let mark = if plain { "stopped:" } else { "⏸" };
+            format!(
+                "{mark} auto-continue budget spent ({continues_used}/{max_continues}) \
+                 — type \"continue\" to resume"
+            )
+        }
+    })
 }
 
 /// Format a dim one-line hint naming the next queued follow-up item.
@@ -2380,6 +2495,103 @@ mod tests {
         assert!(!looks_incomplete(""));
         assert!(!looks_incomplete("ok"));
         assert!(!looks_incomplete("short response"));
+    }
+
+    // ── Terminal-state marker (issue #631) ──
+
+    const SUMMARY: &str = "Fixed the parser and added a regression test; all checks pass locally.";
+
+    #[test]
+    fn classify_turn_end_table() {
+        // (final_text, queue, used_tools, had_error, used, max, expected)
+        let cases: &[(&str, usize, bool, bool, u32, u32, TurnEnd)] = &[
+            // Clean finish: work done, real summary, nothing queued.
+            (SUMMARY, 0, true, false, 0, 5, TurnEnd::Done),
+            // Tool activity that trailed off into silence — the #631 shape.
+            ("", 0, true, false, 0, 5, TurnEnd::Paused),
+            ("ok", 0, true, false, 0, 5, TurnEnd::Paused),
+            // Errors always hand back.
+            (SUMMARY, 0, true, true, 0, 5, TurnEnd::Paused),
+            // Work still queued but budget not spent → paused, not budget.
+            (SUMMARY, 2, true, false, 1, 5, TurnEnd::Paused),
+            // Budget spent WITH pending work.
+            (SUMMARY, 3, true, false, 5, 5, TurnEnd::BudgetSpent),
+            ("", 1, true, false, 6, 5, TurnEnd::BudgetSpent),
+            // NEAR MISS: budget fully used but queue empty → a long finished
+            // turn, not a hand-back (Day 122: test the non-firing side).
+            (SUMMARY, 0, true, false, 5, 5, TurnEnd::Done),
+            // NEAR MISS: max_continues == 0 (auto-continue disabled) must not
+            // read as "budget spent" just because 0 >= 0.
+            (SUMMARY, 0, true, false, 0, 0, TurnEnd::Done),
+            // NEAR MISS: short text with NO tool activity is ordinary chat.
+            ("sure", 0, false, false, 0, 5, TurnEnd::Done),
+            // Provider that never populates the queue: 0 pending is normal and
+            // must not read as paused when a summary exists.
+            (SUMMARY, 0, true, false, 0, 5, TurnEnd::Done),
+        ];
+        for (text, queue, tools, err, used, max, expected) in cases {
+            let got = classify_turn_end(text, *queue, *tools, *err, *used, *max);
+            assert_eq!(
+                got, *expected,
+                "classify_turn_end({text:?}, {queue}, {tools}, {err}, {used}, {max})"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_turn_end_summary_length_boundary() {
+        // Exactly at the threshold counts as a summary; one char short doesn't.
+        let at = "x".repeat(MIN_SUMMARY_CHARS);
+        let below = "x".repeat(MIN_SUMMARY_CHARS - 1);
+        assert_eq!(classify_turn_end(&at, 0, true, false, 0, 5), TurnEnd::Done);
+        assert_eq!(
+            classify_turn_end(&below, 0, true, false, 0, 5),
+            TurnEnd::Paused
+        );
+        // Multi-byte text must be counted in chars, not bytes (and not panic).
+        let emoji = "🐙".repeat(MIN_SUMMARY_CHARS);
+        assert_eq!(
+            classify_turn_end(&emoji, 0, true, false, 0, 5),
+            TurnEnd::Done
+        );
+    }
+
+    #[test]
+    fn format_turn_end_suppressed_for_trivial_chat_turns() {
+        // No work signal → no marker at all, whatever the classification.
+        for end in [TurnEnd::Done, TurnEnd::Paused, TurnEnd::BudgetSpent] {
+            assert_eq!(format_turn_end(end, false, 0, 5, false), None);
+        }
+    }
+
+    #[test]
+    fn format_turn_end_renders_each_state() {
+        let done = format_turn_end(TurnEnd::Done, true, 0, 5, false).unwrap();
+        assert!(done.contains("done"), "{done}");
+        assert!(done.contains("nothing queued"), "{done}");
+
+        let paused = format_turn_end(TurnEnd::Paused, true, 0, 5, false).unwrap();
+        assert!(paused.contains("continue"), "{paused}");
+
+        let budget = format_turn_end(TurnEnd::BudgetSpent, true, 5, 5, false).unwrap();
+        assert!(budget.contains("5/5"), "{budget}");
+        assert!(budget.contains("continue"), "{budget}");
+
+        // Always exactly one line — this prints after every working turn.
+        for line in [done, paused, budget] {
+            assert!(!line.contains('\n'), "marker must be one line: {line}");
+        }
+    }
+
+    #[test]
+    fn format_turn_end_plain_mode_drops_glyphs() {
+        for end in [TurnEnd::Done, TurnEnd::Paused, TurnEnd::BudgetSpent] {
+            let plain = format_turn_end(end, true, 5, 5, true).unwrap();
+            assert!(
+                !plain.contains('✓') && !plain.contains('⏸') && !plain.contains('\x1b'),
+                "plain marker must be glyph-free and escape-free: {plain}"
+            );
+        }
     }
 
     #[test]
