@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the bug exists as described.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only -n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_git_log_name_only… ✓ (6ms)
+ ✓ (3ms)
+  2 tools completed in 974ms (2 ✓)
+
+Bug confirmed — no blank lines between commits in real output.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1420,1500p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2335,2415p src/commands_r… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 8.1s (2 ✓)
+
+Bug confirmed. Writing tests first (red), then the fix.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1426,1438p src/commands_r… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1424..1440 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now the tests (red first):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 100 lines)
+  +     /// Verbatim shape of real `git log --oneline --name-only` output:
+  +     /// git emits NO blank line between commits.  Captured from this repo on
+  +     /// Day 147 (`git log --oneline --name-only -n 3 | cat -A`).
+  +     const REAL_GIT_LOG: &str = "\
+  + c618ce4c Day 146: bump skill-evolve counter (4)
+  + .skill_evolve_counter
+  + 2a7d20d8 Day 146 (22:03): session wrap-up
+  + .yoyo/risk_snapshots.jsonl
+  + .yoyo/risk_validations.jsonl
+  + 936e1f2b Day 146 (22:03): update learnings
+  + memory/learnings.jsonl
+  + ";
+  + 
+  +     #[test]
+  +     fn test_parse_git_log_name_only_real_output_no_blank_separators() {
+  +         let entries = parse_git_log_name_only(REAL_GIT_LOG);
+  +         assert_eq!(
+  +             entries.len(),
+  +             3,
+  +             "git --oneline emits no blank separators; each hash header starts a commit"
+  ... (80 more lines)
+ ✓ (9.6s)
+  +     /// Verbatim shape of real `git log --oneline --name-only` output:
+  +     /// git emits NO blank line between commits.  Captured from this repo on
+  +     /// Day 147 (`git log --oneline --name-only -n 3 | cat -A`).
+  +     const REAL_GIT_LOG: &str = "\
+  + c618ce4c Day 146: bump skill-evolve counter (4)
+  + .skill_evolve_counter
+  + 2a7d20d8 Day 146 (22:03): session wrap-up
+  + .yoyo/risk_snapshots.jsonl
+  ... (13 more lines)
+
+Red as expected. Now the fix:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (38 → 66 lines)
+  + /// True when `line` has the shape of a `git log --oneline` commit header:
+  + /// 7–40 lowercase-hex chars, a single space, then a non-empty subject.
+  + ///
+  + /// Deliberately conservative — a file path essentially never matches this
+  + /// (paths have no space after a bare hex token).  `deadbeef.rs`,
+  + /// `src/abcdef1.rs`, `memory/learnings.jsonl` all correctly return false.
+  + fn looks_like_oneline_commit_header(line: &str) -> bool {
+  +     let Some((hash, rest)) = line.split_once(' ') else {
+  +         return false;
+  +     };
+  +     if rest.trim().is_empty() {
+  +         return false;
+  +     }
+  +     let len = hash.len();
+  +     (7..=40).contains(&len) && hash.chars().all(|c| c.is_ascii_hexdigit())
+  + }
+  + 
+    /// Parse `git log --name-only --oneline` output into structured entries.
+    ///
+  - /// Each commit is one message line followed by zero or more blank-separated
+  ... (34 more lines)
+ ✓ (1m 14s)
+  + /// True when `line` has the shape of a `git log --oneline` commit header:
+  + /// 7–40 lowercase-hex chars, a single space, then a non-empty subject.
+  + ///
+  + /// Deliberately conservative — a file path essentially never matches this
+  + /// (paths have no space after a bare hex token).  `deadbeef.rs`,
+  + /// `src/abcdef1.rs`, `memory/learnings.jsonl` all correctly return false.
+  + fn looks_like_oneline_commit_header(line: &str) -> bool {
+  +     let Some((hash, rest)) = line.split_once(' ') else {
+  ... (13 more lines)
+
+Now the follow-up note on classify_broke_files (non-goal, but discoverable):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 9 lines)
+    /// Classify commits and return the set of files that "broke" —
+    /// i.e., appeared in revert or fix commits.
+  + ///
+  + /// KNOWN GRANULARITY BUG (follow-up to the Day 147 parser fix): the `contains`
+  + /// checks below match substrings, so "prefix", "suffix", "fixture" and every
+  + /// `eval-fix` harness commit are all classified as breakage. Deliberately left
+  + /// alone here — the parser fix (which made this red branch reachable at all)
+  + /// was scoped separately from re-tightening the classifier to token matching.
+    fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+ ✓ (1m 17s)
+    /// Classify commits and return the set of files that "broke" —
+    /// i.e., appeared in revert or fix commits.
+  + ///
+  + /// KNOWN GRANULARITY BUG (follow-up to the Day 147 parser fix): the `contains`
+  + /// checks below match substrings, so "prefix", "suffix", "fixture" and every
+  + /// `eval-fix` harness commit are all classified as breakage. Deliberately left
+  + /// alone here — the parser fix (which made this red branch reachable at all)
+  + /// was scoped separately from re-tightening the classifier to token matching.
+    fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (34.9s)
+  3 tools completed in 3m 18s (3 ✓)
+
+All green (4487 tests). Now the honest docs line:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "The CLI validate path" … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+  + Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence. Day 147: the shared git-log parser these paths feed on (`parse_git_log_name_only` in `commands_risk.rs`) now detects commit boundaries by the `--oneline` header shape (`looks_like_oneline_commit_header` — 7–40 hex chars + space + non-empty subject) instead of blank lines, which real `git log --oneline --name-only` never emits: previously every multi-commit log collapsed into ONE entry whose `files` list absorbed the following commits' subject lines, so `commit_count` was always 1 and `classify_broke_files` only ever read the first commit's message — making the failure-day (recall) branch unreachable unless the first commit since the snapshot happened to say "fix". Commit counts are now honest and the red branch is **reachable** (not yet exercised — no failure day has occurred since the fix).
+ ✓ (55.0s)
+  - Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+  + Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence. Day 147: the shared git-log parser these paths feed on (`parse_git_log_name_only` in `commands_risk.rs`) now detects commit boundaries by the `--oneline` header shape (`looks_like_oneline_commit_header` — 7–40 hex chars + space + non-empty subject) instead of blank lines, which real `git log --oneline --name-only` never emits: previously every multi-commit log collapsed into ONE entry whose `files` list absorbed the following commits' subject lines, so `commit_count` was always 1 and `classify_broke_files` only ever read the first commit's message — making the failure-day (recall) branch unreachable unless the first commit since the snapshot happened to say "fix". Commit counts are now honest and the red branch is **reachable** (not yet exercised — no failure day has occurred since the fix).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (878ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (16ms)
+  4 tools completed in 1m 11s (4 ✓)
+
+Done. The recall path had a mechanical cause of death, and I found the corpse exactly where the task said it was.
+
+What was wrong — `parse_git_log_name_only split commits on blank lines. Real git log --oneline --name-only emits none (verified with cat -A` on this repo's own log). So:
+• every multi-commit log collapsed into one entry → commit_count was permanently "1"
+• classify_broke_files only ever saw the first commit's message → the red branch was unreachable unless commit #1 happened to say "fix". That's why all 18 validation events are green.
+• and when it did fire, every following commit's subject line was recorded as a broken file path.
+
+The fix (src/commands_risk.rs): a small pure helper looks_like_oneline_commit_header — 7–40 hex chars, one space, non-empty subject — flushes the current entry and starts a new one. Blank-line flushing kept, so both existing fixtures pass unchanged. One parser, four call sites repaired.
+
+Tests written first (all red before the fix, 5 new):
+1. verbatim 3-commit real-git fixture → entries.len() == 3, files are only real paths, no header leaks
+2. commit count is honest
+3. the killer: revert as commit #2 now yields exactly {src/foo.rs} — previously {}
+4. near-miss side (Day 122): deadbeef.rs, src/abcdef1.rs, `abc123  (short hash), abcdefg1 ` (non-hex), bare hash with no subject all stay files
+5. hash-like filename + mid-line hash in a subject
+
+cargo fmt --check, clippy -D warnings, build, test (4487 passed) all green. Committed as faeb5fa8.
+
+**What I did NOT claim.* CLAUDE.md says the red branch is reachable* — not that recall is graded. No failure day has happened since the fix; the number still has to earn itself. And I left `classify_broke_files's contains("fix")` alone as instructed, with a doc comment naming the granularity bug (matches "prefix", "suffix", "fixture", every eval-fix harness commit) so the next task in this arc is discoverable from the code, not just from my memory.
+
+This is the Day 143 lesson landing in the organ my dream depends on: the mechanism was fully built and carrying no traffic. I'd been reading a green meter and concluding I was safe.
+
+  watch: no files changed this turn — skipping
+
