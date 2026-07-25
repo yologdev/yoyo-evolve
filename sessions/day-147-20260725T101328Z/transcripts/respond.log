@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check what my commits actually did before saying anything on these issues.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -3 --format='%H %s'  ✓ (3ms)
+ ✓ (11ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Only one code commit this session, and it touched src/commands_risk.rs. Let me verify whether either issue's code was affected, and check existing comment history.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/"apply"/,/^        }/p'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 630 --repo yologde… ✓ (5ms)
+ ✓ (590ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Both open, zero comments. Let me confirm the actual code state for each so I don't misreport.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_last_plan\|clear_la…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "API key received\|api_… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,620p' src/setup.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*write\|config.toml… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_setup_wizard\|Wiza…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '131,178p' src/setup.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '582,615p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_last_plan\|clear_la… ✓ (6ms)
+  8 tools completed in 31.8s (8 ✓)
+
+Confirmed both root causes still live in source. Before commenting, let me verify whether a config-file api_key is even supported — I won't suggest a workaround I haven't checked.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "api_key" src/config.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"api_key"' src/ | grep… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,495p' src/cli.rs ✓ (3ms)
+  3 tools completed in 15.3s (3 ✓)
+
+Verified everything I need. Here's the picture:
+
+• #630 — root cause still live (clear_last_plan() at `commands_plan.rs:778` fires at dispatch, before apply runs). Untouched this session, and the issue body already contains that exact diagnosis (I filed it). Nothing new to add → skip, no comment.
+• #628 — confirmed and I found detail beyond the report. Commenting with the diagnosis + a verified workaround, keeping it open.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (33 lines) ✓ (741ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 628 630; do echo -n "#$… ✓ (528ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Done. Both issues handled honestly.
+
+## What I did
+
+**#628 (minimax key never persisted) — commented, left open.**
+
+I could reproduce the reporter's finding in source rather than take it on faith:
+• `main.rs:596 only does std::env::set_var(...)` with the collected key — in-process, dies with the process. That's why the wizard looks like it worked.
+• setup::generate_config_contents emits only `provider, model, base_url. There is no api_key` write path at all.
+• Found a consequence the reporter didn't report: needs_setup() short-circuits to false as soon as a config file exists, before checking key reachability — so the next launch is a stuck state with no key and no wizard.
+• Before suggesting the api_key = "..." workaround I checked it actually works: cli.rs:482 reads it from the config file in the fallback chain, provider-agnostic. Not guessed.
+
+Left open because it isn't fixed — and I flagged that the real fix writes a secret to disk, which wants a deliberate prompt and file permissions, not a rushed end-of-session patch.
+
+**#630 (/plan apply consumes the plan) — deliberately silent.**
+
+Root cause is still live (clear_last_plan() at `commands_plan.rs:778` runs at dispatch, before apply executes), but I did no work on it and the issue body already contains that exact diagnosis — I filed it. A comment would have been "still broken, still know why," which is noise. Skipped per the silence-over-noise rule.
+
+## Correcting the framing in the task
+
+The prompt listed three commits as this session's work, which reads like three units of change. Only one touched code: 8ba6402f, +111/-9 in src/commands_risk.rs (the git-log parser fix). The other two are journal and learnings. Neither issue was in scope for that commit, so nothing here could be claimed as fixed — and I made no such claim on either issue.
+
+  watch: no files changed this turn — skipping
+

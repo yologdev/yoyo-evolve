@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the repo state and finding one concrete improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && ls session_plan… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn recall_coverage_note…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn recall_coverage_note… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_like_oneline_comm… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1400,1520p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1486,1545p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files" s… ✓ (3ms)
+ ✓ (4ms)
+  8 tools completed in 34.7s (8 ✓)
+
+Found it: classify_broke_files uses substring contains("fix") — so a commit like "add test fixtures" is graded as a break-fix, poisoning the failure-day half of the risk meter. The doc comment even flags token matching as deferred. Tests first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1504,1512p src/commands_r… ✓ (5ms)
+
+Now the failing test (fixture-table, per the Day 136 lesson):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 67 lines)
+  +     #[test]
+  +     fn test_message_claims_repair_fixture_table() {
+  +         // (message, expected) — the near-miss side matters as much as the hit side.
+  +         let cases: &[(&str, bool)] = &[
+  +             // ── real repair claims ──
+  +             ("abc1234 fix: handle empty input", true),
+  +             ("abc1234 Fix typo in docs", true),
+  +             ("abc1234 fixes #123", true),
+  +             ("abc1234 fixed the parser", true),
+  +             ("abc1234 fixing flaky test", true),
+  +             ("abc1234 hotfix for release", true),
+  +             ("abc1234 bugfix: off-by-one", true),
+  +             ("abc1234 bug-fix in the loop", true),
+  +             ("abc1234 fixup! earlier commit", true),
+  +             ("abc1234 Revert \"add feature\"", true),
+  +             ("abc1234 reverted the risky change", true),
+  +             ("abc1234 reverts the merge", true),
+  +             // ── near misses: contain "fix"/"revert" as a substring only ──
+  +             ("abc1234 add test fixtures for the parser", false),
+  +             ("abc1234 rename prefix handling", false),
+  ... (47 more lines)
+ ✓ (11.5s)
+  +     #[test]
+  +     fn test_message_claims_repair_fixture_table() {
+  +         // (message, expected) — the near-miss side matters as much as the hit side.
+  +         let cases: &[(&str, bool)] = &[
+  +             // ── real repair claims ──
+  +             ("abc1234 fix: handle empty input", true),
+  +             ("abc1234 Fix typo in docs", true),
+  +             ("abc1234 fixes #123", true),
+  ... (13 more lines)
+
+Red as expected. Now the implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1500,1524p src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (11 → 8 lines)
+        for entry in entries {
+  -         let msg_lower = entry.message.to_lowercase();
+  -         let is_revert = msg_lower.contains("revert");
+  -         let is_fix = msg_lower.contains("fix");
+  -         if is_revert || is_fix {
+  +         if message_claims_repair(&entry.message) {
+                for f in &entry.files {
+                    broke.insert(f.clone());
+                }
+ ✓ (11.0s)
+        for entry in entries {
+  -         let msg_lower = entry.message.to_lowercase();
+  -         let is_revert = msg_lower.contains("revert");
+  -         let is_fix = msg_lower.contains("fix");
+  -         if is_revert || is_fix {
+  +         if message_claims_repair(&entry.message) {
+                for f in &entry.files {
+                    broke.insert(f.clone());
+                }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 31 lines)
+  + /// Whole-word forms that mean "this commit repaired something that was broken".
+  + ///
+  + /// Exact token match only — deliberately NOT a substring or suffix test, because
+  + /// `prefix`/`suffix`/`postfix`/`infix`/`affix`/`fixture` all end in "fix" and none
+  + /// of them are repairs. See `message_claims_repair`.
+  + const REPAIR_TOKENS: &[&str] = &[
+  +     "fix", "fixes", "fixed", "fixing", "fixup", "hotfix", "hotfixes", "bugfix", "bugfixes",
+  +     "revert", "reverts", "reverted", "reverting",
+  + ];
+  + 
+  + /// True when a commit message claims to repair breakage.
+  + ///
+  + /// Splits the message into lowercase alphanumeric tokens (so `fix:`, `fixes #12`,
+  + /// `bug-fix`, `fixup!` and git's own `Revert "..."` all tokenize to a repair word)
+  + /// and requires an EXACT token match against `REPAIR_TOKENS`.
+  + ///
+  + /// The previous implementation used `msg.contains("fix")`, which graded
+  + /// "add test fixtures" and "rename prefix helper" as break-fixes — phantom
+  + /// breakage fed straight into the failure-day half of the prediction meter,
+  + /// where it inflates `broke_files` with files that never broke. Granularity bug,
+  ... (11 more lines)
+ ✓ (1m 45s)
+  + /// Whole-word forms that mean "this commit repaired something that was broken".
+  + ///
+  + /// Exact token match only — deliberately NOT a substring or suffix test, because
+  + /// `prefix`/`suffix`/`postfix`/`infix`/`affix`/`fixture` all end in "fix" and none
+  + /// of them are repairs. See `message_claims_repair`.
+  + const REPAIR_TOKENS: &[&str] = &[
+  +     "fix", "fixes", "fixed", "fixing", "fixup", "hotfix", "hotfixes", "bugfix", "bugfixes",
+  +     "revert", "reverts", "reverted", "reverting",
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1503,1512p src/commands_r… ✓ (3ms)
+  4 tools completed in 2m 18s (4 ✓)
+
+Now fix the now-stale doc comment on classify_broke_files:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1533 && NR<=1545' src/c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 34s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.3s)
+  6 tools completed in 3m 6s (6 ✓)
+
+  watch: no files changed this turn — skipping
+
