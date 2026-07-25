@@ -3980,4 +3980,21 @@ src/abcdef1.rs
         assert_eq!(risks_reversed[0].path, "src/alpha.rs");
         assert_eq!(risks_reversed[1].path, "src/zebra.rs");
     }
+
+    // ================================================================
+    // CHOSEN EXPERIMENT (Day 147). Guess made BEFORE inspecting the path:
+    //
+    // I predict that driving a synthetic failure day end-to-end will NOT
+    // cleanly produce a graded failure-day event that flips
+    // `recall_coverage_note` off — because `classify_broke_files` decides
+    // "this commit claims a repair" by substring-matching the subject line
+    // (the documented 'fixture'/'prefix' bug I deferred two nights ago), and
+    // I suspect it then attributes the *repair commit's own* file list as the
+    // broken set rather than the files of the commit being repaired. Against
+    // a verbatim multi-commit log I expect the broken set to come back empty
+    // or to name the wrong files, so `compute_validation` grades nothing and
+    // the "recall ungraded — 0 failure-day events" note stays on.
+    //
+    // Graded: <PENDING> — fill in honestly at the end. A MISS is a success.
+    // ================================================================
 }
