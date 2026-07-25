@@ -53,6 +53,10 @@ pub struct PlanStep {
 pub struct StructuredPlan {
     pub raw_text: String,
     pub steps: Vec<PlanStep>,
+    /// Whether `/plan apply` has already dispatched this plan at least once.
+    /// The plan is NOT consumed at dispatch (so a run that stops partway can be
+    /// resumed) — this flag only makes the repeat visible.
+    pub applied: bool,
 }
 
 /// Parse plan text into structured steps.
@@ -244,6 +248,11 @@ fn extract_title_and_desc(text: &str) -> (String, String) {
 
 static LAST_PLAN: Mutex<Option<StructuredPlan>> = Mutex::new(None);
 
+/// One small flag so "cleared this session" and "never existed" don't collapse
+/// into the same message. Set by `clear_last_plan` (only when a plan actually
+/// existed), reset by `set_last_plan`.
+static PLAN_WAS_CLEARED: AtomicBool = AtomicBool::new(false);
+
 /// Store the text of the last generated plan (parses into structured steps).
 pub fn set_last_plan(plan: String) {
     if let Ok(mut guard) = LAST_PLAN.lock() {
@@ -251,8 +260,27 @@ pub fn set_last_plan(plan: String) {
         *guard = Some(StructuredPlan {
             raw_text: plan,
             steps,
+            applied: false,
         });
     }
+    // A fresh plan replaces any "was cleared" history.
+    PLAN_WAS_CLEARED.store(false, Ordering::Relaxed);
+}
+
+/// Mark the stored plan as applied (dispatched at least once).
+///
+/// Returns `true` if the plan had *already* been applied before this call, so
+/// the caller can print an honest re-apply line instead of pretending it's the
+/// first run.
+pub fn mark_plan_applied() -> bool {
+    if let Ok(mut guard) = LAST_PLAN.lock() {
+        if let Some(plan) = guard.as_mut() {
+            let was_applied = plan.applied;
+            plan.applied = true;
+            return was_applied;
+        }
+    }
+    false
 }
 
 /// Retrieve the last stored plan, if any.
@@ -263,7 +291,64 @@ pub fn get_last_plan() -> Option<StructuredPlan> {
 /// Clear the stored plan.
 pub fn clear_last_plan() {
     if let Ok(mut guard) = LAST_PLAN.lock() {
+        // Only remember an *explicit discard of a real plan*, so a plain
+        // `/plan clear` on an empty slot doesn't rewrite history.
+        if guard.is_some() {
+            PLAN_WAS_CLEARED.store(true, Ordering::Relaxed);
+        }
         *guard = None;
+    }
+}
+
+/// What `/plan apply` should do at dispatch time, derived purely from the
+/// stored-plan state. Kept separate from the handler so every branch —
+/// including the near-miss (a first apply must NOT say "re-applying") — is
+/// unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyDispatch {
+    /// A plan is stored and hasn't been dispatched yet.
+    First,
+    /// A plan is stored and was already dispatched at least once — run it
+    /// again, but say so.
+    ReApply,
+    /// A plan existed this session and was explicitly discarded.
+    Cleared,
+    /// No plan was ever stored this session.
+    Missing,
+}
+
+impl ApplyDispatch {
+    /// Whether the handler should actually dispatch the plan.
+    pub fn proceeds(self) -> bool {
+        matches!(self, ApplyDispatch::First | ApplyDispatch::ReApply)
+    }
+
+    /// The line printed to the user (uncolored — the caller picks the color).
+    pub fn message(self) -> &'static str {
+        match self {
+            ApplyDispatch::First => "🚀 Applying stored plan…",
+            ApplyDispatch::ReApply => {
+                "🔁 Re-applying stored plan (already applied once) — /plan clear to discard"
+            }
+            ApplyDispatch::Cleared => {
+                "Plan was cleared this session. Use /plan <task> to create a new one."
+            }
+            ApplyDispatch::Missing => "No plan stored. Use /plan <task> to create one first.",
+        }
+    }
+}
+
+/// Pure decision for the `/plan apply` dispatch message.
+pub fn apply_dispatch_state(
+    has_plan: bool,
+    already_applied: bool,
+    was_cleared: bool,
+) -> ApplyDispatch {
+    match (has_plan, already_applied, was_cleared) {
+        (true, false, _) => ApplyDispatch::First,
+        (true, true, _) => ApplyDispatch::ReApply,
+        (false, _, true) => ApplyDispatch::Cleared,
+        (false, _, false) => ApplyDispatch::Missing,
     }
 }
 
@@ -771,18 +856,35 @@ pub async fn handle_plan(
             }
             return PlanResult::Handled;
         }
-        "apply" => match get_last_plan() {
-            Some(plan) => {
-                let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
-                println!("{GREEN}  🚀 Applying stored plan…{RESET}\n");
-                clear_last_plan();
-                return PlanResult::Apply(prompt);
+        "apply" => {
+            // NOTE: the plan is deliberately NOT cleared here. If the apply run
+            // stops partway (provider timeout, model hands back, user types a
+            // plain continuation), the plan must still be there to resume from.
+            // It lives until `/plan clear` or until a new `/plan <task>`
+            // overwrites it.
+            let stored = get_last_plan();
+            let state = apply_dispatch_state(
+                stored.is_some(),
+                stored.as_ref().map(|p| p.applied).unwrap_or(false),
+                PLAN_WAS_CLEARED.load(Ordering::Relaxed),
+            );
+            match stored {
+                Some(plan) if state.proceeds() => {
+                    let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
+                    if state == ApplyDispatch::ReApply {
+                        println!("{YELLOW}  {}{RESET}\n", state.message());
+                    } else {
+                        println!("{GREEN}  {}{RESET}\n", state.message());
+                    }
+                    mark_plan_applied();
+                    return PlanResult::Apply(prompt);
+                }
+                _ => {
+                    println!("{DIM}  {}{RESET}\n", state.message());
+                    return PlanResult::Handled;
+                }
             }
-            None => {
-                println!("{DIM}  No plan stored. Use /plan <task> to create one first.{RESET}\n");
-                return PlanResult::Handled;
-            }
-        },
+        }
         "clear" => {
             clear_last_plan();
             println!("{DIM}  Stored plan cleared.{RESET}\n");
@@ -1336,6 +1438,7 @@ Step 2: Second step
     }
 
     #[test]
+    #[serial]
     fn test_step_marking_done_and_undo() {
         // Clear any previous plan state
         clear_last_plan();
@@ -1360,10 +1463,96 @@ Step 2: Second step
         clear_last_plan();
     }
 
+    // -----------------------------------------------------------------
+    // /plan apply is resumable: the plan is not consumed at dispatch (#630)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn apply_dispatch_first_apply_is_not_a_reapply() {
+        let state = apply_dispatch_state(true, false, false);
+        assert_eq!(state, ApplyDispatch::First);
+        assert!(state.proceeds());
+        assert!(state.message().contains("Applying stored plan"));
+        // Near-miss: the very first apply must NOT claim a repeat.
+        assert!(!state.message().contains("Re-applying"));
+        assert!(!state.message().contains("already applied"));
+    }
+
+    #[test]
+    fn apply_dispatch_second_apply_says_reapply_and_still_proceeds() {
+        let state = apply_dispatch_state(true, true, false);
+        assert_eq!(state, ApplyDispatch::ReApply);
+        // Repeats are made visible, not forbidden.
+        assert!(state.proceeds());
+        assert!(state.message().contains("Re-applying"));
+        assert!(state.message().contains("/plan clear"));
+    }
+
+    #[test]
+    fn apply_dispatch_never_stored_says_no_plan() {
+        let state = apply_dispatch_state(false, false, false);
+        assert_eq!(state, ApplyDispatch::Missing);
+        assert!(!state.proceeds());
+        assert!(state.message().contains("No plan stored"));
+    }
+
+    #[test]
+    fn apply_dispatch_cleared_is_distinguishable_from_never_stored() {
+        let cleared = apply_dispatch_state(false, false, true);
+        assert_eq!(cleared, ApplyDispatch::Cleared);
+        assert!(!cleared.proceeds());
+        assert!(cleared.message().contains("cleared this session"));
+        // "consumed" and "never existed" must not collapse into one message.
+        assert_ne!(
+            cleared.message(),
+            apply_dispatch_state(false, false, false).message()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn stored_plan_survives_being_applied() {
+        clear_last_plan();
+        set_last_plan("1. Step one\n2. Step two".to_string());
+
+        // First dispatch: not previously applied, plan still there afterwards.
+        assert!(!mark_plan_applied());
+        let plan = get_last_plan().expect("plan must survive dispatch");
+        assert!(plan.applied);
+        assert_eq!(plan.steps.len(), 2);
+
+        // Step tracking still works after apply — the point of not consuming.
+        assert!(mark_step(1, true).is_ok());
+        assert!(get_last_plan().unwrap().steps[0].completed);
+
+        // Second dispatch reports the repeat.
+        assert!(mark_plan_applied());
+        assert!(get_last_plan().is_some());
+
+        clear_last_plan();
+    }
+
+    #[test]
+    #[serial]
+    fn new_plan_resets_applied_and_cleared_flags() {
+        clear_last_plan();
+        set_last_plan("1. Old".to_string());
+        assert!(!mark_plan_applied());
+        assert!(get_last_plan().unwrap().applied);
+
+        set_last_plan("1. New".to_string());
+        let plan = get_last_plan().unwrap();
+        assert!(!plan.applied, "a fresh plan starts unapplied");
+        assert!(!PLAN_WAS_CLEARED.load(Ordering::Relaxed));
+
+        clear_last_plan();
+    }
+
     #[test]
     fn test_format_plan_status_display() {
         let plan = StructuredPlan {
             raw_text: String::new(),
+            applied: false,
             steps: vec![
                 PlanStep {
                     number: 1,
@@ -1404,6 +1593,7 @@ Step 2: Second step
     }
 
     #[test]
+    #[serial]
     fn test_parse_plan_steps_no_parseable_steps() {
         let plan = "This is just a paragraph of text without any numbered steps\n\
                      or checklists. It describes what to do but not in a structured way.";
