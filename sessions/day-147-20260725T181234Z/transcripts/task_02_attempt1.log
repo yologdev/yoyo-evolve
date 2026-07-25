@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant section of repl.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_continue_count\|ma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1200,1400p src/repl.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct PromptOutcom…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn should_auto_continue… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes_before" src/rep… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tool_call\|tools_used\… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/repl.rs && echo… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const DIM\|fn disab… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 237,300p src/format/mod.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1340,1372p src/repl.rs ✓ (4ms)
+  11 tools completed in 47.7s (11 ✓)
+
+Now let me add the pure helpers with tests first.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1436,1448p src/repl.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (1 → 85 lines)
+  + /// Why a turn ended, as far as yoyo can tell.
+  + ///
+  + /// This is a *stated belief*, not ground truth — a belief that is printed can
+  + /// be argued with; a silent one can't (issue #631).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum TurnEnd {
+  +     /// Nothing pending, no error, and the turn closed with real prose.
+  +     Done,
+  +     /// The turn stopped while work still looked outstanding: an error, a
+  +     /// non-empty follow-up queue, or tool activity with no closing summary.
+  +     Paused,
+  +     /// The auto-continue budget ran out with work still queued.
+  +     BudgetSpent,
+  + }
+  + 
+  + /// Minimum length (chars, trimmed) of closing text we accept as a "summary".
+  + /// Shorter than this after tool activity reads as "stopped mid-work" — the
+  + /// model went quiet rather than wrapping up.
+  + const MIN_SUMMARY_CHARS: usize = 20;
+  + 
+  ... (65 more lines)
+ ✓ (19.5s)
+  + /// Why a turn ended, as far as yoyo can tell.
+  + ///
+  + /// This is a *stated belief*, not ground truth — a belief that is printed can
+  + /// be argued with; a silent one can't (issue #631).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum TurnEnd {
+  +     /// Nothing pending, no error, and the turn closed with real prose.
+  +     Done,
+  ... (13 more lines)
+  2 tools completed in 36.5s (2 ✓)
+
+Expected — now wire it into the REPL loop.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (6 → 37 lines)
+                    })
+                    .await;
+  +             }
+  + 
+  +             // ── Terminal-state marker (issue #631) ──
+  +             // Say out loud whether this turn believes it finished or handed
+  +             // back mid-work. Silent-and-ambiguous is what users were reading
+  +             // as "maybe type continue?"; a stated belief can be wrong, but it
+  +             // can also be argued with.
+  +             //
+  +             // `did_work` proxy: the turn touched at least one file. That's the
+  +             // cheapest signal reachable here — imprecise for read-only turns
+  +             // (a paused exploration turn prints nothing), but the error is
+  +             // toward silence, which is the product-safe direction.
+  +             if !is_quiet() {
+  +                 let did_work = session_changes.snapshot().len() > changes_before.len();
+  +                 let end = classify_turn_end(
+  +                     &last_text,
+  +                     agent.follow_up_queue_len(),
+  +                     did_work,
+  ... (16 more lines)
+ ✓ (1m 50s)
+                    })
+                    .await;
+  +             }
+  + 
+  +             // ── Terminal-state marker (issue #631) ──
+  +             // Say out loud whether this turn believes it finished or handed
+  +             // back mid-work. Silent-and-ambiguous is what users were reading
+  +             // as "maybe type continue?"; a stated belief can be wrong, but it
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn should_auto_continue… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2493,2502p src/repl.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (2 → 103 lines)
+  +     // ── Terminal-state marker (issue #631) ──
+  + 
+  +     const SUMMARY: &str =
+  +         "Fixed the parser and added a regression test; all checks pass locally.";
+  + 
+  +     #[test]
+  +     fn classify_turn_end_table() {
+  +         // (final_text, queue, used_tools, had_error, used, max, expected)
+  +         let cases: &[(&str, usize, bool, bool, u32, u32, TurnEnd)] = &[
+  +             // Clean finish: work done, real summary, nothing queued.
+  +             (SUMMARY, 0, true, false, 0, 5, TurnEnd::Done),
+  +             // Tool activity that trailed off into silence — the #631 shape.
+  +             ("", 0, true, false, 0, 5, TurnEnd::Paused),
+  +             ("ok", 0, true, false, 0, 5, TurnEnd::Paused),
+  +             // Errors always hand back.
+  +             (SUMMARY, 0, true, true, 0, 5, TurnEnd::Paused),
+  +             // Work still queued but budget not spent → paused, not budget.
+  +             (SUMMARY, 2, true, false, 1, 5, TurnEnd::Paused),
+  +             // Budget spent WITH pending work.
+  +             (SUMMARY, 3, true, false, 5, 5, TurnEnd::BudgetSpent),
+  ... (83 more lines)
+ ✓ (1m 49s)
+  +     // ── Terminal-state marker (issue #631) ──
+  + 
+  +     const SUMMARY: &str =
+  +         "Fixed the parser and added a regression test; all checks pass locally.";
+  + 
+  +     #[test]
+  +     fn classify_turn_end_table() {
+  +         // (final_text, queue, used_tools, had_error, used, max, expected)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.5s)
+  5 tools completed in 4m 27s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

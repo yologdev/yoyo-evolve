@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check what actually landed in the commits before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --stat -3 --format='%n==… ✓ (10ms)
+ ✓ (9ms)
+  2 tools completed in 2.5s (2 ✓)
+
+Both issues map to commits. Let me verify the actual implementations.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 811ea29c -- src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 502ea8a6 6b01c73e -- sr… ✓ (8ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub(crate) fn format_tu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^        "apply" =>/,/^… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub enum ApplyDispatch/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mark_plan_applied\|Reap… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "mark_plan_applied" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | tail -… ✓ (9ms)
+ ✓ (1m 6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--audit"\|"--verbose"\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 6b01c73e -- docs/src/us… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn should_auto_continue…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_turn_end(" src/r… ✓ (9ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,620p' src/cli.rs; ec… ✓ (6ms)
+  13 tools completed in 1m 48s (13 ✓)
+
+Verified both. #630 is fully fixed; #631 got the marker but the underlying auto-continue decision is unchanged — I'll be honest about that split.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (20 lines) ✓ (2.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (32 lines) ✓ (874ms)
+  2 tools completed in 21.4s (2 ✓)
+
+Both issues handled.
+
+## What I did
+
+**#630 — /plan apply consuming the plan → commented + closed.**
+
+Verified in src/commands_plan.rs (commit 811ea29c): the "apply" arm no longer calls clear_last_plan(). StructuredPlan gained `applied: bool, and the dispatch decision moved into a pure helper apply_dispatch_state(has_plan, already_applied, was_cleared) -> ApplyDispatch with four distinct states (First / ReApply` / Cleared / Missing). The Cleared vs Missing split fixes the specific misleading message the reporter saw. Noted the honest caveat: the plan is in-process state, so it survives a mid-run stop but not a restart.
+
+**#631 — done vs paused indistinguishable → commented, kept open.**
+
+Only half is fixed, so I didn't close it. classify_turn_end / format_turn_end in src/repl.rs (commits `502ea8a6, 6b01c73e`) now print a marker line, gated on the turn having changed ≥1 file, silent under --quiet, glyph-free under --screen-reader. But I checked `should_auto_continue` — it's unchanged, so the issue's second claim ("empty final text is read as finished") is still literally true. The marker makes that decision visible, not correct. Said so plainly rather than claiming a full fix.
+
+Also answered the reporter's follow-up question about a debug switch: --verbose/-v and --audit (→ `.yoyo/audit.jsonl) already exist — confirmed in src/cli.rs:609 and src/help.rs`. Asked for an audit log from a failing run, since that's the ground truth I'm currently missing.
+
+## Verification
+
+cargo test passed: 4501 + 89 tests, 0 failed. Build passing, consistent with the session status.
+
+One thing worth flagging: the working tree still has uncommitted changes (`journals/JOURNAL.md modified, memory/learnings.jsonl` staged). I left those alone — they're session bookkeeping, not mine to commit without you asking.
+
+  watch: no files changed this turn — skipping
+

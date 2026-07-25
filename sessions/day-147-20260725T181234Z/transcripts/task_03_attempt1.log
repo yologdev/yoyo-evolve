@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/commands_plan.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LAST_PLAN\|clear_last_p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "plan" src/help_data.rs … ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,80p src/commands_plan.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1010,1050p src/help_data.… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/commands_plan.r… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 278,335p docs/src/usage/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply" docs/src/usage/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1330,1440p src/commands_p… ✓ (4ms)
+  8 tools completed in 39.0s (8 ✓)
+
+Now the edits. First the struct + state:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (4 → 8 lines)
+    pub struct StructuredPlan {
+        pub raw_text: String,
+        pub steps: Vec<PlanStep>,
+  +     /// Whether `/plan apply` has already dispatched this plan at least once.
+  +     /// The plan is NOT consumed at dispatch (so a run that stops partway can be
+  +     /// resumed) — this flag only makes the repeat visible.
+  +     pub applied: bool,
+    }
+ ✓ (12.5s)
+    pub struct StructuredPlan {
+        pub raw_text: String,
+        pub steps: Vec<PlanStep>,
+  +     /// Whether `/plan apply` has already dispatched this plan at least once.
+  +     /// The plan is NOT consumed at dispatch (so a run that stops partway can be
+  +     /// resumed) — this flag only makes the repeat visible.
+  +     pub applied: bool,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (9 → 28 lines)
+            *guard = Some(StructuredPlan {
+                raw_text: plan,
+                steps,
+  +             applied: false,
+            });
+  +     }
+  +     // A fresh plan replaces any "was cleared" history.
+  +     PLAN_WAS_CLEARED.store(false, Ordering::Relaxed);
+  + }
+  + 
+  + /// Mark the stored plan as applied (dispatched at least once).
+  + ///
+  + /// Returns `true` if the plan had *already* been applied before this call, so
+  + /// the caller can print an honest re-apply line instead of pretending it's the
+  + /// first run.
+  + pub fn mark_plan_applied() -> bool {
+  +     if let Ok(mut guard) = LAST_PLAN.lock() {
+  +         if let Some(plan) = guard.as_mut() {
+  +             let was_applied = plan.applied;
+  +             plan.applied = true;
+  ... (5 more lines)
+ ✓ (12.3s)
+            *guard = Some(StructuredPlan {
+                raw_text: plan,
+                steps,
+  +             applied: false,
+            });
+  +     }
+  +     // A fresh plan replaces any "was cleared" history.
+  +     PLAN_WAS_CLEARED.store(false, Ordering::Relaxed);
+  ... (13 more lines)
+  2 tools completed in 31.7s (2 ✓)
+
+Now the static, clear_last_plan, and the pure dispatch helper:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (1 → 6 lines)
+    static LAST_PLAN: Mutex<Option<StructuredPlan>> = Mutex::new(None);
+  + 
+  + /// One small flag so "cleared this session" and "never existed" don't collapse
+  + /// into the same message. Set by `clear_last_plan` (only when a plan actually
+  + /// existed), reset by `set_last_plan`.
+  + static PLAN_WAS_CLEARED: AtomicBool = AtomicBool::new(false);
+ ✓ (12.5s)
+    static LAST_PLAN: Mutex<Option<StructuredPlan>> = Mutex::new(None);
+  + 
+  + /// One small flag so "cleared this session" and "never existed" don't collapse
+  + /// into the same message. Set by `clear_last_plan` (only when a plan actually
+  + /// existed), reset by `set_last_plan`.
+  + static PLAN_WAS_CLEARED: AtomicBool = AtomicBool::new(false);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (6 → 59 lines)
+    /// Clear the stored plan.
+    pub fn clear_last_plan() {
+        if let Ok(mut guard) = LAST_PLAN.lock() {
+  +         // Only remember an *explicit discard of a real plan*, so a plain
+  +         // `/plan clear` on an empty slot doesn't rewrite history.
+  +         if guard.is_some() {
+  +             PLAN_WAS_CLEARED.store(true, Ordering::Relaxed);
+  +         }
+            *guard = None;
+  +     }
+  + }
+  + 
+  + /// What `/plan apply` should do at dispatch time, derived purely from the
+  + /// stored-plan state. Kept separate from the handler so every branch —
+  + /// including the near-miss (a first apply must NOT say "re-applying") — is
+  + /// unit-testable.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum ApplyDispatch {
+  +     /// A plan is stored and hasn't been dispatched yet.
+  +     First,
+  ... (39 more lines)
+ ✓ (12.8s)
+    /// Clear the stored plan.
+    pub fn clear_last_plan() {
+        if let Ok(mut guard) = LAST_PLAN.lock() {
+  +         // Only remember an *explicit discard of a real plan*, so a plain
+  +         // `/plan clear` on an empty slot doesn't rewrite history.
+  +         if guard.is_some() {
+  +             PLAN_WAS_CLEARED.store(true, Ordering::Relaxed);
+  +         }
+  ... (13 more lines)
+  2 tools completed in 37.8s (2 ✓)
+
+Now the dispatch arm itself:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (12 → 29 lines)
+  -         "apply" => match get_last_plan() {
+  -             Some(plan) => {
+  -                 let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
+  -                 println!("{GREEN}  🚀 Applying stored plan…{RESET}\n");
+  -                 clear_last_plan();
+  -                 return PlanResult::Apply(prompt);
+  -             }
+  -             None => {
+  -                 println!("{DIM}  No plan stored. Use /plan <task> to create one first.{RESET}\n");
+  -                 return PlanResult::Handled;
+  +         "apply" => {
+  +             // NOTE: the plan is deliberately NOT cleared here. If the apply run
+  +             // stops partway (provider timeout, model hands back, user types a
+  +             // plain continuation), the plan must still be there to resume from.
+  +             // It lives until `/plan clear` or until a new `/plan <task>`
+  +             // overwrites it.
+  +             let stored = get_last_plan();
+  +             let state = apply_dispatch_state(
+  +                 stored.is_some(),
+  +                 stored.as_ref().map(|p| p.applied).unwrap_or(false),
+  ... (20 more lines)
+ ✓ (13.0s)
+  -         "apply" => match get_last_plan() {
+  -             Some(plan) => {
+  -                 let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
+  -                 println!("{GREEN}  🚀 Applying stored plan…{RESET}\n");
+  -                 clear_last_plan();
+  -                 return PlanResult::Apply(prompt);
+  -             }
+  -             None => {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1460,1470p src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (10.1s)
+  3 tools completed in 29.6s (3 ✓)
+
+Now the tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (95 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 974,985p src/commands_pla… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (29 lines) ✓ (45.1s)
+  3 tools completed in 57.7s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
