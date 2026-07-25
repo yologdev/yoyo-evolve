@@ -1547,8 +1547,12 @@ pub(crate) fn format_turn_end(
             format!("{mark} nothing queued")
         }
         TurnEnd::Paused => {
-            let mark = if plain { "stopped:" } else { "⏸ stopped" };
-            format!("{mark} no summary — type \"continue\" if this looks unfinished")
+            let mark = if plain {
+                "stopped: no summary"
+            } else {
+                "⏸ stopped with no summary"
+            };
+            format!("{mark} — type \"continue\" if this looks unfinished")
         }
         TurnEnd::BudgetSpent => {
             let mark = if plain { "stopped:" } else { "⏸" };

@@ -64,6 +64,29 @@ This happens up to 3 times per user turn. Auto-continue won't fire if:
 - The session budget is exhausted
 - The response doesn't show clear signs of being incomplete
 
+### Turn-end marker
+
+When a turn actually did work (it changed at least one file), yoyo prints one
+dim line to stderr saying *why it believes it stopped*. It's a stated belief,
+not ground truth — but a stated one can be argued with:
+
+```
+  ✓ done — nothing queued
+  ⏸ stopped with no summary — type "continue" if this looks unfinished
+  ⏸ auto-continue budget spent (3/3) — type "continue" to resume
+```
+
+- **done** — nothing pending, no error, and the turn closed with a real summary.
+- **stopped** — the turn hit an error, still has queued follow-up work, or went
+  quiet right after tool activity without wrapping up. Send `continue` if the
+  work looks unfinished.
+- **budget spent** — auto-continue used all its attempts while work was still
+  queued.
+
+The marker is *only informational* — it never changes what yoyo does. It's
+suppressed for plain conversational replies (no file changes), silent under
+`--quiet`, and prints glyph-free wording under `--screen-reader`.
+
 ## Shell passthrough
 
 Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:
