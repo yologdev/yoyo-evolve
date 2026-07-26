@@ -210,6 +210,7 @@ pub(crate) fn write_validation_event(
     emerging_accuracy_pct: Option<f64>,
     severity: Option<&str>,
     snapshot_git_hash: Option<&str>,
+    ci_run_id: Option<u64>,
 ) -> std::io::Result<()> {
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -258,6 +259,14 @@ pub(crate) fn write_validation_event(
     if let Some(hash) = snapshot_git_hash {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("snapshot_git_hash".to_string(), serde_json::json!(hash));
+        }
+    }
+
+    // CI-harvest events carry the GitHub Actions run id as their dedup key.
+    // Absent on every other event shape (parse defensively downstream).
+    if let Some(run_id) = ci_run_id {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("ci_run_id".to_string(), serde_json::json!(run_id));
         }
     }
 
@@ -413,6 +422,7 @@ pub(crate) fn record_green_validation_to(
         emerging_pct,
         Some("watch_success"),
         Some(snapshot_git_hash),
+        None, // green event — not a CI harvest
     )?;
 
     Ok(GreenGrade::Recorded {
@@ -524,6 +534,7 @@ fn auto_validate_after_failure_to(
         emerging_accuracy_pct,
         Some(severity),
         None, // not a green-grade event — no snapshot dedup key
+        None, // not a CI-harvested event — no run id
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -668,6 +679,10 @@ pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
 pub(crate) struct ParsedSnapshot {
     pub(crate) day: u64,
     pub(crate) git_hash: String,
+    /// ISO-8601 UTC timestamp (`%Y-%m-%dT%H:%M:%SZ`) this snapshot was taken.
+    /// `"unknown"` on the handful of legacy lines written before the field
+    /// existed — callers that order by time must skip those explicitly.
+    pub(crate) ts: String,
     pub(crate) predicted: Vec<String>,
     /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
     /// snapshot. Empty for older snapshots written before emerging was recorded.
@@ -692,6 +707,7 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
         };
         let day = val["day"].as_u64().unwrap_or(0);
         let git_hash = val["git_hash"].as_str().unwrap_or("unknown").to_string();
+        let ts = val["ts"].as_str().unwrap_or("unknown").to_string();
         let predicted: Vec<String> = val["top_10"]
             .as_array()
             .map(|arr| {
@@ -712,12 +728,97 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
             snapshots.push(ParsedSnapshot {
                 day,
                 git_hash,
+                ts,
                 predicted,
                 emerging,
             });
         }
     }
     snapshots
+}
+
+/// One failed CI run as reported by `gh run list --json ...`. This is the raw
+/// failure-day evidence the risk meter has been throwing away: CI already
+/// decided the outcome was red, so no commit-message heuristic is needed.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct FailedCiRun {
+    pub(crate) run_id: u64,
+    pub(crate) head_sha: String,
+    pub(crate) created_at: String,
+    pub(crate) title: String,
+}
+
+/// Parse the output of
+/// `gh run list --workflow=CI --status=failure --limit N --json databaseId,headSha,createdAt,displayTitle`.
+///
+/// Defensive like every reader in this module: non-array input, non-object
+/// entries, and entries missing any *required* field (`databaseId` as a real
+/// number, `headSha`, `createdAt`) are skipped rather than guessed at. Only
+/// `displayTitle` is optional — it's cosmetic. Never panics.
+pub(crate) fn parse_failed_ci_runs(json: &str) -> Vec<FailedCiRun> {
+    let val: serde_json::Value = match serde_json::from_str(json.trim()) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let Some(arr) = val.as_array() else {
+        return Vec::new();
+    };
+    let mut runs = Vec::new();
+    for entry in arr {
+        let (Some(run_id), Some(head_sha), Some(created_at)) = (
+            entry.get("databaseId").and_then(|v| v.as_u64()),
+            entry.get("headSha").and_then(|v| v.as_str()),
+            entry.get("createdAt").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        if head_sha.is_empty() || created_at.is_empty() {
+            continue;
+        }
+        let title = entry
+            .get("displayTitle")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no title)")
+            .to_string();
+        runs.push(FailedCiRun {
+            run_id,
+            head_sha: head_sha.to_string(),
+            created_at: created_at.to_string(),
+            title,
+        });
+    }
+    runs
+}
+
+/// Return true if a validation event for this CI run id was already recorded,
+/// making `yoyo risk harvest` idempotent.
+///
+/// Deliberately NOT [`green_event_exists_for`]: that one matches on
+/// `snapshot_git_hash`, and a snapshot may already carry a green event — reusing
+/// it would silently swallow the red evidence this whole path exists to collect.
+pub(crate) fn ci_event_exists_for(content: &str, run_id: u64) -> bool {
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .any(|v| v.get("ci_run_id").and_then(|r| r.as_u64()) == Some(run_id))
+}
+
+/// Pick the most recent snapshot taken strictly *before* `created_at`.
+///
+/// Both timestamps are `%Y-%m-%dT%H:%M:%SZ` UTC, so lexicographic comparison is
+/// chronological comparison. Snapshots with an `"unknown"` ts are skipped —
+/// they can't be ordered, and guessing would attribute a run to the wrong
+/// prediction.
+pub(crate) fn snapshot_before<'a>(
+    snapshots: &'a [ParsedSnapshot],
+    created_at: &str,
+) -> Option<&'a ParsedSnapshot> {
+    snapshots
+        .iter()
+        .filter(|s| s.ts != "unknown" && s.ts.as_str() < created_at)
+        .max_by(|a, b| a.ts.cmp(&b.ts))
 }
 
 #[cfg(test)]
@@ -1336,8 +1437,10 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
-        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None, None, None)
-            .expect("write validation event");
+        write_validation_event(
+            &path, 129, "cli", &hits, &surprises, 66.7, None, None, None, None,
+        )
+        .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
         // Raw JSON shape check: trigger and predicted_count.
@@ -1372,6 +1475,7 @@ mod tests {
             None,
             Some("watch_failure"),
             None,
+            None,
         )
         .expect("write validation event");
 
@@ -1397,10 +1501,14 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None, None, None)
-            .expect("first write");
-        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None, None, None)
-            .expect("second write");
+        write_validation_event(
+            &path, 1, "cli", &hits, &surprises, 100.0, None, None, None, None,
+        )
+        .expect("first write");
+        write_validation_event(
+            &path, 2, "cli", &hits, &surprises, 100.0, None, None, None, None,
+        )
+        .expect("second write");
 
         let events = load_validation_history_from(&path);
         assert_eq!(events.len(), 2, "appending twice yields two lines");
@@ -1516,6 +1624,7 @@ mod tests {
             50.0,
             Some(75.0),
             Some("watch_failure"),
+            None,
             None,
         )
         .expect("write validation event with emerging");
@@ -1669,6 +1778,149 @@ mod tests {
             stats.severity_counts.get("watch_success").copied(),
             Some(1),
             "green events are tallied under the watch_success severity"
+        );
+    }
+
+    // ---- CI harvest (Day 148): turning failed CI runs into failure-day events ----
+
+    /// VERBATIM capture (Day 147's lesson: a hand-typed fixture pins my belief
+    /// about the input, not the input). Produced on 2026-07-26 by running:
+    ///
+    /// ```text
+    /// gh run list --workflow=CI --status=failure --limit 5 \
+    ///   --json databaseId,headSha,createdAt,displayTitle
+    /// ```
+    ///
+    /// Pasted unedited from stdout.
+    const GH_RUN_LIST_FIXTURE: &str = r#"[{"createdAt":"2026-07-23T22:53:49Z","databaseId":30051449447,"displayTitle":"Day 145: bump skill-evolve counter (5)","headSha":"47ea6981af59e69a7207fc18842edc6ccacfffe6"},{"createdAt":"2026-07-11T09:53:19Z","databaseId":29148457259,"displayTitle":"Day 133: bump skill-evolve counter (3)","headSha":"a35503f99c7d88656f90806827fb7398f4aec120"},{"createdAt":"2026-07-09T14:39:14Z","databaseId":29026252684,"displayTitle":"evolve: prompt-discipline guards + skill anti-fabrication (fork review)","headSha":"05b58c5271cb83b02d741e3c0b80240d0658dd56"},{"createdAt":"2026-07-03T16:08:16Z","databaseId":28671767779,"displayTitle":"Day 125: bump skill-evolve counter (6)","headSha":"c9d4ae86fcbbfca903a908735ab4d50b5e427f1d"},{"createdAt":"2026-07-02T23:20:20Z","databaseId":28627737171,"displayTitle":"CI","headSha":"6d9828e4c7ee9776fb6f3efde177237b4d94d93d"}]"#;
+
+    #[test]
+    fn test_parse_failed_ci_runs_verbatim_gh_fixture() {
+        let runs = parse_failed_ci_runs(GH_RUN_LIST_FIXTURE);
+        assert_eq!(runs.len(), 5, "all five real runs parse");
+        assert_eq!(runs[0].run_id, 30051449447);
+        assert_eq!(runs[0].head_sha, "47ea6981af59e69a7207fc18842edc6ccacfffe6");
+        assert_eq!(runs[0].created_at, "2026-07-23T22:53:49Z");
+        assert_eq!(runs[0].title, "Day 145: bump skill-evolve counter (5)");
+        assert_eq!(runs[4].run_id, 28627737171);
+        assert_eq!(runs[4].title, "CI");
+    }
+
+    #[test]
+    fn test_parse_failed_ci_runs_malformed_shapes_skip_never_panic() {
+        // Fixture table of the shapes a flaky `gh` can hand me. Every one must
+        // yield a skip (or empty), never a panic.
+        let cases: &[(&str, usize, &str)] = &[
+            ("", 0, "empty string"),
+            ("[]", 0, "empty array"),
+            ("{}", 0, "object, not an array"),
+            ("not json at all", 0, "garbage"),
+            (
+                r#"[{"createdAt":"2026-07-23T22:53:49Z","databaseId":1,"displayTitle":"t"}]"#,
+                0,
+                "missing headSha",
+            ),
+            (
+                r#"[{"createdAt":"2026-07-23T22:53:49Z","databaseId":"1","displayTitle":"t","headSha":"abc"}]"#,
+                0,
+                "databaseId as a string",
+            ),
+            (
+                r#"[{"databaseId":1,"displayTitle":"t","headSha":"abc"}]"#,
+                0,
+                "missing createdAt",
+            ),
+            (
+                "  \n [{\"createdAt\":\"2026-07-23T22:53:49Z\",\"databaseId\":7,\"displayTitle\":\"t\",\"headSha\":\"abc\"}]  \n ",
+                1,
+                "trailing/leading whitespace still parses",
+            ),
+            (
+                r#"[3, "str", null, {"createdAt":"2026-07-23T22:53:49Z","databaseId":9,"displayTitle":"ok","headSha":"def"}]"#,
+                1,
+                "non-object entries skipped, good one kept",
+            ),
+            (
+                r#"[{"createdAt":"2026-07-23T22:53:49Z","databaseId":9,"headSha":"def"}]"#,
+                1,
+                "missing displayTitle is tolerated (title is cosmetic)",
+            ),
+        ];
+        for (json, expected, label) in cases {
+            let runs = parse_failed_ci_runs(json);
+            assert_eq!(runs.len(), *expected, "case: {label}");
+        }
+    }
+
+    #[test]
+    fn test_ci_event_exists_for_present_and_absent() {
+        let content = concat!(
+            r#"{"ts":"2026-07-26T00:00:00Z","day":148,"trigger":"ci_harvest","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"ci_failure","ci_run_id":30051449447}"#,
+            "\n"
+        );
+        assert!(ci_event_exists_for(content, 30051449447));
+        assert!(!ci_event_exists_for(content, 29148457259));
+        assert!(!ci_event_exists_for("", 30051449447));
+        assert!(!ci_event_exists_for("not json\n", 30051449447));
+    }
+
+    #[test]
+    fn test_ci_event_exists_for_ignores_green_event_with_same_snapshot_hash() {
+        // Regression: green events dedup on `snapshot_git_hash`. If harvest
+        // reused `green_event_exists_for`, an already-green-graded snapshot
+        // would silently swallow the red event. The red dedup key is the run id.
+        let green = concat!(
+            r#"{"ts":"2026-07-25T00:00:00Z","day":147,"trigger":"cli","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"watch_success","snapshot_git_hash":"deadbee"}"#,
+            "\n"
+        );
+        assert!(
+            green_event_exists_for(green, "deadbee"),
+            "sanity: the green dedup key does match"
+        );
+        assert!(
+            !ci_event_exists_for(green, 30051449447),
+            "a green event must never mask a CI failure event"
+        );
+    }
+
+    #[test]
+    fn test_ci_failure_event_round_trip_counts_as_failure_day() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("risk_validations.jsonl");
+
+        write_validation_event(
+            &path,
+            148,
+            "ci_harvest",
+            &["src/commands_risk.rs".to_string()],
+            &["src/repl.rs".to_string()],
+            50.0,
+            Some(25.0),
+            Some("ci_failure"),
+            None,
+            Some(30051449447),
+        )
+        .expect("write ci_failure event");
+
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            content.contains("\"ci_run_id\":30051449447"),
+            "the run id is persisted so re-harvesting is idempotent: {content}"
+        );
+        assert!(ci_event_exists_for(&content, 30051449447));
+
+        let events = parse_validation_events(&content);
+        assert_eq!(events.len(), 1);
+        assert!(
+            !crate::commands_risk_accuracy::is_green_event(&events[0]),
+            "ci_failure must grade on the RECALL side of the Day-142 polarity split"
+        );
+
+        let stats = crate::commands_risk_accuracy::compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 1);
+        assert!(
+            stats.failure_hit_rate_pct.is_some(),
+            "harvested CI failures are exactly the failure-day evidence the meter was starving for"
         );
     }
 }

@@ -10,10 +10,11 @@ use crate::format::*;
 // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
 // module's own scoring/reporting code) remain unchanged.
 pub(crate) use crate::commands_risk_snapshots::{
-    auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json, emerging_grade_of,
-    load_validation_history_from, parse_all_snapshots, parse_validation_events,
-    risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
-    RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+    ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
+    parse_failed_ci_runs, parse_validation_events, risk_autosnapshot_enabled, snapshot_before,
+    write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+    RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.
@@ -585,6 +586,7 @@ pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
     "accuracy",
     "effectiveness",
     "epistemic",
+    "harvest",
     "--all",
 ];
 
@@ -638,6 +640,11 @@ pub(crate) fn handle_risk(input: &str) {
 
     if sub == "epistemic" {
         handle_risk_epistemic();
+        return;
+    }
+
+    if sub == "harvest" {
+        handle_risk_harvest();
         return;
     }
 
@@ -2023,6 +2030,203 @@ fn emerging_paths_from_snapshot(snapshot: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// How many failed CI runs `/risk harvest` asks GitHub for in one crank.
+const CI_HARVEST_RUN_LIMIT: usize = 10;
+
+/// Fetch the recent failed CI runs as raw JSON via the `gh` CLI.
+///
+/// Fail-soft, but never fail-*silent* (Day 139): every error path returns a
+/// stated reason the caller prints. Returns the raw stdout on success.
+fn fetch_failed_ci_runs_json(limit: usize) -> Result<String, String> {
+    let output = std::process::Command::new("gh")
+        .args([
+            "run",
+            "list",
+            "--workflow=CI",
+            "--status=failure",
+            "--limit",
+            &limit.to_string(),
+            "--json",
+            "databaseId,headSha,createdAt,displayTitle",
+        ])
+        .output()
+        .map_err(|e| format!("could not run `gh` ({e}) — is the GitHub CLI installed?"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let reason = if stderr.is_empty() {
+            "(no stderr)".to_string()
+        } else {
+            stderr
+        };
+        return Err(format!("`gh run list` failed: {reason}"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Handle `/risk harvest` — turn already-recorded failed CI runs into
+/// failure-day validation events.
+///
+/// The meter's green (precision) half fills up on its own; the red (recall)
+/// half almost never does, because in the evolve loop breakage is repaired
+/// inside the harness fix loop and rarely survives into a commit the
+/// commit-message classifier can see. Failed CI runs are real, already-recorded
+/// failure-day evidence — this crank feeds them to the meter.
+///
+/// Deliberately manual (like `yoyo risk validate`): no cron, no hook. Every
+/// skip prints its reason; nothing is recorded on a guess.
+fn handle_risk_harvest() {
+    let day: u32 = std::fs::read_to_string("DAY_COUNT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    // 1. Snapshots are the predictions being graded — no snapshots, nothing to do.
+    let snapshot_content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
+    let snapshots = parse_all_snapshots(&snapshot_content);
+    if snapshots.is_empty() {
+        println!("  No snapshots found — run {BOLD}/risk snapshot{RESET} first (nothing to grade CI failures against).");
+        return;
+    }
+
+    // 2. Fetch failed CI runs.
+    let json = match fetch_failed_ci_runs_json(CI_HARVEST_RUN_LIMIT) {
+        Ok(j) => j,
+        Err(reason) => {
+            println!("  {DIM}Harvest skipped: {reason}{RESET}");
+            return;
+        }
+    };
+    let runs = parse_failed_ci_runs(&json);
+    println!(
+        "  Failed CI runs seen: {} (limit {CI_HARVEST_RUN_LIMIT})",
+        runs.len()
+    );
+    if runs.is_empty() {
+        println!("  {DIM}Nothing to harvest — no failed CI runs in the window (or `gh` returned an unexpected shape).{RESET}");
+        return;
+    }
+
+    let validation_path = std::path::Path::new(RISK_VALIDATION_PATH);
+    let mut existing = std::fs::read_to_string(validation_path).unwrap_or_default();
+
+    let (mut harvested, mut deduped, mut skipped) = (0usize, 0usize, 0usize);
+
+    for run in &runs {
+        // 3. Dedup by run id — NOT by snapshot hash (a snapshot may already
+        //    carry a green event, which would silently swallow this red one).
+        if ci_event_exists_for(&existing, run.run_id) {
+            deduped += 1;
+            continue;
+        }
+
+        // 4. Match the most recent snapshot taken before the run started.
+        let Some(snapshot) = snapshot_before(&snapshots, &run.created_at) else {
+            skipped += 1;
+            println!(
+                "  {DIM}skip run {}: no snapshot recorded before {}{RESET}",
+                run.run_id, run.created_at
+            );
+            continue;
+        };
+
+        // 5. Broke set = files changed between the snapshot and the failing
+        //    commit. CI already told us the outcome was red, so the
+        //    commit-message heuristic (`classify_broke_files`) is the wrong
+        //    instrument here.
+        let range = format!("{}..{}", snapshot.git_hash, run.head_sha);
+        let log = match crate::git::run_git(&["log", &range, "--name-only", "--oneline"]) {
+            Ok(o) => o,
+            Err(e) => {
+                skipped += 1;
+                println!(
+                    "  {DIM}skip run {}: git range {range} unavailable ({e}) — likely shallow clone history{RESET}",
+                    run.run_id
+                );
+                continue;
+            }
+        };
+
+        let broke: std::collections::BTreeSet<String> = parse_git_log_name_only(&log)
+            .iter()
+            .flat_map(|e| e.files.iter().cloned())
+            .filter(|f| f.starts_with("src/"))
+            .collect();
+        if broke.is_empty() {
+            skipped += 1;
+            println!(
+                "  {DIM}skip run {}: no src/ files changed in {range} — a 0-file event would only dilute the average{RESET}",
+                run.run_id
+            );
+            continue;
+        }
+
+        // 6. Grade both columns with the SAME shared helpers every other
+        //    validation path uses.
+        let broke_refs: Vec<&str> = broke.iter().map(|s| s.as_str()).collect();
+        let predicted_set: std::collections::HashSet<&str> =
+            snapshot.predicted.iter().map(|s| s.as_str()).collect();
+        let (hit_count, accuracy_pct) = accuracy_of(&broke_refs, &predicted_set);
+        let hits: Vec<String> = broke
+            .iter()
+            .filter(|f| predicted_set.contains(f.as_str()))
+            .cloned()
+            .collect();
+        let surprises: Vec<String> = broke
+            .iter()
+            .filter(|f| !predicted_set.contains(f.as_str()))
+            .cloned()
+            .collect();
+        let emerging_grade = emerging_grade_of(&broke_refs, &snapshot.emerging);
+
+        // 7. Persist. `severity: "ci_failure"` is not `"watch_success"`, so
+        //    `is_green_event` is false and this grades on the RECALL side of
+        //    the Day-142 polarity split — which is the entire point.
+        if let Err(e) = write_validation_event(
+            validation_path,
+            day,
+            "ci_harvest",
+            &hits,
+            &surprises,
+            accuracy_pct,
+            emerging_grade.map(|(_, pct)| pct),
+            Some("ci_failure"),
+            None, // red-path event — the green dedup key does not apply
+            Some(run.run_id),
+        ) {
+            skipped += 1;
+            eprintln!(
+                "  {RED}could not record CI failure event for run {}: {e}{RESET}",
+                run.run_id
+            );
+            continue;
+        }
+
+        harvested += 1;
+        let emerging_str = match emerging_grade {
+            Some((_, pct)) => format!("{pct:.1}%"),
+            None => "n/a (no emerging list in snapshot)".to_string(),
+        };
+        println!(
+            "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) — {}",
+            run.run_id,
+            snapshot.day,
+            snapshot.git_hash,
+            hit_count,
+            broke.len(),
+            run.title,
+        );
+
+        // Keep the in-memory dedup view current for the rest of this loop.
+        existing = std::fs::read_to_string(validation_path).unwrap_or(existing);
+    }
+
+    println!(
+        "  Harvest: {harvested} recorded, {deduped} already recorded, {skipped} skipped (reasons above)."
+    );
+}
+
 fn handle_risk_validate() {
     // 1. Load the most recent snapshot
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
@@ -2157,6 +2361,7 @@ fn handle_risk_validate() {
             emerging_accuracy_pct,
             None, // CLI manual grading — untagged severity
             None, // red-path event — no green dedup key
+            None, // not a CI-harvest event
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
@@ -4247,6 +4452,7 @@ c618ce4c Day 146: bump skill-evolve counter (4)
             (accuracy_pct * 10.0).round() / 10.0,
             None, // no emerging forecast in this synthetic snapshot
             None, // untagged severity — the shape handle_risk_validate writes
+            None,
             None,
         )
         .expect("write validation event");

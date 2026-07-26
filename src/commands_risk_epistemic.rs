@@ -314,6 +314,7 @@ mod tests {
         ParsedSnapshot {
             day,
             git_hash: format!("hash{day}"),
+            ts: format!("2026-07-{:02}T00:00:00Z", (day % 28) + 1),
             predicted: predicted.iter().map(|s| s.to_string()).collect(),
             emerging: emerging.iter().map(|s| s.to_string()).collect(),
         }
