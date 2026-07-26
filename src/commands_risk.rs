@@ -2065,6 +2065,71 @@ fn fetch_failed_ci_runs_json(limit: usize) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Extract the changed-file list from a GitHub compare payload (`.files[].filename`).
+///
+/// Pure and network-free so it can be pinned against a captured payload.
+/// Anything that isn't a compare payload — empty string, an API error object,
+/// `files` of the wrong type, entries without a string `filename` — yields an
+/// explicit empty Vec. Empty means "I learned nothing here", and the caller
+/// treats it exactly like a git range that produced no `src/` files: skip and
+/// say why. It never fabricates a file set and never panics.
+fn parse_compare_changed_files(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    value["files"]
+        .as_array()
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| f["filename"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Ask GitHub which files changed between two commits, via `gh api`.
+///
+/// This exists because the only caller that ever turns the harvest crank is an
+/// ephemeral CI runner checked out at `fetch-depth: 50` — most snapshot SHAs
+/// and failing-run head SHAs simply do not resolve locally, so `git log
+/// <base>..<head>` fails with "unknown revision". GitHub still holds the full
+/// history; `gh api` substitutes `{owner}`/`{repo}` from the current repo, so
+/// there's no hardcoded slug and forks work unchanged.
+///
+/// Honest limitation: the compare endpoint returns at most 300 files per page
+/// and we do not paginate, so a very large range under-reports its changed
+/// files. For harvest that means a possible *undercount* of the broke set, not
+/// a wrong grade of the files it does see.
+fn fetch_compare_files(base: &str, head: &str) -> Result<Vec<String>, String> {
+    // Three dots: `base...head` compares against the merge base, which is what
+    // "what changed on the way to this failing run" means.
+    let endpoint = format!("repos/{{owner}}/{{repo}}/compare/{base}...{head}");
+    let output = std::process::Command::new("gh")
+        .args(["api", &endpoint])
+        .output()
+        .map_err(|e| format!("could not run `gh` ({e}) — is the GitHub CLI installed?"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let reason = if stderr.is_empty() {
+            "(no stderr)".to_string()
+        } else {
+            stderr
+        };
+        return Err(format!("`gh api compare` failed: {reason}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let files = parse_compare_changed_files(&stdout);
+    if files.is_empty() {
+        return Err(
+            "compare payload listed no files (unexpected shape or empty range)".to_string(),
+        );
+    }
+    Ok(files)
+}
+
 /// Handle `/risk harvest` — turn already-recorded failed CI runs into
 /// failure-day validation events.
 ///
@@ -2135,28 +2200,58 @@ fn handle_risk_harvest() {
         //    commit. CI already told us the outcome was red, so the
         //    commit-message heuristic (`classify_broke_files`) is the wrong
         //    instrument here.
+        //
+        //    Two sources, in order: local `git log` (free, exact, works in a
+        //    full clone) and — when that errors or turns up no `src/` files —
+        //    the GitHub compare API, which still has the history a shallow
+        //    clone threw away. The source is printed so a reader can tell
+        //    which one produced the file set.
         let range = format!("{}..{}", snapshot.git_hash, run.head_sha);
-        let log = match crate::git::run_git(&["log", &range, "--name-only", "--oneline"]) {
-            Ok(o) => o,
-            Err(e) => {
-                skipped += 1;
-                println!(
-                    "  {DIM}skip run {}: git range {range} unavailable ({e}) — likely shallow clone history{RESET}",
-                    run.run_id
-                );
-                continue;
-            }
-        };
+        let mut local_reason: Option<String> = None;
+        let mut source = "via local git";
+        let mut broke: std::collections::BTreeSet<String> =
+            match crate::git::run_git(&["log", &range, "--name-only", "--oneline"]) {
+                Ok(log) => parse_git_log_name_only(&log)
+                    .iter()
+                    .flat_map(|e| e.files.iter().cloned())
+                    .filter(|f| f.starts_with("src/"))
+                    .collect(),
+                Err(e) => {
+                    local_reason = Some(format!(
+                        "local git range {range} unavailable ({e}) — likely shallow clone history"
+                    ));
+                    std::collections::BTreeSet::new()
+                }
+            };
 
-        let broke: std::collections::BTreeSet<String> = parse_git_log_name_only(&log)
-            .iter()
-            .flat_map(|e| e.files.iter().cloned())
-            .filter(|f| f.starts_with("src/"))
-            .collect();
+        if broke.is_empty() {
+            match fetch_compare_files(&snapshot.git_hash, &run.head_sha) {
+                Ok(files) => {
+                    broke = files
+                        .into_iter()
+                        .filter(|f| f.starts_with("src/"))
+                        .collect();
+                    source = "via GitHub compare API";
+                }
+                Err(api_reason) => {
+                    // Both sources failed — keep the honest skip. A zero-file
+                    // event would only dilute the average.
+                    skipped += 1;
+                    let local =
+                        local_reason.unwrap_or_else(|| format!("no src/ files changed in {range}"));
+                    println!(
+                        "  {DIM}skip run {}: {local}; compare API also failed ({api_reason}){RESET}",
+                        run.run_id
+                    );
+                    continue;
+                }
+            }
+        }
+
         if broke.is_empty() {
             skipped += 1;
             println!(
-                "  {DIM}skip run {}: no src/ files changed in {range} — a 0-file event would only dilute the average{RESET}",
+                "  {DIM}skip run {}: no src/ files changed in {range} ({source}) — a 0-file event would only dilute the average{RESET}",
                 run.run_id
             );
             continue;
@@ -2209,7 +2304,7 @@ fn handle_risk_harvest() {
             None => "n/a (no emerging list in snapshot)".to_string(),
         };
         println!(
-            "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) — {}",
+            "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) [{source}] — {}",
             run.run_id,
             snapshot.day,
             snapshot.git_hash,
@@ -2417,6 +2512,116 @@ fn handle_risk_validate() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A *captured* GitHub compare payload, not one I wrote from memory.
+    ///
+    /// Taken verbatim (then trimmed to 3 of 14 file entries, patches clipped)
+    /// from `gh api "repos/{owner}/{repo}/compare/7a4c5845...47ea6981"` run in
+    /// this repo on Day 148. Key names and nesting are exactly what the API
+    /// returned — Day 147's lesson: a hand-written fixture pins my belief about
+    /// the input, not the input.
+    const COMPARE_FIXTURE: &str = r#"{
+  "url": "https://api.github.com/repos/yologdev/yoyo-evolve/compare/7a4c5845...47ea6981af59e69a7207fc18842edc6ccacfffe6",
+  "status": "diverged",
+  "ahead_by": 9,
+  "behind_by": 6,
+  "total_commits": 9,
+  "base_commit": {
+    "sha": "7a4c5845b1ddaad2b72fac0da85b6f37c8e1be54"
+  },
+  "commits": [
+    {
+      "sha": "0882cc0378132947dc70cc1309ed2fdd72249bd2"
+    }
+  ],
+  "files": [
+    {
+      "sha": "7ed6ff82de6bcc2a78243fc9c54d3ef5ac14da69",
+      "filename": ".skill_evolve_counter",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/yologdev/yoyo-evolve/blob/47ea6981af59e69a7207fc18842edc6ccacfffe6/.skill_evolve_counter",
+      "raw_url": "https://github.com/yologdev/yoyo-evolve/raw/47ea6981af59e69a7207fc18842edc6ccacfffe6/.skill_evolve_counter",
+      "contents_url": "https://api.github.com/repos/yologdev/yoyo-evolve/contents/.skill_evolve_counter?ref=47ea6981af59e69a7207fc18842edc6ccacfffe6",
+      "patch": "@@ -1 +1 @@\n-4\n+5"
+    },
+    {
+      "sha": "b797d5e19d0c09a6fa32c396f5b4c9a3ed678a6e",
+      "filename": "src/commands_risk.rs",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/yologdev/yoyo-evolve/blob/47ea6981af59e69a7207fc18842edc6ccacfffe6/src%2Fcommands_risk.rs",
+      "raw_url": "https://github.com/yologdev/yoyo-evolve/raw/47ea6981af59e69a7207fc18842edc6ccacfffe6/src%2Fcommands_risk.rs",
+      "contents_url": "https://api.github.com/repos/yologdev/yoyo-evolve/contents/src%2Fcommands_risk.rs?ref=47ea6981af59e69a7207fc18842edc6ccacfffe6",
+      "patch": "@@ -23,7 +23,7 @@ pub(crate) use crate::commands_risk_snapsh"
+    },
+    {
+      "sha": "3a8ee0f5c657173fa74d6339531d0f8489d2cff3",
+      "filename": "src/commands_risk_accuracy.rs",
+      "status": "modified",
+      "additions": 111,
+      "deletions": 0,
+      "changes": 111,
+      "blob_url": "https://github.com/yologdev/yoyo-evolve/blob/47ea6981af59e69a7207fc18842edc6ccacfffe6/src%2Fcommands_risk_accuracy.rs",
+      "raw_url": "https://github.com/yologdev/yoyo-evolve/raw/47ea6981af59e69a7207fc18842edc6ccacfffe6/src%2Fcommands_risk_accuracy.rs",
+      "contents_url": "https://api.github.com/repos/yologdev/yoyo-evolve/contents/src%2Fcommands_risk_accuracy.rs?ref=47ea6981af59e69a7207fc18842edc6ccacfffe6",
+      "patch": "@@ -467,6 +467,41 @@ pub(crate) fn format_accuracy_report(st"
+    }
+  ]
+}"#;
+
+    #[test]
+    fn test_parse_compare_changed_files_reads_captured_payload() {
+        let files = parse_compare_changed_files(COMPARE_FIXTURE);
+        assert_eq!(
+            files,
+            vec![
+                ".skill_evolve_counter".to_string(),
+                "src/commands_risk.rs".to_string(),
+                "src/commands_risk_accuracy.rs".to_string(),
+            ],
+            "parser must read .files[].filename in payload order"
+        );
+    }
+
+    #[test]
+    fn test_parse_compare_changed_files_absent_or_malformed_is_empty_not_panic() {
+        // Every shape the network can hand back that isn't a compare payload.
+        // Explicit empty (the caller's skip-with-reason branch), never a panic
+        // and never a fabricated file list.
+        for bad in [
+            "",
+            "   ",
+            "not json at all",
+            "{}",
+            r#"{"message":"Not Found","status":"404"}"#,
+            r#"{"files": null}"#,
+            r#"{"files": "src/commands_risk.rs"}"#,
+            r#"{"files": []}"#,
+            r#"{"files": [{"status":"modified"}]}"#,
+            r#"{"files": [{"filename": 42}]}"#,
+        ] {
+            assert!(
+                parse_compare_changed_files(bad).is_empty(),
+                "expected empty Vec for malformed payload: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_compare_changed_files_skips_entries_without_filename() {
+        // A partially-usable payload still yields the usable half.
+        let json =
+            r#"{"files":[{"filename":"src/a.rs"},{"sha":"deadbeef"},{"filename":"src/b.rs"}]}"#;
+        assert_eq!(
+            parse_compare_changed_files(json),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+    }
 
     #[test]
     fn test_risk_subcommand_list_covers_every_subcommand() {
