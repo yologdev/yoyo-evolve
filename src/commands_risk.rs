@@ -1423,6 +1423,79 @@ struct CommitEntry {
     files: Vec<String>,
 }
 
+/// Decode a path as git prints it in `--name-only` output.
+///
+/// With `core.quotePath` at its default (true), git wraps any path containing
+/// non-ASCII or control characters in double quotes and octal-escapes the raw
+/// bytes — a file named `src/café.rs` is printed as `"src/caf\303\251.rs"`.
+/// Verbatim `git log --oneline --name-only` capture:
+///
+/// ```text
+/// 0488876 fix: unicode path
+/// "src/caf\303\251.rs"
+/// src/plain rs file.rs
+/// ```
+///
+/// Note the second line: paths containing *spaces* are NOT quoted, so quoting
+/// is not a reliable "has weird characters" signal and only the quoted form
+/// needs decoding.
+///
+/// Left undecoded, such a path can never equal the filesystem-walked path
+/// stored in a risk snapshot, so the file is silently dropped from grading —
+/// an absence absorbed as "this file never broke" (Day 144: absence must be an
+/// explicit value, not a convenient default). Unquoting closes that hole.
+///
+/// Unquoted input is returned unchanged. Octal escapes are decoded at the byte
+/// level and re-assembled with `from_utf8_lossy`, so a multi-byte character
+/// split across escapes round-trips correctly and invalid UTF-8 degrades to
+/// replacement characters rather than panicking.
+fn unquote_git_path(raw: &str) -> String {
+    let inner = match raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        Some(inner) => inner,
+        // Not quoted (the common case, including paths with spaces).
+        None => return raw.to_string(),
+    };
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some(d @ '0'..='7') => {
+                // Octal escape: up to three digits, e.g. \303 -> 0xC3.
+                let mut val = d.to_digit(8).unwrap_or(0);
+                for _ in 0..2 {
+                    let mut probe = chars.clone();
+                    match probe.next().and_then(|n| n.to_digit(8)) {
+                        Some(n) => {
+                            val = val * 8 + n;
+                            chars = probe;
+                        }
+                        None => break,
+                    }
+                }
+                bytes.push((val & 0xFF) as u8);
+            }
+            Some('n') => bytes.push(b'\n'),
+            Some('t') => bytes.push(b'\t'),
+            Some('r') => bytes.push(b'\r'),
+            // `\"` and `\\` (and any other escape git emits) are literal.
+            Some(other) => {
+                let mut buf = [0u8; 4];
+                bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            // Trailing lone backslash: keep it rather than dropping data.
+            None => bytes.push(b'\\'),
+        }
+    }
+
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// True when `line` has the shape of a `git log --oneline` commit header:
 /// 7–40 lowercase-hex chars, a single space, then a non-empty subject.
 ///
@@ -1485,8 +1558,8 @@ fn parse_git_log_name_only(output: &str) -> Vec<CommitEntry> {
             // Leading line that doesn't look like a header: treat as the message.
             current_msg = Some(trimmed.to_string());
         } else {
-            // Subsequent non-blank line: file path
-            current_files.push(trimmed.to_string());
+            // Subsequent non-blank line: file path (git may C-quote it).
+            current_files.push(unquote_git_path(trimmed));
         }
     }
 
@@ -2534,6 +2607,71 @@ src/abcdef1.rs
         let entries = parse_git_log_name_only(log);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].files, vec!["deadbeef.rs", "src/abcdef1.rs"]);
+    }
+
+    /// VERBATIM `git log --oneline --name-only` capture from a scratch repo
+    /// containing `src/café.rs` and `src/plain rs file.rs` (Day 148). Typed
+    /// fixtures pin my *belief* about git's output; only captured output pins
+    /// the output (Day 147 lesson).
+    ///
+    /// It shows both halves of the contract: non-ASCII paths arrive C-quoted
+    /// and octal-escaped, plain paths with spaces arrive bare.
+    const VERBATIM_QUOTED_PATH_LOG: &str = "\
+0488876 fix: unicode path
+\"src/caf\\303\\251.rs\"
+src/plain rs file.rs
+";
+
+    #[test]
+    fn test_parse_git_log_name_only_decodes_git_quoted_paths() {
+        let entries = parse_git_log_name_only(VERBATIM_QUOTED_PATH_LOG);
+        assert_eq!(entries.len(), 1, "one commit in the captured log");
+        assert_eq!(
+            entries[0].files,
+            vec!["src/café.rs", "src/plain rs file.rs"],
+            "quoted path must be decoded back to the on-disk path; \
+             an unquoted path with spaces must pass through untouched"
+        );
+    }
+
+    #[test]
+    fn test_quoted_path_reaches_broke_set_and_matches_snapshot_path() {
+        // The bug this closes: an undecoded `"src/caf\303\251.rs"` can never
+        // equal the filesystem-walked path a snapshot stores, so the file was
+        // silently dropped from grading instead of counting as a hit.
+        let entries = parse_git_log_name_only(VERBATIM_QUOTED_PATH_LOG);
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.contains("src/café.rs"),
+            "decoded path should join the broken set, got {broke:?}"
+        );
+
+        let predicted = vec!["src/café.rs".to_string()];
+        let result = compute_validation(&predicted, &broke, None, 1);
+        assert_eq!(
+            result.hits,
+            vec!["src/café.rs"],
+            "prediction must grade as a hit"
+        );
+    }
+
+    #[test]
+    fn test_unquote_git_path_edge_cases() {
+        // Unquoted input is returned verbatim (the common case).
+        assert_eq!(unquote_git_path("src/foo.rs"), "src/foo.rs");
+        assert_eq!(unquote_git_path("a b/c d.rs"), "a b/c d.rs");
+        // Multi-byte character split across two octal escapes.
+        assert_eq!(unquote_git_path("\"caf\\303\\251\""), "café");
+        // Literal escapes git emits for quotes and backslashes.
+        assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b");
+        assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b");
+        // Control-character escapes.
+        assert_eq!(unquote_git_path("\"a\\tb\\nc\""), "a\tb\nc");
+        // Malformed input must not panic or lose data: a lone trailing
+        // backslash is kept as a literal rather than silently dropped.
+        assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\\");
+        assert_eq!(unquote_git_path("\"\""), "");
+        assert_eq!(unquote_git_path("\"unterminated"), "\"unterminated");
     }
 
     #[test]
