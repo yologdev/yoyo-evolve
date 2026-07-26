@@ -694,13 +694,37 @@ fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
     }
 }
 
+/// Return the slice of `s` before the first `delim`, but only when that prefix
+/// still contains an identifier character. Otherwise return `s` unchanged, so
+/// delimiter-leading shapes (`()`, `<T>`) keep the caller's graceful fallback
+/// instead of collapsing to an empty candidate. Slices on an ASCII delimiter
+/// index, which is always a char boundary.
+fn cut_before(s: &str, delim: char) -> &str {
+    match s.find(delim) {
+        Some(idx) => {
+            let prefix = &s[..idx];
+            if prefix
+                .chars()
+                .any(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                prefix
+            } else {
+                s
+            }
+        }
+        None => s,
+    }
+}
+
 /// Normalize a user-typed symbol query into a bare identifier the symbol
 /// index can match. Strips surrounding punctuation people paste from code:
 /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
 /// path/member access `crate::bar::baz`/`self.count` (last segment), markdown
-/// backticks, trailing `,;:.` etc. If the input contains `<`, only the text before the first `<` is
-/// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
-/// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+/// backticks, trailing `,;:.` etc. If the input contains `<` or `(`, only the
+/// text before the first one is considered (so `Vec<Foo>` → `Vec`,
+/// `foo<T>` → `foo`, `foo(a, b)` → `foo` — the callee, not the last argument).
+/// Falls back to the trimmed input if no identifier run is found (e.g. `()`
+/// stays `()`).
 ///
 /// Language-agnostic and syntax-free: it never parses code, it just picks the
 /// last maximal run of `[A-Za-z0-9_]` characters. Char-safe (no byte indexing).
@@ -709,11 +733,12 @@ fn normalize_symbol_query(raw: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    // If there's a `<`, only look before it so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`.
-    let candidate = match trimmed.find('<') {
-        Some(idx) => &trimmed[..idx],
-        None => trimmed,
-    };
+    // Cut at `<` then `(` so generics and call arguments never outrank the name
+    // in front of them: `Vec<Foo>` → `Vec`, `foo(a, b)` → `foo`. The cut is only
+    // taken when the prefix actually holds an identifier char, so shapes like
+    // `()` or `<T>` keep their existing graceful fallback instead of degrading
+    // to an empty candidate.
+    let candidate = cut_before(cut_before(trimmed, '<'), '(');
     // Find the last maximal run of identifier chars by pushing into a String
     // per run — sidesteps byte indexing entirely (café() is safe).
     // A run that is all digits (e.g. the `0` in `arr[0]`) is never a symbol
@@ -1882,9 +1907,13 @@ mod tests {
             ("MyStruct", "MyStruct"),
             // Call / borrow / deref shapes.
             ("foo()", "foo"),
-            // KNOWN GAP: ideal is "foo" (the callee), but the last name run
-            // wins so a trailing argument identifier is returned instead.
-            ("foo(a, b)", "b"),
+            // Call arguments never outrank the callee (was a KNOWN GAP: the
+            // last name run used to win, returning the trailing argument).
+            ("foo(a, b)", "foo"),
+            ("handle_risk(args)", "handle_risk"),
+            ("self.count(x)", "count"),
+            ("println!(\"hi\")", "println"),
+            ("foo::<T>()", "foo"),
             ("&foo", "foo"),
             ("&mut foo", "foo"),
             ("*foo", "foo"),
