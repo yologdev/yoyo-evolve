@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current repo state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat c8c4474f 2>/dev/… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|HACK" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "normalize_symbol_query\… ✓ (5ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,770p src/commands_sea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1805,1870p src/commands_s… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1863,1930p src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,712p src/commands_sea… ✓ (3ms)
+ ✓ (4ms)
+  8 tools completed in 32.7s (8 ✓)
+
+Found a documented KNOWN GAP in the code. Let me close it.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 695,702p src/commands_sea… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:697..715 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (16 → 19 lines)
+  - /// backticks, trailing `,;:.` etc. If the input contains `<`, only the text before the first `<` is
+  - /// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
+  - /// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+  + /// backticks, trailing `,;:.` etc. If the input contains `<` or `(`, only the
+  + /// text before the first one is considered (so `Vec<Foo>` → `Vec`,
+  + /// `foo<T>` → `foo`, `foo(a, b)` → `foo` — the callee, not the last argument).
+  + /// Falls back to the trimmed input if no identifier run is found (e.g. `()`
+  + /// stays `()`).
+    ///
+    /// Language-agnostic and syntax-free: it never parses code, it just picks the
+    /// last maximal run of `[A-Za-z0-9_]` characters. Char-safe (no byte indexing).
+  ···
+        if trimmed.is_empty() {
+            return String::new();
+        }
+  -     // If there's a `<`, only look before it so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`.
+  -     let candidate = match trimmed.find('<') {
+  -         Some(idx) => &trimmed[..idx],
+  -         None => trimmed,
+  -     };
+  ... (6 more lines)
+ ✓ (11.4s)
+  - /// backticks, trailing `,;:.` etc. If the input contains `<`, only the text before the first `<` is
+  - /// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
+  - /// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+  + /// backticks, trailing `,;:.` etc. If the input contains `<` or `(`, only the
+  + /// text before the first one is considered (so `Vec<Foo>` → `Vec`,
+  + /// `foo<T>` → `foo`, `foo(a, b)` → `foo` — the callee, not the last argument).
+  + /// Falls back to the trimmed input if no identifier run is found (e.g. `()`
+  + /// stays `()`).
+  ... (13 more lines)
+  3 tools completed in 25.7s (3 ✓)
+
+Expected — now add the helper:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 23 lines)
+  + /// Return the slice of `s` before the first `delim`, but only when that prefix
+  + /// still contains an identifier character. Otherwise return `s` unchanged, so
+  + /// delimiter-leading shapes (`()`, `<T>`) keep the caller's graceful fallback
+  + /// instead of collapsing to an empty candidate. Slices on an ASCII delimiter
+  + /// index, which is always a char boundary.
+  + fn cut_before(s: &str, delim: char) -> &str {
+  +     match s.find(delim) {
+  +         Some(idx) => {
+  +             let prefix = &s[..idx];
+  +             if prefix
+  +                 .chars()
+  +                 .any(|c| c.is_ascii_alphanumeric() || c == '_')
+  +             {
+  +                 prefix
+  +             } else {
+  +                 s
+  +             }
+  +         }
+  +         None => s,
+  +     }
+  ... (3 more lines)
+ ✓ (1m 39s)
+  + /// Return the slice of `s` before the first `delim`, but only when that prefix
+  + /// still contains an identifier character. Otherwise return `s` unchanged, so
+  + /// delimiter-leading shapes (`()`, `<T>`) keep the caller's graceful fallback
+  + /// instead of collapsing to an empty candidate. Slices on an ASCII delimiter
+  + /// index, which is always a char boundary.
+  + fn cut_before(s: &str, delim: char) -> &str {
+  +     match s.find(delim) {
+  +         Some(idx) => {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test normalize_symbol_quer… ✓ (177ms)
+  2 tools completed in 1m 43s (2 ✓)
+
+That's exactly the documented gap now closed. Update the fixture to the correct expectation and add coverage:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (4 → 8 lines)
+                ("foo()", "foo"),
+  -             // KNOWN GAP: ideal is "foo" (the callee), but the last name run
+  -             // wins so a trailing argument identifier is returned instead.
+  -             ("foo(a, b)", "b"),
+  +             // Call arguments never outrank the callee (was a KNOWN GAP: the
+  +             // last name run used to win, returning the trailing argument).
+  +             ("foo(a, b)", "foo"),
+  +             ("handle_risk(args)", "handle_risk"),
+  +             ("self.count(x)", "count"),
+  +             ("println!(\"hi\")", "println"),
+  +             ("foo::<T>()", "foo"),
+ ✓ (1m 42s)
+                ("foo()", "foo"),
+  -             // KNOWN GAP: ideal is "foo" (the callee), but the last name run
+  -             // wins so a trailing argument identifier is returned instead.
+  -             ("foo(a, b)", "b"),
+  +             // Call arguments never outrank the callee (was a KNOWN GAP: the
+  +             // last name run used to win, returning the trailing argument).
+  +             ("foo(a, b)", "foo"),
+  +             ("handle_risk(args)", "handle_risk"),
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (52.8s)
+  3 tools completed in 4m 3s (3 ✓)
+
+All four checks green, and only src/commands_search.rs is modified. Committing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -4 &… ✓ (10ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Done. Committed c3efc58 — a real source change under src/, which is what the evaluator said was missing.
+
+What I fixed
+
+The previous session's commit was only a regenerated `.yoyo/risk_weights.json` (a data side effect), with zero src/ changes.
+
+The improvement
+
+I found an explicitly documented KNOWN GAP in src/commands_search.rs's fixture table:
+
+```rust
+// KNOWN GAP: ideal is "foo" (the callee), but the last name run
+// wins so a trailing argument identifier is returned instead.
+("foo(a, b)", "b"),
+```
+
+normalize_symbol_query (used by /def and /refs) picks the last identifier run, so pasting a call with arguments — /def handle_risk(args) — looked up args instead of handle_risk.
+
+The change (smallest correct version):
+• Added `cut_before(s, delim) -> &str`: takes the slice before the first delimiter, but only when that prefix contains an identifier char — so () and <T> keep their existing graceful fallback rather than collapsing to an empty candidate.
+• Applied it for '<' then '(' — extending the rule generics already used: let candidate = cut_before(cut_before(trimmed, '<'), '(').
+• Updated the fixture entry to ("foo(a, b)", "foo"), deleted the gap comment, and added cases for handle_risk(args), self.count(x), `println!("hi"), foo::<T>()`.
+
+Slicing is on an ASCII delimiter index, so it stays char-boundary-safe per the CLAUDE.md byte-indexing rule; the existing café() multi-byte test still passes.
+
+Verification (all run, all green):
+• cargo fmt — clean
+• `cargo clippy --all-targets -- -D warnings` — no warnings
+• cargo build — ok
+• cargo test — 4512 passed + 89 integration passed, 0 failed
+
+Working tree is clean; the diff touches exactly one file (src/commands_search.rs, +40/-11).
+
+  watch: no files changed this turn — skipping
+
