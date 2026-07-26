@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding one concrete improvement quickly. Let me check the known-bug thread from Day 147 first — the deferred classifier substring bug.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files" -… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "message_claims_repair" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|KNOWN BUG…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_like_oneline_comm… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" -A 15… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/dispatch_sub.… ✓ (5ms)
+  7 tools completed in 53.7s (7 ✓)
+
+Timebox hit. Best candidate found: the risk grader's git-log path parsing. Let me make a falsifiable prediction and test it against **real** git output (Day 147's lesson: verbatim capture, not hand-written fixtures).
+
+Prediction: `git log --oneline --name-only emits non-ASCII paths C-quoted+octal-escaped ("src/caf\303\251.rs"), and parse_git_log_name_only` passes them through verbatim — so such a file can never match a snapshot path, silently dropping it from grading.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf gq && mkdir gq && cd gq && git init -q . && git config user.em… ✓ (20ms)
+
+Prediction confirmed — and it also showed spaces are not quoted. Real bug: a non-ASCII path can never match a snapshot path, so it's silently dropped from grading. Writing the test first, with the verbatim capture above as the fixture.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1405,1435p' src/commands… ✓ (3ms)
+
+Now the implementation — a unquote_git_path helper wired into the file-path branch:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 74 lines)
+  + /// Decode a path as git prints it in `--name-only` output.
+  + ///
+  + /// With `core.quotePath` at its default (true), git wraps any path containing
+  + /// non-ASCII or control characters in double quotes and octal-escapes the raw
+  + /// bytes — a file named `src/café.rs` is printed as `"src/caf\303\251.rs"`.
+  + /// Verbatim `git log --oneline --name-only` capture:
+  + ///
+  + /// ```text
+  + /// 0488876 fix: unicode path
+  + /// "src/caf\303\251.rs"
+  + /// src/plain rs file.rs
+  + /// ```
+  + ///
+  + /// Note the second line: paths containing *spaces* are NOT quoted, so quoting
+  + /// is not a reliable "has weird characters" signal and only the quoted form
+  + /// needs decoding.
+  + ///
+  + /// Left undecoded, such a path can never equal the filesystem-walked path
+  + /// stored in a risk snapshot, so the file is silently dropped from grading —
+  + /// an absence absorbed as "this file never broke" (Day 144: absence must be an
+  ... (54 more lines)
+ ✓ (17.6s)
+  + /// Decode a path as git prints it in `--name-only` output.
+  + ///
+  + /// With `core.quotePath` at its default (true), git wraps any path containing
+  + /// non-ASCII or control characters in double quotes and octal-escapes the raw
+  + /// bytes — a file named `src/café.rs` is printed as `"src/caf\303\251.rs"`.
+  + /// Verbatim `git log --oneline --name-only` capture:
+  + ///
+  + /// ```text
+  ... (13 more lines)
+
+Expected — now wire it into the parser's file-path branch:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 4 lines)
+            } else {
+  -             // Subsequent non-blank line: file path
+  -             current_files.push(trimmed.to_string());
+  +             // Subsequent non-blank line: file path (git may C-quote it).
+  +             current_files.push(unquote_git_path(trimmed));
+            }
+ ✓ (1m 43s)
+            } else {
+  -             // Subsequent non-blank line: file path
+  -             current_files.push(trimmed.to_string());
+  +             // Subsequent non-blank line: file path (git may C-quote it).
+  +             current_files.push(unquote_git_path(trimmed));
+            }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_git_log\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2596,2625p' src/commands… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 2 lines) ✓ (1m 44s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 62 lines)
+  +     /// VERBATIM `git log --oneline --name-only` capture from a scratch repo
+  +     /// containing `src/café.rs` and `src/plain rs file.rs` (Day 148). Typed
+  +     /// fixtures pin my *belief* about git's output; only captured output pins
+  +     /// the output (Day 147 lesson).
+  +     ///
+  +     /// It shows both halves of the contract: non-ASCII paths arrive C-quoted
+  +     /// and octal-escaped, plain paths with spaces arrive bare.
+  +     const VERBATIM_QUOTED_PATH_LOG: &str = "\
+  + 0488876 fix: unicode path
+  + \"src/caf\\303\\251.rs\"
+  + src/plain rs file.rs
+  + ";
+  + 
+  +     #[test]
+  +     fn test_parse_git_log_name_only_decodes_git_quoted_paths() {
+  +         let entries = parse_git_log_name_only(VERBATIM_QUOTED_PATH_LOG);
+  +         assert_eq!(entries.len(), 1, "one commit in the captured log");
+  +         assert_eq!(
+  +             entries[0].files,
+  +             vec!["src/café.rs", "src/plain rs file.rs"],
+  ... (42 more lines)
+ ✓ (1m 41s)
+  +     /// VERBATIM `git log --oneline --name-only` capture from a scratch repo
+  +     /// containing `src/café.rs` and `src/plain rs file.rs` (Day 148). Typed
+  +     /// fixtures pin my *belief* about git's output; only captured output pins
+  +     /// the output (Day 147 lesson).
+  +     ///
+  +     /// It shows both halves of the contract: non-ASCII paths arrive C-quoted
+  +     /// and octal-escaped, plain paths with spaces arrive bare.
+  +     const VERBATIM_QUOTED_PATH_LOG: &str = "\
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk::tests:… ✓ (170ms)
+  6 tools completed in 5m 37s (6 ✓)
+
+My test expectation was wrong, not the code — a lone trailing backslash is preserved as data. Fixing the assertion:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 3 lines)
+  -         // Malformed input must not panic or lose data.
+  -         assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\"");
+  +         // Malformed input must not panic or lose data: a lone trailing
+  +         // backslash is kept as a literal rather than silently dropped.
+  +         assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\\");
+ ✓ (1m 45s)
+  -         // Malformed input must not panic or lose data.
+  -         assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\"");
+  +         // Malformed input must not panic or lose data: a lone trailing
+  +         // backslash is kept as a literal rather than silently dropped.
+  +         assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\\");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.5s)
+  2 tools completed in 2m 14s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
