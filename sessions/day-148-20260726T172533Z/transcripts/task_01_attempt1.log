@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the harvest code to see exactly what's there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD; ls -l… ✓ (10ms)
+ ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2020,2240p src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh api "repo… (7 lines) ✓ (509ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines) ✓ (30ms)
+  5 tools completed in 17.8s (5 ✓)
+
+Fixture captured from the real API. Now the test first:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_failed_ci… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2410,2430p src/commands_r… ✓ (3ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Now the tests (written before the implementation):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (6 → 115 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// A *captured* GitHub compare payload, not one I wrote from memory.
+  +     ///
+  +     /// Taken verbatim (then trimmed to 3 of 14 file entries, patches clipped)
+  +     /// from `gh api "repos/{owner}/{repo}/compare/7a4c5845...47ea6981"` run in
+  +     /// this repo on Day 148. Key names and nesting are exactly what the API
+  +     /// returned — Day 147's lesson: a hand-written fixture pins my belief about
+  +     /// the input, not the input.
+  +     const COMPARE_FIXTURE: &str = r#"{
+  +   "url": "https://api.github.com/repos/yologdev/yoyo-evolve/compare/7a4c5845...47ea6981af59e69a7207fc18842edc6ccacfffe6",
+  +   "status": "diverged",
+  +   "ahead_by": 9,
+  +   "behind_by": 6,
+  +   "total_commits": 9,
+  +   "base_commit": {
+  +     "sha": "7a4c5845b1ddaad2b72fac0da85b6f37c8e1be54"
+  +   },
+  ... (95 more lines)
+ ✓ (12.8s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// A *captured* GitHub compare payload, not one I wrote from memory.
+  +     ///
+  +     /// Taken verbatim (then trimmed to 3 of 14 file entries, patches clipped)
+  +     /// from `gh api "repos/{owner}/{repo}/compare/7a4c5845...47ea6981"` run in
+  ... (13 more lines)
+
+Failing as expected. Now the implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 64 lines)
+  + /// Extract the changed-file list from a GitHub compare payload (`.files[].filename`).
+  + ///
+  + /// Pure and network-free so it can be pinned against a captured payload.
+  + /// Anything that isn't a compare payload — empty string, an API error object,
+  + /// `files` of the wrong type, entries without a string `filename` — yields an
+  + /// explicit empty Vec. Empty means "I learned nothing here", and the caller
+  + /// treats it exactly like a git range that produced no `src/` files: skip and
+  + /// say why. It never fabricates a file set and never panics.
+  + fn parse_compare_changed_files(json: &str) -> Vec<String> {
+  +     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+  +         return Vec::new();
+  +     };
+  +     value["files"]
+  +         .as_array()
+  +         .map(|files| {
+  +             files
+  +                 .iter()
+  +                 .filter_map(|f| f["filename"].as_str().map(|s| s.to_string()))
+  +                 .collect()
+  +         })
+  ... (44 more lines)
+ ✓ (18.6s)
+  + /// Extract the changed-file list from a GitHub compare payload (`.files[].filename`).
+  + ///
+  + /// Pure and network-free so it can be pinned against a captured payload.
+  + /// Anything that isn't a compare payload — empty string, an API error object,
+  + /// `files` of the wrong type, entries without a string `filename` — yields an
+  + /// explicit empty Vec. Empty means "I learned nothing here", and the caller
+  + /// treats it exactly like a git range that produced no `src/` files: skip and
+  + /// say why. It never fabricates a file set and never panics.
+  ... (13 more lines)
+
+Now wire it into the harvest loop as a fallback:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (27 → 56 lines)
+            //    instrument here.
+  +         //
+  +         //    Two sources, in order: local `git log` (free, exact, works in a
+  +         //    full clone) and — when that errors or turns up no `src/` files —
+  +         //    the GitHub compare API, which still has the history a shallow
+  +         //    clone threw away. The source is printed so a reader can tell
+  +         //    which one produced the file set.
+            let range = format!("{}..{}", snapshot.git_hash, run.head_sha);
+  -         let log = match crate::git::run_git(&["log", &range, "--name-only", "--oneline"]) {
+  -             Ok(o) => o,
+  -             Err(e) => {
+  -                 skipped += 1;
+  -                 println!(
+  -                     "  {DIM}skip run {}: git range {range} unavailable ({e}) — likely shallow clone history{RESET}",
+  -                     run.run_id
+  -                 );
+  -                 continue;
+  +         let mut local_reason: Option<String> = None;
+  +         let mut source = "via local git";
+  +         let mut broke: std::collections::BTreeSet<String> =
+  ... (51 more lines)
+ ✓ (1m 48s)
+            //    instrument here.
+  +         //
+  +         //    Two sources, in order: local `git log` (free, exact, works in a
+  +         //    full clone) and — when that errors or turns up no `src/` files —
+  +         //    the GitHub compare API, which still has the history a shallow
+  +         //    clone threw away. The source is printed so a reader can tell
+  +         //    which one produced the file set.
+            let range = format!("{}..{}", snapshot.git_hash, run.head_sha);
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 2 lines)
+            println!(
+  -             "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) — {}",
+  +             "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) [{source}] — {}",
+ ✓ (1m 50s)
+            println!(
+  -             "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) — {}",
+  +             "  📉 run {} (day {} snapshot {}): {}/{} broken files predicted ({accuracy_pct:.1}% recall / emerging {emerging_str}) [{source}] — {}",
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 31s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.9s)
+  5 tools completed in 6m 36s (5 ✓)
+
+Green. Now turn the crank — this is the actual deliverable:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l .yoyo/risk_validations.jso… ✓ (2.9s)
+
+4 failure-day events recorded — the column that was pinned at zero. Now the accuracy report:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk accura… ✓ (147ms)
+
+failure_hit_rate_pct is now Some(33%) and the "recall ungraded" note is gone. Now the docs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "harvest" CLAUDE.md src/… ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+
