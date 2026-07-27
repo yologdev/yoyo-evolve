@@ -1,0 +1,65 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at what was already implemented.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NARROW_OUTCOME_MAX\|fai… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,120p src/commands_risk_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,300p src/commands_ris… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn pooled_hit_rate" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) struct Valid… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:630..760 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs:400..470 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -60 src/commands_risk_accur… ✓ (3ms)
+  10 tools completed in 26.4s (10 ✓)
+
+Now let me add the fixture-table tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (244 lines) ✓ (21.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_accuracy.… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - rendered as an honest ", N ungraded — no emerging forecast recorded" clause only when > 0. Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + rendered as an honest ", N ungraded — no emerging forecast recorded" clause only when > 0. Day 149 outcome-breadth split: failure-day recall is further split by how many files the outcome touched (`NARROW_OUTCOME_MAX = 3`, a documented judgment threshold) into `failure_narrow_samples`/`failure_narrow_hit_rate_pct` (outcomes a 10-slot prediction list could plausibly have covered) and `failure_broad_samples`/`failure_broad_hit_rate_pct` — pooled with the same hits/changed method as `failure_hit_rate_pct` so all three are commensurable; a `total_changed == 0` outcome lands in neither bucket (explicit third value, not "narrow"), empty sides render as "(no narrow/broad failure-day events yet)" and are `None`, never `Some(0.0)`. The report owns the caveat: a broad outcome is near-unpredictable by construction (a red build touching 31 files drags recall however good the model is), so the narrow number grades the model and the broad number mostly grades the breadth of the breakages. Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+ ✓ (1m 25s)
+  - rendered as an honest ", N ungraded — no emerging forecast recorded" clause only when > 0. Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + rendered as an honest ", N ungraded — no emerging forecast recorded" clause only when > 0. Day 149 outcome-breadth split: failure-day recall is further split by how many files the outcome touched (`NARROW_OUTCOME_MAX = 3`, a documented judgment threshold) into `failure_narrow_samples`/`failure_narrow_hit_rate_pct` (outcomes a 10-slot prediction list could plausibly have covered) and `failure_broad_samples`/`failure_broad_hit_rate_pct` — pooled with the same hits/changed method as `failure_hit_rate_pct` so all three are commensurable; a `total_changed == 0` outcome lands in neither bucket (explicit third value, not "narrow"), empty sides render as "(no narrow/broad failure-day events yet)" and are `None`, never `Some(0.0)`. The report owns the caveat: a broad outcome is near-unpredictable by construction (a red build touching 31 files drags recall however good the model is), so the narrow number grades the model and the broad number mostly grades the breadth of the breakages. Re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  3 tools completed in 1m 59s (3 ✓)
+
+Now the full verification suite, then the experiment.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk accura… ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git add -A… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (52 lines) ✓ (10ms)
+  4 tools completed in 1m 52s (4 ✓)
+
+Fixed both gaps the evaluator identified.
+
+What I added (the computation/report split from the prior commit was already working — I didn't touch it):
+
+1. Fixture-table tests in src/commands_risk_accuracy.rs — 9 new test fns, all passing. A `breadth_event helper plus a 6-row fixture table covering narrow-only / broad-only / mixed / total_changed == 0` / both-sides-empty / boundary. Every required pin is present:
+   • `failure_narrow_samples + failure_broad_samples <= failure_samples (asserted per fixture row), and == failure_samples` when no zero-change events exist
+   • None not `Some(0.0)` on each empty side — including the sharp case where the populated side genuinely scored 0%
+   • boundary: `total_changed == 3 → narrow, == 4` → broad
+   • a zero-change event lands in neither bucket
+   • report-level: both sides + caveat render; empty side prints "(no narrow failure-day events yet)"
+
+2. CLAUDE.md — commands_risk_accuracy.rs bullet now describes the Day 149 breadth split in the same style as the Day 142 note.
+
+3. The experiment, in the commit body — with a disclosure I want to flag explicitly: **it was not a clean blind test.** The evaluator's rejection feedback quoted the live numbers (narrow 40.0% / broad 32.4%) back at me, so I knew the answer before I could write a prediction. Rather than fake one, I recorded the prediction the task itself encoded in its example output (narrow ~90%, broad ~23%) and marked it as contaminated.
+
+**The result is a miss, and an interesting one.** Real output:
+
+```
+recall (failure days, 5 events): 33% of breakages were on the risk list
+  └ narrow outcomes (≤3 files changed, 3 events): 40.0%
+  └ broad outcomes (>3 files changed, 2 events):  32.4%
+```
+
+The expected gap was ~67 points; the actual gap is 7.6. So the breadth confound explains almost none of the failure-day recall number — on outcomes where 1–3 files broke and the list had 10 slots, the model still missed 3 of 5 files. That's blindness, not unpredictability. Caveat I put in the commit too: the narrow bucket is n=3, so one more narrow failure day could move it substantially.
+
+Verification: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test all green (4520 + 89 tests passing).
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,233 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the premise against HEAD.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/risk_validations.jsonl… ✓ (5ms)
+ ✓ (10ms)
+  2 tools completed in 12.5s (2 ✓)
+
+Premise checks out on data. Now the code:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,200p' src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,650p' src/commands_r… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 16.3s (2 ✓)
+
+Premise confirmed: total_changed + severity exist, polarity split exists, 5 failure-day events (total_changed = 6, 1, 31, 1, 3). Note `failure_hit_rate_pct` pools hits/changed. Let me read the rest.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,340p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_accuracy_repo… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Premise verified on all 3 points. Writing my prediction down before implementing/running:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (26 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn ev\|ValidationEvent … ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now implementing. Const + struct fields first:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 14 lines)
+  + /// Outcome-breadth boundary (Day 149): a failure whose outcome touched at
+  + /// most this many files is one a 10-slot prediction list could *plausibly*
+  + /// have covered. Above it, the outcome is close to unpredictable by
+  + /// construction — a red build touching 31 files drags recall down no matter
+  + /// how good the model is, because the list physically cannot hold 31 slots.
+  + ///
+  + /// This is a **judgment threshold, not a derived constant.** 3 is chosen
+  + /// because it is well inside the 10-slot list (a model with any skill should
+  + /// land ≥1 of 3) while still admitting the majority of small breakages. If
+  + /// the list length ever changes, revisit this number — the two are related
+  + /// but deliberately not tied, so the split stays stable across list resizes.
+  + pub(crate) const NARROW_OUTCOME_MAX: usize = 3;
+  + 
+    /// Aggregate accuracy statistics computed from validation history.
+ ✓ (17.9s)
+  + /// Outcome-breadth boundary (Day 149): a failure whose outcome touched at
+  + /// most this many files is one a 10-slot prediction list could *plausibly*
+  + /// have covered. Above it, the outcome is close to unpredictable by
+  + /// construction — a red build touching 31 files drags recall down no matter
+  + /// how good the model is, because the list physically cannot hold 31 slots.
+  + ///
+  + /// This is a **judgment threshold, not a derived constant.** 3 is chosen
+  + /// because it is well inside the 10-slot list (a model with any skill should
+  ... (6 more lines)
+
+Expected — now the fields and logic that use it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 18 lines)
+        pub(crate) failure_hit_rate_pct: Option<f64>,
+  +     /// Failure-day events whose outcome touched `1 ..= NARROW_OUTCOME_MAX`
+  +     /// files — outcomes a 10-slot prediction list could plausibly cover.
+  +     /// `total_changed == 0` events land in neither bucket (ungraded, not
+  +     /// narrow — Day 144: the absent case is an explicit third value).
+  +     pub(crate) failure_narrow_samples: usize,
+  +     /// Recall over narrow failure-day outcomes only. Pooled exactly like
+  +     /// `failure_hit_rate_pct`, so the two are commensurable. **This is the
+  +     /// number that grades the model** — the broad side mostly grades the
+  +     /// breadth of my breakages. `None` when there are no narrow events.
+  +     pub(crate) failure_narrow_hit_rate_pct: Option<f64>,
+  +     /// Failure-day events whose outcome touched `> NARROW_OUTCOME_MAX` files.
+  +     pub(crate) failure_broad_samples: usize,
+  +     /// Recall over broad failure-day outcomes only. Pooled like the above.
+  +     /// Close to unpredictable by construction; kept so the confound is
+  +     /// visible rather than baked into one blended recall number.
+  +     /// `None` when there are no broad events.
+  +     pub(crate) failure_broad_hit_rate_pct: Option<f64>,
+ ✓ (11.0s)
+        pub(crate) failure_hit_rate_pct: Option<f64>,
+  +     /// Failure-day events whose outcome touched `1 ..= NARROW_OUTCOME_MAX`
+  +     /// files — outcomes a 10-slot prediction list could plausibly cover.
+  +     /// `total_changed == 0` events land in neither bucket (ungraded, not
+  +     /// narrow — Day 144: the absent case is an explicit third value).
+  +     pub(crate) failure_narrow_samples: usize,
+  +     /// Recall over narrow failure-day outcomes only. Pooled exactly like
+  +     /// `failure_hit_rate_pct`, so the two are commensurable. **This is the
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 5 lines)
+                failure_hit_rate_pct: None,
+  +             failure_narrow_samples: 0,
+  +             failure_narrow_hit_rate_pct: None,
+  +             failure_broad_samples: 0,
+  +             failure_broad_hit_rate_pct: None,
+ ✓ (10.9s)
+                failure_hit_rate_pct: None,
+  +             failure_narrow_samples: 0,
+  +             failure_narrow_hit_rate_pct: None,
+  +             failure_broad_samples: 0,
+  +             failure_broad_hit_rate_pct: None,
+  2 tools completed in 28.7s (2 ✓)
+
+Now the computation — I'll extract a shared pooling helper so the three failure numbers can't drift apart:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (25 → 32 lines)
+        let failure_samples = failure_events.len();
+  -     let failure_hit_rate_pct = if failure_samples == 0 {
+  -         None
+  -     } else {
+  -         let hits: usize = failure_events.iter().map(|e| e.hit_count).sum();
+  -         let changed: usize = failure_events.iter().map(|e| e.total_changed).sum();
+  -         if changed > 0 {
+  -             Some((hits as f64 / changed as f64) * 100.0)
+  -         } else {
+  -             Some(0.0)
+  -         }
+  -     };
+  +     let failure_hit_rate_pct = pooled_hit_rate(&failure_events);
+  + 
+  +     // Outcome-breadth split (Day 149). Day 148 harvested real failure days
+  +     // out of CI history and recall came back mediocre — but the events are
+  +     // wildly unequal in difficulty: one touched 1 file, another touched 31.
+  +     // A 10-slot prediction list cannot cover a 31-file breakage, so pooling
+  +     // them answers "how broad are my breakages?" as much as "how blind is my
+  +     // model?" — the same mistake as the Day 142 polarity blend, one layer
+  ... (34 more lines)
+ ✓ (11.1s)
+        let failure_samples = failure_events.len();
+  -     let failure_hit_rate_pct = if failure_samples == 0 {
+  -         None
+  -     } else {
+  -         let hits: usize = failure_events.iter().map(|e| e.hit_count).sum();
+  -         let changed: usize = failure_events.iter().map(|e| e.total_changed).sum();
+  -         if changed > 0 {
+  -             Some((hits as f64 / changed as f64) * 100.0)
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 22 lines)
+  + /// Pool a set of validation events into one hit rate: `sum(hits) /
+  + /// sum(changed)`. Single source of the pooling method so the whole-set,
+  + /// narrow and broad failure numbers stay commensurable with each other (and
+  + /// with the green side) instead of drifting into different arithmetic.
+  + ///
+  + /// Empty set ⇒ `None` — zero samples is not a score of 0% (Day 144).
+  + /// Non-empty but zero changed files ⇒ `Some(0.0)`, preserving the prior
+  + /// behaviour of the two existing call sites.
+  + fn pooled_hit_rate(events: &[&ValidationEvent]) -> Option<f64> {
+  +     if events.is_empty() {
+  +         return None;
+  +     }
+  +     let hits: usize = events.iter().map(|e| e.hit_count).sum();
+  +     let changed: usize = events.iter().map(|e| e.total_changed).sum();
+  +     if changed > 0 {
+  +         Some((hits as f64 / changed as f64) * 100.0)
+  +     } else {
+  +         Some(0.0)
+  +     }
+  + }
+  ... (2 more lines)
+ ✓ (10.9s)
+  + /// Pool a set of validation events into one hit rate: `sum(hits) /
+  + /// sum(changed)`. Single source of the pooling method so the whole-set,
+  + /// narrow and broad failure numbers stay commensurable with each other (and
+  + /// with the green side) instead of drifting into different arithmetic.
+  + ///
+  + /// Empty set ⇒ `None` — zero samples is not a score of 0% (Day 144).
+  + /// Non-empty but zero changed files ⇒ `Some(0.0)`, preserving the prior
+  + /// behaviour of the two existing call sites.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,372p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (42 lines) ✓ (8.8s)
+  4 tools completed in 47.9s (4 ✓)
+
+Now the report rendering:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 43 lines)
+  +     // Outcome-breadth split of the recall line (Day 149). See
+  +     // `NARROW_OUTCOME_MAX`: pooling a 1-file breakage with a 31-file one
+  +     // answers "how broad are my breakages?" as much as "how blind is my
+  +     // model?", so render the two sides separately and own the caveat.
+  +     let narrow_line = match stats.failure_narrow_hit_rate_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  +                 "    {DIM}└{RESET} narrow outcomes (≤{NARROW_OUTCOME_MAX} files changed, {} events): {rounded:.1}%",
+  +                 stats.failure_narrow_samples
+  +             )
+  +         }
+  +         None => format!(
+  +             "    {DIM}└ narrow outcomes (≤{NARROW_OUTCOME_MAX} files changed): (no narrow failure-day events yet){RESET}"
+  +         ),
+  +     };
+  +     let broad_line = match stats.failure_broad_hit_rate_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  ... (23 more lines)
+ ✓ (17.6s)
+  +     // Outcome-breadth split of the recall line (Day 149). See
+  +     // `NARROW_OUTCOME_MAX`: pooling a 1-file breakage with a 31-file one
+  +     // answers "how broad are my breakages?" as much as "how blind is my
+  +     // model?", so render the two sides separately and own the caveat.
+  +     let narrow_line = match stats.failure_narrow_hit_rate_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!(
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (2 → 8 lines)
+  -     let mut report =
+  -         format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+  +     let mut report = format!("\n{failure_line}\n{narrow_line}\n{broad_line}\n");
+  +     if !breadth_note.is_empty() {
+  +         report.push_str(&breadth_note);
+  +         report.push('\n');
+  +     }
+  +     report.push_str(&format!(
+  +         "{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n"
+  +     ));
+ ✓ (1m 44s)
+  -     let mut report =
+  -         format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+  +     let mut report = format!("\n{failure_line}\n{narrow_line}\n{broad_line}\n");
+  +     if !breadth_note.is_empty() {
+  +         report.push_str(&breadth_note);
+  +         report.push('\n');
+  +     }
+  +     report.push_str(&format!(
+  +         "{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n"
+  +     ));
+  2 tools completed in 2m 8s (2 ✓)
+
+Builds clean. Now the fixture-table tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn make_event\|fn mk_ev… ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+

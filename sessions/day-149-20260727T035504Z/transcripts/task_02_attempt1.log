@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the premise — what yoagent version is pinned and what the current code looks like.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent"' Carg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_prompt_events" s… ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,160p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 630,680p src/prompt.rs &&… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.3/src 2>/dev/null && ls && grep -n "enum…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.3/src 2>/dev/null && grep -rn "impl Drop… ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1385,1405p src/prompt.rs … ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:42..67  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1389..1401 ✓ (1ms)
+ ✓ (1ms)
+  9 tools completed in 28.2s (9 ✓)
+
+Premise confirmed: yoagent 0.13.3, AgentEvent::AgentEnd { messages }, Drop for Agent aborts the loop task. Now the test.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 13 lines)
+        // agent's internal `self.messages` is only updated when `finish()` is awaited.
+        // Without this, `agent.messages()` returns stale state and the context bar
+        // permanently reads "0% used". Call finish() before reading messages.
+  +     //
+  +     // Issue #634 escalation: under yoagent >=0.13.3 (yoagent#84) `Drop for Agent`
+  +     // *cancels the run* — dropping the Agent before its receiver is drained
+  +     // doesn't merely leave `messages()` stale, it aborts the loop task, and the
+  +     // channel then closes WITHOUT an `AgentEnd` event. At a `rx.recv()` loop that
+  +     // truncation is indistinguishable from a clean finish. So the Agent must stay
+  +     // alive for the whole drain (see `handle_prompt_events(&mut Agent, ...)`);
+  +     // pinned by `agent_alive_across_drain_yields_agent_end` below.
+        agent.finish().await;
+ ✓ (1m 47s)
+        // agent's internal `self.messages` is only updated when `finish()` is awaited.
+        // Without this, `agent.messages()` returns stale state and the context bar
+        // permanently reads "0% used". Call finish() before reading messages.
+  +     //
+  +     // Issue #634 escalation: under yoagent >=0.13.3 (yoagent#84) `Drop for Agent`
+  +     // *cancels the run* — dropping the Agent before its receiver is drained
+  +     // doesn't merely leave `messages()` stale, it aborts the loop task, and the
+  +     // channel then closes WITHOUT an `AgentEnd` event. At a `rx.recv()` loop that
+  ... (4 more lines)
+
+Now the regression test, right after the existing one:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 81 lines)
+            assert!(
+                real_count > stale_count || stale_count == 0,
+                "finish() should restore messages: stale={stale_count}, real={real_count}"
+  +         );
+  +     }
+  + 
+  +     // Issue #634 / Day 149: yoagent >=0.13.3 made `Drop for Agent` cancel the run.
+  +     // A dropped Agent aborts its loop task and the receiver then closes WITHOUT an
+  +     // `AgentEnd` event — which a `while let Some(ev) = rx.recv().await` loop cannot
+  +     // tell apart from a clean finish. yoyo is compliant (`handle_prompt_events`
+  +     // takes `&mut Agent` and holds it across the whole drain, and every call site
+  +     // follows with `finish().await`), but that compliance was incidental — nothing
+  +     // pinned it, so a future refactor that moves the Agent or returns early from the
+  +     // drain would silently truncate runs with no signal but a yoagent stderr warning.
+  +     //
+  +     // Behavioural pin, both polarities (Day 122: the side that should NOT fire is
+  +     // the half I habitually leave unverified):
+  +     //   positive — Agent held alive across the drain => `AgentEnd` arrives, and
+  +     //              `finish().await` afterwards yields non-empty `messages()`.
+  +     //   negative — Agent dropped before the drain => no `AgentEnd` ever arrives.
+  ... (61 more lines)
+ ✓ (1m 44s)
+            assert!(
+                real_count > stale_count || stale_count == 0,
+                "finish() should restore messages: stale={stale_count}, real={real_count}"
+  +         );
+  +     }
+  + 
+  +     // Issue #634 / Day 149: yoagent >=0.13.3 made `Drop for Agent` cancel the run.
+  +     // A dropped Agent aborts its loop task and the receiver then closes WITHOUT an
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (8 → 7 lines)
+            let provider = MockProvider::text("hello back");
+  -         let agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+  +         let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+                .with_api_key("not-a-real-key");
+    
+  -         let mut agent = agent;
+            let mut rx = agent.prompt("hi").await;
+            // The regression this guards: the Agent goes away mid-run.
+            drop(agent);
+ ✓ (1m 44s)
+            let provider = MockProvider::text("hello back");
+  -         let agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+  +         let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+                .with_api_key("not-a-real-key");
+    
+  -         let mut agent = agent;
+            let mut rx = agent.prompt("hi").await;
+            // The regression this guards: the Agent goes away mid-run.
+            drop(agent);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --lib pr… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test agent_ 2>&1 | tail -2… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do cargo test --… ✓ (179ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do cargo test dr… ✓ (436ms)
+  6 tools completed in 3m 53s (6 ✓)
+
+Now let me prove the net actually catches the regression (Day 147: don't ship a test that corroborates my own assumption).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (13 lines) ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/prom… (12 lines) ✓ (21.8s)
+  2 tools completed in 42.0s (2 ✓)
+
+Both mutations fail — the net is real on both polarities. Restoring and running full checks:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/prompt.bak src/prompt.rs… ✓ (29.2s)
+
+Now the CLAUDE.md note:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "0.7.x prompt lifecycle"… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding the existing turn-end code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_turn_end\|form…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_verbose" src/ | hea… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1330,1420p src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1480,1580p src/repl.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1360..1400 ✓ (1ms)
+  5 tools completed in 14.4s (5 ✓)
+
+Now the implementation — test first, then the function.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2500,2545p src/repl.rs ✓ (3ms)
+
+Now add the function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (1 → 39 lines)
+  + /// Render the observation-shaped counterpart to [`format_turn_end`]: the raw
+  + /// signals the verdict was computed from, plus the verdict they produced.
+  + ///
+  + /// @danstis asked for exactly this (discussion #378) after declining to trust a
+  + /// bare verdict: *"I'm hesitant to have a complete message if the detection of
+  + /// done is not captured correctly"*. A claim you can't audit is worse than no
+  + /// claim — so under `--verbose` we print the inputs beside the conclusion and
+  + /// let the reader disagree with the classifier.
+  + ///
+  + /// Facts only: no advice, no glyphs, no ANSI, pure ASCII — one string that is
+  + /// correct in both normal and screen-reader (`format::is_plain_output()`) modes.
+  + ///
+  + /// The parameter list mirrors [`classify_turn_end`]'s inputs exactly (plus the
+  + /// verdict); the call site feeds both from the same variables so the two can't
+  + /// drift apart.
+  + pub(crate) fn format_turn_end_debug(
+  +     end: TurnEnd,
+  +     queue_pending: usize,
+  +     used_tools: bool,
+  +     had_error: bool,
+  ... (19 more lines)
+ ✓ (18.1s)
+  + /// Render the observation-shaped counterpart to [`format_turn_end`]: the raw
+  + /// signals the verdict was computed from, plus the verdict they produced.
+  + ///
+  + /// @danstis asked for exactly this (discussion #378) after declining to trust a
+  + /// bare verdict: *"I'm hesitant to have a complete message if the detection of
+  + /// done is not captured correctly"*. A claim you can't audit is worse than no
+  + /// claim — so under `--verbose` we print the inputs beside the conclusion and
+  + /// let the reader disagree with the classifier.
+  ... (13 more lines)
+
+Expected — now wire the call site.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (11 → 28 lines)
+                if !is_quiet() {
+                    let did_work = session_changes.snapshot().len() > changes_before.len();
+  +                 let queue_pending = agent.follow_up_queue_len();
+  +                 let final_text_chars = last_text.trim().chars().count();
+                    let end = classify_turn_end(
+                        &last_text,
+  -                     agent.follow_up_queue_len(),
+  +                     queue_pending,
+                        did_work,
+                        had_error,
+                        auto_continue_count,
+                        max_continues,
+                    );
+  +                 // Observation before claim (discussion #378): under --verbose,
+  +                 // show the raw signals the verdict came from — including on
+  +                 // turns where the verdict itself declines to speak.
+  +                 if crate::cli::is_verbose() {
+  +                     let debug_line = format_turn_end_debug(
+  +                         end,
+  +                         queue_pending,
+  ... (9 more lines)
+ ✓ (1m 47s)
+                if !is_quiet() {
+                    let did_work = session_changes.snapshot().len() > changes_before.len();
+  +                 let queue_pending = agent.follow_up_queue_len();
+  +                 let final_text_chars = last_text.trim().chars().count();
+                    let end = classify_turn_end(
+                        &last_text,
+  -                     agent.follow_up_queue_len(),
+  +                     queue_pending,
+  ... (13 more lines)
+
+Now the tests, over the same fixture rows as classify_turn_end_table:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (2 → 67 lines)
+        #[test]
+  -     fn format_turn_end_suppressed_for_trivial_chat_turns() {
+  +     fn format_turn_end_debug_reports_every_classifier_input() {
+  +         // Same rows as `classify_turn_end_table` — the debug view must speak
+  +         // about exactly the inputs the classifier consumes, on every shape.
+  +         let cases: &[(&str, usize, bool, bool, u32, u32)] = &[
+  +             (SUMMARY, 0, true, false, 0, 5),
+  +             ("", 0, true, false, 0, 5),
+  +             ("ok", 0, true, false, 0, 5),
+  +             (SUMMARY, 0, true, true, 0, 5),
+  +             (SUMMARY, 2, true, false, 1, 5),
+  +             (SUMMARY, 3, true, false, 5, 5),
+  +             ("", 1, true, false, 6, 5),
+  +             (SUMMARY, 0, true, false, 5, 5),
+  +             (SUMMARY, 0, true, false, 0, 0),
+  +             ("sure", 0, false, false, 0, 5),
+  +             // Multi-byte closing text: the char count must not panic or
+  +             // disagree with the classifier's own trimmed char count.
+  +             ("完了しました ✓ 全部通った", 0, true, false, 0, 5),
+  +         ];
+  ... (48 more lines)
+ ✓ (387ms)
+        #[test]
+  -     fn format_turn_end_suppressed_for_trivial_chat_turns() {
+  +     fn format_turn_end_debug_reports_every_classifier_input() {
+  +         // Same rows as `classify_turn_end_table` — the debug view must speak
+  +         // about exactly the inputs the classifier consumes, on every shape.
+  +         let cases: &[(&str, usize, bool, bool, u32, u32)] = &[
+  +             (SUMMARY, 0, true, false, 0, 5),
+  +             ("", 0, true, false, 0, 5),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2624,2640p src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_turn_end_suppres… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (3 → 3 lines)
+        #[test]
+  - 
+  +     fn format_turn_end_suppressed_for_trivial_chat_turns() {
+            // No work signal → no marker at all, whatever the classification.
+ ✓ (1m 47s)
+        #[test]
+  - 
+  +     fn format_turn_end_suppressed_for_trivial_chat_turns() {
+            // No work signal → no marker at all, whatever the classification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "turn_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "turn-end\|turn end\|sto… ✓ (4ms)
+ ✓ (1m 14s)
+  7 tools completed in 4m 58s (7 ✓)
+
+All green. Now the docs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,95p docs/src/usage/rep… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/repl.md (3 → 18 lines)
+    The marker is *only informational* — it never changes what yoyo does. It's
+    suppressed for plain conversational replies (no file changes), silent under
+    `--quiet`, and prints glyph-free wording under `--screen-reader`.
+  + 
+  + #### Seeing the raw stop state (`--verbose`)
+  + 
+  + The marker is a *verdict*, and a verdict you can't audit is worth less than the
+  + signals behind it. Run with `--verbose` (or `-v`) and yoyo prints the raw inputs
+  + its classifier consumed, immediately above the verdict:
+  + 
+  + ```
+  +   turn state: queue=0 tools=yes error=no continues=0/5 final_text=412ch -> done
+  + ```
+  + 
+  + Facts only — no glyphs, no advice, plain ASCII (so it reads identically under
+  + `--screen-reader`). Unlike the marker itself, this line prints on **every** turn
+  + that ends, including turns the verdict stays silent about, so you can judge the
+  + stop state yourself instead of trusting the classifier.
+ ✓ (1m 7s)
+    The marker is *only informational* — it never changes what yoyo does. It's
+    suppressed for plain conversational replies (no file changes), silent under
+    `--quiet`, and prints glyph-free wording under `--screen-reader`.
+  + 
+  + #### Seeing the raw stop state (`--verbose`)
+  + 
+  + The marker is a *verdict*, and a verdict you can't audit is worth less than the
+  + signals behind it. Run with `--verbose` (or `-v`) and yoyo prints the raw inputs
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_turn_end\` — pur… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - glyph-free under `is_plain_output()`), contextual command hints after prompt turns
+  + glyph-free under `is_plain_output()`; under `cli::is_verbose()` an observation-shaped line is printed *above* the verdict — `format_turn_end_debug`, the raw classifier inputs plus the verdict they produced, pure ASCII so one string serves both output modes, and printed on every ended turn including the ones the verdict declines to speak about), contextual command hints after prompt turns
+ ✓ (1m 25s)
+  - glyph-free under `is_plain_output()`), contextual command hints after prompt turns
+  + glyph-free under `is_plain_output()`; under `cli::is_verbose()` an observation-shaped line is printed *above* the verdict — `format_turn_end_debug`, the raw classifier inputs plus the verdict they produced, pure ASCII so one string serves both output modes, and printed on every ended turn including the ones the verdict declines to speak about), contextual command hints after prompt turns
+  4 tools completed in 2m 49s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
