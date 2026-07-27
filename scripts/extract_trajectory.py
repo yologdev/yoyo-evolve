@@ -866,6 +866,38 @@ def run_self_tests() -> int:
         len(clamped) == 1 and len(clamped[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
     )
 
+    # 19f. The "never forecast" section (Day 149) must not leak into the ranked
+    # entries: its rows are bulleted (◦), not `N. path score`, and the parser
+    # stops collecting at the header line so its bullets can't be appended to
+    # the last ranked entry's reasons.
+    canned_never = (
+        "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+        "   1. src/commands_risk.rs                   5.0\n"
+        "  • predicted 12×, never graded\n"
+        "   2. src/watch.rs                           2.5\n"
+        "\n  high score = the model is blindest here\n"
+        "\n  ⚠ never forecast — 37 scored files have never appeared in any prediction\n"
+        "  ◦ src/update.rs (risk 3.2)\n"
+        "  ◦ src/hooks.rs (risk 1.8)\n"
+        "    ... (+35 more)\n"
+        "    the ranking above cannot see these — it is built from files I once guessed about.\n"
+        "    Files with no recent churn have no risk score and are invisible to both views.\n"
+    )
+    parsed_never = parse_epistemic_output(canned_never)
+    assert_eq(
+        "never-forecast section yields only the ranked entries",
+        " | ".join(parsed_never),
+        "- src/commands_risk.rs (5.0) — predicted 12×, never graded | - src/watch.rs (2.5)",
+    )
+    assert_true(
+        "never-forecast paths never parsed as ranked entries",
+        not any("src/update.rs" in line or "src/hooks.rs" in line for line in parsed_never),
+    )
+    assert_true(
+        "never-forecast caveat not appended as a reason",
+        not any("cannot see these" in line for line in parsed_never),
+    )
+
     # --- cap_output self-tests: the steering channel must survive ---
     print("\n=== cap_output self-tests ===\n")
 

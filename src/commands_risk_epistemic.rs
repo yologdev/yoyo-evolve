@@ -363,7 +363,7 @@ pub(crate) fn format_epistemic_report(
     // use the `◦` glyph rather than the `•` that parser appends to the
     // previous ranked entry's reasons. The chosen guard is on the parser
     // side: it stops collecting at the "never forecast" header line (see
-    // `EPISTEMIC_NEVER_HEADER_RE` there). The distinct glyph is belt-and-
+    // `EPISTEMIC_NEVER_FORECAST_RE` there). The distinct glyph is belt-and-
     // braces for any other reader.
     if !never.is_empty() {
         out.push_str(&format!(
