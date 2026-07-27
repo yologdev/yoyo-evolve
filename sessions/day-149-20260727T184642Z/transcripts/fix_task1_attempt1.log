@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_NEVER\|never … ✓ (8ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 430,500p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_NEVER_HEADER_… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 632,700p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 340,400p src/commands_ris… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 356,372p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 805,870p scripts/extract_… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:356..370 ✓ (0ms)
+  9 tools completed in 18.3s (9 ✓)
+
+Three fixes: the comment name, the Python self-test case, and CLAUDE.md.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 1 lines)
+  -     // `EPISTEMIC_NEVER_HEADER_RE` there). The distinct glyph is belt-and-
+  +     // `EPISTEMIC_NEVER_FORECAST_RE` there). The distinct glyph is belt-and-
+ ✓ (1m 32s)
+  -     // `EPISTEMIC_NEVER_HEADER_RE` there). The distinct glyph is belt-and-
+  +     // `EPISTEMIC_NEVER_FORECAST_RE` there). The distinct glyph is belt-and-
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 33 lines)
+  +     # 19f. The "never forecast" section (Day 149) must not leak into the ranked
+  +     # entries: its rows are bulleted (◦), not `N. path score`, and the parser
+  +     # stops collecting at the header line so its bullets can't be appended to
+  +     # the last ranked entry's reasons.
+  +     canned_never = (
+  +         "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+  +         "   1. src/commands_risk.rs                   5.0\n"
+  +         "  • predicted 12×, never graded\n"
+  +         "   2. src/watch.rs                           2.5\n"
+  +         "\n  high score = the model is blindest here\n"
+  +         "\n  ⚠ never forecast — 37 scored files have never appeared in any prediction\n"
+  +         "  ◦ src/update.rs (risk 3.2)\n"
+  +         "  ◦ src/hooks.rs (risk 1.8)\n"
+  +         "    ... (+35 more)\n"
+  +         "    the ranking above cannot see these — it is built from files I once guessed about.\n"
+  +         "    Files with no recent churn have no risk score and are invisible to both views.\n"
+  +     )
+  +     parsed_never = parse_epistemic_output(canned_never)
+  +     assert_eq(
+  +         "never-forecast section yields only the ranked entries",
+  ... (13 more lines)
+ ✓ (1m 9s)
+  +     # 19f. The "never forecast" section (Day 149) must not leak into the ranked
+  +     # entries: its rows are bulleted (◦), not `N. path score`, and the parser
+  +     # stops collecting at the header line so its bullets can't be appended to
+  +     # the last ranked entry's reasons.
+  +     canned_never = (
+  +         "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+  +         "   1. src/commands_risk.rs                   5.0\n"
+  +         "  • predicted 12×, never graded\n"
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 940,960p scripts/extract_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self.test\|--test\|argv… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (39ms)
+  5 tools completed in 3m 8s (5 ✓)
+
+Self-tests pass. Now CLAUDE.md.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk epistemic" CLAUDE.… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. This is the ranking half of the DREAM epistemic-appetite milestone (Day 141)
+  + Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. Day 149 never-forecast section: the ranking is built only from files that once appeared in a `predicted`/`emerging` column, so files it never guessed about were structurally invisible (absence absorbed by silence); `never_forecast_files` (pure — every scored path appearing in **no** snapshot's `predicted` and no snapshot's `emerging`, ordered by current risk score descending then path; empty snapshots → empty result) is rendered by `format_epistemic_report` as an **explicit separate section below** the ranked entries — never merged in, since a list where everything is equally unknown ranks nothing — showing at most `NEVER_FORECAST_SAMPLE = 5` rows plus the honest total, and it still prints when the ranked list is empty. The section states its own remaining limitation: only files the risk model *scores* are in the universe, so files with no recent churn have no risk score and are invisible to both views. Consumer guard: its rows use a bulleted `◦ path (risk N)` shape, not the `N. path score` form `scripts/extract_trajectory.py::EPISTEMIC_ENTRY_RE` matches, and the parser hard-stops collecting at the header (`EPISTEMIC_NEVER_FORECAST_RE`) so the section's bullets can't be appended to the last ranked entry's reasons (pinned by a `run_self_tests()` case). This is the ranking half of the DREAM epistemic-appetite milestone (Day 141)
+ ✓ (1m 11s)
+  - Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. This is the ranking half of the DREAM epistemic-appetite milestone (Day 141)
+  + Reads existing snapshot/validation JSONL via the `commands_risk_snapshots` readers — no new persistence. Day 149 never-forecast section: the ranking is built only from files that once appeared in a `predicted`/`emerging` column, so files it never guessed about were structurally invisible (absence absorbed by silence); `never_forecast_files` (pure — every scored path appearing in **no** snapshot's `predicted` and no snapshot's `emerging`, ordered by current risk score descending then path; empty snapshots → empty result) is rendered by `format_epistemic_report` as an **explicit separate section below** the ranked entries — never merged in, since a list where everything is equally unknown ranks nothing — showing at most `NEVER_FORECAST_SAMPLE = 5` rows plus the honest total, and it still prints when the ranked list is empty. The section states its own remaining limitation: only files the risk model *scores* are in the universe, so files with no recent churn have no risk score and are invisible to both views. Consumer guard: its rows use a bulleted `◦ path (risk N)` shape, not the `N. path score` form `scripts/extract_trajectory.py::EPISTEMIC_ENTRY_RE` matches, and the parser hard-stops collecting at the header (`EPISTEMIC_NEVER_FORECAST_RE`) so the section's bullets can't be appended to the last ranked entry's reasons (pinned by a `run_self_tests()` case). This is the ranking half of the DREAM epistemic-appetite milestone (Day 141)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 15s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (44.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && git add … ✓ (937ms)
+  5 tools completed in 3m 29s (5 ✓)
+
+Done — the three gaps the evaluator named are closed and committed.
+
+**1. `run_self_tests() case (scripts/extract_trajectory.py`, +32 lines, test 19f)**
+Canned report output containing two ranked entries, a reason bullet, the `⚠ never forecast header, two ◦ rows, the ... (+35 more)` line and both caveat sentences. Asserts:
+• parsed output is exactly `- src/commands_risk.rs (5.0) — predicted 12×, never graded | - src/watch.rs (2.5)`
+• neither src/update.rs nor src/hooks.rs appears in any parsed line
+• the caveat sentence is not appended as a reason to the last ranked entry
+
+python3 scripts/extract_trajectory.py --test → ALL PASSED (that's the invocation main() checks — --test, not --self-test).
+
+2. CLAUDE.md — the `commands_risk_epistemic.rs bullet now documents never_forecast_files` (semantics, ordering, empty-snapshots → empty), the separate capped section with honest total, that it renders with an empty ranking, the honest limitation (only risk-scored files are in the universe; unchurned files are invisible to both views), and the parser guard (◦ shape + EPISTEMIC_NEVER_FORECAST_RE hard stop, pinned by a self-test).
+
+**3. Comment fix** — EPISTEMIC_NEVER_HEADER_RE → EPISTEMIC_NEVER_FORECAST_RE in the consumer note.
+
+Verification: cargo fmt -- --check clean, cargo clippy --all-targets -- -D warnings clean, build ok, cargo test 4538 + 89 passed / 0 failed.
+
+  watch: no files changed this turn — skipping
+

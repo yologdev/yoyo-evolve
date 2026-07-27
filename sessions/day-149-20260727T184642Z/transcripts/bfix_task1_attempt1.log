@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the failing test and the code it exercises.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,800p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never_forecast\|NeverFo… ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,400p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,845p src/commands_ris… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn strip_ansi_codes" -A… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Color" -A6 s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 262,275p src/format/mod.r… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 13 lines)
+  -         let sample_rows = report.matches("  ◦ src/f").count();
+  +         // Count rows by their glyph, not by a colored prefix: ANSI codes are
+  +         // emitted unless NO_COLOR is set, so a literal "  ◦ src/f" match would
+  +         // silently find zero rows in a colored run.
+  +         let sample_rows = report
+  +             .lines()
+  +             .filter(|line| {
+  +                 let plain = line
+  +                     .replace(RESET.0, "")
+  +                     .replace(DIM.0, "")
+  +                     .replace(YELLOW.0, "");
+  +                 plain.trim_start().starts_with('◦') && plain.contains("src/f")
+  +             })
+  +             .count();
+ ✓ (1m 29s)
+  -         let sample_rows = report.matches("  ◦ src/f").count();
+  +         // Count rows by their glyph, not by a colored prefix: ANSI codes are
+  +         // emitted unless NO_COLOR is set, so a literal "  ◦ src/f" match would
+  +         // silently find zero rows in a colored run.
+  +         let sample_rows = report
+  +             .lines()
+  +             .filter(|line| {
+  +                 let plain = line
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_epistem… ✓ (129ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (7 → 9 lines)
+  +         // Keep each sentence on one line: the caveat is the honest part of this
+  +         // section, and a mid-sentence wrap makes it unmatchable for any reader
+  +         // (test or human) scanning line by line.
+            out.push_str(&format!(
+  -             "    {DIM}the ranking above cannot see these — it is built from files I once guessed{RESET}\n"
+  +             "    {DIM}the ranking above cannot see these — it is built from files I once guessed about.{RESET}\n"
+            ));
+            out.push_str(&format!(
+  -             "    {DIM}about. Files with no recent churn have no risk score and are invisible to{RESET}\n"
+  +             "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
+            ));
+  -         out.push_str(&format!("    {DIM}both views.{RESET}\n"));
+ ✓ (1m 29s)
+  +         // Keep each sentence on one line: the caveat is the honest part of this
+  +         // section, and a mid-sentence wrap makes it unmatchable for any reader
+  +         // (test or human) scanning line by line.
+            out.push_str(&format!(
+  -             "    {DIM}the ranking above cannot see these — it is built from files I once guessed{RESET}\n"
+  +             "    {DIM}the ranking above cannot see these — it is built from files I once guessed about.{RESET}\n"
+            ));
+            out.push_str(&format!(
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_epistem… ✓ (134ms)
+  11 tools completed in 4m 0s (11 ✓)
+
+Now the full verification chain:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (45.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_self_tests\|self.te… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 450,520p scripts/extract_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 10 lines)
+        entries: list[tuple[str, str, list[str]]] = []
+        for raw in strip_ansi(text).splitlines():
+  +         # The "never forecast" section sits below the ranked entries and is a
+  +         # different kind of claim (files with NO prediction at all). Stop
+  +         # parsing there so its rows can never be absorbed as ranked entries or
+  +         # appended as reasons to the last one. Explicit guard, not a reliance
+  +         # on the section's ◦ glyph differing from the • reason bullet.
+  +         if EPISTEMIC_NEVER_FORECAST_RE.search(raw):
+  +             break
+            m = EPISTEMIC_ENTRY_RE.match(raw)
+ ✓ (54.9s)
+        entries: list[tuple[str, str, list[str]]] = []
+        for raw in strip_ansi(text).splitlines():
+  +         # The "never forecast" section sits below the ranked entries and is a
+  +         # different kind of claim (files with NO prediction at all). Stop
+  +         # parsing there so its rows can never be absorbed as ranked entries or
+  +         # appended as reasons to the last one. Explicit guard, not a reliance
+  +         # on the section's ◦ glyph differing from the • reason bullet.
+  +         if EPISTEMIC_NEVER_FORECAST_RE.search(raw):
+  +             break
+            m = EPISTEMIC_ENTRY_RE.match(raw)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_STALE_RE = \|… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (30ms)
+  10 tools completed in 3m 15s (10 ✓)
+
+Now add the self-test case:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 808,880p scripts/extract_… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

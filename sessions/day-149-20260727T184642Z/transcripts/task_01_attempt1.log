@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current epistemic module and the parser it feeds.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (240 lines) ✓ (1ms)
+ ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:240..400  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' scripts/extract_t… ✓ (1ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_epistemic_repor…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self-test\|run_self_tes… ✓ (5ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '795,870p' scripts/extrac… ✓ (4ms)
+  7 tools completed in 29.6s (7 ✓)
+
+Now the tests first, then implementation.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (11 → 161 lines)
+        fn test_report_no_tie_note_when_scores_distinct() {
+            let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
+            let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+  -         let report = format_epistemic_report(&snapshots, &ranking);
+  +         let report = format_epistemic_report(&snapshots, &ranking, &[]);
+            assert!(
+                !report.contains("ordered by current risk score"),
+                "no tie → no tie note, got: {report}"
+  +         );
+  +     }
+  + 
+  +     // ---- never-forecast section (Day 149) ----
+  + 
+  +     fn scores(pairs: &[(&str, f64)]) -> Vec<(String, f64)> {
+  +         pairs.iter().map(|(p, s)| (p.to_string(), *s)).collect()
+  +     }
+  + 
+  +     #[test]
+  +     fn test_predicted_file_is_not_never_forecast() {
+  +         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+  ... (141 more lines)
+ ✓ (12.1s)
+        fn test_report_no_tie_note_when_scores_distinct() {
+            let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
+            let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+  -         let report = format_epistemic_report(&snapshots, &ranking);
+  +         let report = format_epistemic_report(&snapshots, &ranking, &[]);
+            assert!(
+                !report.contains("ordered by current risk score"),
+                "no tie → no tie note, got: {report}"
+  ... (13 more lines)
+
+Tests fail as expected. Now the implementation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 21 lines)
+    /// Default number of entries shown in the report.
+    const REPORT_TOP_N: usize = 10;
+  + 
+  + /// How many never-forecast files are listed as a sample. The honest *total*
+  + /// is always printed alongside — the cap is a display budget, not a claim.
+  + pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+  + 
+  + /// A file the risk model scores but that has **never once** been forecast —
+  + /// absent from every snapshot's reactive (`predicted`) and anticipatory
+  + /// (`emerging`) column alike.
+  + ///
+  + /// This is the ranking's structural blind spot (Day 149): the epistemic score
+  + /// is built by iterating snapshot columns, so a file that was never guessed
+  + /// about gets no entry at all — it is invisible to the very view whose job is
+  + /// to find where the model is blindest. A detector for *known* unknowns.
+  + /// Rather than blend these into the score (a list where everything is equally
+  + /// unknown ranks nothing), they are an explicit third value.
+  + pub(crate) struct NeverForecast {
+  +     pub(crate) path: String,
+  +     pub(crate) risk_score: f64,
+  ... (1 more lines)
+ ✓ (11.3s)
+    /// Default number of entries shown in the report.
+    const REPORT_TOP_N: usize = 10;
+  + 
+  + /// How many never-forecast files are listed as a sample. The honest *total*
+  + /// is always printed alongside — the cap is a display budget, not a claim.
+  + pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+  + 
+  + /// A file the risk model scores but that has **never once** been forecast —
+  ... (13 more lines)
+
+Now the helper and the report section:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (6 → 58 lines)
+  + /// Every scored path that appears in **no** snapshot's `predicted` column and
+  + /// **no** snapshot's `emerging` column, across all snapshots — the files the
+  + /// epistemic ranking structurally cannot see.
+  + ///
+  + /// Ordering: current risk score descending, then path ascending (fully
+  + /// deterministic). Rationale — a file that *changes* (it has a risk score at
+  + /// all) yet has never once been forecast is the most consequential blind spot,
+  + /// so churny-but-unforecast files come first.
+  + ///
+  + /// Returns empty when `snapshots` is empty: with no predictions on record
+  + /// there is nothing to be blind *relative to*, and claiming every scored file
+  + /// is unforecast would be a false "everything is blind" verdict.
+  + ///
+  + /// Honest limitation (stated in the report too): the universe here is only
+  + /// what the risk model scores. A file with no recent churn has no risk score
+  + /// and is invisible to both views.
+  + pub(crate) fn never_forecast_files(
+  +     snapshots: &[ParsedSnapshot],
+  +     risk_scores: &[(String, f64)],
+  + ) -> Vec<NeverForecast> {
+  ... (38 more lines)
+ ✓ (11.1s)
+  + /// Every scored path that appears in **no** snapshot's `predicted` column and
+  + /// **no** snapshot's `emerging` column, across all snapshots — the files the
+  + /// epistemic ranking structurally cannot see.
+  + ///
+  + /// Ordering: current risk score descending, then path ascending (fully
+  + /// deterministic). Rationale — a file that *changes* (it has a risk score at
+  + /// all) yet has never once been forecast is the most consequential blind spot,
+  + /// so churny-but-unforecast files come first.
+  ... (13 more lines)
+
+Now restructure the report body so the section always renders:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (35 → 73 lines)
+            out.push_str(&format!(
+                "  {DIM}no ungraded predictions — the model has been graded on everything it predicted{RESET}\n"
+            ));
+  -         return out;
+  +     } else {
+  +         for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+  +             out.push_str(&format!(
+  +                 "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
+  +                 i + 1,
+  +                 e.path,
+  +                 e.score
+  +             ));
+  +             for r in &e.reasons {
+  +                 out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+  +             }
+  +         }
+  +         // Honest ordering note: if any displayed neighbours are tied (within
+  +         // SCORE_EPSILON), say so — the order among them came from the tie-break,
+  +         // not the epistemic score.
+  +         let shown = &entries[..entries.len().min(REPORT_TOP_N)];
+  ... (73 more lines)
+ ✓ (11.1s)
+            out.push_str(&format!(
+                "  {DIM}no ungraded predictions — the model has been graded on everything it predicted{RESET}\n"
+            ));
+  -         return out;
+  +     } else {
+  +         for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+  +             out.push_str(&format!(
+  +                 "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test commands… ✓ (13.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const RESET\|pub co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESET\b" src/format/mod… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 1 lines)
+  -             let plain: String = line.replace(RESET, "").replace(DIM, "");
+  +             let plain: String = line.replace(RESET.0, "").replace(DIM.0, "");
+ ✓ (1m 29s)
+  -             let plain: String = line.replace(RESET, "").replace(DIM, "");
+  +             let plain: String = line.replace(RESET.0, "").replace(DIM.0, "");
+  6 tools completed in 2m 14s (6 ✓)
+
+  watch: no files changed this turn — skipping
+

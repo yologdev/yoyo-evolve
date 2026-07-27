@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current needs_setup implementation and checking what config-reading helpers already exist.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_setup" -r src/ | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "api_key" src/config.rs … ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 680,760p src/setup.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_config_file… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1000,1130p src/config.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 570,600p src/main.rs && e… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_setup\|serial" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_config_file\|home… ✓ (3ms)
+  8 tools completed in 30.3s (8 ✓)
+
+Good — crate::cli re-exports parse_config_file and the path helpers. Writing the tests first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 736,745p src/setup.rs ✓ (3ms)
+  ▶ edit src/setup.rs (5 → 59 lines)
+        use crate::cli::KNOWN_PROVIDERS;
+        use serial_test::serial;
+  + 
+  +     /// The decision matrix for "can yoyo actually start?" — one row per
+  +     /// (provider, key_from_env, key_in_config) shape that reaches the wizard
+  +     /// gate. The enumeration lives here in code, not in my memory.
+  +     #[test]
+  +     fn test_needs_setup_from_matrix() {
+  +         // (provider, key_from_env, key_in_config, expected_needs_setup, why)
+  +         let cases: &[(&str, bool, bool, bool, &str)] = &[
+  +             // Local / self-hosted providers never need a key — never prompt them.
+  +             ("ollama", false, false, false, "ollama needs no key"),
+  +             ("custom", false, false, false, "custom base_url needs no key"),
+  +             ("ollama", true, false, false, "ollama with a key is still fine"),
+  +             // A reachable key means yoyo can start.
+  +             ("anthropic", true, false, false, "key from env"),
+  +             ("anthropic", false, true, false, "key from config file"),
+  +             ("openai", true, true, false, "key from both sources"),
+  +             // No reachable key: the wizard must offer itself. The presence of a
+  +             // config file is irrelevant — a half-configured file (provider +
+  ... (39 more lines)
+ ✓ (11.6s)
+        use crate::cli::KNOWN_PROVIDERS;
+        use serial_test::serial;
+  + 
+  +     /// The decision matrix for "can yoyo actually start?" — one row per
+  +     /// (provider, key_from_env, key_in_config) shape that reaches the wizard
+  +     /// gate. The enumeration lives here in code, not in my memory.
+  +     #[test]
+  +     fn test_needs_setup_from_matrix() {
+  ... (13 more lines)
+  2 tools completed in 24.5s (2 ✓)
+
+Tests fail as expected (functions don't exist yet). Now the implementation:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (44 → 76 lines)
+  - /// Check whether we should offer the setup wizard.
+  - /// Returns true when there's no API key from any source and no config file.
+  - pub fn needs_setup(provider: &str) -> bool {
+  -     // Check if config file exists
+  -     if std::path::Path::new(".yoyo.toml").exists() {
+  + /// Pure decision helper: should we offer the setup wizard?
+  + ///
+  + /// The question this answers is **"can yoyo actually start?"** — not "does a
+  + /// config file exist?". The old existence check assumed a config file implied a
+  + /// working config, so a half-configured file (provider + model, no key — exactly
+  + /// what the wizard used to write) left the user stuck: yoyo couldn't run and the
+  + /// wizard never offered itself again (#628).
+  + ///
+  + /// Rules:
+  + /// - `ollama` / `custom` never need a key (local models, custom `base_url`) → no setup
+  + /// - any reachable key, from env **or** config → no setup
+  + /// - no reachable key → offer the wizard, *regardless of whether a config exists*
+  + ///
+  + /// (`config_exists` is deliberately not a parameter: it never changes the answer,
+  + /// and carrying it would just re-invite the bug this fixes.)
+  ... (90 more lines)
+ ✓ (1m 33s)
+  - /// Check whether we should offer the setup wizard.
+  - /// Returns true when there's no API key from any source and no config file.
+  - pub fn needs_setup(provider: &str) -> bool {
+  -     // Check if config file exists
+  -     if std::path::Path::new(".yoyo.toml").exists() {
+  + /// Pure decision helper: should we offer the setup wizard?
+  + ///
+  + /// The question this answers is **"can yoyo actually start?"** — not "does a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test needs_setup_from 2>&1… ✓ (128ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "wizard" docs/src READM… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 10,26p docs/src/getting-s… ✓ (3ms)
+  7 tools completed in 4m 25s (7 ✓)
+
+  watch: no files changed this turn — skipping
+
