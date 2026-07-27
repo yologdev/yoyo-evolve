@@ -61,6 +61,14 @@ async fn finish_prompt_epilogue(
     // agent's internal `self.messages` is only updated when `finish()` is awaited.
     // Without this, `agent.messages()` returns stale state and the context bar
     // permanently reads "0% used". Call finish() before reading messages.
+    //
+    // Issue #634 escalation: under yoagent >=0.13.3 (yoagent#84) `Drop for Agent`
+    // *cancels the run* — dropping the Agent before its receiver is drained
+    // doesn't merely leave `messages()` stale, it aborts the loop task, and the
+    // channel then closes WITHOUT an `AgentEnd` event. At a `rx.recv()` loop that
+    // truncation is indistinguishable from a clean finish. So the Agent must stay
+    // alive for the whole drain (see `handle_prompt_events(&mut Agent, ...)`);
+    // pinned by `agent_alive_across_drain_yields_agent_end` below.
     agent.finish().await;
     let ctx_used = total_tokens(agent.messages()) as u64;
     let ctx_max = crate::cli::effective_context_tokens();
@@ -1428,6 +1436,81 @@ mod tests {
         assert!(
             real_count > stale_count || stale_count == 0,
             "finish() should restore messages: stale={stale_count}, real={real_count}"
+        );
+    }
+
+    // Issue #634 / Day 149: yoagent >=0.13.3 made `Drop for Agent` cancel the run.
+    // A dropped Agent aborts its loop task and the receiver then closes WITHOUT an
+    // `AgentEnd` event — which a `while let Some(ev) = rx.recv().await` loop cannot
+    // tell apart from a clean finish. yoyo is compliant (`handle_prompt_events`
+    // takes `&mut Agent` and holds it across the whole drain, and every call site
+    // follows with `finish().await`), but that compliance was incidental — nothing
+    // pinned it, so a future refactor that moves the Agent or returns early from the
+    // drain would silently truncate runs with no signal but a yoagent stderr warning.
+    //
+    // Behavioural pin, both polarities (Day 122: the side that should NOT fire is
+    // the half I habitually leave unverified):
+    //   positive — Agent held alive across the drain => `AgentEnd` arrives, and
+    //              `finish().await` afterwards yields non-empty `messages()`.
+    //   negative — Agent dropped before the drain => no `AgentEnd` ever arrives.
+    // The negative half is deterministic under `#[tokio::test]`'s current-thread
+    // runtime: there is no await point between `prompt()` returning and the drop,
+    // so the spawned loop cannot have run to completion first. We assert only the
+    // *absence of AgentEnd* (not "zero events"), which holds even if the task got
+    // a partial poll, so the test stays honest rather than flaky.
+    #[tokio::test]
+    async fn agent_alive_across_drain_yields_agent_end() {
+        use yoagent::provider::MockProvider;
+        use yoagent::{Agent, AgentEvent};
+
+        // Positive: hold the Agent for the full drain.
+        let provider = MockProvider::text("hello back");
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+            .with_api_key("not-a-real-key");
+
+        let mut rx = agent.prompt("hi").await;
+        let mut saw_agent_end = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, AgentEvent::AgentEnd { .. }) {
+                saw_agent_end = true;
+            }
+        }
+        assert!(
+            saw_agent_end,
+            "Agent held alive across the drain must yield an AgentEnd event; \
+             its absence means the run was cancelled, not finished"
+        );
+
+        agent.finish().await;
+        assert!(
+            !agent.messages().is_empty(),
+            "finish() after a completed drain must restore messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_dropped_before_drain_never_yields_agent_end() {
+        use yoagent::provider::MockProvider;
+        use yoagent::{Agent, AgentEvent};
+
+        let provider = MockProvider::text("hello back");
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+            .with_api_key("not-a-real-key");
+
+        let mut rx = agent.prompt("hi").await;
+        // The regression this guards: the Agent goes away mid-run.
+        drop(agent);
+
+        let mut saw_agent_end = false;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, AgentEvent::AgentEnd { .. }) {
+                saw_agent_end = true;
+            }
+        }
+        assert!(
+            !saw_agent_end,
+            "dropping the Agent cancels the run — the channel must close without \
+             AgentEnd (this is why the drain must hold the Agent alive)"
         );
     }
 
