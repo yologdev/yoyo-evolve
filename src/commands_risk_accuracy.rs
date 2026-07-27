@@ -1597,4 +1597,229 @@ mod tests {
             "silent when there are zero events"
         );
     }
+
+    // ── Day 149: outcome-breadth split of failure-day recall ──
+
+    /// Build a failure-day (severity-less → failure) event with the given
+    /// breadth. `accuracy_pct` is derived so fixtures stay self-consistent.
+    fn breadth_event(day: u32, hit_count: usize, total_changed: usize) -> ValidationEvent {
+        let accuracy_pct = if total_changed > 0 {
+            (hit_count as f64 / total_changed as f64) * 100.0
+        } else {
+            0.0
+        };
+        ValidationEvent {
+            day,
+            hit_count,
+            total_changed,
+            accuracy_pct,
+            emerging_accuracy_pct: None,
+            severity: Some("ci_failure".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_breadth_split_fixture_table() {
+        // (name, events, expected narrow samples/rate, expected broad samples/rate)
+        #[allow(clippy::type_complexity)]
+        let cases: Vec<(
+            &str,
+            Vec<ValidationEvent>,
+            usize,
+            Option<f64>,
+            usize,
+            Option<f64>,
+        )> = vec![
+            ("both sides empty", vec![], 0, None, 0, None),
+            (
+                "narrow only — pooled 3 hits / 4 changed",
+                vec![breadth_event(149, 1, 1), breadth_event(149, 2, 3)],
+                2,
+                Some(75.0),
+                0,
+                None,
+            ),
+            (
+                "broad only — pooled 7 hits / 31 changed",
+                vec![breadth_event(148, 7, 31)],
+                0,
+                None,
+                1,
+                Some(7.0 / 31.0 * 100.0),
+            ),
+            (
+                "mixed — each side pooled independently",
+                vec![
+                    breadth_event(148, 1, 1),
+                    breadth_event(148, 7, 31),
+                    breadth_event(149, 1, 3),
+                ],
+                2,
+                Some(50.0), // (1 + 1) / (1 + 3)
+                1,
+                Some(7.0 / 31.0 * 100.0),
+            ),
+            (
+                "zero-change outcome lands in neither bucket",
+                vec![breadth_event(149, 0, 0), breadth_event(149, 2, 2)],
+                1,
+                Some(100.0),
+                0,
+                None,
+            ),
+            (
+                "boundary: 3 files is narrow, 4 files is broad",
+                vec![breadth_event(149, 3, 3), breadth_event(149, 1, 4)],
+                1,
+                Some(100.0),
+                1,
+                Some(25.0),
+            ),
+        ];
+
+        for (name, events, want_narrow_n, want_narrow_pct, want_broad_n, want_broad_pct) in cases {
+            let stats = compute_accuracy_stats(&events);
+            assert_eq!(
+                stats.failure_narrow_samples, want_narrow_n,
+                "[{name}] narrow sample count"
+            );
+            assert_eq!(
+                stats.failure_broad_samples, want_broad_n,
+                "[{name}] broad sample count"
+            );
+            match (stats.failure_narrow_hit_rate_pct, want_narrow_pct) {
+                (None, None) => {}
+                (Some(got), Some(want)) => assert!(
+                    (got - want).abs() < 0.05,
+                    "[{name}] narrow rate: got {got}, want {want}"
+                ),
+                (got, want) => panic!("[{name}] narrow rate mismatch: got {got:?}, want {want:?}"),
+            }
+            match (stats.failure_broad_hit_rate_pct, want_broad_pct) {
+                (None, None) => {}
+                (Some(got), Some(want)) => assert!(
+                    (got - want).abs() < 0.05,
+                    "[{name}] broad rate: got {got}, want {want}"
+                ),
+                (got, want) => panic!("[{name}] broad rate mismatch: got {got:?}, want {want:?}"),
+            }
+            // Invariant: the two breadth buckets partition a subset of the
+            // failure-day events — never more than the whole.
+            assert!(
+                stats.failure_narrow_samples + stats.failure_broad_samples <= stats.failure_samples,
+                "[{name}] breadth buckets must not exceed failure_samples"
+            );
+        }
+    }
+
+    #[test]
+    fn test_breadth_split_partitions_all_failure_events_when_no_zero_change() {
+        // With no zero-change outcomes present, narrow + broad == failure_samples.
+        let events = vec![
+            breadth_event(148, 1, 1),
+            breadth_event(148, 2, 3),
+            breadth_event(148, 7, 31),
+            breadth_event(149, 1, 4),
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 4);
+        assert_eq!(
+            stats.failure_narrow_samples + stats.failure_broad_samples,
+            stats.failure_samples,
+            "no zero-change events → the split is a full partition"
+        );
+    }
+
+    #[test]
+    fn test_breadth_split_zero_change_event_is_ungraded_not_narrow() {
+        // A 0-file outcome is an explicit third value (Day 144): it belongs to
+        // neither bucket, so the sum is strictly less than failure_samples.
+        let events = vec![breadth_event(149, 0, 0), breadth_event(149, 1, 2)];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 2);
+        assert_eq!(stats.failure_narrow_samples, 1);
+        assert_eq!(stats.failure_broad_samples, 0);
+        assert!(
+            stats.failure_narrow_samples + stats.failure_broad_samples < stats.failure_samples,
+            "the zero-change event must be in neither bucket"
+        );
+    }
+
+    #[test]
+    fn test_breadth_split_empty_side_is_none_not_zero() {
+        // Absence is not a score: an empty side must be None, never Some(0.0)
+        // — even when the populated side genuinely scored 0%.
+        let events = vec![breadth_event(149, 0, 9)];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_narrow_samples, 0);
+        assert!(
+            stats.failure_narrow_hit_rate_pct.is_none(),
+            "empty narrow side must be None, got {:?}",
+            stats.failure_narrow_hit_rate_pct
+        );
+        assert_eq!(stats.failure_broad_samples, 1);
+        assert_eq!(stats.failure_broad_hit_rate_pct, Some(0.0));
+    }
+
+    #[test]
+    fn test_breadth_split_green_days_excluded() {
+        // Green-day events grade the opposite polarity (Day 142) — they must
+        // not leak into either breadth bucket.
+        let mut green = breadth_event(149, 1, 2);
+        green.severity = Some("watch_success".to_string());
+        let events = vec![green, breadth_event(149, 2, 2)];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.failure_samples, 1);
+        assert_eq!(stats.failure_narrow_samples, 1);
+        assert_eq!(stats.failure_broad_samples, 0);
+        assert!(stats.failure_broad_hit_rate_pct.is_none());
+    }
+
+    #[test]
+    fn test_breadth_split_pooling_matches_whole_failure_rate() {
+        // Both sides use the same pooled hits/changed method as
+        // failure_hit_rate_pct, so a single-bucket set must agree with it.
+        let events = vec![breadth_event(148, 7, 31), breadth_event(148, 3, 9)];
+        let stats = compute_accuracy_stats(&events);
+        let whole = stats.failure_hit_rate_pct.expect("failure events exist");
+        let broad = stats.failure_broad_hit_rate_pct.expect("all events broad");
+        assert!(
+            (whole - broad).abs() < 1e-9,
+            "all-broad set: whole {whole} vs broad {broad}"
+        );
+        assert!(stats.failure_narrow_hit_rate_pct.is_none());
+    }
+
+    #[test]
+    fn test_breadth_report_renders_both_sides_and_caveat() {
+        let events = vec![
+            breadth_event(148, 1, 1),
+            breadth_event(148, 7, 31),
+            breadth_event(149, 1, 3),
+        ];
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        assert!(report.contains("narrow outcomes"), "report: {report}");
+        assert!(report.contains("broad outcomes"), "report: {report}");
+        assert!(
+            report.contains("near-unpredictable by construction"),
+            "caveat must be printed when both sides have events: {report}"
+        );
+    }
+
+    #[test]
+    fn test_breadth_report_says_no_events_instead_of_zero_pct() {
+        // One-sided data: the empty side must read as absent, not as 0.0%.
+        let events = vec![breadth_event(148, 0, 31)];
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("no narrow failure-day events yet"),
+            "report: {report}"
+        );
+        assert!(
+            !report.contains("near-unpredictable by construction"),
+            "caveat needs both sides populated: {report}"
+        );
+    }
 }
