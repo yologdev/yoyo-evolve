@@ -1,0 +1,115 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state, then pick one small improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT ✓ (2ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff .yoyo/risk_weights.json… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|XXX:" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs | sort -n | head … ✓ (6ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs ✓ (1ms)
+  6 tools completed in 42.8s (6 ✓)
+
+Found a real bug in src/update.rs: version_is_newer treats pre-release suffixes as garbage (`"0.2.0-rc1" → [0,2,0]), so a user on 0.2.0-rc1` is never offered the final 0.2.0. Tests first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs (2 → 42 lines)
+  +     #[test]
+  +     fn test_prerelease_is_older_than_its_stable() {
+  +         // Semver: 0.2.0-rc1 < 0.2.0. Someone running the rc must be offered the
+  +         // final release — this was silently broken (the suffix parsed to 0).
+  +         assert!(version_is_newer("0.2.0-rc1", "0.2.0"));
+  +         assert!(!version_is_newer("0.2.0", "0.2.0-rc1"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_prerelease_ordering() {
+  +         assert!(version_is_newer("1.0.0-alpha", "1.0.0-beta"));
+  +         assert!(version_is_newer("1.0.0-rc1", "1.0.0-rc2"));
+  +         assert!(!version_is_newer("1.0.0-rc2", "1.0.0-rc1"));
+  +         assert!(!version_is_newer("1.0.0-rc1", "1.0.0-rc1"));
+  +         // Numeric identifiers compare numerically, not lexicographically.
+  +         assert!(version_is_newer("1.0.0-alpha.9", "1.0.0-alpha.10"));
+  +         assert!(!version_is_newer("1.0.0-alpha.10", "1.0.0-alpha.9"));
+  +         // Numeric identifiers have lower precedence than alphanumeric ones.
+  +         assert!(version_is_newer("1.0.0-1", "1.0.0-alpha"));
+  +     }
+  ... (22 more lines)
+ ✓ (1m 42s)
+  +     #[test]
+  +     fn test_prerelease_is_older_than_its_stable() {
+  +         // Semver: 0.2.0-rc1 < 0.2.0. Someone running the rc must be offered the
+  +         // final release — this was silently broken (the suffix parsed to 0).
+  +         assert!(version_is_newer("0.2.0-rc1", "0.2.0"));
+  +         assert!(!version_is_newer("0.2.0", "0.2.0-rc1"));
+  +     }
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test update:: 2>&1 | tail … ✓ (275ms)
+  2 tools completed in 1m 47s (2 ✓)
+
+Confirmed 3 real failures. Now the fix:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs (23 → 77 lines)
+  + /// Split a version string into its numeric core and optional pre-release tag,
+  + /// following semver: an optional leading `v`, `+build` metadata is discarded,
+  + /// and everything after the first `-` is the pre-release identifier.
+  + fn split_version(s: &str) -> (Vec<u64>, Option<&str>) {
+  +     let s = s.trim();
+  +     let s = s.strip_prefix('v').unwrap_or(s);
+  +     // Build metadata (`+...`) is ignored for precedence.
+  +     let s = s.split('+').next().unwrap_or(s);
+  +     let (core, pre) = match s.split_once('-') {
+  +         Some((core, pre)) if !pre.is_empty() => (core, Some(pre)),
+  +         _ => (s, None),
+  +     };
+  +     let nums = core
+  +         .split('.')
+  +         .map(|part| part.parse::<u64>().unwrap_or(0))
+  +         .collect();
+  +     (nums, pre)
+  + }
+  + 
+  + /// Compare two dot-separated pre-release tags by semver precedence rules:
+  ... (61 more lines)
+ ✓ (1m 47s)
+  + /// Split a version string into its numeric core and optional pre-release tag,
+  + /// following semver: an optional leading `v`, `+build` metadata is discarded,
+  + /// and everything after the first `-` is the pre-release identifier.
+  + fn split_version(s: &str) -> (Vec<u64>, Option<&str>) {
+  +     let s = s.trim();
+  +     let s = s.strip_prefix('v').unwrap_or(s);
+  +     // Build metadata (`+...`) is ignored for precedence.
+  +     let s = s.split('+').next().unwrap_or(s);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test update:: 2>&1 | tail … ✓ (407ms)
+  2 tools completed in 1m 50s (2 ✓)
+
+All 38 pass. Full gate:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 10s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (56.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (55.9s)
+  4 tools completed in 3m 33s (4 ✓)
+
+4529 + 89 tests green, clippy clean. Committing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (13ms)
+
+Done. One committed improvement.
+
+What I found: src/update.rs — a module I'd never actually read (rut-escape: I scanned the smallest unfamiliar file instead of returning to the risk meter for the ninth night).
+
+The bug: version_is_newer parsed versions with `split('.') + parse::<u64>().unwrap_or(0)`. Two real failures fell out of that:
+
+• "0.2.0-rc1" → [0, 2, 0] — indistinguishable from 0.2.0. Anyone running a release candidate would never be told the final release exists. Silent no-op.
+• "1.0.0+build.7" → [1, 0, 0, 7] — strictly greater than [1,0,0]. Build metadata alone manufactures a phantom upgrade. Silent wrong-op — the worse half of the harm gradient.
+
+The fix: split core from pre-release, discard +build, tolerate a leading v/whitespace, and compare pre-release tags by real semver precedence (field-by-field; numeric identifiers numerically and ranked below alphanumeric, so alpha.9 < alpha.10 instead of losing to string sort).
+
+Verification: wrote the 6 tests first and watched 3 of them go red against the old code — a real net over a real hole, not retroactive coverage of ground that was already solid. Then green: `cargo fmt, clippy -D warnings, build`, and 4529 + 89 tests all pass.
+
+No doc updates needed — CLAUDE.md's description of update.rs is still accurate.
+
+  watch: no files changed this turn — skipping
+
