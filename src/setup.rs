@@ -687,49 +687,76 @@ pub fn run_setup_wizard() -> Option<WizardResult> {
     run_wizard_interactive(&mut reader, &mut writer)
 }
 
-/// Check whether we should offer the setup wizard.
-/// Returns true when there's no API key from any source and no config file.
-pub fn needs_setup(provider: &str) -> bool {
-    // Check if config file exists
-    if std::path::Path::new(".yoyo.toml").exists() {
-        return false;
-    }
-    // Check user-level config
-    if let Some(user_path) = crate::cli::user_config_path() {
-        if user_path.exists() {
-            return false;
-        }
-    }
-    // For ollama/custom, no setup needed
+/// Pure decision helper: should we offer the setup wizard?
+///
+/// The question this answers is **"can yoyo actually start?"** — not "does a
+/// config file exist?". The old existence check assumed a config file implied a
+/// working config, so a half-configured file (provider + model, no key — exactly
+/// what the wizard used to write) left the user stuck: yoyo couldn't run and the
+/// wizard never offered itself again (#628).
+///
+/// Rules:
+/// - `ollama` / `custom` never need a key (local models, custom `base_url`) → no setup
+/// - any reachable key, from env **or** config → no setup
+/// - no reachable key → offer the wizard, *regardless of whether a config exists*
+///
+/// (`config_exists` is deliberately not a parameter: it never changes the answer,
+/// and carrying it would just re-invite the bug this fixes.)
+pub(crate) fn needs_setup_from(provider: &str, key_from_env: bool, key_in_config: bool) -> bool {
+    // Local / self-hosted providers authenticate differently (or not at all).
+    // Never drag a local-model user into an API-key prompt.
     if provider == "ollama" || provider == "custom" {
         return false;
     }
-    // Check if any API key env var is set
+    !(key_from_env || key_in_config)
+}
+
+/// Is there a non-empty top-level `api_key` in this config file content?
+/// Reuses `cli::parse_config_file` — no second TOML parser.
+fn config_content_has_api_key(content: &str) -> bool {
+    crate::cli::parse_config_file(content)
+        .get("api_key")
+        .is_some_and(|k| !k.trim().is_empty())
+}
+
+/// Does any config file on the search path supply a usable `api_key`?
+/// Same search order as `cli::load_config_file`, minus the "config: <path>"
+/// chatter (this runs before the banner and shouldn't add noise).
+fn api_key_in_config_files() -> bool {
+    let mut paths: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(".yoyo.toml")];
+    if let Some(p) = crate::cli::home_config_path() {
+        paths.push(p);
+    }
+    if let Some(p) = crate::cli::user_config_path() {
+        paths.push(p);
+    }
+    paths.iter().any(|p| {
+        std::fs::read_to_string(p)
+            .map(|c| config_content_has_api_key(&c))
+            .unwrap_or(false)
+    })
+}
+
+/// Is an API key reachable from the environment for this provider?
+fn api_key_in_env(provider: &str) -> bool {
+    let is_set = |var: &str| std::env::var(var).ok().filter(|k| !k.is_empty()).is_some();
     if let Some(env_var) = provider_api_key_env(provider) {
-        if std::env::var(env_var)
-            .ok()
-            .filter(|k| !k.is_empty())
-            .is_some()
-        {
-            return false;
+        if is_set(env_var) {
+            return true;
         }
     }
-    // Also check generic fallbacks
-    if std::env::var("ANTHROPIC_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .is_some()
-    {
-        return false;
-    }
-    if std::env::var("API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .is_some()
-    {
-        return false;
-    }
-    true
+    // Generic fallbacks, matching cli.rs's key resolution chain.
+    is_set("ANTHROPIC_API_KEY") || is_set("API_KEY")
+}
+
+/// Check whether we should offer the setup wizard.
+/// Thin wrapper: gather the facts, let `needs_setup_from` decide.
+pub fn needs_setup(provider: &str) -> bool {
+    needs_setup_from(
+        provider,
+        api_key_in_env(provider),
+        api_key_in_config_files(),
+    )
 }
 
 #[cfg(test)]
@@ -737,6 +764,78 @@ mod tests {
     use super::*;
     use crate::cli::KNOWN_PROVIDERS;
     use serial_test::serial;
+
+    /// The decision matrix for "can yoyo actually start?" — one row per
+    /// (provider, key_from_env, key_in_config) shape that reaches the wizard
+    /// gate. The enumeration lives here in code, not in my memory.
+    #[test]
+    fn test_needs_setup_from_matrix() {
+        // (provider, key_from_env, key_in_config, expected_needs_setup, why)
+        let cases: &[(&str, bool, bool, bool, &str)] = &[
+            // Local / self-hosted providers never need a key — never prompt them.
+            ("ollama", false, false, false, "ollama needs no key"),
+            (
+                "custom",
+                false,
+                false,
+                false,
+                "custom base_url needs no key",
+            ),
+            (
+                "ollama",
+                true,
+                false,
+                false,
+                "ollama with a key is still fine",
+            ),
+            // A reachable key means yoyo can start.
+            ("anthropic", true, false, false, "key from env"),
+            ("anthropic", false, true, false, "key from config file"),
+            ("openai", true, true, false, "key from both sources"),
+            // No reachable key: the wizard must offer itself. The presence of a
+            // config file is irrelevant — a half-configured file (provider +
+            // model, no key) used to lock the user out entirely (#628).
+            (
+                "anthropic",
+                false,
+                false,
+                true,
+                "keyless config must NOT lock out the wizard",
+            ),
+            ("openai", false, false, true, "no key anywhere, no config"),
+            (
+                "google",
+                false,
+                false,
+                true,
+                "unknown-to-env provider, no key",
+            ),
+        ];
+        for (provider, env, cfg, expected, why) in cases {
+            assert_eq!(
+                needs_setup_from(provider, *env, *cfg),
+                *expected,
+                "provider={provider} env={env} config={cfg}: {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_content_has_api_key() {
+        // The exact shape the wizard writes when the key is NOT saved: no key.
+        assert!(!config_content_has_api_key(
+            "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\n"
+        ));
+        // Empty value is not a reachable key.
+        assert!(!config_content_has_api_key("api_key = \"\"\n"));
+        assert!(!config_content_has_api_key(""));
+        // A real key is reachable.
+        assert!(config_content_has_api_key(
+            "provider = \"anthropic\"\napi_key = \"sk-ant-abc\"\n"
+        ));
+        // Commented-out keys don't count (parse_config_file skips comments).
+        assert!(!config_content_has_api_key("# api_key = \"sk-ant-abc\"\n"));
+    }
 
     #[test]
     fn test_parse_provider_choice_by_number() {
