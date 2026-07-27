@@ -87,6 +87,21 @@ The marker is *only informational* — it never changes what yoyo does. It's
 suppressed for plain conversational replies (no file changes), silent under
 `--quiet`, and prints glyph-free wording under `--screen-reader`.
 
+#### Seeing the raw stop state (`--verbose`)
+
+The marker is a *verdict*, and a verdict you can't audit is worth less than the
+signals behind it. Run with `--verbose` (or `-v`) and yoyo prints the raw inputs
+its classifier consumed, immediately above the verdict:
+
+```
+  turn state: queue=0 tools=yes error=no continues=0/5 final_text=412ch -> done
+```
+
+Facts only — no glyphs, no advice, plain ASCII (so it reads identically under
+`--screen-reader`). Unlike the marker itself, this line prints on **every** turn
+that ends, including turns the verdict stays silent about, so you can judge the
+stop state yourself instead of trusting the classifier.
+
 ## Shell passthrough
 
 Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:

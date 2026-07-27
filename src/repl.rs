@@ -1375,14 +1375,31 @@ pub async fn run_repl(
             // toward silence, which is the product-safe direction.
             if !is_quiet() {
                 let did_work = session_changes.snapshot().len() > changes_before.len();
+                let queue_pending = agent.follow_up_queue_len();
+                let final_text_chars = last_text.trim().chars().count();
                 let end = classify_turn_end(
                     &last_text,
-                    agent.follow_up_queue_len(),
+                    queue_pending,
                     did_work,
                     had_error,
                     auto_continue_count,
                     max_continues,
                 );
+                // Observation before claim (discussion #378): under --verbose,
+                // show the raw signals the verdict came from — including on
+                // turns where the verdict itself declines to speak.
+                if crate::cli::is_verbose() {
+                    let debug_line = format_turn_end_debug(
+                        end,
+                        queue_pending,
+                        did_work,
+                        had_error,
+                        auto_continue_count,
+                        max_continues,
+                        final_text_chars,
+                    );
+                    eprintln!("{DIM}  {debug_line}{RESET}");
+                }
                 if let Some(line) = format_turn_end(
                     end,
                     did_work,
@@ -1562,6 +1579,44 @@ pub(crate) fn format_turn_end(
             )
         }
     })
+}
+
+/// Render the observation-shaped counterpart to [`format_turn_end`]: the raw
+/// signals the verdict was computed from, plus the verdict they produced.
+///
+/// @danstis asked for exactly this (discussion #378) after declining to trust a
+/// bare verdict: *"I'm hesitant to have a complete message if the detection of
+/// done is not captured correctly"*. A claim you can't audit is worse than no
+/// claim — so under `--verbose` we print the inputs beside the conclusion and
+/// let the reader disagree with the classifier.
+///
+/// Facts only: no advice, no glyphs, no ANSI, pure ASCII — one string that is
+/// correct in both normal and screen-reader (`format::is_plain_output()`) modes.
+///
+/// The parameter list mirrors [`classify_turn_end`]'s inputs exactly (plus the
+/// verdict); the call site feeds both from the same variables so the two can't
+/// drift apart.
+pub(crate) fn format_turn_end_debug(
+    end: TurnEnd,
+    queue_pending: usize,
+    used_tools: bool,
+    had_error: bool,
+    continues_used: u32,
+    max_continues: u32,
+    final_text_chars: usize,
+) -> String {
+    let yn = |b: bool| if b { "yes" } else { "no" };
+    let verdict = match end {
+        TurnEnd::Done => "done",
+        TurnEnd::Paused => "paused",
+        TurnEnd::BudgetSpent => "budget_spent",
+    };
+    format!(
+        "turn state: queue={queue_pending} tools={} error={} \
+         continues={continues_used}/{max_continues} final_text={final_text_chars}ch -> {verdict}",
+        yn(used_tools),
+        yn(had_error),
+    )
 }
 
 /// Format a dim one-line hint naming the next queued follow-up item.
@@ -2558,6 +2613,75 @@ mod tests {
             classify_turn_end(&emoji, 0, true, false, 0, 5),
             TurnEnd::Done
         );
+    }
+
+    #[test]
+    fn format_turn_end_debug_reports_every_classifier_input() {
+        // Same rows as `classify_turn_end_table` — the debug view must speak
+        // about exactly the inputs the classifier consumes, on every shape.
+        let cases: &[(&str, usize, bool, bool, u32, u32)] = &[
+            (SUMMARY, 0, true, false, 0, 5),
+            ("", 0, true, false, 0, 5),
+            ("ok", 0, true, false, 0, 5),
+            (SUMMARY, 0, true, true, 0, 5),
+            (SUMMARY, 2, true, false, 1, 5),
+            (SUMMARY, 3, true, false, 5, 5),
+            ("", 1, true, false, 6, 5),
+            (SUMMARY, 0, true, false, 5, 5),
+            (SUMMARY, 0, true, false, 0, 0),
+            ("sure", 0, false, false, 0, 5),
+            // Multi-byte closing text: the char count must not panic or
+            // disagree with the classifier's own trimmed char count.
+            ("完了しました ✓ 全部通った", 0, true, false, 0, 5),
+        ];
+        for (text, queue, tools, err, used, max) in cases {
+            let chars = text.trim().chars().count();
+            let end = classify_turn_end(text, *queue, *tools, *err, *used, *max);
+            let line = format_turn_end_debug(end, *queue, *tools, *err, *used, *max, chars);
+
+            // Every input value is present, by name.
+            assert!(line.contains(&format!("queue={queue}")), "{line}");
+            assert!(
+                line.contains(&format!("tools={}", if *tools { "yes" } else { "no" })),
+                "{line}"
+            );
+            assert!(
+                line.contains(&format!("error={}", if *err { "yes" } else { "no" })),
+                "{line}"
+            );
+            assert!(line.contains(&format!("continues={used}/{max}")), "{line}");
+            assert!(line.contains(&format!("final_text={chars}ch")), "{line}");
+
+            // And the verdict it produced.
+            let verdict = match end {
+                TurnEnd::Done => "done",
+                TurnEnd::Paused => "paused",
+                TurnEnd::BudgetSpent => "budget_spent",
+            };
+            assert!(line.ends_with(&format!("-> {verdict}")), "{line}");
+
+            // Safe in screen-reader mode without a second code path: pure
+            // ASCII, no ANSI escapes, no glyphs — one string for both modes.
+            assert!(line.is_ascii(), "non-ASCII in debug line: {line}");
+            assert!(
+                !line.contains('\u{1b}'),
+                "ANSI escape in debug line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_turn_end_debug_distinguishes_all_three_verdicts() {
+        // Near-miss guard: the verdict word must actually vary with the state,
+        // not be a constant that happens to match on the row I tested first.
+        let done = format_turn_end_debug(TurnEnd::Done, 0, true, false, 0, 5, 70);
+        let paused = format_turn_end_debug(TurnEnd::Paused, 1, true, true, 1, 5, 0);
+        let budget = format_turn_end_debug(TurnEnd::BudgetSpent, 3, true, false, 5, 5, 70);
+        assert!(done.ends_with("-> done"), "{done}");
+        assert!(paused.ends_with("-> paused"), "{paused}");
+        assert!(budget.ends_with("-> budget_spent"), "{budget}");
+        assert_ne!(done, paused);
+        assert_ne!(paused, budget);
     }
 
     #[test]
