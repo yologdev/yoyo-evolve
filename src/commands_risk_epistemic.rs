@@ -50,6 +50,25 @@ pub(crate) const SCORE_EPSILON: f64 = 1e-6;
 /// Default number of entries shown in the report.
 const REPORT_TOP_N: usize = 10;
 
+/// How many never-forecast files are listed as a sample. The honest *total*
+/// is always printed alongside — the cap is a display budget, not a claim.
+pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+
+/// A file the risk model scores but that has **never once** been forecast —
+/// absent from every snapshot's reactive (`predicted`) and anticipatory
+/// (`emerging`) column alike.
+///
+/// This is the ranking's structural blind spot (Day 149): the epistemic score
+/// is built by iterating snapshot columns, so a file that was never guessed
+/// about gets no entry at all — it is invisible to the very view whose job is
+/// to find where the model is blindest. A detector for *known* unknowns.
+/// Rather than blend these into the score (a list where everything is equally
+/// unknown ranks nothing), they are an explicit third value.
+pub(crate) struct NeverForecast {
+    pub(crate) path: String,
+    pub(crate) risk_score: f64,
+}
+
 /// One file the graded outcomes have taught the model little about.
 pub(crate) struct EpistemicEntry {
     pub(crate) path: String,
@@ -232,11 +251,63 @@ fn rank_magnitude(list: &[String], path: &str) -> f64 {
     }
 }
 
+/// Every scored path that appears in **no** snapshot's `predicted` column and
+/// **no** snapshot's `emerging` column, across all snapshots — the files the
+/// epistemic ranking structurally cannot see.
+///
+/// Ordering: current risk score descending, then path ascending (fully
+/// deterministic). Rationale — a file that *changes* (it has a risk score at
+/// all) yet has never once been forecast is the most consequential blind spot,
+/// so churny-but-unforecast files come first.
+///
+/// Returns empty when `snapshots` is empty: with no predictions on record
+/// there is nothing to be blind *relative to*, and claiming every scored file
+/// is unforecast would be a false "everything is blind" verdict.
+///
+/// Honest limitation (stated in the report too): the universe here is only
+/// what the risk model scores. A file with no recent churn has no risk score
+/// and is invisible to both views.
+pub(crate) fn never_forecast_files(
+    snapshots: &[ParsedSnapshot],
+    risk_scores: &[(String, f64)],
+) -> Vec<NeverForecast> {
+    use std::collections::HashSet;
+
+    if snapshots.is_empty() {
+        return Vec::new();
+    }
+
+    let mut forecast: HashSet<&str> = HashSet::new();
+    for snap in snapshots {
+        for p in snap.predicted.iter().chain(snap.emerging.iter()) {
+            forecast.insert(p.as_str());
+        }
+    }
+
+    let mut out: Vec<NeverForecast> = risk_scores
+        .iter()
+        .filter(|(p, _)| !forecast.contains(p.as_str()))
+        .map(|(p, s)| NeverForecast {
+            path: p.clone(),
+            risk_score: *s,
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        use std::cmp::Ordering;
+        b.risk_score
+            .partial_cmp(&a.risk_score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    out
+}
+
 /// Format the epistemic ranking as a report. Honest empty states — never a
 /// silent nothing.
 pub(crate) fn format_epistemic_report(
     snapshots: &[ParsedSnapshot],
     entries: &[EpistemicEntry],
+    never: &[NeverForecast],
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -254,35 +325,75 @@ pub(crate) fn format_epistemic_report(
         out.push_str(&format!(
             "  {DIM}no ungraded predictions — the model has been graded on everything it predicted{RESET}\n"
         ));
-        return out;
+    } else {
+        for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+            out.push_str(&format!(
+                "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
+                i + 1,
+                e.path,
+                e.score
+            ));
+            for r in &e.reasons {
+                out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+            }
+        }
+        // Honest ordering note: if any displayed neighbours are tied (within
+        // SCORE_EPSILON), say so — the order among them came from the tie-break,
+        // not the epistemic score.
+        let shown = &entries[..entries.len().min(REPORT_TOP_N)];
+        let has_tie = shown
+            .windows(2)
+            .any(|w| (w[0].score - w[1].score).abs() <= SCORE_EPSILON);
+        if has_tie {
+            out.push_str(&format!(
+                "\n  {DIM}note: tied scores are ordered by current risk score (higher first), then path{RESET}\n"
+            ));
+        }
+        out.push_str(&format!(
+            "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
+        ));
     }
 
-    for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+    // The unknown unknowns, kept as an explicit separate section — merging
+    // them into the ranked list above would flatten it (a list where
+    // everything is equally unknown ranks nothing).
+    //
+    // Consumer note: rows deliberately do NOT take the `N. path score` shape
+    // that `scripts/extract_trajectory.py::EPISTEMIC_ENTRY_RE` matches, and
+    // use the `◦` glyph rather than the `•` that parser appends to the
+    // previous ranked entry's reasons. The chosen guard is on the parser
+    // side: it stops collecting at the "never forecast" header line (see
+    // `EPISTEMIC_NEVER_HEADER_RE` there). The distinct glyph is belt-and-
+    // braces for any other reader.
+    if !never.is_empty() {
         out.push_str(&format!(
-            "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
-            i + 1,
-            e.path,
-            e.score
+            "\n  {YELLOW}⚠ never forecast{RESET} {DIM}— {} scored file{} {} never appeared in any prediction{RESET}\n",
+            never.len(),
+            if never.len() == 1 { "" } else { "s" },
+            if never.len() == 1 { "has" } else { "have" },
         ));
-        for r in &e.reasons {
-            out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+        for n in never.iter().take(NEVER_FORECAST_SAMPLE) {
+            out.push_str(&format!(
+                "  ◦ {YELLOW}{}{RESET} {DIM}(risk {:.1}){RESET}\n",
+                n.path, n.risk_score
+            ));
         }
-    }
-    // Honest ordering note: if any displayed neighbours are tied (within
-    // SCORE_EPSILON), say so — the order among them came from the tie-break,
-    // not the epistemic score.
-    let shown = &entries[..entries.len().min(REPORT_TOP_N)];
-    let has_tie = shown
-        .windows(2)
-        .any(|w| (w[0].score - w[1].score).abs() <= SCORE_EPSILON);
-    if has_tie {
+        if never.len() > NEVER_FORECAST_SAMPLE {
+            out.push_str(&format!(
+                "    {DIM}... (+{} more){RESET}\n",
+                never.len() - NEVER_FORECAST_SAMPLE
+            ));
+        }
+        // Keep each sentence on one line: the caveat is the honest part of this
+        // section, and a mid-sentence wrap makes it unmatchable for any reader
+        // (test or human) scanning line by line.
         out.push_str(&format!(
-            "\n  {DIM}note: tied scores are ordered by current risk score (higher first), then path{RESET}\n"
+            "    {DIM}the ranking above cannot see these — it is built from files I once guessed about.{RESET}\n"
+        ));
+        out.push_str(&format!(
+            "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
         ));
     }
-    out.push_str(&format!(
-        "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
-    ));
     out
 }
 
@@ -303,7 +414,8 @@ pub(crate) fn handle_risk_epistemic() {
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
-    print!("{}", format_epistemic_report(&snapshots, &entries));
+    let never = never_forecast_files(&snapshots, &risk_scores);
+    print!("{}", format_epistemic_report(&snapshots, &entries, &never));
 }
 
 #[cfg(test)]
@@ -381,7 +493,7 @@ mod tests {
     fn test_empty_snapshots_honest_message() {
         let ranking = compute_epistemic_ranking(&[], &[], &[]);
         assert!(ranking.is_empty());
-        let report = format_epistemic_report(&[], &ranking);
+        let report = format_epistemic_report(&[], &ranking, &[]);
         assert!(
             report.contains("no snapshots yet"),
             "empty state must be honest, got: {report}"
@@ -393,7 +505,7 @@ mod tests {
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
-        let report = format_epistemic_report(&snapshots, &ranking);
+        let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             report.contains("no ungraded predictions"),
             "all-graded state must be honest, got: {report}"
@@ -462,7 +574,7 @@ mod tests {
     fn test_report_lists_reasons() {
         let snapshots = vec![snap(100, &["src/b.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking);
+        let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
     }
@@ -554,7 +666,7 @@ mod tests {
             (ranking[0].score - ranking[1].score).abs() < SCORE_EPSILON,
             "fixture must tie"
         );
-        let report = format_epistemic_report(&snapshots, &ranking);
+        let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             report.contains("ordered by current risk score"),
             "report must note the tie-break honestly, got: {report}"
@@ -565,10 +677,172 @@ mod tests {
     fn test_report_no_tie_note_when_scores_distinct() {
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking);
+        let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             !report.contains("ordered by current risk score"),
             "no tie → no tie note, got: {report}"
+        );
+    }
+
+    // ---- never-forecast section (Day 149) ----
+
+    fn scores(pairs: &[(&str, f64)]) -> Vec<(String, f64)> {
+        pairs.iter().map(|(p, s)| (p.to_string(), *s)).collect()
+    }
+
+    #[test]
+    fn test_predicted_file_is_not_never_forecast() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]));
+        assert!(
+            never.is_empty(),
+            "a file in the reactive column has been forecast: {:?}",
+            never.iter().map(|n| &n.path).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_emerging_only_file_is_not_never_forecast() {
+        let snapshots = vec![snap(100, &[], &["src/a.rs"])];
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]));
+        assert!(
+            never.is_empty(),
+            "a file in the anticipatory column has been forecast"
+        );
+    }
+
+    #[test]
+    fn test_scored_file_in_no_snapshot_is_never_forecast() {
+        // src/update.rs is the Day 149 journal's real example: churns, scores,
+        // and appears in zero of the saved predictions.
+        let snapshots = vec![snap(100, &["src/a.rs"], &["src/b.rs"])];
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[("src/a.rs", 5.0), ("src/update.rs", 3.2)]),
+        );
+        assert_eq!(never.len(), 1, "exactly the unforecast file");
+        assert_eq!(never[0].path, "src/update.rs");
+        assert!((never[0].risk_score - 3.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_never_forecast_ordering_risk_desc_then_path() {
+        let snapshots = vec![snap(100, &["src/seen.rs"], &[])];
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[
+                ("src/low.rs", 1.0),
+                ("src/zeta.rs", 4.0),
+                ("src/alpha.rs", 4.0),
+                ("src/high.rs", 9.0),
+            ]),
+        );
+        let paths: Vec<&str> = never.iter().map(|n| n.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["src/high.rs", "src/alpha.rs", "src/zeta.rs", "src/low.rs"],
+            "higher risk first, ties broken by path ascending"
+        );
+    }
+
+    #[test]
+    fn test_never_forecast_empty_snapshots_makes_no_claim() {
+        // No snapshots = nothing to be blind *relative to*. Claiming every
+        // scored file is unforecast here would be a false "everything is
+        // blind" verdict, not an honest observation.
+        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]));
+        assert!(never.is_empty(), "empty snapshots → no claim");
+    }
+
+    #[test]
+    fn test_report_never_forecast_total_and_sample_cap() {
+        let snapshots = vec![snap(100, &["src/seen.rs"], &[])];
+        let mut pairs: Vec<(String, f64)> = Vec::new();
+        for i in 0..12 {
+            pairs.push((format!("src/f{i:02}.rs"), 12.0 - i as f64));
+        }
+        let never = never_forecast_files(&snapshots, &pairs);
+        assert_eq!(never.len(), 12);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs);
+        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        assert!(
+            report.contains("12 scored files have never appeared in any prediction"),
+            "honest total must be printed, got: {report}"
+        );
+        // Count rows by their glyph, not by a colored prefix: ANSI codes are
+        // emitted unless NO_COLOR is set, so a literal "  ◦ src/f" match would
+        // silently find zero rows in a colored run.
+        let sample_rows = report
+            .lines()
+            .filter(|line| {
+                let plain = line
+                    .replace(RESET.0, "")
+                    .replace(DIM.0, "")
+                    .replace(YELLOW.0, "");
+                plain.trim_start().starts_with('◦') && plain.contains("src/f")
+            })
+            .count();
+        assert_eq!(sample_rows, NEVER_FORECAST_SAMPLE, "sample is capped at 5");
+        assert!(
+            report.contains("(+7 more)"),
+            "remainder must be stated, got: {report}"
+        );
+        assert!(
+            report.contains("have no risk score and are invisible to both views"),
+            "the honest limitation caveat is required, got: {report}"
+        );
+    }
+
+    #[test]
+    fn test_report_renders_never_forecast_even_with_no_ranked_entries() {
+        // The ranked list can be empty (everything predicted was graded)
+        // while the blindest files are exactly the ones never predicted —
+        // the section must survive that early return.
+        let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
+        let events = vec![graded(100, &["src/a.rs"])];
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        assert!(ranking.is_empty(), "fixture must produce an empty ranking");
+        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
+        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        assert!(
+            report.contains("no ungraded predictions"),
+            "existing empty-ranking message stays, got: {report}"
+        );
+        assert!(
+            report.contains("src/update.rs"),
+            "never-forecast section must still render, got: {report}"
+        );
+    }
+
+    #[test]
+    fn test_report_never_forecast_rows_are_not_numbered_entries() {
+        // The trajectory parser matches ranked entries as `N. path score`.
+        // If the never-forecast rows took that shape they would be silently
+        // absorbed as ranked entries and push real ones out of the top-N
+        // budget (Day 141). Pin the distinct bullet shape.
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        for line in report.lines() {
+            let plain: String = line.replace(RESET.0, "").replace(DIM.0, "");
+            if plain.contains("src/update.rs") {
+                assert!(
+                    plain.trim_start().starts_with('◦'),
+                    "never-forecast rows use the ◦ glyph, not `N. path score`: {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_report_never_forecast_section_absent_when_empty() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        assert!(
+            !report.contains("never forecast"),
+            "no unforecast files → no section, got: {report}"
         );
     }
 }

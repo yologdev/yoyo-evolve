@@ -440,6 +440,8 @@ EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
 # Verbose reasons from the report, compacted to fit the byte budget.
 EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
 EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
+# Header of the never-forecast section — a hard stop for entry parsing.
+EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
 
 
 def compact_epistemic_reason(reason: str) -> str:
@@ -461,6 +463,13 @@ def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]
     """
     entries: list[tuple[str, str, list[str]]] = []
     for raw in strip_ansi(text).splitlines():
+        # The "never forecast" section sits below the ranked entries and is a
+        # different kind of claim (files with NO prediction at all). Stop
+        # parsing there so its rows can never be absorbed as ranked entries or
+        # appended as reasons to the last one. Explicit guard, not a reliance
+        # on the section's ◦ glyph differing from the • reason bullet.
+        if EPISTEMIC_NEVER_FORECAST_RE.search(raw):
+            break
         m = EPISTEMIC_ENTRY_RE.match(raw)
         if m:
             entries.append((m.group(1), m.group(2), []))
