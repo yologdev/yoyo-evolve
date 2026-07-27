@@ -18,6 +18,19 @@ pub(crate) enum AccuracyTrend {
     Insufficient, // not enough data points
 }
 
+/// Outcome-breadth boundary (Day 149): a failure whose outcome touched at
+/// most this many files is one a 10-slot prediction list could *plausibly*
+/// have covered. Above it, the outcome is close to unpredictable by
+/// construction — a red build touching 31 files drags recall down no matter
+/// how good the model is, because the list physically cannot hold 31 slots.
+///
+/// This is a **judgment threshold, not a derived constant.** 3 is chosen
+/// because it is well inside the 10-slot list (a model with any skill should
+/// land ≥1 of 3) while still admitting the majority of small breakages. If
+/// the list length ever changes, revisit this number — the two are related
+/// but deliberately not tied, so the split stays stable across list resizes.
+pub(crate) const NARROW_OUTCOME_MAX: usize = 3;
+
 /// Aggregate accuracy statistics computed from validation history.
 ///
 /// Since Day 140, validation events carry two opposite polarities and a
@@ -46,6 +59,23 @@ pub(crate) struct AccuracyStats {
     /// risk list? Pooled over failure-day events only. `None` when there
     /// are no failure-day events yet — absence is not a score.
     pub(crate) failure_hit_rate_pct: Option<f64>,
+    /// Failure-day events whose outcome touched `1 ..= NARROW_OUTCOME_MAX`
+    /// files — outcomes a 10-slot prediction list could plausibly cover.
+    /// `total_changed == 0` events land in neither bucket (ungraded, not
+    /// narrow — Day 144: the absent case is an explicit third value).
+    pub(crate) failure_narrow_samples: usize,
+    /// Recall over narrow failure-day outcomes only. Pooled exactly like
+    /// `failure_hit_rate_pct`, so the two are commensurable. **This is the
+    /// number that grades the model** — the broad side mostly grades the
+    /// breadth of my breakages. `None` when there are no narrow events.
+    pub(crate) failure_narrow_hit_rate_pct: Option<f64>,
+    /// Failure-day events whose outcome touched `> NARROW_OUTCOME_MAX` files.
+    pub(crate) failure_broad_samples: usize,
+    /// Recall over broad failure-day outcomes only. Pooled like the above.
+    /// Close to unpredictable by construction; kept so the confound is
+    /// visible rather than baked into one blended recall number.
+    /// `None` when there are no broad events.
+    pub(crate) failure_broad_hit_rate_pct: Option<f64>,
     /// Number of green-day events (severity `watch_success`).
     pub(crate) green_samples: usize,
     /// False-alarm signal: on green days, what fraction of changed files
@@ -134,6 +164,27 @@ pub(crate) fn is_green_event(e: &ValidationEvent) -> bool {
     e.severity.as_deref() == Some("watch_success")
 }
 
+/// Pool a set of validation events into one hit rate: `sum(hits) /
+/// sum(changed)`. Single source of the pooling method so the whole-set,
+/// narrow and broad failure numbers stay commensurable with each other (and
+/// with the green side) instead of drifting into different arithmetic.
+///
+/// Empty set ⇒ `None` — zero samples is not a score of 0% (Day 144).
+/// Non-empty but zero changed files ⇒ `Some(0.0)`, preserving the prior
+/// behaviour of the two existing call sites.
+fn pooled_hit_rate(events: &[&ValidationEvent]) -> Option<f64> {
+    if events.is_empty() {
+        return None;
+    }
+    let hits: usize = events.iter().map(|e| e.hit_count).sum();
+    let changed: usize = events.iter().map(|e| e.total_changed).sum();
+    if changed > 0 {
+        Some((hits as f64 / changed as f64) * 100.0)
+    } else {
+        Some(0.0)
+    }
+}
+
 /// Compute aggregate accuracy statistics from validation events.
 pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStats {
     if events.is_empty() {
@@ -144,6 +195,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             overall_hit_rate_pct: 0.0,
             failure_samples: 0,
             failure_hit_rate_pct: None,
+            failure_narrow_samples: 0,
+            failure_narrow_hit_rate_pct: None,
+            failure_broad_samples: 0,
+            failure_broad_hit_rate_pct: None,
             green_samples: 0,
             green_flagged_change_rate_pct: None,
             trend: AccuracyTrend::Insufficient,
@@ -180,30 +235,37 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
     let green_events: Vec<&ValidationEvent> = events.iter().filter(|e| is_green_event(e)).collect();
 
     let failure_samples = failure_events.len();
-    let failure_hit_rate_pct = if failure_samples == 0 {
-        None
-    } else {
-        let hits: usize = failure_events.iter().map(|e| e.hit_count).sum();
-        let changed: usize = failure_events.iter().map(|e| e.total_changed).sum();
-        if changed > 0 {
-            Some((hits as f64 / changed as f64) * 100.0)
-        } else {
-            Some(0.0)
-        }
-    };
+    let failure_hit_rate_pct = pooled_hit_rate(&failure_events);
+
+    // Outcome-breadth split (Day 149). Day 148 harvested real failure days
+    // out of CI history and recall came back mediocre — but the events are
+    // wildly unequal in difficulty: one touched 1 file, another touched 31.
+    // A 10-slot prediction list cannot cover a 31-file breakage, so pooling
+    // them answers "how broad are my breakages?" as much as "how blind is my
+    // model?" — the same mistake as the Day 142 polarity blend, one layer
+    // down (same polarity, incommensurable difficulty). Splitting lets the
+    // narrow side grade the model and the broad side own the confound.
+    //
+    // `total_changed == 0` lands in NEITHER bucket: a zero-file outcome is
+    // ungraded, not narrow (Day 144 — the absent case is an explicit third
+    // value, never absorbed by a convenient neighbour).
+    let narrow_events: Vec<&ValidationEvent> = failure_events
+        .iter()
+        .copied()
+        .filter(|e| e.total_changed >= 1 && e.total_changed <= NARROW_OUTCOME_MAX)
+        .collect();
+    let broad_events: Vec<&ValidationEvent> = failure_events
+        .iter()
+        .copied()
+        .filter(|e| e.total_changed > NARROW_OUTCOME_MAX)
+        .collect();
+    let failure_narrow_samples = narrow_events.len();
+    let failure_narrow_hit_rate_pct = pooled_hit_rate(&narrow_events);
+    let failure_broad_samples = broad_events.len();
+    let failure_broad_hit_rate_pct = pooled_hit_rate(&broad_events);
 
     let green_samples = green_events.len();
-    let green_flagged_change_rate_pct = if green_samples == 0 {
-        None
-    } else {
-        let hits: usize = green_events.iter().map(|e| e.hit_count).sum();
-        let changed: usize = green_events.iter().map(|e| e.total_changed).sum();
-        if changed > 0 {
-            Some((hits as f64 / changed as f64) * 100.0)
-        } else {
-            Some(0.0)
-        }
-    };
+    let green_flagged_change_rate_pct = pooled_hit_rate(&green_events);
 
     // Best/worst day — failure-day events only, same reason as the trend:
     // a green day's 100% accuracy_pct is maximal false-alarm evidence, not
@@ -306,6 +368,10 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         overall_hit_rate_pct,
         failure_samples,
         failure_hit_rate_pct,
+        failure_narrow_samples,
+        failure_narrow_hit_rate_pct,
+        failure_broad_samples,
+        failure_broad_hit_rate_pct,
         green_samples,
         green_flagged_change_rate_pct,
         trend,
@@ -352,6 +418,48 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
             format!("  {BOLD}recall{RESET}: {DIM}(no failure-day events yet){RESET}").to_string()
         }
     };
+    // Outcome-breadth split of the recall line (Day 149). See
+    // `NARROW_OUTCOME_MAX`: pooling a 1-file breakage with a 31-file one
+    // answers "how broad are my breakages?" as much as "how blind is my
+    // model?", so render the two sides separately and own the caveat.
+    let narrow_line = match stats.failure_narrow_hit_rate_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "    {DIM}└{RESET} narrow outcomes (≤{NARROW_OUTCOME_MAX} files changed, {} events): {rounded:.1}%",
+                stats.failure_narrow_samples
+            )
+        }
+        None => format!(
+            "    {DIM}└ narrow outcomes (≤{NARROW_OUTCOME_MAX} files changed): (no narrow failure-day events yet){RESET}"
+        ),
+    };
+    let broad_line = match stats.failure_broad_hit_rate_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!(
+                "    {DIM}└{RESET} broad outcomes (>{NARROW_OUTCOME_MAX} files changed, {} events):  {rounded:.1}%",
+                stats.failure_broad_samples
+            )
+        }
+        None => format!(
+            "    {DIM}└ broad outcomes (>{NARROW_OUTCOME_MAX} files changed): (no broad failure-day events yet){RESET}"
+        ),
+    };
+    // Own the caveat rather than burying it: only print it when both sides
+    // actually have events, i.e. when the comparison is meaningful.
+    let breadth_note = if stats.failure_narrow_hit_rate_pct.is_some()
+        && stats.failure_broad_hit_rate_pct.is_some()
+    {
+        format!(
+            "    {DIM}a broad outcome is near-unpredictable by construction — a red build touching\n\
+             \x20   dozens of files drags recall however good the model is. The narrow number grades\n\
+             \x20   the model; the broad number mostly grades the breadth of my breakages.{RESET}"
+        )
+    } else {
+        String::new()
+    };
+
     let green_line = match stats.green_flagged_change_rate_pct {
         Some(pct) => {
             let rounded = (pct * 10.0).round() / 10.0;
@@ -425,8 +533,14 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         None => "—".to_string(),
     };
 
-    let mut report =
-        format!("\n{failure_line}\n{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n");
+    let mut report = format!("\n{failure_line}\n{narrow_line}\n{broad_line}\n");
+    if !breadth_note.is_empty() {
+        report.push_str(&breadth_note);
+        report.push('\n');
+    }
+    report.push_str(&format!(
+        "{green_line}\n{emerging_failure_line}\n{emerging_green_line}\n"
+    ));
 
     // DREAM meter honesty (Day 146; Day-140 lesson: "one-sided self-measurement
     // measures recall and never precision"). Recall grades only on failure days
@@ -1190,6 +1304,10 @@ mod tests {
             overall_hit_rate_pct: 58.333,
             failure_samples: 12,
             failure_hit_rate_pct: Some(58.333),
+            failure_narrow_samples: 8,
+            failure_narrow_hit_rate_pct: Some(75.0),
+            failure_broad_samples: 4,
+            failure_broad_hit_rate_pct: Some(25.0),
             green_samples: 0,
             green_flagged_change_rate_pct: None,
             trend: AccuracyTrend::Improving,
