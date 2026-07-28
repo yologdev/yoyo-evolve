@@ -82,35 +82,103 @@ pub(crate) fn load_learned_weights() -> [f64; 7] {
     load_learned_weights_from(std::path::Path::new(LEARNED_WEIGHTS_PATH))
 }
 
-/// Inner implementation with configurable path (for testing).
-fn load_learned_weights_from(path: &std::path::Path) -> [f64; 7] {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return RISK_WEIGHTS,
-    };
-    let val: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return RISK_WEIGHTS,
-    };
-    let weights_arr = match val["weights"].as_array() {
-        Some(a) => a,
-        None => return RISK_WEIGHTS,
-    };
+/// Why a *present* `risk_weights.json` could not be used.
+///
+/// A missing file is deliberately NOT a variant here: "no weights learned yet"
+/// is the normal first-run state and must stay silent. Every variant below means
+/// the file exists and something about it is wrong — the case that used to be
+/// indistinguishable from the normal one (Day 139: fail-soft without a liveness
+/// signal is fail-silent). Learned weights silently reverting to `RISK_WEIGHTS`
+/// would leave `/risk` printing confident scores from a dead model.
+#[derive(Debug, PartialEq)]
+pub(crate) enum WeightsDefect {
+    /// File contents are not valid JSON.
+    NotJson,
+    /// No `weights` key, or it is not an array.
+    NoWeightsArray,
+    /// `weights` is an array, but not of length 7.
+    WrongLength(usize),
+    /// Element at this index is not a non-negative number.
+    BadValue(usize),
+    /// Weights parsed but do not sum to ~1.0 (within 0.05).
+    SumOutOfRange(f64),
+}
+
+impl WeightsDefect {
+    /// One-line human description, used in the stderr warning.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            WeightsDefect::NotJson => "not valid JSON".to_string(),
+            WeightsDefect::NoWeightsArray => "missing a `weights` array".to_string(),
+            WeightsDefect::WrongLength(n) => {
+                format!("`weights` has {n} entries, expected {}", SIGNAL_NAMES.len())
+            }
+            WeightsDefect::BadValue(i) => {
+                let name = SIGNAL_NAMES.get(*i).copied().unwrap_or("?");
+                format!("`weights[{i}]` ({name}) is not a non-negative number")
+            }
+            WeightsDefect::SumOutOfRange(sum) => {
+                format!("weights sum to {sum:.4}, expected ~1.0")
+            }
+        }
+    }
+}
+
+/// Pure parse+validate of `risk_weights.json` contents.
+///
+/// Returns the learned weights, or an explicit named defect. Keeping this pure
+/// (no filesystem, no stderr) is what lets each failure mode be tested directly
+/// instead of being observed only as "we got the defaults back".
+pub(crate) fn parse_learned_weights(content: &str) -> Result<[f64; 7], WeightsDefect> {
+    let val: serde_json::Value =
+        serde_json::from_str(content).map_err(|_| WeightsDefect::NotJson)?;
+    let weights_arr = val["weights"]
+        .as_array()
+        .ok_or(WeightsDefect::NoWeightsArray)?;
     if weights_arr.len() != 7 {
-        return RISK_WEIGHTS;
+        return Err(WeightsDefect::WrongLength(weights_arr.len()));
     }
     let mut weights = [0.0f64; 7];
     for (i, v) in weights_arr.iter().enumerate() {
         match v.as_f64() {
             Some(w) if w >= 0.0 => weights[i] = w,
-            _ => return RISK_WEIGHTS,
+            _ => return Err(WeightsDefect::BadValue(i)),
         }
     }
     let sum: f64 = weights.iter().sum();
     if (sum - 1.0).abs() > 0.05 {
-        return RISK_WEIGHTS;
+        return Err(WeightsDefect::SumOutOfRange(sum));
     }
-    weights
+    Ok(weights)
+}
+
+/// Warn at most once per process about an unusable weights file.
+///
+/// `load_learned_weights` is called per risk computation, so an unconditional
+/// warning would spam every `/risk` run; once is enough to break the silence.
+static WEIGHTS_DEFECT_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Inner implementation with configurable path (for testing).
+fn load_learned_weights_from(path: &std::path::Path) -> [f64; 7] {
+    let content = match std::fs::read_to_string(path) {
+        // Absent (or unreadable) file: the normal "nothing learned yet" state.
+        Err(_) => return RISK_WEIGHTS,
+        Ok(c) => c,
+    };
+    match parse_learned_weights(&content) {
+        Ok(w) => w,
+        Err(defect) => {
+            if !WEIGHTS_DEFECT_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                eprintln!(
+                    "  {YELLOW}warning:{RESET} {} is unusable ({}) — falling back to built-in risk weights",
+                    path.display(),
+                    defect.describe()
+                );
+            }
+            RISK_WEIGHTS
+        }
+    }
 }
 
 /// A parsed validation event with per-file signal detail for weight learning.
@@ -649,6 +717,76 @@ mod tests {
             .expect("write");
         let weights = load_learned_weights_from(&good);
         assert_eq!(weights, [0.25, 0.15, 0.15, 0.10, 0.10, 0.15, 0.10]);
+    }
+
+    /// Every way a *present* weights file can be unusable must surface as a
+    /// distinct, named defect — not as "we silently got the defaults back".
+    ///
+    /// Before this, all six paths returned `RISK_WEIGHTS` with no signal, so a
+    /// corrupted `risk_weights.json` would make the learned half of the risk
+    /// model dead while `/risk` kept printing confident scores. Day 139:
+    /// fail-soft without a liveness signal is fail-silent.
+    #[test]
+    fn parse_learned_weights_names_every_defect() {
+        let cases: &[(&str, WeightsDefect)] = &[
+            ("not json at all", WeightsDefect::NotJson),
+            ("{}", WeightsDefect::NoWeightsArray),
+            (r#"{"weights": "nope"}"#, WeightsDefect::NoWeightsArray),
+            (r#"{"weights":[0.5,0.5]}"#, WeightsDefect::WrongLength(2)),
+            (
+                r#"{"weights":[0.2,0.2,0.2,0.2,0.1,0.1,"x"]}"#,
+                WeightsDefect::BadValue(6),
+            ),
+            (
+                r#"{"weights":[-0.1,0.3,0.2,0.2,0.1,0.1,0.2]}"#,
+                WeightsDefect::BadValue(0),
+            ),
+        ];
+        for (content, expected) in cases {
+            let got = parse_learned_weights(content);
+            assert_eq!(
+                got.as_ref().err(),
+                Some(expected),
+                "parse_learned_weights({content:?}) should report {expected:?}"
+            );
+            // The warning text must actually say something about what's wrong.
+            assert!(
+                !expected.describe().is_empty(),
+                "{expected:?} must describe itself"
+            );
+        }
+
+        // Sum-out-of-range carries the offending sum so the warning is specific.
+        let bad_sum = parse_learned_weights(r#"{"weights":[0.5,0.5,0.5,0.5,0.5,0.5,0.5]}"#);
+        match bad_sum {
+            Err(WeightsDefect::SumOutOfRange(sum)) => {
+                assert!((sum - 3.5).abs() < 1e-9, "sum should be 3.5, got {sum}");
+            }
+            other => panic!("expected SumOutOfRange, got {other:?}"),
+        }
+
+        // A valid file still parses cleanly — the guard must not eat good input.
+        let good = parse_learned_weights(r#"{"weights":[0.25,0.15,0.15,0.10,0.10,0.15,0.10]}"#);
+        assert_eq!(
+            good,
+            Ok([0.25, 0.15, 0.15, 0.10, 0.10, 0.15, 0.10]),
+            "a valid weights file must load"
+        );
+    }
+
+    /// A defect description must name the signal / value at fault, so the
+    /// stderr line is actionable rather than merely present.
+    #[test]
+    fn weights_defect_descriptions_are_specific() {
+        assert!(WeightsDefect::WrongLength(2).describe().contains('2'));
+        // `SIGNAL_NAMES[1]` is the second learned signal; the message names it.
+        let bad = WeightsDefect::BadValue(1).describe();
+        assert!(
+            bad.contains(SIGNAL_NAMES[1]),
+            "BadValue should name the signal, got {bad:?}"
+        );
+        assert!(WeightsDefect::SumOutOfRange(3.5).describe().contains("3.5"));
+        assert!(WeightsDefect::NotJson.describe().contains("JSON"));
     }
 
     #[test]
