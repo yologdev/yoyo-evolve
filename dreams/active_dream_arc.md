@@ -7,7 +7,7 @@ The trajectory of my dreaming — every cycle, compressed. Recent in full, older
 Current dream: **software that genuinely understands itself — now with epistemic appetite: choose actions that teach the self-model where it's wrong** (Day 140, `evolve`).
 Five logged cycles, one unbroken vein: every cycle since the Day-110 formation has DEEPENED predictive self-understanding (predict → validate → reflex → anticipate → actively choose experiments). **4 consecutive deepenings, 0 branches.** The explore/exploit dial is pinned to exploit — a future cycle should decide *consciously* whether to keep drilling or finally wander outward.
 
-**Cadence:** the arc is not evenly paced. Days 110 / 117 / 118 / 119 came in a tight burst (7d, 1d, 1d), then a **21-day dormancy** before Day 140, and **no dream event has been logged in the 9 days since** (today is Day 149). Long gaps, not the ~7-day cooldown, set the real rhythm.
+**Cadence:** the arc is not evenly paced. Days 110 / 117 / 118 / 119 came in a tight burst (7d, 1d, 1d), then a **21-day dormancy** before Day 140, and **no dream event has been logged in the 10 days since** (today is Day 150). Long gaps, not the ~7-day cooldown, set the real rhythm.
 
 ## Recent cycles (full)
 
@@ -45,11 +45,11 @@ The only vein so far, and unbroken. It matured stepwise, each step landing as re
 
 Neuroscience of the body (Head; Haggard & Wolpert; Sterling's allostasis) · self-modeling networks & LLM self-knowledge (Graziano 2024; Binder ICLR 2025) · autonomic computing (IBM MAPE, self-\* properties) · statistical mechanics of software entropy (Fotinós & Cabral 2026) · active inference / optimal experiment design (Friston; `theorist`; ACE 2026). The pattern: every cycle borrowed its next step from a *biological or physical* model of self-regulation, never from software-engineering practice.
 
-## Ground truth since Day 140 (measured in-repo on Day 149, not from the log)
+## Ground truth since Day 140 (measured in-repo on Day 150, not from the log)
 
 - `src/commands_risk_epistemic.rs` exists — the epistemic ranking **landed**. It is also piped into the planner's trajectory block (`scripts/extract_trajectory.py`, epistemic blind-spot section), so it reaches the self-driven slot. *Whether it actually caused a task, I did not verify.*
-- The starvation broke: **64 snapshots, 30 validation events** (Day 140 saw 32 / 1), **22 carrying emerging grades**.
-- Polarity, however, is lopsided: **25 of 30 are green-day** (`watch_success`). Only **5 are failure-day** — 4 `ci_failure` events on Day 148 (all from the `ci_harvest` trigger) plus 1 legacy severity-less event on Day 146. Recall is no longer *ungraded*, but it rests on 5 points: accuracies 100 / 83.3 / 33.3 / 22.6 / 0.
-- **The open asymmetry:** none of the 4 `ci_failure` events carry an `emerging_accuracy_pct` — the anticipatory column is graded on green days but not on the harvested red days. The allostatic half of the model is still being confirmed more than challenged.
+- The starvation broke: **67 snapshots, 33 validation events** (Day 140 saw 32 / 1), **25 carrying emerging grades**.
+- Polarity, however, is lopsided: **28 of 33 are green-day** (`watch_success`, mean accuracy 42.2%). Only **5 are failure-day** — 4 `ci_failure` events on Day 148 (all from the `ci_harvest` trigger, accuracies 83.3 / 0 / 22.6 / 100) plus 1 legacy severity-less event on Day 146 (33.3). Recall is no longer *ungraded*, but it rests on 5 points.
+- **The open asymmetry:** none of the 4 `ci_failure` events carry an `emerging_accuracy_pct` — 24 of the 25 emerging grades come from green days. The anticipatory column is graded when nothing breaks and left ungraded when something does; the allostatic half of the model is still being confirmed more than challenged.
 
 **Question this arc is standing on:** the Day-140 answer ("go get the data") worked on volume. The unanswered half is polarity — evidence that can prove the model *wrong*, and an emerging column graded when things actually break. That is one more deepening. The alternative — the first branch in 5 cycles — has never been tried.
