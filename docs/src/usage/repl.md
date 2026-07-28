@@ -102,6 +102,37 @@ Facts only — no glyphs, no advice, plain ASCII (so it reads identically under
 that ends, including turns the verdict stays silent about, so you can judge the
 stop state yourself instead of trusting the classifier.
 
+### Acting on silence (`--continue-on-silence`)
+
+The marker *tells* you a turn went quiet after doing work. This flag makes yoyo
+*act* on it:
+
+```bash
+yoyo --continue-on-silence
+```
+
+With the flag on, auto-continue also fires when **all** of these hold:
+
+- the turn **used tools** (it did work),
+- the final text is **empty or near-empty** (under 20 characters, trimmed),
+- the follow-up queue is **empty**, and
+- the turn ended **without an error**.
+
+A turn that used no tools and returned nothing is *not* continued — that's a
+model declining to speak, not work left on the table.
+
+**Why it's off by default.** yoyo can't distinguish "stopped mid-work" from
+"finished quietly" — some providers legitimately end a tool-using turn with no
+closing prose. Turning this on for everyone would make those providers loop.
+The worst case is bounded, not infinite: the existing auto-continue budget (5
+per prompt, `max_auto_continues` in config) still applies, so a quiet-finishing
+provider costs you up to 5 extra turns of wasted tokens per prompt — annoying,
+not runaway. If your provider chats normally at the end of a turn, you'll never
+notice the flag; if it goes silent mid-task, this is the knob.
+
+With the flag off, behaviour is exactly what it was before the flag existed
+(pinned by a default-off invariance test in `src/repl.rs`).
+
 ## Shell passthrough
 
 Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:

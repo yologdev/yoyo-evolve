@@ -2777,6 +2777,93 @@ mod tests {
         assert!(!should_auto_continue("short response", 0, false, false));
     }
 
+    /// The old two-argument behaviour, spelled out literally. This is what
+    /// `should_auto_continue(.., enabled = false)` must equal for every input —
+    /// the product-safety guarantee for `--continue-on-silence` (issue #631).
+    fn legacy_should_auto_continue(text: &str, queue_pending: usize) -> bool {
+        queue_pending > 0 || looks_incomplete(text)
+    }
+
+    #[test]
+    fn should_auto_continue_default_off_is_byte_identical_to_legacy() {
+        // Includes the case the flag exists for: empty final text + tools used
+        // + empty queue. With the flag off it must still read as "finished".
+        let texts = [
+            "",
+            "   ",
+            "\n\t  \n",
+            "ok",
+            "short response",
+            "Done — all tests pass and the build is green.",
+            "I've fixed the first file. Next, I'll update the remaining tests.",
+            "1234567890123456789",  // 19 chars: under MIN_SUMMARY_CHARS
+            "12345678901234567890", // 20 chars: exactly at the boundary
+        ];
+        for text in texts {
+            for queue_pending in [0usize, 1, 3] {
+                for used_tools in [false, true] {
+                    let expected = legacy_should_auto_continue(text, queue_pending);
+                    assert_eq!(
+                        should_auto_continue(text, queue_pending, used_tools, false),
+                        expected,
+                        "default-off must match legacy for \
+                         (text={text:?}, queue={queue_pending}, tools={used_tools})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn should_auto_continue_on_silence_fires_only_after_tool_use() {
+        // The abstention case: tools ran, then silence, nothing queued.
+        assert!(should_auto_continue("", 0, true, true));
+        assert!(should_auto_continue("   \n ", 0, true, true));
+        assert!(should_auto_continue("done", 0, true, true));
+
+        // A plain chat turn that returns nothing must NOT loop — no tools ran,
+        // so there is no work left on the table, just a model declining to speak.
+        assert!(!should_auto_continue("", 0, false, true));
+        assert!(!should_auto_continue("   \n ", 0, false, true));
+        assert!(!should_auto_continue("ok", 0, false, true));
+    }
+
+    #[test]
+    fn should_auto_continue_on_silence_leaves_complete_turns_alone() {
+        // Real closing prose → false even with the flag on and tools used.
+        let complete = "Done — all tests pass and the build is green.";
+        assert!(!looks_incomplete(complete));
+        assert!(!should_auto_continue(complete, 0, true, true));
+
+        // Pending queue still wins regardless of the flag or tool usage.
+        for used_tools in [false, true] {
+            for enabled in [false, true] {
+                assert!(should_auto_continue(complete, 1, used_tools, enabled));
+            }
+        }
+    }
+
+    #[test]
+    fn should_auto_continue_on_silence_boundary_and_whitespace() {
+        // MIN_SUMMARY_CHARS is a trimmed *char* count, exclusive: exactly at the
+        // boundary is a summary, one under is silence.
+        let at_boundary = "a".repeat(MIN_SUMMARY_CHARS);
+        let under_boundary = "a".repeat(MIN_SUMMARY_CHARS - 1);
+        assert_eq!(at_boundary.chars().count(), MIN_SUMMARY_CHARS);
+        assert!(!should_auto_continue(&at_boundary, 0, true, true));
+        assert!(should_auto_continue(&under_boundary, 0, true, true));
+
+        // Padding with whitespace doesn't buy length — it's trimmed first.
+        let padded = format!("   {under_boundary}   ");
+        assert!(should_auto_continue(&padded, 0, true, true));
+
+        // Multi-byte text at the boundary counts chars, not bytes (19 chars,
+        // 57 bytes) — the byte count would clear the threshold, chars don't.
+        let multibyte = "✓".repeat(MIN_SUMMARY_CHARS - 1);
+        assert!(multibyte.len() > MIN_SUMMARY_CHARS);
+        assert!(should_auto_continue(&multibyte, 0, true, true));
+    }
+
     #[test]
     fn test_looks_incomplete_continuation_phrases() {
         assert!(looks_incomplete(
