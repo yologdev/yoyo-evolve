@@ -343,6 +343,14 @@ pub fn cli_help_text() -> String {
         s,
         "  memories          Show project memories (e.g. yoyo memories)"
     );
+    let _ = writeln!(
+        s,
+        "  evolution         Show evolution history, session stats, and CI runs (e.g. yoyo evolution 20)"
+    );
+    let _ = writeln!(
+        s,
+        "  extended          Long autonomous task — prints usage; needs an interactive session"
+    );
     let _ = writeln!(s);
     let _ = writeln!(s, "Commands (in REPL):");
     let _ = writeln!(s);
@@ -1577,6 +1585,84 @@ mod tests {
                 "cli_help_text() must document flag {flag}"
             );
         }
+    }
+
+    /// Extract the top-level `yoyo <subcmd>` match arm names from the real
+    /// dispatch source. The outer positional-subcommand match in
+    /// `dispatch_sub.rs` sits at exactly 12 spaces of indentation, so a line
+    /// shaped `            "name" => ` is one routed subcommand.
+    fn routed_cli_subcommands(src: &str) -> Vec<&str> {
+        let mut arms = Vec::new();
+        for line in src.lines() {
+            let Some(rest) = line.strip_prefix("            \"") else {
+                continue;
+            };
+            let Some((name, tail)) = rest.split_once('"') else {
+                continue;
+            };
+            if !tail.trim_start().starts_with("=>") {
+                continue;
+            }
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
+            {
+                continue;
+            }
+            arms.push(name);
+        }
+        arms
+    }
+
+    #[test]
+    fn routed_cli_subcommands_parses_arm_shapes() {
+        // Pin the extractor itself so a false-empty result can't make the
+        // completeness test below pass vacuously.
+        // Built by joining explicit lines: a `\n\` continued string literal
+        // strips the leading whitespace of each continuation line, which would
+        // silently un-indent the fixture and make the extractor look broken.
+        let src = [
+            "            \"doctor\" => {",     // routed arm
+            "            \"health\" => {",     // routed arm
+            "                \"nested\" => {", // nested match, wrong indent
+            "            \"not an arm\"",      // no `=>`
+            "            \"Upper\" => {",      // not lowercase
+        ]
+        .join("\n");
+        assert_eq!(routed_cli_subcommands(&src), vec!["doctor", "health"]);
+    }
+
+    #[test]
+    fn cli_help_documents_every_routed_subcommand() {
+        // The `--help` subcommand list is prose that mirrors the match arms in
+        // `dispatch_sub.rs`. Prose drifts silently — a subcommand can ship,
+        // work, and be invisible to anyone who only reads `--help`. Rather
+        // than hand-typing the enumeration again here (the exact habit that
+        // caused the drift), walk the real dispatch arms and demand each one
+        // is documented.
+        let dispatch_src = include_str!("dispatch_sub.rs");
+        let arms = routed_cli_subcommands(dispatch_src);
+        assert!(
+            arms.len() > 20,
+            "expected to find the dispatch_sub.rs subcommand arms, found {} — \
+             the extractor probably needs updating for a changed match shape",
+            arms.len()
+        );
+        let text = cli_help_text();
+        let mut undocumented: Vec<&str> = Vec::new();
+        for arm in &arms {
+            let listed =
+                text.contains(&format!("  {arm} ")) || text.contains(&format!("  {arm}\n"));
+            if !listed {
+                undocumented.push(arm);
+            }
+        }
+        assert!(
+            undocumented.is_empty(),
+            "cli_help_text() is missing routed subcommand(s): {undocumented:?} — \
+             every `yoyo <subcmd>` that dispatch_sub.rs routes must appear in --help"
+        );
     }
 
     #[test]
