@@ -36,6 +36,26 @@ pub fn is_verbose() -> bool {
     *VERBOSE.get_or_init(|| false)
 }
 
+/// Whether `--continue-on-silence` was passed. Default **off** (issue #631).
+///
+/// When on, the auto-continue loop treats a turn that used tools and then went
+/// quiet (empty / near-empty final text, empty follow-up queue, no error) as
+/// "stopped mid-work" rather than "finished". That's the honest reading for
+/// most providers, but some legitimately finish without a closing summary — so
+/// it stays opt-in. Read at the auto-continue call site, never inside the pure
+/// `should_auto_continue` helper.
+static CONTINUE_ON_SILENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable the opt-in continue-on-silence behavior.
+pub fn set_continue_on_silence() {
+    let _ = CONTINUE_ON_SILENCE.set(true);
+}
+
+/// Whether continue-on-silence is enabled (default false).
+pub fn is_continue_on_silence() -> bool {
+    *CONTINUE_ON_SILENCE.get_or_init(|| false)
+}
+
 /// The provider the session was actually configured with (e.g. "openrouter").
 /// Set once during startup (after the setup wizard resolves the provider); read
 /// by error diagnosis so auth-failure messages name the *configured* provider and
@@ -213,6 +233,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--context-window",
     "--no-color",
     "--screen-reader",
+    "--continue-on-silence",
     "--no-bell",
     "--no-notify",
     "--no-rtk",
@@ -776,6 +797,14 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     if args.iter().any(|a| a == "--screen-reader") {
         crate::format::set_plain_output(true);
         crate::format::disable_color();
+    }
+
+    // --continue-on-silence: opt-in (issue #631). Treat a tool-using turn that
+    // ends with no closing text as "stopped mid-work" and auto-continue it.
+    // Off by default because some providers legitimately finish quietly, and a
+    // default that loops on them would be worse than the ambiguity it fixes.
+    if args.iter().any(|a| a == "--continue-on-silence") {
+        set_continue_on_silence();
     }
 
     // Validate that flags requiring values actually have them

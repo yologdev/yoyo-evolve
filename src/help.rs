@@ -117,6 +117,12 @@ pub fn cli_help_text() -> String {
         s,
         "  --screen-reader   Plain, linear, animation-free output (implies --no-color)"
     );
+    let _ = writeln!(
+        s,
+        "  --continue-on-silence  Auto-continue when a tool-using turn ends with no closing text\n\
+         \x20                       (off by default: providers that legitimately finish quietly will\n\
+         \x20                       get up to 5 extra turns per prompt — bounded, but wasted tokens)"
+    );
     let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
     let _ = writeln!(s, "  --no-notify       Disable desktop notifications on long completions (also respects YOYO_NO_NOTIFY env)");
     let _ = writeln!(

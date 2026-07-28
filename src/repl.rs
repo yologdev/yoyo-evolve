@@ -1290,7 +1290,14 @@ pub async fn run_repl(
 
             while auto_continue_count < max_continues
                 && !had_error
-                && should_auto_continue(&last_text, agent.follow_up_queue_len())
+                && should_auto_continue(
+                    &last_text,
+                    agent.follow_up_queue_len(),
+                    // Same tool-usage proxy the turn-end marker uses below:
+                    // the turn touched at least one file.
+                    session_changes.snapshot().len() > changes_before.len(),
+                    crate::cli::is_continue_on_silence(),
+                )
                 && !crate::prompt_budget::session_budget_exhausted(30)
             {
                 auto_continue_count += 1;
@@ -1484,13 +1491,38 @@ pub(crate) fn get_max_auto_continues(
 }
 
 /// Decide whether the auto-continue loop should run another turn.
+///
 /// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
 /// authoritative pending work (user-injected messages queued while the agent
 /// worked) and we continue regardless of the text heuristic. An empty queue
 /// tells us nothing about whether the model finished, so we fall back to the
 /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
-pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
-    queue_pending > 0 || looks_incomplete(text)
+///
+/// `used_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+/// branch (issue #631): a turn that *did work* and then said nothing is the
+/// abstention case — "no answer" — which today gets absorbed by the convenient
+/// neighbour, "finished". With the flag on we make it an explicit third value
+/// and continue. With the flag off this function is byte-identical to the old
+/// two-argument version, which is the product-safety guarantee: providers that
+/// legitimately finish quietly must not be looped by default.
+///
+/// Deliberately pure — the flag is read at the call site, never from global
+/// state in here, so the whole truth table stays unit-testable. The caller also
+/// owns the "no error" precondition (the loop already gates on `!had_error`)
+/// and the bounded budget (`get_max_auto_continues`).
+pub(crate) fn should_auto_continue(
+    text: &str,
+    queue_pending: usize,
+    used_tools: bool,
+    continue_on_silence: bool,
+) -> bool {
+    if queue_pending > 0 || looks_incomplete(text) {
+        return true;
+    }
+    // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
+    // (no tools) is NOT looped — that's a model declining to speak, not work
+    // left on the table.
+    continue_on_silence && used_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
 }
 
 /// Why a turn ended, as far as yoyo can tell.
@@ -2727,7 +2759,7 @@ mod tests {
         // A non-empty follow-up queue overrides the text heuristic: "ok" is a
         // string looks_incomplete() returns false for, but pending work wins.
         assert!(!looks_incomplete("ok"));
-        assert!(should_auto_continue("ok", 1));
+        assert!(should_auto_continue("ok", 1, false, false));
     }
 
     #[test]
@@ -2735,14 +2767,14 @@ mod tests {
         // Empty queue → fall back to the heuristic, which fires on this phrase.
         let incomplete = "I've fixed the first file. Next, I'll update the remaining tests.";
         assert!(looks_incomplete(incomplete));
-        assert!(should_auto_continue(incomplete, 0));
+        assert!(should_auto_continue(incomplete, 0, false, false));
     }
 
     #[test]
     fn should_auto_continue_false_when_queue_empty_and_complete() {
         // Paired negative (Day 122): empty queue + complete-looking text → false.
         assert!(!looks_incomplete("short response"));
-        assert!(!should_auto_continue("short response", 0));
+        assert!(!should_auto_continue("short response", 0, false, false));
     }
 
     #[test]
