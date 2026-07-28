@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by inspecting the current implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ search 'continue_on_silence|should_auto_continue|looks_incomplete' (*.rs) ✓ (10ms)
+ ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "should_auto_continue\|… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1480,1560p src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1275,1310p src/repl.rs &&… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2745,2790p src/repl.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "continue-on-silence" s… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1690,1720p src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "turn-end\|turn end\|mar… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,120p docs/src/usage/re… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 110,130p src/help.rs ✓ (4ms)
+  11 tools completed in 22.4s (11 ✓)
+
+Now let me add the tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (2 → 89 lines)
+  +     /// The old two-argument behaviour, spelled out literally. This is what
+  +     /// `should_auto_continue(.., enabled = false)` must equal for every input —
+  +     /// the product-safety guarantee for `--continue-on-silence` (issue #631).
+  +     fn legacy_should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  +         queue_pending > 0 || looks_incomplete(text)
+  +     }
+  + 
+  +     #[test]
+  +     fn should_auto_continue_default_off_is_byte_identical_to_legacy() {
+  +         // Includes the case the flag exists for: empty final text + tools used
+  +         // + empty queue. With the flag off it must still read as "finished".
+  +         let texts = [
+  +             "",
+  +             "   ",
+  +             "\n\t  \n",
+  +             "ok",
+  +             "short response",
+  +             "Done — all tests pass and the build is green.",
+  +             "I've fixed the first file. Next, I'll update the remaining tests.",
+  +             "1234567890123456789",  // 19 chars: under MIN_SUMMARY_CHARS
+  ... (69 more lines)
+ ✓ (1m 44s)
+  +     /// The old two-argument behaviour, spelled out literally. This is what
+  +     /// `should_auto_continue(.., enabled = false)` must equal for every input —
+  +     /// the product-safety guarantee for `--continue-on-silence` (issue #631).
+  +     fn legacy_should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  +         queue_pending > 0 || looks_incomplete(text)
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib repl:: 2>&1 | t… ✓ (147ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo repl:: 2>&… ✓ (151ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo should_aut… ✓ (145ms)
+  4 tools completed in 1m 54s (4 ✓)
+
+Tests pass. Now the docs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/repl.md (4 → 35 lines)
+    `--screen-reader`). Unlike the marker itself, this line prints on **every** turn
+    that ends, including turns the verdict stays silent about, so you can judge the
+    stop state yourself instead of trusting the classifier.
+  + 
+  + ### Acting on silence (`--continue-on-silence`)
+  + 
+  + The marker *tells* you a turn went quiet after doing work. This flag makes yoyo
+  + *act* on it:
+  + 
+  + ```bash
+  + yoyo --continue-on-silence
+  + ```
+  + 
+  + With the flag on, auto-continue also fires when **all** of these hold:
+  + 
+  + - the turn **used tools** (it did work),
+  + - the final text is **empty or near-empty** (under 20 characters, trimmed),
+  + - the follow-up queue is **empty**, and
+  + - the turn ended **without an error**.
+  + 
+  ... (14 more lines)
+ ✓ (1m 23s)
+    `--screen-reader`). Unlike the marker itself, this line prints on **every** turn
+    that ends, including turns the verdict stays silent about, so you can judge the
+    stop state yourself instead of trusting the classifier.
+  + 
+  + ### Acting on silence (`--continue-on-silence`)
+  + 
+  + The marker *tells* you a turn went quiet after doing work. This flag makes yoyo
+  + *act* on it:
+  ... (13 more lines)
+
+Now the CLAUDE.md bullet:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_auto_continue" C… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported)), a turn-end marker
+  + (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported); Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, used_tools, continue_on_silence)` — with `--continue-on-silence` (default OFF, `cli::set_continue_on_silence`/`is_continue_on_silence`, read at the call site so the helper stays pure) a turn that **used tools**, ended **without an error**, has an **empty queue**, and produced **under `MIN_SUMMARY_CHARS` (20)** trimmed chars of final text also auto-continues — the issue #631 abstention case made an explicit third value instead of being absorbed into "finished"; a no-tools silent turn never loops, and off-mode is pinned byte-identical to the old two-argument logic by `should_auto_continue_default_off_is_byte_identical_to_legacy`. Off by default because yoyo cannot distinguish "stopped mid-work" from "finished quietly"; the `get_max_auto_continues` budget bounds the worst case at 5 wasted turns per prompt, not an infinite loop), a turn-end marker
+ ✓ (1m 23s)
+  - (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported)), a turn-end marker
+  + (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported); Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, used_tools, continue_on_silence)` — with `--continue-on-silence` (default OFF, `cli::set_continue_on_silence`/`is_continue_on_silence`, read at the call site so the helper stays pure) a turn that **used tools**, ended **without an error**, has an **empty queue**, and produced **under `MIN_SUMMARY_CHARS` (20)** trimmed chars of final text also auto-continues — the issue #631 abstention case made an explicit third value instead of being absorbed into "finished"; a no-tools silent turn never loops, and off-mode is pinned byte-identical to the old two-argument logic by `should_auto_continue_default_off_is_byte_identical_to_legacy`. Off by default because yoyo cannot distinguish "stopped mid-work" from "finished quietly"; the `get_max_auto_continues` budget bounds the worst case at 5 wasted turns per prompt, not an infinite loop), a turn-end marker
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (42ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (38ms)
+  5 tools completed in 1m 58s (5 ✓)
+
+Balanced. Now full verification:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (52.8s)
+  3 tools completed in 2m 25s (3 ✓)
+
+Quick mutation check that the new tests actually bite:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/repl.… (7 lines) ✓ (19.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (39.5s)
+  2 tools completed in 1m 3s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

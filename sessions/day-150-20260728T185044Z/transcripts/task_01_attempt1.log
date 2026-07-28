@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with STEP 1 — commit the guess before looking at the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "experiments" .gitignore… ✓ (3ms)
+ ✓ (11ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Clean tree, attempt 1 (blind). Writing the guess now, before opening the file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (13ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Guess committed. Now STEP 2 — look at the file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/commands_for… ✓ (4ms)
+
+`parse_fork_subcommand` confirms the class — but let me check the exact shape and the checkpoint mirror before grading.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "checkpoint_subcommands\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,340p;480,610p' src/c… ✓ (5ms)
+  2 tools completed in 32.0s (2 ✓)
+
+Guess graded. Let me check two existing precedents before fixing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHECKPOINT_SUBCOMMANDS"… ✓ (5ms)
+
+The bug is confirmed — and it's worse than predicted, in the opposite direction. Writing the failing test first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_fork_subcommand" … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '826,870p' src/commands_f… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (2 → 74 lines)
+  +     /// Fixture table for `parse_fork_subcommand`: the messy shapes a real user types.
+  +     ///
+  +     /// The dangerous rows are the ones where a free-form fork NAME merely *starts with*
+  +     /// a subcommand word. A substring-prefix parser reads `/fork deleteme` as
+  +     /// `delete me` — a silent wrong-op that destroys a branch the user never named.
+  +     /// Fork names are free-form, so anything that is not an exact subcommand token
+  +     /// must reach `create` whole.
+  +     #[test]
+  +     fn test_fork_parse_subcommand_fixture_table() {
+  +         let cases: &[(&str, (&str, &str))] = &[
+  +             // --- exact subcommand tokens still dispatch ---
+  +             ("/fork list", ("list", "")),
+  +             ("/fork switch main", ("switch", "main")),
+  +             ("/fork delete old", ("delete", "old")),
+  +             ("/fork rename old new", ("rename", "old new")),
+  +             // --- names that merely start with a subcommand word (the wrong-op class) ---
+  +             ("/fork deleteme", ("create", "deleteme")),
+  +             ("/fork delete-me-later", ("create", "delete-me-later")),
+  +             ("/fork switcheroo", ("create", "switcheroo")),
+  +             ("/fork switch-to-v2", ("create", "switch-to-v2")),
+  ... (54 more lines)
+ ✓ (11.9s)
+  +     /// Fixture table for `parse_fork_subcommand`: the messy shapes a real user types.
+  +     ///
+  +     /// The dangerous rows are the ones where a free-form fork NAME merely *starts with*
+  +     /// a subcommand word. A substring-prefix parser reads `/fork deleteme` as
+  +     /// `delete me` — a silent wrong-op that destroys a branch the user never named.
+  +     /// Fork names are free-form, so anything that is not an exact subcommand token
+  +     /// must reach `create` whole.
+  +     #[test]
+  ... (13 more lines)
+  3 tools completed in 34.6s (3 ✓)
+
+Expected — the helpers don't exist yet. Now the implementation.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (23 → 40 lines)
+    /// Parse a `/fork` subcommand from user input.
+  - ... (2 more similar lines)
+  + ///
+  + /// Subcommands only match at a **token boundary**. Fork names are free-form, so a name
+  + /// that merely starts with a subcommand word (`/fork deleteme`, `/fork switch-to-v2`)
+  + /// must be created whole rather than absorbed by the neighbouring subcommand — the
+  + /// substring-prefix version of this parser silently read `/fork deleteme` as
+  + /// "delete the fork named `me`", destroying a branch the user never asked about.
+  + ///
+  + /// Returns `(subcommand, argument)` where subcommand is one of
+    /// `"create"`, `"switch"`, `"list"`, `"delete"`, `"rename"`, or `"help"`.
+    pub fn parse_fork_subcommand(input: &str) -> (&str, &str) {
+        let rest = input.strip_prefix("/fork").unwrap_or("").trim();
+        if rest.is_empty() {
+            return ("help", "");
+  -     }
+  -     if rest == "list" {
+  -         return ("list", "");
+        }
+  -     if let Some(arg) = rest.strip_prefix("switch") {
+  ... (32 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (24 → 40 lines)
+    /// Parse a `/fork` subcommand from user input.
+  + ///
+  + /// Subcommands only match at a **token boundary**. Fork names are free-form, so a name
+  + /// that merely starts with a subcommand word (`/fork deleteme`, `/fork switch-to-v2`)
+  + /// must be created whole rather than absorbed by the neighbouring subcommand — the
+  + /// substring-prefix version of this parser silently read `/fork deleteme` as
+  + /// "delete the fork named `me`", destroying a branch the user never named.
+    ///
+    /// Returns `(subcommand, rest)` where subcommand is one of:
+    /// `"create"`, `"switch"`, `"list"`, `"delete"`, `"rename"`, or `"help"`.
+  ···
+        let rest = input.strip_prefix("/fork").unwrap_or("").trim();
+        if rest.is_empty() {
+            return ("help", "");
+  -     }
+  -     if rest == "list" {
+  -         return ("list", "");
+        }
+  -     if let Some(arg) = rest.strip_prefix("switch") {
+  -         return ("switch", arg.trim());
+  ... (31 more lines)
+ ✓ (11.4s)
+    /// Parse a `/fork` subcommand from user input.
+  + ///
+  + /// Subcommands only match at a **token boundary**. Fork names are free-form, so a name
+  + /// that merely starts with a subcommand word (`/fork deleteme`, `/fork switch-to-v2`)
+  + /// must be created whole rather than absorbed by the neighbouring subcommand — the
+  + /// substring-prefix version of this parser silently read `/fork deleteme` as
+  + /// "delete the fork named `me`", destroying a branch the user never named.
+    ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 26s)
+  5 tools completed in 2m 25s (4 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+

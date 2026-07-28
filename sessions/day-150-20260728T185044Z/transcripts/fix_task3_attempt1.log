@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TASK_COMMIT_RE\|WINDOW_… ✓ (3ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p scripts/extract_tra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,270p scripts/extract_… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 490,640p scripts/extract_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 632,700p scripts/extract_… ✓ (6ms)
+  6 tools completed in 10.2s (6 ✓)
+
+Now let me capture a real git log fixture from this repo.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --since="14 days ago" --… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --since="14 days ago" --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --since="14 days ago" --… ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,131p /tmp/fixture_full… ✓ (4ms)
+  4 tools completed in 58.8s (4 ✓)
+
+Now implementing. First the module-level table and pure helpers:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 175 lines)
+        if reverts == 0:
+            return f"## Reverts in window\n0 of last ~{total_sessions} sessions had reverts."
+        return f"## Reverts in window\n{reverts} revert commit(s) in last {WINDOW_DAYS} days."
+  + 
+  + 
+  + # --- Subsystem concentration (the monoculture gate) ---------------------------
+  + #
+  + # Day 150 lesson: "A real bug inside the zone I resolved to leave is the perfect
+  + # alibi — audit the topic histogram, not the task's merits." Its prescription was
+  + # concrete: count how many of the last ~N self-driven diffs touched the same
+  + # subsystem; at half or more, the in-zone idea goes to the tracker and the slot
+  + # goes elsewhere. A stopping rule is only load-bearing if something checks it at
+  + # selection time (Day 129/134), and the planner reads exactly one thing at
+  + # selection time — this block. So the gate lives here, as arithmetic with no
+  + # interpretive slack (Day 137–139: judgment-worded rules get renegotiated by the
+  + # impulse they exist to check).
+  + CONCENTRATION_WARN_RATIO = 0.5   # ≥ half the window in one subsystem → warn
+  + CONCENTRATION_MAX_ROWS = 5       # rows rendered before the tail is summarised
+  + CONCENTRATION_MIN_COMMITS = 4    # below this the ratio is noise, not a signal
+  + 
+  ... (152 more lines)
+ ✓ (1m 34s)
+        if reverts == 0:
+            return f"## Reverts in window\n0 of last ~{total_sessions} sessions had reverts."
+        return f"## Reverts in window\n{reverts} revert commit(s) in last {WINDOW_DAYS} days."
+  + 
+  + 
+  + # --- Subsystem concentration (the monoculture gate) ---------------------------
+  + #
+  + # Day 150 lesson: "A real bug inside the zone I resolved to leave is the perfect
+  ... (13 more lines)
+
+Now wire it into main() right after render_reverts:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 15 lines)
+        s = render_reverts(reverts, len(outcomes))
+        if s:
+            sections.append(s)
+  +     # Placed mid-order deliberately: a capped surface has an implicit sacrifice
+  +     # order equal to its render order, and an appended signal starts last
+  +     # (Day 145). This is short, steering data — it must survive the cap.
+  +     raw_subsystem_log = collect_subsystem_commits()
+  +     if raw_subsystem_log is not None:
+  +         sub_counts, sub_total = count_subsystems(
+  +             parse_subsystem_commits(raw_subsystem_log)
+  +         )
+  +         s = render_subsystem_concentration(sub_counts, sub_total)
+  +         if s:
+  +             sections.append(s)
+        s = render_ci_errors(ci_clusters)
+ ✓ (1m 34s)
+        s = render_reverts(reverts, len(outcomes))
+        if s:
+            sections.append(s)
+  +     # Placed mid-order deliberately: a capped surface has an implicit sacrifice
+  +     # order equal to its render order, and an appended signal starts last
+  +     # (Day 145). This is short, steering data — it must survive the cap.
+  +     raw_subsystem_log = collect_subsystem_commits()
+  +     if raw_subsystem_log is not None:
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,52p… (5 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p… (4 lines) ✓ (22ms)
+  3 tools completed in 1m 45s (3 ✓)
+
+Now let me build the self-test block with the verbatim fixture:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (122 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (63ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (44ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (45ms)
+  4 tools completed in 16.2s (4 ✓)
+
+Now the cap-survival test (requirement 6):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reverts_sec\|synth = (\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1270,1300p scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (61 lines) ✓ (63ms)
+  3 tools completed in 12.4s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

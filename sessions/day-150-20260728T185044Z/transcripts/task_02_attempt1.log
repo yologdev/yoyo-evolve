@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_auto_continue\|l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1250,1320p src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1460,1520p src/repl.rs &&… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1690,1790p src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_turn_end\|form… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1355,1420p src/repl.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1360..1405 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub(crate) struct Prom… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct PromptOutcome" -… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_verbose\|VERBOSE\|se…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "screen-reader\|screen_r… ✓ (5ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1..61  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 195,235p src/cli.rs && ec… ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1520,1600p src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,130p src/help.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1483..1501 ✓ (1ms)
+  17 tools completed in 45.3s (17 ✓)
+
+Now the flag accessor in cli.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 21 lines)
+  + /// Whether `--continue-on-silence` was passed. Default **off** (issue #631).
+  + ///
+  + /// When on, the auto-continue loop treats a turn that used tools and then went
+  + /// quiet (empty / near-empty final text, empty follow-up queue, no error) as
+  + /// "stopped mid-work" rather than "finished". That's the honest reading for
+  + /// most providers, but some legitimately finish without a closing summary — so
+  + /// it stays opt-in. Read at the auto-continue call site, never inside the pure
+  + /// `should_auto_continue` helper.
+  + static CONTINUE_ON_SILENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  + 
+  + /// Enable the opt-in continue-on-silence behavior.
+  + pub fn set_continue_on_silence() {
+  +     let _ = CONTINUE_ON_SILENCE.set(true);
+  + }
+  + 
+  + /// Whether continue-on-silence is enabled (default false).
+  + pub fn is_continue_on_silence() -> bool {
+  +     *CONTINUE_ON_SILENCE.get_or_init(|| false)
+  + }
+  + 
+  ... (1 more lines)
+ ✓ (17.8s)
+  + /// Whether `--continue-on-silence` was passed. Default **off** (issue #631).
+  + ///
+  + /// When on, the auto-continue loop treats a turn that used tools and then went
+  + /// quiet (empty / near-empty final text, empty follow-up queue, no error) as
+  + /// "stopped mid-work" rather than "finished". That's the honest reading for
+  + /// most providers, but some legitimately finish without a closing summary — so
+  + /// it stays opt-in. Read at the auto-continue call site, never inside the pure
+  + /// `should_auto_continue` helper.
+  ... (13 more lines)
+
+Expected — wiring next. Register the flag and set it during parsing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 2 lines)
+        "--screen-reader",
+  +     "--continue-on-silence",
+ ✓ (17.9s)
+        "--screen-reader",
+  +     "--continue-on-silence",
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 12 lines)
+        if args.iter().any(|a| a == "--screen-reader") {
+            crate::format::set_plain_output(true);
+            crate::format::disable_color();
+  +     }
+  + 
+  +     // --continue-on-silence: opt-in (issue #631). Treat a tool-using turn that
+  +     // ends with no closing text as "stopped mid-work" and auto-continue it.
+  +     // Off by default because some providers legitimately finish quietly, and a
+  +     // default that loops on them would be worse than the ambiguity it fixes.
+  +     if args.iter().any(|a| a == "--continue-on-silence") {
+  +         set_continue_on_silence();
+        }
+ ✓ (17.8s)
+        if args.iter().any(|a| a == "--screen-reader") {
+            crate::format::set_plain_output(true);
+            crate::format::disable_color();
+  +     }
+  + 
+  +     // --continue-on-silence: opt-in (issue #631). Treat a tool-using turn that
+  +     // ends with no closing text as "stopped mid-work" and auto-continue it.
+  +     // Off by default because some providers legitimately finish quietly, and a
+  ... (4 more lines)
+  2 tools completed in 42.3s (2 ✓)
+
+Now the pure helper in repl.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (9 → 34 lines)
+    /// Decide whether the auto-continue loop should run another turn.
+  + ///
+    /// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
+    /// authoritative pending work (user-injected messages queued while the agent
+    /// worked) and we continue regardless of the text heuristic. An empty queue
+    /// tells us nothing about whether the model finished, so we fall back to the
+    /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
+  - pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  -     queue_pending > 0 || looks_incomplete(text)
+  + ///
+  + /// `used_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+  + /// branch (issue #631): a turn that *did work* and then said nothing is the
+  + /// abstention case — "no answer" — which today gets absorbed by the convenient
+  + /// neighbour, "finished". With the flag on we make it an explicit third value
+  + /// and continue. With the flag off this function is byte-identical to the old
+  + /// two-argument version, which is the product-safety guarantee: providers that
+  + /// legitimately finish quietly must not be looped by default.
+  + ///
+  + /// Deliberately pure — the flag is read at the call site, never from global
+  + /// state in here, so the whole truth table stays unit-testable. The caller also
+  ... (16 more lines)
+ ✓ (11.3s)
+    /// Decide whether the auto-continue loop should run another turn.
+  + ///
+    /// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
+    /// authoritative pending work (user-injected messages queued while the agent
+    /// worked) and we continue regardless of the text heuristic. An empty queue
+    /// tells us nothing about whether the model finished, so we fall back to the
+    /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
+  - pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

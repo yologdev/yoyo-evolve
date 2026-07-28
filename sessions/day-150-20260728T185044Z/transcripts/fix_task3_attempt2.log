@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the CLAUDE.md line the evaluator flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Six sub-sections" -A3 -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_" scripts/extrac… ✓ (4ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Confirmed: the section renders after render_reverts (line 779). Fixing the enumeration.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - Six sub-sections: recent session outcomes, per-task activity from git log, reverts in window, recurring CI error fingerprints
+  + - Seven sub-sections: recent session outcomes, per-task activity from git log, reverts in window, subsystem concentration (self-driven task-commit histogram + monoculture gate — `CONCENTRATION_WARN_RATIO = 0.5`, Day 150 lesson; rendered mid-order, right after reverts, so it survives `TOTAL_BYTE_CAP`), recurring CI error fingerprints
+ ✓ (1m 33s)
+  - - Six sub-sections: recent session outcomes, per-task activity from git log, reverts in window, recurring CI error fingerprints
+  + - Seven sub-sections: recent session outcomes, per-task activity from git log, reverts in window, subsystem concentration (self-driven task-commit histogram + monoculture gate — `CONCENTRATION_WARN_RATIO = 0.5`, Day 150 lesson; rendered mid-order, right after reverts, so it survives `TOTAL_BYTE_CAP`), recurring CI error fingerprints
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '183,190p' CLAUDE.md && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (7ms)
+ ✓ (44ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '187p' CLAUDE.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (3ms)
+ ✓ (127ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/extr… ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '735,800p' scripts/extrac… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '555,570p' scripts/extrac… ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptyaudit && time… ✓ (125ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def main/,/audit_dir_s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/emptyaudit Y… ✓ (631ms)
+  11 tools completed in 2m 12s (11 ✓)
+
+The section renders for real (risk: 4/11, mid-order). Now the required build checks:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/traj_real.err; cargo fm… ✓ (18.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (1m 5s)
+  3 tools completed in 2m 45s (3 ✓)
+
+Done. The evaluator's single flagged gap is closed.
+
+Change (`CLAUDE.md:187`, one line — the only thing missing):
+• "Six sub-sections" → "Seven sub-sections"
+• Inserted `subsystem concentration (self-driven task-commit histogram + monoculture gate — CONCENTRATION_WARN_RATIO = 0.5, Day 150 lesson; rendered mid-order, right after reverts, so it survives TOTAL_BYTE_CAP) after "reverts in window", matching the actual render position I verified in main() (line 779, between render_reverts and render_ci_errors`).
+
+Verified
+• python3 scripts/extract_trajectory.py --test → ALL PASSED (includes the concentration cap-survival cases).
+• Real run against this repo (`YOYO_AUDIT_DIR set to an empty dir): section renders as ## Subsystem concentration (last 11 self-driven task commits)` with risk: 4/11 top — consistent with what the evaluator observed.
+• cargo fmt -- --check OK, `cargo clippy --all-targets -- -D warnings clean, cargo build OK, cargo test` 4565 + 89 passed, 0 failed.
+
+One honest note, not fixed (out of this task's scope): running the extractor with YOYO_AUDIT_DIR unset crashes with NotADirectoryError: /dev/null in collect_provider_errors (`audit_dir.exists() is true for /dev/null, then iterdir()` fails). I confirmed this is pre-existing — the same crash reproduces on commit b1046165, before this task's changes — so it isn't a regression here. evolve.sh always sets the var, so the cron path is unaffected. Say the word and I'll fix it as a separate change.
+
+  watch: no files changed this turn — skipping
+
