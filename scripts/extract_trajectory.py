@@ -256,6 +256,175 @@ def render_reverts(reverts: int, total_sessions: int) -> str:
     return f"## Reverts in window\n{reverts} revert commit(s) in last {WINDOW_DAYS} days."
 
 
+# --- Subsystem concentration (the monoculture gate) ---------------------------
+#
+# Day 150 lesson: "A real bug inside the zone I resolved to leave is the perfect
+# alibi — audit the topic histogram, not the task's merits." Its prescription was
+# concrete: count how many of the last ~N self-driven diffs touched the same
+# subsystem; at half or more, the in-zone idea goes to the tracker and the slot
+# goes elsewhere. A stopping rule is only load-bearing if something checks it at
+# selection time (Day 129/134), and the planner reads exactly one thing at
+# selection time — this block. So the gate lives here, as arithmetic with no
+# interpretive slack (Day 137–139: judgment-worded rules get renegotiated by the
+# impulse they exist to check).
+CONCENTRATION_WARN_RATIO = 0.5   # ≥ half the window in one subsystem → warn
+CONCENTRATION_MAX_ROWS = 5       # rows rendered before the tail is summarised
+CONCENTRATION_MIN_COMMITS = 4    # below this the ratio is noise, not a signal
+
+# Sentinel prefix for the subsystem git log format. A path line can never start
+# with it, so commit boundaries are unambiguous — unlike blank-line detection,
+# which silently merged every commit in parse_git_log_name_only for months
+# (Day 147).
+SUBSYSTEM_LOG_MARK = "@@COMMIT@@"
+
+# Crude, auditable, ordered path → subsystem table. First matching prefix wins.
+# Only families that span several files (so the file stem alone would scatter
+# them) need an entry; everything else is handled by the documented fallback in
+# classify_subsystem().
+SUBSYSTEM_MAP: tuple[tuple[str, str], ...] = (
+    ("src/commands_risk", "risk"),
+    ("src/commands_git", "git"),
+    ("src/format/", "format"),
+    ("src/prompt", "prompt"),
+    ("src/cli", "cli"),
+    ("src/help", "help"),
+    ("src/tool", "tools"),
+)
+
+# Explicit third value: a path the table and the fallback both decline to name.
+# Never absorbed into a convenient neighbour (Day 144).
+SUBSYSTEM_UNKNOWN = "other (unclassified)"
+
+
+def classify_subsystem(path: str) -> str:
+    """Pure path → subsystem label. No subprocess, so self-tests can drive it.
+
+    Rules, in order:
+      1. First matching prefix in SUBSYSTEM_MAP.
+      2. `src/<stem>.rs` → family key: for `commands_<family>[_<rest>].rs` the
+         family token (`commands_fork.rs` → `fork`); otherwise the stem with any
+         trailing `_<word>` dropped (`prompt_retry.rs` → `prompt`,
+         `repl.rs` → `repl`).
+      3. Anything else → SUBSYSTEM_UNKNOWN.
+    """
+    p = path.strip()
+    if not p:
+        return SUBSYSTEM_UNKNOWN
+    for prefix, label in SUBSYSTEM_MAP:
+        if p.startswith(prefix):
+            return label
+    if not (p.startswith("src/") and p.endswith(".rs")):
+        return SUBSYSTEM_UNKNOWN
+    stem = p[len("src/"):-len(".rs")]
+    if "/" in stem:  # a subdirectory the table doesn't name
+        return SUBSYSTEM_UNKNOWN
+    parts = stem.split("_")
+    if parts[0] == "commands" and len(parts) >= 2:
+        return parts[1]
+    if len(parts) >= 2:
+        return "_".join(parts[:-1])
+    return stem
+
+
+def parse_subsystem_commits(raw: str) -> list[tuple[str, list[str]]]:
+    """Pure parser for `git log --name-only --format=<MARK>%s -- src/` output.
+
+    Returns [(subject, [paths...]), ...] for ONLY those commits whose subject
+    matches TASK_COMMIT_RE — i.e. self-driven task commits. Routine sweeps
+    (social/synthesize sessions touching dozens of files) do not match that
+    shape and are dropped here; getting that exclusion right is the whole value
+    of the number.
+    """
+    commits: list[tuple[str, list[str]]] = []
+    subject: str | None = None
+    paths: list[str] = []
+
+    def flush() -> None:
+        nonlocal subject, paths
+        if subject is not None and TASK_COMMIT_RE.match(subject) and paths:
+            commits.append((subject, paths))
+        subject, paths = None, []
+
+    for line in raw.splitlines():
+        if line.startswith(SUBSYSTEM_LOG_MARK):
+            flush()
+            subject = line[len(SUBSYSTEM_LOG_MARK):].strip()
+            continue
+        stripped = line.strip()
+        if not stripped or subject is None:
+            continue
+        paths.append(stripped)
+    flush()
+    return commits
+
+
+def count_subsystems(
+    commits: list[tuple[str, list[str]]],
+) -> tuple[list[tuple[str, int]], int]:
+    """Pure counter. Returns ([(label, commits_touching_it), ...] desc, total).
+
+    A commit counts once per DISTINCT subsystem it touched, so a diff spanning
+    two subsystems is evidence for both but cannot inflate either.
+    """
+    counts: Counter[str] = Counter()
+    for _subject, paths in commits:
+        for label in {classify_subsystem(p) for p in paths}:
+            counts[label] += 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ordered, len(commits)
+
+
+def collect_subsystem_commits() -> str | None:
+    """The only subprocess half. Returns raw git output, or None on failure.
+
+    Fail-soft renders nothing (file convention) but warn()s — a fail-soft path
+    without a replacement signal is fail-silent (Day 139/145), and warn() output
+    is captured to trajectory.stderr.log and surfaced by the cron.
+    """
+    rc, stdout, stderr = run_cmd(
+        [
+            "git",
+            "log",
+            f"--since={WINDOW_DAYS} days ago",
+            "--name-only",
+            f"--format={SUBSYSTEM_LOG_MARK}%s",
+            "--",
+            "src/",
+        ],
+        timeout=15,
+    )
+    if rc != 0:
+        warn(
+            "subsystem concentration section skipped: "
+            f"`git log --name-only` rc={rc} {stderr.strip()[:120]}"
+        )
+        return None
+    return stdout
+
+
+def render_subsystem_concentration(
+    counts: list[tuple[str, int]], total: int
+) -> str:
+    """Pure renderer. Short by design — this is steering data, not diagnostics."""
+    if total < CONCENTRATION_MIN_COMMITS:
+        return ""
+    header = f"## Subsystem concentration (last {total} self-driven task commits)"
+    lines = [header]
+    for label, n in counts[:CONCENTRATION_MAX_ROWS]:
+        lines.append(f"{label}: {n}/{total}")
+    rest = counts[CONCENTRATION_MAX_ROWS:]
+    if rest:
+        lines.append(f"(+{len(rest)} other subsystem(s) with fewer)")
+    top_label, top_n = counts[0]
+    if top_n / total >= CONCENTRATION_WARN_RATIO:
+        lines.append(
+            f"⚠️ {top_label} took {top_n} of the last {total} self-driven diffs — "
+            "send this session's self-driven slot to a different subsystem; "
+            "file the in-zone idea instead."
+        )
+    return "\n".join(lines)
+
+
 # ── Section 4: Recurring CI errors via gh run view --log-failed ──────────
 
 
@@ -599,6 +768,17 @@ def main() -> int:
     s = render_reverts(reverts, len(outcomes))
     if s:
         sections.append(s)
+    # Placed mid-order deliberately: a capped surface has an implicit sacrifice
+    # order equal to its render order, and an appended signal starts last
+    # (Day 145). This is short, steering data — it must survive the cap.
+    raw_subsystem_log = collect_subsystem_commits()
+    if raw_subsystem_log is not None:
+        sub_counts, sub_total = count_subsystems(
+            parse_subsystem_commits(raw_subsystem_log)
+        )
+        s = render_subsystem_concentration(sub_counts, sub_total)
+        if s:
+            sections.append(s)
     s = render_ci_errors(ci_clusters)
     if s:
         sections.append(s)
@@ -898,6 +1078,182 @@ def run_self_tests() -> int:
         not any("cannot see these" in line for line in parsed_never),
     )
 
+
+    # --- subsystem concentration self-tests ---
+    print("\n=== subsystem concentration self-tests ===\n")
+
+    # 30. Pure classifier: table entries and the documented fallback.
+    for path, want in [
+        ("src/commands_risk.rs", "risk"),
+        ("src/commands_risk_accuracy.rs", "risk"),
+        ("src/commands_git_pr.rs", "git"),
+        ("src/format/mod.rs", "format"),
+        ("src/prompt_retry.rs", "prompt"),
+        ("src/commands_fork.rs", "fork"),
+        ("src/commands_search.rs", "search"),
+        ("src/repl.rs", "repl"),
+        ("src/setup.rs", "setup"),
+        ("src/agent_builder.rs", "agent"),
+        # Explicit third value — never absorbed into a neighbour (Day 144).
+        ("scripts/evolve.sh", SUBSYSTEM_UNKNOWN),
+        ("src/bin/other/thing.rs", SUBSYSTEM_UNKNOWN),
+        ("", SUBSYSTEM_UNKNOWN),
+    ]:
+        assert_eq(f"classify {path!r}", classify_subsystem(path), want)
+
+    # 31. VERBATIM FIXTURE. Captured by running, in this repo:
+    #   git log --since="14 days ago" --name-only \
+    #     --format="@@COMMIT@@%s" -- src/ | head -60
+    # Pasted unedited (Day 147-148: a fixture must be captured, not authored —
+    # hand-written fixtures encode the same wrong belief as the parser).
+    REAL_GIT_LOG_FIXTURE = """\
+@@COMMIT@@Day 150 (17:26): Give #631 the knob I keep refusing to flip — opt-in `--continue-on-silence` (Task 2, eval-fix 1)
+
+src/repl.rs
+@@COMMIT@@Day 150 (17:26): Give #631 the knob I keep refusing to flip — opt-in `--continue-on-silence` (Task 2)
+
+src/cli.rs
+src/help.rs
+src/repl.rs
+@@COMMIT@@Day 150 (17:26): DREAM chosen experiment — point the blind-spot map at `commands_fork.rs` (outside the risk subsystem), guess first (Task 1)
+
+src/commands_fork.rs
+@@COMMIT@@help: pin --help subcommand list against dispatch_sub.rs routing
+
+src/help.rs
+@@COMMIT@@Day 150 (02:28): Self-improvement (small, committed) (Task 1)
+
+src/commands_risk_weights.rs
+@@COMMIT@@Day 149 (17:42): A config file with no reachable key must not lock the user out of the wizard (#628, second half) (Task 3)
+
+src/setup.rs
+@@COMMIT@@Day 149 (17:42): Setup wizard must persist the API key it asked for (#628) (Task 2)
+
+src/setup.rs
+@@COMMIT@@epistemic: pin never-forecast parser guard in extract_trajectory self-tests + document section in CLAUDE.md
+
+src/commands_risk_epistemic.rs
+@@COMMIT@@Day 149 (17:42): DREAM — the blind-spot map is blind to files it never predicted: add an explicit "never forecast" section (Task 1)
+
+src/commands_risk_epistemic.rs
+@@COMMIT@@Day 149 (11:20): Self-improvement (small, committed) (Task 1)
+
+src/update.rs
+@@COMMIT@@Day 149 (02:50): Show the raw stop state, not just the verdict — `--verbose` turn-end debug line (Task 3)
+
+src/repl.rs
+@@COMMIT@@Day 149 (02:50): Pin the Agent-alive-across-drain invariant (yoagent 0.13.3 drop-kills-run) (Task 2)
+
+src/prompt.rs
+@@COMMIT@@Day 149: breadth split — fixture tests, CLAUDE.md, and the experiment
+
+src/commands_risk_accuracy.rs
+@@COMMIT@@Day 149 (02:50): DREAM — split failure-day recall by outcome breadth (is 48% blindness, or unpredictable-by-construction?) (Task 1)
+
+src/commands_risk_accuracy.rs
+@@COMMIT@@/def, /refs: resolve the callee, not the last argument
+
+src/commands_search.rs
+@@COMMIT@@Day 148 (16:59): DREAM — make `yoyo risk harvest` reachable in a shallow clone (GitHub compare API), then actually run it (Task 1)
+
+src/commands_risk.rs
+@@COMMIT@@Day 148 (11:14): social session (learnings + seen-state)
+
+src/agent_builder.rs
+src/banner.rs
+src/cli.rs
+src/cli_config.rs
+src/commands.rs
+src/commands_ast_grep.rs
+src/commands_bg.rs
+src/commands_config.rs
+"""
+
+    parsed = parse_subsystem_commits(REAL_GIT_LOG_FIXTURE)
+    subjects = [s for s, _ in parsed]
+
+    # The sweep commit ("social session (learnings + seen-state)") touches
+    # dozens of files and would swamp the histogram. It is not a task-shaped
+    # subject, so it must be absent along with every file it carried.
+    assert_true(
+        "sweep commit excluded from parsed commits",
+        not any("social session" in s for s in subjects),
+    )
+    swept = {p for _s, paths in parsed for p in paths}
+    assert_true(
+        "sweep-only files never enter the histogram",
+        "src/agent_builder.rs" not in swept and "src/cli_config.rs" not in swept,
+    )
+    # The eval-fix re-commit of Task 2 is not TASK_COMMIT_RE-shaped either, so
+    # one task cannot be double-counted.
+    assert_true(
+        "eval-fix commit not counted as a separate task commit",
+        not any("eval-fix" in s for s in subjects),
+    )
+    assert_eq(
+        "verbatim fixture yields the real task-commit count",
+        str(len(parsed)),
+        "11",
+    )
+
+    counts, total = count_subsystems(parsed)
+    assert_eq("fixture total commits", str(total), "11")
+    assert_eq("fixture top subsystem is risk", counts[0][0], "risk")
+    assert_eq("fixture risk count", str(counts[0][1]), "4")
+    assert_eq(
+        "fixture histogram is the real one",
+        repr(dict(counts)),
+        repr(
+            {
+                "risk": 4,
+                "repl": 2,
+                "setup": 2,
+                "cli": 1,
+                "fork": 1,
+                "help": 1,
+                "prompt": 1,
+                "update": 1,
+            }
+        ),
+    )
+
+    # 32. Renderer: below the warn ratio there is a histogram and no gate line.
+    rendered = render_subsystem_concentration(counts, total)
+    assert_true(
+        "histogram header present",
+        "## Subsystem concentration (last 11 self-driven task commits)" in rendered,
+    )
+    assert_true("histogram row present", "risk: 4/11" in rendered)
+    assert_true("no warning below the ratio", "⚠️" not in rendered)
+
+    # 33. Renderer: at/above CONCENTRATION_WARN_RATIO the gate fires with the
+    # arithmetic stated, not a judgment word.
+    warned = render_subsystem_concentration([("risk", 7), ("repl", 3), ("setup", 2)], 14)
+    assert_true("warning fires at half the window", "⚠️" in warned)
+    assert_true(
+        "warning states the arithmetic",
+        "risk took 7 of the last 14 self-driven diffs" in warned,
+    )
+    assert_true(
+        "warning prescribes the action",
+        "file the in-zone idea instead" in warned,
+    )
+
+    # 34. Too few commits → no section at all (a ratio over 2 commits is noise).
+    assert_eq(
+        "tiny sample renders nothing",
+        render_subsystem_concentration([("risk", 2)], 2),
+        "",
+    )
+
+    # 35. Malformed / empty input is survivable, not a crash.
+    assert_eq("empty log parses to nothing", str(len(parse_subsystem_commits(""))), "0")
+    assert_eq(
+        "orphan path lines without a commit header are ignored",
+        str(len(parse_subsystem_commits("src/repl.rs\nsrc/cli.rs\n"))),
+        "0",
+    )
+
     # --- cap_output self-tests: the steering channel must survive ---
     print("\n=== cap_output self-tests ===\n")
 
@@ -929,11 +1285,25 @@ def run_self_tests() -> int:
             "- src/watch.rs (3.0) — stale (7 snapshots)",
         ]
     )
+    # The concentration gate renders in main() immediately after reverts, so the
+    # synthetic block must place it there too — its cap survival depends on that
+    # position, not on its size (Day 145: sacrifice order == render order).
+    concentration_sec = render_subsystem_concentration(
+        [("risk", 7), ("repl", 3), ("setup", 2), ("git", 1), ("help", 1)], 14
+    )
     synth = (
         synth_header
         + "\n"
         + "\n\n".join(
-            [outcomes_sec, tasks_sec, reverts_sec, ci_sec, provider_sec, epistemic_sec]
+            [
+                outcomes_sec,
+                tasks_sec,
+                reverts_sec,
+                concentration_sec,
+                ci_sec,
+                provider_sec,
+                epistemic_sec,
+            ]
         )
         + "\n"
     )
@@ -961,6 +1331,21 @@ def run_self_tests() -> int:
     assert_true(
         "old 2048 cap would truncate (regression rationale)",
         "(truncated to fit token budget)" in old_capped,
+    )
+
+    # 22a. The concentration gate survives capping — header, the top row, AND
+    # the warning line. A gate the planner only sees on short days is not a gate.
+    assert_true(
+        "concentration header survives capping",
+        "## Subsystem concentration" in capped,
+    )
+    assert_true(
+        "concentration top row survives capping",
+        "risk: 7/14" in capped,
+    )
+    assert_true(
+        "concentration warning survives capping",
+        "took 7 of the last 14 self-driven diffs" in capped,
     )
 
     # 22. Oversized input still gets the marker and stays under the cap
