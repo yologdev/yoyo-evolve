@@ -1,0 +1,57 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and finding one concrete improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "KNOWN GAP\|currently r… ✓ (9ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1880,1960p src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn normalize_symbol_que… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" -r sr… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/dispatch_sub.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^\s*"[a-z-]*" =>' src/d… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,290p src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^\s*"[a-z-]*" =>' src/d… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,105p src/dispatch_sub.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (12 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"  \(changelog\|config\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 325,355p src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE '^ {12}"[a-z_-]+" =>' s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should have Subcommands… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (2 → 74 lines)
+  +     /// Extract the top-level `yoyo <subcmd>` match arm names from the real
+  +     /// dispatch source. The outer positional-subcommand match in
+  +     /// `dispatch_sub.rs` sits at exactly 12 spaces of indentation, so a line
+  +     /// shaped `            "name" => ` is one routed subcommand.
+  +     fn routed_cli_subcommands(src: &str) -> Vec<&str> {
+  +         let mut arms = Vec::new();
+  +         for line in src.lines() {
+  +             let Some(rest) = line.strip_prefix("            \"") else {
+  +                 continue;
+  +             };
+  +             let Some((name, tail)) = rest.split_once('"') else {
+  +                 continue;
+  +             };
+  +             if !tail.trim_start().starts_with("=>") {
+  +                 continue;
+  +             }
+  +             if name.is_empty()
+  +                 || !name
+  +                     .chars()
+  +                     .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
+  ... (54 more lines)
+ ✓ (1m 40s)
+  +     /// Extract the top-level `yoyo <subcmd>` match arm names from the real
+  +     /// dispatch source. The outer positional-subcommand match in
+  +     /// `dispatch_sub.rs` sits at exactly 12 spaces of indentation, so a line
+  +     /// shaped `            "name" => ` is one routed subcommand.
+  +     fn routed_cli_subcommands(src: &str) -> Vec<&str> {
+  +         let mut arms = Vec::new();
+  +         for line in src.lines() {
+  +             let Some(rest) = line.strip_prefix("            \"") else {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib help:: 2>&1 | g… ✓ (140ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_documents_every_… ✓ (141ms)
+  18 tools completed in 3m 7s (18 ✓)
+
+  watch: no files changed this turn — skipping
+

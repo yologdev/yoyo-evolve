@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the failing test and the code it exercises.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1540,1670p src/help.rs ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/help.rs | head -120  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"evolution"\|"extended"… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Subcommands" src/help.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1583,1625p src/help.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1609 && NR<=1622' src/h… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:1609..1623 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,300p src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 285,300p src/dispatch_sub… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"  changelog\|"  memori… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 320,360p src/help.rs ✓ (4ms)
+  12 tools completed in 30.1s (12 ✓)
+
+Now the two fixes — the fixture indentation bug, and the two genuinely-undocumented subcommands the new test caught:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (6 → 12 lines)
+  -         let src = "            \"doctor\" => {\n\
+  -                                \"health\" => {\n\
+  -                            \"nested\" => {\n\
+  -                                \"not an arm\"\n\
+  -                                \"Upper\" => {\n";
+  -         assert_eq!(routed_cli_subcommands(src), vec!["doctor", "health"]);
+  +         // Built by joining explicit lines: a `\n\` continued string literal
+  +         // strips the leading whitespace of each continuation line, which would
+  +         // silently un-indent the fixture and make the extractor look broken.
+  +         let src = [
+  +             "            \"doctor\" => {",       // routed arm
+  +             "            \"health\" => {",       // routed arm
+  +             "                \"nested\" => {",   // nested match, wrong indent
+  +             "            \"not an arm\"",        // no `=>`
+  +             "            \"Upper\" => {",        // not lowercase
+  +         ]
+  +         .join("\n");
+  +         assert_eq!(routed_cli_subcommands(&src), vec!["doctor", "health"]);
+ ✓ (1m 43s)
+  -         let src = "            \"doctor\" => {\n\
+  -                                \"health\" => {\n\
+  -                            \"nested\" => {\n\
+  -                                \"not an arm\"\n\
+  -                                \"Upper\" => {\n";
+  -         assert_eq!(routed_cli_subcommands(src), vec!["doctor", "health"]);
+  +         // Built by joining explicit lines: a `\n\` continued string literal
+  +         // strips the leading whitespace of each continuation line, which would
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo help::test… ✓ (180ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"evolution" =>\|"extend… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 12 lines)
+        let _ = writeln!(
+            s,
+            "  memories          Show project memories (e.g. yoyo memories)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  evolution         Show evolution history, session stats, and CI runs (e.g. yoyo evolution 20)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  extended          Long autonomous task — prints usage; needs an interactive session"
+        );
+ ✓ (1m 50s)
+        let _ = writeln!(
+            s,
+            "  memories          Show project memories (e.g. yoyo memories)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  evolution         Show evolution history, session stats, and CI runs (e.g. yoyo evolution 20)"
+  +     );
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 37s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18.2s)
+ ✓ (1m 30s)
+  7 tools completed in 6m 55s (7 ✓)
+
+All green: 4558 + 89 tests pass, clippy clean, fmt applied. Committing.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run -q… (6 lines) ✓ (189ms)
+
+Fixed and committed.
+
+**What broke (both in my uncommitted `src/help.rs` test addition):**
+
+1. `routed_cli_subcommands_parses_arm_shapes — the fixture used a "...\n\ line-continued string literal. Rust's \` continuation strips leading whitespace on each continuation line, so the intended 12-space-indented `"health" => {` line arrived with zero indentation and the extractor (which keys on exactly 12 spaces) rejected it. Rebuilt the fixture as an explicit array of lines joined with \n, so indentation is literal and visible.
+
+2. cli_help_documents_every_routed_subcommand — not a test bug. The new test correctly found that evolution and extended are routed in dispatch_sub.rs (lines 292 and 356) but absent from cli_help_text(). Added both to the --help subcommand list; extended's line states honestly that it only prints usage and needs an interactive session, which is what its dispatch arm actually does.
+
+Verification: `cargo fmt, cargo build, cargo test (4558 + 89 pass, 0 failed), cargo clippy --all-targets -- -D warnings clean. Confirmed the new lines render in real yoyo --help output. Committed as 2876065f`.
+
+  watch: no files changed this turn — skipping
+
