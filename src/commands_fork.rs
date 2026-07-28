@@ -86,6 +86,12 @@ fn utc_timestamp() -> String {
 
 /// Parse a `/fork` subcommand from user input.
 ///
+/// Subcommands only match at a **token boundary**. Fork names are free-form, so a name
+/// that merely starts with a subcommand word (`/fork deleteme`, `/fork switch-to-v2`)
+/// must be created whole rather than absorbed by the neighbouring subcommand — the
+/// substring-prefix version of this parser silently read `/fork deleteme` as
+/// "delete the fork named `me`", destroying a branch the user never named.
+///
 /// Returns `(subcommand, rest)` where subcommand is one of:
 /// `"create"`, `"switch"`, `"list"`, `"delete"`, `"rename"`, or `"help"`.
 pub fn parse_fork_subcommand(input: &str) -> (&str, &str) {
@@ -93,20 +99,30 @@ pub fn parse_fork_subcommand(input: &str) -> (&str, &str) {
     if rest.is_empty() {
         return ("help", "");
     }
-    if rest == "list" {
-        return ("list", "");
+    let (head, tail) = match rest.split_once(char::is_whitespace) {
+        Some((h, t)) => (h, t.trim()),
+        None => (rest, ""),
+    };
+    if FORK_SUBCOMMANDS.contains(&head) {
+        return (head, tail);
     }
-    if let Some(arg) = rest.strip_prefix("switch") {
-        return ("switch", arg.trim());
-    }
-    if let Some(arg) = rest.strip_prefix("delete") {
-        return ("delete", arg.trim());
-    }
-    if let Some(arg) = rest.strip_prefix("rename") {
-        return ("rename", arg.trim());
-    }
-    // Bare name → create
+    // Not a subcommand token → the whole thing is a fork name.
     ("create", rest)
+}
+
+/// Suggest a subcommand when a bare fork name looks like a typo of one.
+///
+/// Fork names are free-form, so `/fork lst` is *not* an error — a branch may honestly be
+/// called `lst`. We create it and hint, rather than refusing: an explicit third value
+/// between "valid subcommand" and "silently do something else entirely".
+pub fn fork_near_miss(name: &str) -> Option<&'static str> {
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return None;
+    }
+    if FORK_SUBCOMMANDS.contains(&name) {
+        return None;
+    }
+    crate::commands::closest_match(name, FORK_SUBCOMMANDS, 2)
 }
 
 /// Create a new named branch from the current conversation.
@@ -306,7 +322,16 @@ fn fork_help() -> String {
 pub fn handle_fork(agent: &mut Agent, input: &str) -> String {
     let (subcmd, arg) = parse_fork_subcommand(input);
     match subcmd {
-        "create" => handle_fork_create(agent, arg),
+        "create" => {
+            let mut out = handle_fork_create(agent, arg);
+            // A fork may legitimately be named `lst` — so create it, then hint.
+            if let Some(suggestion) = fork_near_miss(arg) {
+                out.push_str(&format!(
+                    "{DIM}  (that was read as a fork name — did you mean /fork {suggestion}?){RESET}\n"
+                ));
+            }
+            out
+        }
         "switch" => handle_fork_switch(agent, arg),
         "list" => handle_fork_list(),
         "delete" => handle_fork_delete(arg),
@@ -579,9 +604,7 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
         // Bare name: treat as save
         name => {
             if !is_valid_checkpoint_name(name) {
-                println!(
-                    "{RED}Unknown subcommand '{name}'. Use: save, list, restore, diff, delete.{RESET}"
-                );
+                println!("{}", checkpoint_unknown_message(name));
                 return;
             }
             store.save(name, changes);
@@ -593,6 +616,19 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
             println!("{GREEN}Checkpoint '{name}' saved ({count} files).{RESET}");
         }
     }
+}
+
+/// Rejection message for a `/checkpoint` argument that is neither a known subcommand
+/// nor a usable checkpoint name.
+///
+/// The valid-subcommand list is **derived** from `CHECKPOINT_SUBCOMMANDS`, never
+/// hand-typed: a hand-copied enumeration in an error string drifts silently the moment
+/// the constant gains or loses a member.
+fn checkpoint_unknown_message(name: &str) -> String {
+    format!(
+        "{RED}Unknown subcommand '{name}'. Use: {}.{RESET}",
+        CHECKPOINT_SUBCOMMANDS.join(", ")
+    )
 }
 
 /// Subcommand completions for `/checkpoint`.
@@ -841,6 +877,81 @@ mod tests {
             parse_fork_subcommand("/fork my-branch"),
             ("create", "my-branch")
         );
+    }
+
+    /// Fixture table for `parse_fork_subcommand`: the messy shapes a real user types.
+    ///
+    /// The dangerous rows are the ones where a free-form fork NAME merely *starts with*
+    /// a subcommand word. A substring-prefix parser reads `/fork deleteme` as
+    /// `delete me` — a silent wrong-op that destroys a branch the user never named.
+    /// Fork names are free-form, so anything that is not an exact subcommand token
+    /// must reach `create` whole.
+    #[test]
+    fn test_fork_parse_subcommand_fixture_table() {
+        let cases: &[(&str, (&str, &str))] = &[
+            // --- exact subcommand tokens still dispatch ---
+            ("/fork list", ("list", "")),
+            ("/fork switch main", ("switch", "main")),
+            ("/fork delete old", ("delete", "old")),
+            ("/fork rename old new", ("rename", "old new")),
+            // --- names that merely start with a subcommand word (the wrong-op class) ---
+            ("/fork deleteme", ("create", "deleteme")),
+            ("/fork delete-me-later", ("create", "delete-me-later")),
+            ("/fork switcheroo", ("create", "switcheroo")),
+            ("/fork switch-to-v2", ("create", "switch-to-v2")),
+            ("/fork renamed-idea", ("create", "renamed-idea")),
+            ("/fork listing-page", ("create", "listing-page")),
+            // --- ordinary free-form names keep working ---
+            ("/fork my-idea", ("create", "my-idea")),
+            ("/fork my idea", ("create", "my idea")),
+            ("/fork 2026-07-28", ("create", "2026-07-28")),
+            // --- typos are NOT subcommands: a fork may legitimately be named `lst` ---
+            ("/fork lst", ("create", "lst")),
+            ("/fork delte x", ("create", "delte x")),
+            // --- whitespace / empty ---
+            ("/fork", ("help", "")),
+            ("/fork   ", ("help", "")),
+            ("/fork   switch   main  ", ("switch", "main")),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                parse_fork_subcommand(input),
+                *expected,
+                "input {input:?} parsed wrongly"
+            );
+        }
+    }
+
+    /// A near-miss of a subcommand still *creates* (names are free-form), but the user
+    /// gets a hint. Real names and exact subcommands must not produce a hint.
+    #[test]
+    fn test_fork_near_miss_hints() {
+        assert_eq!(fork_near_miss("lst"), Some("list"));
+        assert_eq!(fork_near_miss("delte"), Some("delete"));
+        assert_eq!(fork_near_miss("swich"), Some("switch"));
+        // exact subcommands are dispatched, never hinted
+        for sub in FORK_SUBCOMMANDS {
+            assert_eq!(fork_near_miss(sub), None, "{sub} should not be a near miss");
+        }
+        // genuine names are not typos
+        assert_eq!(fork_near_miss("my-idea"), None);
+        assert_eq!(fork_near_miss("refactor"), None);
+        assert_eq!(fork_near_miss(""), None);
+        assert_eq!(fork_near_miss("my idea"), None);
+    }
+
+    /// The `/checkpoint` rejection message must derive its list from the authoritative
+    /// constant, not a hand-typed copy that drifts when the constant changes.
+    #[test]
+    fn test_checkpoint_unknown_message_derives_from_constant() {
+        let msg = checkpoint_unknown_message("no/slashes");
+        assert!(
+            msg.contains("no/slashes"),
+            "should name the bad input: {msg}"
+        );
+        for sub in CHECKPOINT_SUBCOMMANDS {
+            assert!(msg.contains(sub), "message should list {sub}: {msg}");
+        }
     }
 
     #[test]
