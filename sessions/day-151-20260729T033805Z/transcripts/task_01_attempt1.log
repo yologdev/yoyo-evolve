@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by committing the guess to the ledger before reading the target file — that's the whole point of this experiment.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && tail -4 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain ✓ (7ms)
+ ✓ (5ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Clean tree. Committing the guess artifact first, blind.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (47ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (12ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Guess is on the record. Now I open the file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_config_set_arg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_config_set" -… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 714,800p src/commands_con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "settable_keys_list\|SET… ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 596,700p src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_loaded_config… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,790p src/config.rs ✓ (4ms)
+  7 tools completed in 36.1s (7 ✓)
+
+Primary and tertiary guesses look like misses — keys are validated against SETTABLE_KEYS and lists are derived. Checking the secondary (source disagreement):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "home_config_path\|user…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_config_show" … ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1670,1700p src/cli.rs && … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CONFIG_FILE_NAMES" -A 6… ✓ (5ms)
+  4 tools completed in 46.8s (4 ✓)
+
+Guess graded. Primary/tertiary are misses (keys *are validated against `SETTABLE_KEYS`, lists are* derived), but the secondary hit — here's the real defect:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (4ms)
+
+Writing the failing test first:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (96 lines) ✓ (13.1s)
+
+Red as expected. Now the implementation:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (20 → 68 lines)
+    fn detect_loaded_config_path() -> Option<std::path::PathBuf> {
+  +     existing_config_paths().into_iter().next()
+  + }
+  + 
+  + /// Every config file that exists on disk, highest precedence first.
+  + ///
+  + /// Mirrors `config::load_config_file`, which loads exactly ONE file — the
+  + /// first that exists — and does **not** merge them:
+  + /// `./.yoyo.toml` → `~/.yoyo.toml` → `~/.config/yoyo/config.toml`.
+  + fn existing_config_paths() -> Vec<std::path::PathBuf> {
+  +     let mut found = Vec::new();
+        // Project-level: ./.yoyo.toml
+        let project = std::path::PathBuf::from(".yoyo.toml");
+        if project.exists() {
+  -         return Some(project);
+  +         found.push(project);
+        }
+        // Home shorthand: ~/.yoyo.toml
+        if let Some(path) = crate::cli::home_config_path() {
+            if path.exists() {
+  ... (52 more lines)
+ ✓ (19.6s)
+    fn detect_loaded_config_path() -> Option<std::path::PathBuf> {
+  +     existing_config_paths().into_iter().next()
+  + }
+  + 
+  + /// Every config file that exists on disk, highest precedence first.
+  + ///
+  + /// Mirrors `config::load_config_file`, which loads exactly ONE file — the
+  + /// first that exists — and does **not** merge them:
+  ... (13 more lines)
+
+Now wire it into the /config set confirmation:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (9 → 16 lines)
+                    "{GREEN}  ✓ Set {key} = {canonical} in {}{RESET}",
+                    path.display()
+                );
+  +             // The write succeeding is the container, not the payload: yoyo
+  +             // loads exactly one config file (first existing wins, no merge),
+  +             // so a write into a shadowed file is a write nothing will read.
+  +             // Say so instead of letting the green checkmark imply effect.
+  +             if let Some(shadow) = shadowing_config_file(&path, &existing_config_paths()) {
+  +                 println!("{YELLOW}  {}{RESET}", shadowed_write_warning(&path, &shadow));
+  +             }
+            }
+ ✓ (1m 46s)
+                    "{GREEN}  ✓ Set {key} = {canonical} in {}{RESET}",
+                    path.display()
+                );
+  +             // The write succeeding is the container, not the payload: yoyo
+  +             // loads exactly one config file (first existing wins, no merge),
+  +             // so a write into a shadowed file is a write nothing will read.
+  +             // Say so instead of letting the green checkmark imply effect.
+  +             if let Some(shadow) = shadowing_config_file(&path, &existing_config_paths()) {
+  ... (3 more lines)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,45 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check the current state of the ledger and the code change first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat d8a11352 && echo… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SETTABLE_KEYS" src/conf… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub fn validate_config_… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '783,840p' src/commands_c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "settable_keys_list()" s… ✓ (6ms)
+  6 tools completed in 21.7s (6 ✓)
+
+Now appending the missing experiment_result line with an honest grade.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (54ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '672,712p' src/commands_c… ✓ (3ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Claims verified against HEAD. Now the full check suite:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (28.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 && gi… ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_config.rs ✓ (4ms)
+  3 tools completed in 2m 2s (3 ✓)
+
+Formatting fix only. Committing both.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add drea… (5 lines) ✓ (37ms)
+
+Done. The missing deliverable was the grade, not the code.
+
+What I added — the experiment_result line in dreams/experiments.jsonl (day 151, `graded: "partial"), written with python3 + json.dumps()`, matching the Day 150 schema. I did not rewrite the guess (it stands as committed in 5077a52e).
+
+**Grades, each verified against HEAD before claiming:**
+
+• Primary — MISS. handle_config_set (src/commands_config.rs:682) routes every key through `crate::config::validate_config_value, whose catch-all arm returns unknown config key '<k>' — settable keys: … derived from SETTABLE_KEYS. /config set modle …` is rejected, not accepted. The evaluator's reading was right.
+• Secondary — PARTIAL HIT. Right symptom, wrong mechanism. The disagreement isn't TOML-vs-runtime-state; it's TOML-vs-TOML precedence: handle_config_get (line 783) reads only detect_loaded_config_path() — the single highest-precedence file — while /config set --global writes to `~/.config/yoyo/config.toml. With a ./.yoyo.toml` present, the ✓ asserts the container, and the value is shadowed. That's the defect the code half fixes.
+• Tertiary — MISS. Both usage lines (677, 792) call settable_keys_list() over SETTABLE_KEYS; the unknown-key error derives its list the same way. mcp_help_text lists TOML sections, not settable keys, so it has nothing to drift from.
+
+Also: cargo fmt reflowed one println! in the previously-committed hunk; that formatting-only change is in the same commit.
+
+Verification: cargo fmt clean, `clippy --all-targets -D warnings clean, build clean, cargo test` — 89 passed, 0 failed, 1 ignored. Working tree clean.
+
+  watch: no files changed this turn — skipping
+

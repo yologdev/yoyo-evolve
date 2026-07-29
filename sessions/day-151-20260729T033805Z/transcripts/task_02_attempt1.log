@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file and the experiment ledger format.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -c 2000 dreams/experiments.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi… ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,400p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,470p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_\|compact_epi… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_graded_events"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (4ms)
+ ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_epistemic_rank… ✓ (15ms)
+  8 tools completed in 31.9s (8 ✓)
+
+Now the implementation. First the pure parser + weight const:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 59 lines)
+  + /// Negative weight applied when a file has ≥1 **graded** entry in the
+  + /// experiment ledger (`dreams/experiments.jsonl`): I deliberately aimed a
+  + /// session at this file, committed a guess about it, and graded that guess.
+  + /// That is real study, so the file is less blind than an untouched one — but
+  + /// it is *not* a graded validation event, so it only discounts (half of
+  + /// [`W_NEVER_GRADED`]) instead of clearing the never-graded signal.
+  + ///
+  + /// Without this, the ranking could never converge: it would keep pointing the
+  + /// planner at files I had already studied, because study left no trace it
+  + /// could read.
+  + pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
+  + 
+    /// Two epistemic scores within this distance count as tied and fall through
+    /// to the tie-break: current risk score (higher first), then path.
+    pub(crate) const SCORE_EPSILON: f64 = 1e-6;
+  + 
+  + /// Append-only ledger of chosen experiments and their grades, written by the
+  + /// dream/evolve loop. Read-only from here.
+  + pub(crate) const EXPERIMENT_LEDGER_PATH: &str = "dreams/experiments.jsonl";
+  + 
+  ... (39 more lines)
+ ✓ (18.2s)
+  + /// Negative weight applied when a file has ≥1 **graded** entry in the
+  + /// experiment ledger (`dreams/experiments.jsonl`): I deliberately aimed a
+  + /// session at this file, committed a guess about it, and graded that guess.
+  + /// That is real study, so the file is less blind than an untouched one — but
+  + /// it is *not* a graded validation event, so it only discounts (half of
+  + /// [`W_NEVER_GRADED`]) instead of clearing the never-graded signal.
+  + ///
+  + /// Without this, the ranking could never converge: it would keep pointing the
+  ... (13 more lines)
+
+Expected — now wire it into the ranking.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (6 → 7 lines)
+        snapshots: &[ParsedSnapshot],
+        events: &[GradedEvent],
+        risk_scores: &[(String, f64)],
+  +     experiments: &[ExperimentGrade],
+    ) -> Vec<EpistemicEntry> {
+        use std::collections::{HashMap, HashSet};
+ ✓ (11.2s)
+        snapshots: &[ParsedSnapshot],
+        events: &[GradedEvent],
+        risk_scores: &[(String, f64)],
+  +     experiments: &[ExperimentGrade],
+    ) -> Vec<EpistemicEntry> {
+        use std::collections::{HashMap, HashSet};
+
+Now the scoring body and the call site:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 14 lines)
+        let last_index = snapshots.len() - 1;
+  +     // Latest graded experiment per file. This is study history, NOT grading
+  +     // history: it says "I read this file on purpose and graded a guess about
+  +     // it", never "the risk model was measured on it". Kept in its own map and
+  +     // rendered as its own reason so the two can never be conflated.
+  +     let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
+  +     for (path, grade, day) in experiments {
+  +         let slot = studied.entry(path.as_str()).or_insert((grade.as_str(), *day));
+  +         if *day >= slot.1 {
+  +             *slot = (grade.as_str(), *day);
+  +         }
+  +     }
+  + 
+        let mut entries: Vec<EpistemicEntry> = Vec::new();
+ ✓ (11.3s)
+        let last_index = snapshots.len() - 1;
+  +     // Latest graded experiment per file. This is study history, NOT grading
+  +     // history: it says "I read this file on purpose and graded a guess about
+  +     // it", never "the risk model was measured on it". Kept in its own map and
+  +     // rendered as its own reason so the two can never be conflated.
+  +     let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
+  +     for (path, grade, day) in experiments {
+  +         let slot = studied.entry(path.as_str()).or_insert((grade.as_str(), *day));
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (9 → 17 lines)
+                reasons.push(format!(
+                    "last seen {snapshots_ago} snapshots ago, no graded event since"
+                ));
+  +         }
+  + 
+  +         // Study discount. Deliberately additive to the reason list, never a
+  +         // replacement: if the validation ledger still says "never graded",
+  +         // that line stays. Both facts are true at once and both get said.
+  +         if let Some((grade, day)) = studied.get(path.as_str()) {
+  +             score += W_RECENTLY_STUDIED;
+  +             reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+            }
+    
+ ✓ (11.1s)
+                reasons.push(format!(
+                    "last seen {snapshots_ago} snapshots ago, no graded event since"
+                ));
+  +         }
+  + 
+  +         // Study discount. Deliberately additive to the reason list, never a
+  +         // replacement: if the validation ledger still says "never graded",
+  +         // that line stays. Both facts are true at once and both get said.
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 9 lines)
+        let snapshots = parse_all_snapshots(&snapshot_content);
+        let events = parse_graded_events(&validation_content);
+  +     // Study history — absent ledger is an honest empty, not an error.
+  +     let experiment_content =
+  +         std::fs::read_to_string(std::path::Path::new(EXPERIMENT_LEDGER_PATH)).unwrap_or_default();
+  +     let experiments = parse_experiment_grades(&experiment_content);
+        // Current risk scores, used only to break epistemic ties.
+        let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
+  -     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
+  +     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
+ ✓ (11.2s)
+        let snapshots = parse_all_snapshots(&snapshot_content);
+        let events = parse_graded_events(&validation_content);
+  +     // Study history — absent ledger is an honest empty, not an error.
+  +     let experiment_content =
+  +         std::fs::read_to_string(std::path::Path::new(EXPERIMENT_LEDGER_PATH)).unwrap_or_default();
+  +     let experiments = parse_experiment_grades(&experiment_content);
+        // Current risk scores, used only to break epistemic ties.
+        let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
+  -     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
+  +     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "compute_epistemic_ranki… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (10.5s)
+  5 tools completed in 1m 5s (5 ✓)
+
+Now the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_risk_epist… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (166 lines) ✓ (22.8s)
+  2 tools completed in 49.8s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
