@@ -293,10 +293,6 @@ pub fn skill_context_cost_status(total_estimated_tokens: usize) -> (DoctorStatus
     }
 }
 
-/// Sum the byte sizes of every `SKILL.md` under the standard skill-discovery
-/// directories (`.yoyo/skills/` project-local and `~/.yoyo/skills/` global).
-///
-/// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
 /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
 /// loaded from on this run: the two auto-discovery dirs AND any `--skills`
 /// directories. Missing dirs contribute 0.
