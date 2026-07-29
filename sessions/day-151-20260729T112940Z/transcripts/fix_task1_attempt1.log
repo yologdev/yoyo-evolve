@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT ✓ (2ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show cb8add33 --stat && echo… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,360p' src/commands_d… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" src/commands_dev.rs |… ✓ (4ms)
+  5 tools completed in 10.7s (5 ✓)
+
+Confirmed the stacked doc block. Fixing that first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (5 → 1 lines)
+  - /// Sum the byte sizes of every `SKILL.md` under the standard skill-discovery
+  - /// directories (`.yoyo/skills/` project-local and `~/.yoyo/skills/` global).
+  - ///
+  - /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+    /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
+ ✓ (1m 46s)
+  - /// Sum the byte sizes of every `SKILL.md` under the standard skill-discovery
+  - /// directories (`.yoyo/skills/` project-local and `~/.yoyo/skills/` global).
+  - ///
+  - /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+    /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
+
+Now the CLAUDE.md bullet. Let me see the current text:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev.rs" CLAUDE… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes under `.yoyo/skills/` + `~/.yoyo/skills/`, estimates recurring context spend (~bytes/4), warns over ~8k tokens. Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+  + including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes across **every directory skills can be loaded from on this run** — the two auto-discovery dirs (`.yoyo/skills/`, `~/.yoyo/skills/`) **and** any `--skills <dir>` passed on the command line (`cli::skill_flag_dirs`, recorded at parse time) — then estimates recurring context spend (~bytes/4) and warns over ~8k tokens. Day 151 (blind-spot experiment): the `--skills` half was previously missing, so a repo that loads all of its skills that way (this one loads `./skills`) was audited at ~0 tokens and told "no skills loaded" — a silent under-report dressed as a pass. Enumeration and summing are split into pure/testable halves (`skill_source_dirs` — no I/O; `skill_bytes_in_dirs` — dedups by canonicalized path so a dir named twice, e.g. `--skills .yoyo/skills`, is counted once). Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+ ✓ (1m 26s)
+  - including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes under `.yoyo/skills/` + `~/.yoyo/skills/`, estimates recurring context spend (~bytes/4), warns over ~8k tokens. Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+  + including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes across **every directory skills can be loaded from on this run** — the two auto-discovery dirs (`.yoyo/skills/`, `~/.yoyo/skills/`) **and** any `--skills <dir>` passed on the command line (`cli::skill_flag_dirs`, recorded at parse time) — then estimates recurring context spend (~bytes/4) and warns over ~8k tokens. Day 151 (blind-spot experiment): the `--skills` half was previously missing, so a repo that loads all of its skills that way (this one loads `./skills`) was audited at ~0 tokens and told "no skills loaded" — a silent under-report dressed as a pass. Enumeration and summing are split into pure/testable halves (`skill_source_dirs` — no I/O; `skill_bytes_in_dirs` — dedups by canonicalized path so a dir named twice, e.g. `--skills .yoyo/skills`, is counted once). Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn toolchain_checks_for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn print_doctor_report"… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn discovered_skill_byt… ✓ (7ms)
+  5 tools completed in 2m 5s (5 ✓)
+
+Now append the grading line with python3 + json.dumps():
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (57 lines) ✓ (49ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (25ms)
+  2 tools completed in 5.3s (2 ✓)
+
+The new line parses cleanly through the ledger reader. Now full verification:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (19.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (55.7s)
+  3 tools completed in 2m 29s (3 ✓)
+
+All green (4583 + 89 tests). Committing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add drea… (8 lines) ✓ (17ms)
+
+Done. All three evaluator findings fixed; code left as-is.
+
+**1. The missing experiment_result line** (the actual deliverable) — appended to dreams/experiments.jsonl via python3 + json.dumps(), graded `hit` with an explicit per-sub-guess breakdown so the grade isn't inflated:
+
+• **Primary: HIT* — mechanism, symptom and* polarity landed. `discovered_skill_bytes enumerated only the two hardcoded dirs; --skills` dirs were structurally invisible, so this repo (which loads all its skills via --skills ./skills) got a green "~0 tokens / no skills loaded" line. Silent under-report dressed as a pass, from the one check whose job is to surface invisible spend.
+• Secondary: PARTIAL — right that the third value is absorbed (check_tool, commands_dev.rs:371, collapses ENOENT / 127 / installed-but-erroring into one Fail: "not found"), wrong about the harm: `toolchain_checks_for_project gates on ProjectType` first, so non-Rust users are never told cargo is missing. Not fixed — worse polarity lived in the primary.
+• Tertiary: MISS — print_doctor_report (`:441) does *not* absorb Warn: own ⚠ row, excluded from passed, summary goes yellow when passed != total`. Tally adds up.
+
+Every assertion cites file:line; artifact = commit cb8add33. Per the Day 147 rule I did not re-guess — the guess was already immutable in `788c13f1`, and the record says so.
+
+2. Stale CLAUDE.md bullet — the `commands_dev.rs line now describes the actual behavior (all loadable dirs incl. --skills via cli::skill_flag_dirs, pure skill_source_dirs + dedup-by-canonicalized-path skill_bytes_in_dirs`) and names the defect it fixed.
+
+3. Stacked doc block — the orphaned pre-fix doc comment above `discovered_skill_bytes` removed; one doc block now.
+
+Verification: cargo fmt -- --check clean, `clippy --all-targets -D warnings` clean, build OK, **4583 + 89 tests passed, 0 failed**. Committed as f96596a3.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n 164…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "editor-model\|disallowe… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allowed_tools\|\"--imag…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,80p src/help.rs; echo … ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1115,1170p src/cli.rs; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"  -p\|"  --prompt\|pro… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 96,115p src/help.rs ✓ (3ms)
+  7 tools completed in 16.1s (7 ✓)
+
+Adding the two missing lines next to their neighbours.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 6 lines)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --image <file>    Attach an image to the prompt (png/jpg/jpeg/gif/webp/bmp;"
+  +     );
+  +     let _ = writeln!(s, "                    requires -p, ignored in REPL mode)");
+        let _ = writeln!(s, "  --output, -o <f>  Write final response text to a file");
+ ✓ (1m 40s)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --image <file>    Attach an image to the prompt (png/jpg/jpeg/gif/webp/bmp;"
+  +     );
+  +     let _ = writeln!(s, "                    requires -p, ignored in REPL mode)");
+        let _ = writeln!(s, "  --output, -o <f>  Write final response text to a file");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 12 lines)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --allowed-tools <names>  Comma-separated tool names to allow, disabling all"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    others (repeatable; conflicts with --disallowed-tools)"
+  +     );
+        let _ = writeln!(
+            s,
+            "  --disallowed-tools <names>  Comma-separated tool names to disable (e.g., bash,write_file)"
+ ✓ (1m 46s)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --allowed-tools <names>  Comma-separated tool names to allow, disabling all"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    others (repeatable; conflicts with --disallowed-tools)"
+  +     );
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "allowed_tools" src/age… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "allowed_tools" src/age… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 15s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo --help 2>&1 … ✓ (5ms)
+  7 tools completed in 6m 39s (7 ✓)
+
+Fixed. The failing test named exactly two missing flags; I documented them in cli_help_text() (`src/help.rs`):
+
+• `--image <file>` — placed with the input/prompt flags, right after `--prompt, -p. Wording matches the parse site (src/cli.rs:895–925): supported extensions png/jpg/jpeg/gif/webp/bmp, requires -p`, warns-and-ignores in REPL mode.
+• `--allowed-tools <names>` — placed immediately above its sibling --disallowed-tools. Behavior confirmed at src/agent_builder.rs:555 (tools.retain(...) — keeps only listed tools) and the mutual-exclusion check at src/cli.rs:1158.
+
+No flag behavior changed; --editor-model was already documented from the earlier edit.
+
+Verification (all run, all green):
+• cargo build — ok
+• `cargo test` — 4585 passed, 0 failed (previously 1 failed)
+• cargo clippy --all-targets -- -D warnings — clean
+• cargo fmt -- --check — clean
+
+  watch: no files changed this turn — skipping
+

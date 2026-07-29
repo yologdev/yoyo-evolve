@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by writing and committing the blind guess — before reading anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (11ms)
+
+Guess first, before any read of the file. Committing it alone.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (50 lines) ✓ (35ms)
+
+Guess is committed and sealed. Now I read the file for the first time.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_dev.rs && sed… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,420p' src/commands_d… ✓ (5ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Primary guess looks live. Let me verify how skills are *actually* loaded before asserting anything.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "skills" src/cli.rs | g… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,145p' src/cli.rs && e… ✓ (7ms)
+  2 tools completed in 25.0s (2 ✓)
+
+Defect confirmed at the mechanism level. Let me pin down the exact call site and the real-world symptom.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '915,940p' src/cli.rs && … ✓ (7ms)
+
+Guess confirmed — and worse than I predicted: this repo loads **138,812 bytes ≈ 34,703 tokens** of skills via --skills ./skills, and /doctor reports "no skills loaded" because .yoyo/skills doesn't exist. Writing the failing test first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill_bytes_in_dir\|dis… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A8 "dev-dependencies" C… ✓ (3ms)
+  2 tools completed in 22.7s (2 ✓)
+
+Now the failing tests, then the fix.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '826,880p' src/commands_d… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (2 → 61 lines)
+  +     #[test]
+  +     fn test_skill_source_dirs_includes_flag_dirs() {
+  +         // The bug this pins: skills loaded via `--skills <dir>` were invisible to
+  +         // the /doctor cost audit, which only ever looked at the two auto-discovery
+  +         // dirs. On a repo that passes `--skills ./skills` (this one does) the audit
+  +         // summed 0 bytes and reported "no skills loaded" — a false clean bill.
+  +         let flag = vec![std::path::PathBuf::from("./skills")];
+  +         let dirs = skill_source_dirs(&flag, Some(std::path::Path::new("/home/tester")));
+  +         assert!(
+  +             dirs.contains(&std::path::PathBuf::from("./skills")),
+  +             "flag skill dirs must be part of the cost audit's source set: {dirs:?}"
+  +         );
+  +         assert!(dirs.contains(&std::path::PathBuf::from(".yoyo/skills")));
+  +         assert!(dirs.contains(&std::path::PathBuf::from("/home/tester/.yoyo/skills")));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_skill_source_dirs_without_home_still_has_project_and_flags() {
+  +         let flag = vec![std::path::PathBuf::from("/opt/team-skills")];
+  +         let dirs = skill_source_dirs(&flag, None);
+  ... (41 more lines)
+ ✓ (11.2s)
+  +     #[test]
+  +     fn test_skill_source_dirs_includes_flag_dirs() {
+  +         // The bug this pins: skills loaded via `--skills <dir>` were invisible to
+  +         // the /doctor cost audit, which only ever looked at the two auto-discovery
+  +         // dirs. On a repo that passes `--skills ./skills` (this one does) the audit
+  +         // summed 0 bytes and reported "no skills loaded" — a false clean bill.
+  +         let flag = vec![std::path::PathBuf::from("./skills")];
+  +         let dirs = skill_source_dirs(&flag, Some(std::path::Path::new("/home/tester")));
+  ... (13 more lines)
+  2 tools completed in 28.4s (2 ✓)
+
+Red as expected. Now the fix — first the cli.rs side that records the `--skills` dirs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 17 lines)
+    /// Return the number of skills that were auto-discovered (0 if none or not yet parsed).
+    pub fn auto_discovered_skill_count() -> usize {
+        *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
+  + }
+  + 
+  + /// Directories passed via `--skills` on this run (empty if none or not yet parsed).
+  + static SKILL_FLAG_DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+  + 
+  + /// Return the skill directories supplied with `--skills`.
+  + ///
+  + /// These are a real source of loaded skills alongside the two auto-discovery
+  + /// dirs, so anything reporting on skills (e.g. `/doctor`'s context-cost audit)
+  + /// must consult this too — otherwise it describes only the skills it happens to
+  + /// know where to look for, and calls that "no skills loaded".
+  + pub fn skill_flag_dirs() -> Vec<std::path::PathBuf> {
+  +     SKILL_FLAG_DIRS.get().cloned().unwrap_or_default()
+    }
+ ✓ (11.1s)
+    /// Return the number of skills that were auto-discovered (0 if none or not yet parsed).
+    pub fn auto_discovered_skill_count() -> usize {
+        *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
+  + }
+  + 
+  + /// Directories passed via `--skills` on this run (empty if none or not yet parsed).
+  + static SKILL_FLAG_DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+  + 
+  ... (9 more lines)
+
+Now record the dirs at the parse site, and rewrite the audit's source enumeration.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 4 lines)
+        let skill_dirs = collect_repeatable_flag(args, "--skills");
+  +     // Record the flag dirs so skill-aware reporting (e.g. /doctor's context-cost
+  +     // audit) can see this source too, not just the auto-discovery dirs.
+  +     let _ = SKILL_FLAG_DIRS.set(skill_dirs.iter().map(std::path::PathBuf::from).collect());
+ ✓ (11.0s)
+        let skill_dirs = collect_repeatable_flag(args, "--skills");
+  +     // Record the flag dirs so skill-aware reporting (e.g. /doctor's context-cost
+  +     // audit) can see this source too, not just the auto-discovery dirs.
+  +     let _ = SKILL_FLAG_DIRS.set(skill_dirs.iter().map(std::path::PathBuf::from).collect());
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (11 → 49 lines)
+  + /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
+  + /// loaded from on this run: the two auto-discovery dirs AND any `--skills`
+  + /// directories. Missing dirs contribute 0.
+  + ///
+  + /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+    fn discovered_skill_bytes() -> usize {
+  -     let mut total = 0usize;
+  +     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+  +     let dirs = skill_source_dirs(&cli::skill_flag_dirs(), home.as_deref());
+  +     skill_bytes_in_dirs(&dirs)
+  + }
+  + 
+  + /// Enumerate every directory skills can be loaded from, in discovery order.
+  + ///
+  + /// Pure (no I/O) so the *enumeration itself* is testable — the previous version
+  + /// of this audit hardcoded only the two auto-discovery dirs inline, so skills
+  + /// supplied with `--skills` were structurally invisible and a repo loading all
+  + /// of its skills that way was told "no skills loaded".
+  + fn skill_source_dirs(
+  +     flag_dirs: &[std::path::PathBuf],
+  ... (33 more lines)
+ ✓ (1m 42s)
+  + /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
+  + /// loaded from on this run: the two auto-discovery dirs AND any `--skills`
+  + /// directories. Missing dirs contribute 0.
+  + ///
+  + /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+    fn discovered_skill_bytes() -> usize {
+  -     let mut total = 0usize;
+  +     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+  ... (13 more lines)
+  2 tools completed in 2m 6s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

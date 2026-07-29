@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual enumeration and the help text.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" -r src/ | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (9ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 215,300p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cli_help_documents_ever… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1700p src/help.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1530,1562p src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn cli_help_text" -A 13… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 175,280p src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--editor-model"\|"--im… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 570,600p src/cli.rs && ec… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "allowed_tools" src/ | … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allowed_tools" src/agen… ✓ (5ms)
+  12 tools completed in 42.3s (12 ✓)
+
+Now the test first. Make the constant reachable:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 6 lines)
+    /// All known CLI flags (both boolean and value-taking).
+  - const KNOWN_FLAGS: &[&str] = &[
+  + ///
+  + /// `pub(crate)` so `help.rs` can walk this list against `cli_help_text()` —
+  + /// a flag accepted here but absent from `--help` is a capability no user can
+  + /// discover (Day 151).
+  + pub(crate) const KNOWN_FLAGS: &[&str] = &[
+ ✓ (1m 45s)
+    /// All known CLI flags (both boolean and value-taking).
+  - const KNOWN_FLAGS: &[&str] = &[
+  + ///
+  + /// `pub(crate)` so `help.rs` can walk this list against `cli_help_text()` —
+  + /// a flag accepted here but absent from `--help` is a capability no user can
+  + /// discover (Day 151).
+  + pub(crate) const KNOWN_FLAGS: &[&str] = &[
+
+Now the guard test in src/help.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 78 lines)
+  +     /// Short aliases skipped by `cli_help_documents_every_known_flag`, each
+  +     /// paired with the long form that IS asserted in its place. Reason: a bare
+  +     /// substring search for `-p` is vacuous (it matches inside `--prompt`), and
+  +     /// `--help` documents each pair on one line (`--prompt, -p <t>`), so the
+  +     /// long form's presence is the real signal. Same spirit as the `/exit`
+  +     /// alias exception in help_data.rs. Keep this list tiny — a NEW short flag
+  +     /// belongs in `--help` prose, not in here.
+  +     const SHORT_ALIAS_LONG_FORM: &[(&str, &str)] = &[
+  +         ("-p", "--prompt"),
+  +         ("-o", "--output"),
+  +         ("-v", "--verbose"),
+  +         ("-q", "--quiet"),
+  +         ("-y", "--yes"),
+  +         ("-c", "--continue"),
+  +         ("-h", "--help"),
+  +         ("-V", "--version"),
+  +     ];
+  + 
+  +     /// True if `text` mentions `flag` as a whole token — i.e. the next char
+  +     /// isn't one that would make it a longer flag. Without the boundary check
+  ... (58 more lines)
+ ✓ (1m 40s)
+  +     /// Short aliases skipped by `cli_help_documents_every_known_flag`, each
+  +     /// paired with the long form that IS asserted in its place. Reason: a bare
+  +     /// substring search for `-p` is vacuous (it matches inside `--prompt`), and
+  +     /// `--help` documents each pair on one line (`--prompt, -p <t>`), so the
+  +     /// long form's presence is the real signal. Same spirit as the `/exit`
+  +     /// alias exception in help_data.rs. Keep this list tiny — a NEW short flag
+  +     /// belongs in `--help` prose, not in here.
+  +     const SHORT_ALIAS_LONG_FORM: &[(&str, &str)] = &[
+  ... (13 more lines)
+
+Watching it go red — that's the point:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test cli_help_documents_ev… ✓ (167ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn default_editor_model… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 8 lines)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --editor-model <name>  Model the editor uses in /architect mode (default: --model)"
+  +     );
+        let _ = writeln!(
+            s,
+            "  --provider <name> Provider: anthropic (default), openai, google, openrouter,"
+ ✓ (1m 39s)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --editor-model <name>  Model the editor uses in /architect mode (default: --model)"
+  +     );
+        let _ = writeln!(
+            s,
+            "  --provider <name> Provider: anthropic (default), openai, google, openrouter,"
+  3 tools completed in 1m 49s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
