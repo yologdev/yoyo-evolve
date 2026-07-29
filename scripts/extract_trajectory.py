@@ -612,6 +612,9 @@ EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event
 # Study history (dreams/experiments.jsonl), NOT validation grading — kept as its
 # own compaction so the planner can see the expedition it already sent.
 EPISTEMIC_STUDIED_RE = re.compile(r"studied by graded experiment \(day (\d+), ([^)]+)\)")
+# Prefix of the compacted study reason — used to hoist it ahead of the other
+# reasons so the per-entry clamp can never be the thing that hides it.
+STUDIED_COMPACT_PREFIX = "studied d"
 # Header of the never-forecast section — a hard stop for entry parsing.
 EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
 
@@ -624,6 +627,12 @@ def compact_epistemic_reason(reason: str) -> str:
     m = EPISTEMIC_STALE_RE.search(reason)
     if m:
         return f"stale ({m.group(1)} snapshots)"
+    m = EPISTEMIC_STUDIED_RE.search(reason)
+    if m:
+        # Keep the word "studied" and the grade: this is study history, not
+        # validation grading, and the planner must be able to tell the two
+        # apart at a glance (never rewrite it as "graded").
+        return f"studied d{m.group(1)} ({m.group(2)[:12]})"
     return reason[:60]
 
 
@@ -653,6 +662,12 @@ def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]
     for path, score, reasons in entries[:top_n]:
         line = f"- {path} ({score})"
         if reasons:
+            # Study history first. The per-entry clamp below drops the tail, and
+            # "I already sent an expedition here and graded it" is the reason
+            # most likely to change the planner's choice — losing it to the
+            # clamp would defeat the whole read-back (Day 151). Stable sort, so
+            # everything else keeps report order.
+            reasons = sorted(reasons, key=lambda r: not r.startswith(STUDIED_COMPACT_PREFIX))
             line += " — " + "; ".join(reasons)
         if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
             line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
@@ -1020,6 +1035,38 @@ def run_self_tests() -> int:
         "stale reason compacts",
         compact_epistemic_reason("last seen 7 snapshots ago, no graded event since"),
         "stale (7 snapshots)",
+    )
+
+    # 19b2. Study-history reason (Day 151, dreams/experiments.jsonl) compacts to
+    # its own shape and is NOT conflated with validation grading — the entry
+    # keeps saying "never graded" while also saying it was studied.
+    assert_eq(
+        "studied reason compacts",
+        compact_epistemic_reason("studied by graded experiment (day 150, miss)"),
+        "studied d150 (miss)",
+    )
+    canned_studied = (
+        "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
+        "   1. src/commands_fork.rs                   2.5\n"
+        "  • predicted 12×, never graded\n"
+        "  • last seen 37 snapshots ago, no graded event since\n"
+        "  • studied by graded experiment (day 150, miss)\n"
+        "\n  high score = the model is blindest here\n"
+    )
+    parsed_studied = parse_epistemic_output(canned_studied)
+    assert_eq(
+        "studied reason survives the per-entry clamp (hoisted to the front)",
+        parsed_studied[0],
+        "- src/commands_fork.rs (2.5) — studied d150 (miss); "
+        "predicted 12×, never graded; stale (3…",
+    )
+    assert_true(
+        "studied entry still reports the ungraded validation ledger",
+        "never graded" in parsed_studied[0],
+    )
+    assert_true(
+        "studied entry still respects the per-entry clamp",
+        len(parsed_studied[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
     )
 
     # 19c. Empty states / garbage yield [] (the fail-soft path)
