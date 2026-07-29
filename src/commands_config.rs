@@ -701,7 +701,10 @@ pub fn handle_config_set(input: &str, agent_config: &mut crate::AgentConfig, age
             // so a write into a shadowed file is a write nothing will read.
             // Say so instead of letting the green checkmark imply effect.
             if let Some(shadow) = shadowing_config_file(&path, &existing_config_paths()) {
-                println!("{YELLOW}  {}{RESET}", shadowed_write_warning(&path, &shadow));
+                println!(
+                    "{YELLOW}  {}{RESET}",
+                    shadowed_write_warning(&path, &shadow)
+                );
             }
         }
         Err(msg) => {
