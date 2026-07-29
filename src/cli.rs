@@ -82,6 +82,19 @@ pub fn auto_discovered_skill_count() -> usize {
     *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
 }
 
+/// Directories passed via `--skills` on this run (empty if none or not yet parsed).
+static SKILL_FLAG_DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// Return the skill directories supplied with `--skills`.
+///
+/// These are a real source of loaded skills alongside the two auto-discovery
+/// dirs, so anything reporting on skills (e.g. `/doctor`'s context-cost audit)
+/// must consult this too — otherwise it describes only the skills it happens to
+/// know where to look for, and calls that "no skills loaded".
+pub fn skill_flag_dirs() -> Vec<std::path::PathBuf> {
+    SKILL_FLAG_DIRS.get().cloned().unwrap_or_default()
+}
+
 /// Auto-discover skills from `~/.yoyo/skills/` (user-global) and `.yoyo/skills/` (project-local).
 ///
 /// Merges discovered skills into `skills`. The merge order ensures:
@@ -917,6 +930,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     }
 
     let skill_dirs = collect_repeatable_flag(args, "--skills");
+    // Record the flag dirs so skill-aware reporting (e.g. /doctor's context-cost
+    // audit) can see this source too, not just the auto-discovery dirs.
+    let _ = SKILL_FLAG_DIRS.set(skill_dirs.iter().map(std::path::PathBuf::from).collect());
 
     let mut skills = if skill_dirs.is_empty() {
         SkillSet::empty()

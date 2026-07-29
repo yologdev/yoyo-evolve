@@ -297,14 +297,52 @@ pub fn skill_context_cost_status(total_estimated_tokens: usize) -> (DoctorStatus
 /// directories (`.yoyo/skills/` project-local and `~/.yoyo/skills/` global).
 ///
 /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+/// Sum the byte sizes of every `SKILL.md` in every directory skills can be
+/// loaded from on this run: the two auto-discovery dirs AND any `--skills`
+/// directories. Missing dirs contribute 0.
+///
+/// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
 fn discovered_skill_bytes() -> usize {
-    let mut total = 0usize;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let dirs = skill_source_dirs(&cli::skill_flag_dirs(), home.as_deref());
+    skill_bytes_in_dirs(&dirs)
+}
+
+/// Enumerate every directory skills can be loaded from, in discovery order.
+///
+/// Pure (no I/O) so the *enumeration itself* is testable — the previous version
+/// of this audit hardcoded only the two auto-discovery dirs inline, so skills
+/// supplied with `--skills` were structurally invisible and a repo loading all
+/// of its skills that way was told "no skills loaded".
+fn skill_source_dirs(
+    flag_dirs: &[std::path::PathBuf],
+    home: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(".yoyo/skills")];
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(std::path::Path::new(&home).join(".yoyo/skills"));
+    if let Some(home) = home {
+        dirs.push(home.join(".yoyo/skills"));
     }
+    dirs.extend(flag_dirs.iter().cloned());
+    dirs
+}
+
+/// Sum `SKILL.md` bytes across several candidate skill dirs, counting each
+/// real directory at most once.
+///
+/// The dedup matters: `--skills .yoyo/skills` names a directory auto-discovery
+/// already covers, and double-counting would conjure the "over budget" warning
+/// out of arithmetic rather than out of context spend. Paths that can't be
+/// canonicalized (missing dirs) fall back to the literal path as the key.
+fn skill_bytes_in_dirs(dirs: &[std::path::PathBuf]) -> usize {
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut total = 0usize;
     for dir in dirs {
-        total += skill_bytes_in_dir(&dir);
+        let key = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        total += skill_bytes_in_dir(dir);
     }
     total
 }
@@ -840,6 +878,65 @@ mod tests {
         assert_eq!(skill_bytes_to_tokens(4), 1);
         assert_eq!(skill_bytes_to_tokens(5), 2);
         assert_eq!(skill_bytes_to_tokens(8000), 2000);
+    }
+
+    #[test]
+    fn test_skill_source_dirs_includes_flag_dirs() {
+        // The bug this pins: skills loaded via `--skills <dir>` were invisible to
+        // the /doctor cost audit, which only ever looked at the two auto-discovery
+        // dirs. On a repo that passes `--skills ./skills` (this one does) the audit
+        // summed 0 bytes and reported "no skills loaded" — a false clean bill.
+        let flag = vec![std::path::PathBuf::from("./skills")];
+        let dirs = skill_source_dirs(&flag, Some(std::path::Path::new("/home/tester")));
+        assert!(
+            dirs.contains(&std::path::PathBuf::from("./skills")),
+            "flag skill dirs must be part of the cost audit's source set: {dirs:?}"
+        );
+        assert!(dirs.contains(&std::path::PathBuf::from(".yoyo/skills")));
+        assert!(dirs.contains(&std::path::PathBuf::from("/home/tester/.yoyo/skills")));
+    }
+
+    #[test]
+    fn test_skill_source_dirs_without_home_still_has_project_and_flags() {
+        let flag = vec![std::path::PathBuf::from("/opt/team-skills")];
+        let dirs = skill_source_dirs(&flag, None);
+        assert!(dirs.contains(&std::path::PathBuf::from(".yoyo/skills")));
+        assert!(dirs.contains(&std::path::PathBuf::from("/opt/team-skills")));
+        assert_eq!(dirs.len(), 2, "no HOME → no global dir: {dirs:?}");
+    }
+
+    #[test]
+    fn test_skill_bytes_in_dirs_sums_across_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::fs::create_dir_all(a.join("one")).unwrap();
+        std::fs::create_dir_all(b.join("two")).unwrap();
+        std::fs::write(a.join("one/SKILL.md"), "x".repeat(100)).unwrap();
+        std::fs::write(b.join("two/SKILL.md"), "y".repeat(50)).unwrap();
+        assert_eq!(skill_bytes_in_dirs(&[a.clone(), b.clone()]), 150);
+    }
+
+    #[test]
+    fn test_skill_bytes_in_dirs_dedups_same_dir() {
+        // `--skills .yoyo/skills` names a dir auto-discovery already covers.
+        // Counting it twice would over-report the warning into existence.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().join("skills");
+        std::fs::create_dir_all(d.join("one")).unwrap();
+        std::fs::write(d.join("one/SKILL.md"), "z".repeat(80)).unwrap();
+        assert_eq!(skill_bytes_in_dirs(&[d.clone(), d.clone()]), 80);
+        // Same directory reached by a different-looking path: also once.
+        let alias = d.join(".").join("..").join("skills");
+        assert_eq!(skill_bytes_in_dirs(&[d.clone(), alias]), 80);
+    }
+
+    #[test]
+    fn test_skill_bytes_in_dirs_missing_dirs_are_zero_not_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert_eq!(skill_bytes_in_dirs(&[missing]), 0);
+        assert_eq!(skill_bytes_in_dirs(&[]), 0);
     }
 
     #[test]
