@@ -103,6 +103,244 @@ pub(crate) fn parse_experiment_grades(contents: &str) -> Vec<ExperimentGrade> {
     out
 }
 
+/// Where a hypothesis came from. `Unknown` is the deliberate **third value**
+/// (Day 144): a missing, misspelled or null `provenance` is never quietly
+/// bucketed into one of the two real families — absence gets its own name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Provenance {
+    /// Derived from my own learnings archive ("does my hottest lesson apply
+    /// here?"). A hit grades the *lesson's generality*, not the file model.
+    Archive,
+    /// Derived from something about the file itself — its role, callers, age,
+    /// dependencies, consumers. A hit grades my model of *that file*.
+    FileSpecific,
+    /// Not stated, or stated as something I don't recognise.
+    Unknown,
+}
+
+impl Provenance {
+    fn parse(raw: Option<&str>) -> Self {
+        match raw.map(str::trim) {
+            Some("archive") => Provenance::Archive,
+            Some("file_specific") => Provenance::FileSpecific,
+            _ => Provenance::Unknown,
+        }
+    }
+}
+
+/// Hit/miss record for one hypothesis family.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FamilyTally {
+    /// Hypotheses in this family that carry a non-empty grade.
+    pub(crate) graded: usize,
+    /// Of those, how many graded `hit`.
+    pub(crate) hits: usize,
+    /// Of those, how many graded `partial`.
+    pub(crate) partials: usize,
+}
+
+impl FamilyTally {
+    fn record(&mut self, grade: &str) {
+        self.graded += 1;
+        match grade {
+            "hit" => self.hits += 1,
+            "partial" => self.partials += 1,
+            _ => {}
+        }
+    }
+}
+
+/// The chosen-experiment record, split by where each hypothesis came from.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ExperimentFamilies {
+    pub(crate) archive: FamilyTally,
+    pub(crate) file_specific: FamilyTally,
+    pub(crate) unknown: FamilyTally,
+    /// Graded experiment results written before per-hypothesis provenance
+    /// existed. Counted and disclosed, never back-filled — rewriting history
+    /// in the ledger would manufacture evidence.
+    pub(crate) experiments_without_hypotheses: usize,
+}
+
+impl ExperimentFamilies {
+    pub(crate) fn total_graded(&self) -> usize {
+        self.archive.graded + self.file_specific.graded + self.unknown.graded
+    }
+
+    /// Nothing to say at all — no graded hypotheses and no predating results.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.total_graded() == 0 && self.experiments_without_hypotheses == 0
+    }
+}
+
+/// Tally the experiment ledger's per-hypothesis grades by provenance family.
+///
+/// Pure over the ledger text so it is testable without touching the real file.
+/// Both keys it reads are **optional** — every line written before Day 151
+/// lacks them and parses exactly as before:
+///
+/// * `type: "experiment"` may carry `hypotheses: [{id, provenance, ...}]`
+///   (the declaration, used as a provenance fallback);
+/// * `type: "experiment_result"` may carry
+///   `hypothesis_grades: [{id, provenance, graded}]` (the grades).
+///
+/// A graded result with no usable per-hypothesis records counts toward
+/// `experiments_without_hypotheses` instead of vanishing. Ungraded
+/// (`"graded": null`) hypotheses and malformed lines contribute nothing —
+/// same discipline as [`parse_experiment_grades`].
+pub(crate) fn tally_hypothesis_families(ledger_text: &str) -> ExperimentFamilies {
+    use std::collections::HashMap;
+
+    let mut declared: HashMap<(String, String), Provenance> = HashMap::new();
+    let mut out = ExperimentFamilies::default();
+
+    // Pass 1: provenance declared on the `experiment` (guess) lines, keyed by
+    // (target, hypothesis id) so ids only have to be unique per experiment.
+    for line in ledger_text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        if val["type"].as_str() != Some("experiment") {
+            continue;
+        }
+        let (Some(target), Some(hyps)) = (val["target"].as_str(), val["hypotheses"].as_array())
+        else {
+            continue;
+        };
+        for h in hyps {
+            let Some(id) = h["id"].as_str() else { continue };
+            let prov = Provenance::parse(h["provenance"].as_str());
+            if prov != Provenance::Unknown {
+                declared.insert((target.trim().to_string(), id.trim().to_string()), prov);
+            }
+        }
+    }
+
+    // Pass 2: the grades.
+    for line in ledger_text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        if val["type"].as_str() != Some("experiment_result") {
+            continue;
+        }
+        let target = val["target"].as_str().unwrap_or("").trim().to_string();
+        let overall_graded = matches!(val["graded"].as_str(), Some(g) if !g.trim().is_empty());
+
+        let records = val["hypothesis_grades"].as_array();
+        let mut saw_record = false;
+        if let Some(records) = records {
+            for r in records {
+                saw_record = true;
+                // Ungraded hypothesis: counted in neither `graded` nor `hits`.
+                let Some(grade) = r["graded"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|g| !g.is_empty())
+                else {
+                    continue;
+                };
+                let mut prov = Provenance::parse(r["provenance"].as_str());
+                if prov == Provenance::Unknown {
+                    if let Some(id) = r["id"].as_str() {
+                        if let Some(d) = declared.get(&(target.clone(), id.trim().to_string())) {
+                            prov = *d;
+                        }
+                    }
+                }
+                match prov {
+                    Provenance::Archive => out.archive.record(grade),
+                    Provenance::FileSpecific => out.file_specific.record(grade),
+                    Provenance::Unknown => out.unknown.record(grade),
+                }
+            }
+        }
+        if !saw_record && overall_graded {
+            out.experiments_without_hypotheses += 1;
+        }
+    }
+
+    out
+}
+
+/// Render one family line — or an honest "none yet" when the denominator is
+/// empty. A rate over zero graded hypotheses is the exact mistake Days 142 and
+/// 144 cost me twice, so it is never printed.
+fn format_family_line(label: &str, human: &str, tally: &FamilyTally) -> String {
+    if tally.graded == 0 {
+        return format!("    {DIM}{label:<14} (no {human} hypotheses recorded yet){RESET}\n");
+    }
+    let partials = if tally.partials > 0 {
+        format!(" (+{} partial)", tally.partials)
+    } else {
+        String::new()
+    };
+    format!(
+        "    {label:<14} {YELLOW}{}{RESET} hit / {} graded{DIM}{partials}{RESET}\n",
+        tally.hits, tally.graded
+    )
+}
+
+/// The chosen-experiment scoreboard, split by hypothesis provenance.
+///
+/// Empty tally → empty string. Silence beats an empty scoreboard.
+///
+/// Consumer note: every line here must match neither
+/// `scripts/extract_trajectory.py::EPISTEMIC_ENTRY_RE` (`N. path score`) nor
+/// the `•` reason bullet it appends to the previous ranked entry. The block is
+/// also rendered *below* the "never forecast" header, where that parser has
+/// already hard-stopped collecting (`EPISTEMIC_NEVER_FORECAST_RE`).
+fn format_experiment_families(fam: &ExperimentFamilies) -> String {
+    if fam.is_empty() {
+        return String::new();
+    }
+    let total = fam.total_graded();
+    let mut out = String::new();
+    out.push_str(&format!(
+        "\n  {BOLD}chosen-experiment record (guess-first){RESET}{DIM}: {total} graded hypothes{}{RESET}\n",
+        if total == 1 { "is" } else { "es" }
+    ));
+    out.push_str(&format_family_line(
+        "file-specific",
+        "file-specific",
+        &fam.file_specific,
+    ));
+    out.push_str(&format_family_line("archive", "archive", &fam.archive));
+    // Only shown when non-empty: an "unrecognised provenance" row that is
+    // always zero is noise, but hiding real entries in it would be a lie.
+    if fam.unknown.graded > 0 {
+        out.push_str(&format_family_line(
+            "unrecognised",
+            "unrecognised provenance",
+            &fam.unknown,
+        ));
+        out.push_str(&format!(
+            "    {DIM}unrecognised provenance: neither family claimed these — absence is not a family.{RESET}\n"
+        ));
+    }
+    if fam.experiments_without_hypotheses > 0 {
+        out.push_str(&format!(
+            "    {DIM}{} earlier experiment(s) predate per-hypothesis provenance and are not counted here.{RESET}\n",
+            fam.experiments_without_hypotheses
+        ));
+    }
+    out.push_str(&format!(
+        "    {DIM}archive-derived hits measure how general a recent lesson is; file-specific hits{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "    {DIM}measure my model of that file. Only the second is what the dream is after.{RESET}\n"
+    ));
+    out
+}
+
 /// Default number of entries shown in the report.
 const REPORT_TOP_N: usize = 10;
 
@@ -387,6 +625,7 @@ pub(crate) fn format_epistemic_report(
     snapshots: &[ParsedSnapshot],
     entries: &[EpistemicEntry],
     never: &[NeverForecast],
+    families: &ExperimentFamilies,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -397,6 +636,10 @@ pub(crate) fn format_epistemic_report(
         out.push_str(&format!(
             "  {DIM}no snapshots yet — run `yoyo risk snapshot` first{RESET}\n"
         ));
+        // The experiment record doesn't depend on snapshots — it is my own
+        // guess-first history, and it is worth saying even before the first
+        // snapshot exists.
+        out.push_str(&format_experiment_families(families));
         return out;
     }
 
@@ -473,6 +716,10 @@ pub(crate) fn format_epistemic_report(
             "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
         ));
     }
+
+    // Rendered last, below the never-forecast header, so the trajectory
+    // extractor (which hard-stops collecting there) can never absorb it.
+    out.push_str(&format_experiment_families(families));
     out
 }
 
@@ -498,7 +745,13 @@ pub(crate) fn handle_risk_epistemic() {
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
     let never = never_forecast_files(&snapshots, &risk_scores);
-    print!("{}", format_epistemic_report(&snapshots, &entries, &never));
+    // Same ledger text, read once: study history for the ranking, per-hypothesis
+    // provenance for the guess-first scoreboard.
+    let families = tally_hypothesis_families(&experiment_content);
+    print!(
+        "{}",
+        format_epistemic_report(&snapshots, &entries, &never, &families)
+    );
 }
 
 #[cfg(test)]
@@ -576,7 +829,7 @@ mod tests {
     fn test_empty_snapshots_honest_message() {
         let ranking = compute_epistemic_ranking(&[], &[], &[], &[]);
         assert!(ranking.is_empty());
-        let report = format_epistemic_report(&[], &ranking, &[]);
+        let report = format_epistemic_report(&[], &ranking, &[], &ExperimentFamilies::default());
         assert!(
             report.contains("no snapshots yet"),
             "empty state must be honest, got: {report}"
@@ -588,7 +841,8 @@ mod tests {
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(
             report.contains("no ungraded predictions"),
             "all-graded state must be honest, got: {report}"
@@ -657,7 +911,8 @@ mod tests {
     fn test_report_lists_reasons() {
         let snapshots = vec![snap(100, &["src/b.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
     }
@@ -749,7 +1004,8 @@ mod tests {
             (ranking[0].score - ranking[1].score).abs() < SCORE_EPSILON,
             "fixture must tie"
         );
-        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(
             report.contains("ordered by current risk score"),
             "report must note the tie-break honestly, got: {report}"
@@ -760,7 +1016,8 @@ mod tests {
     fn test_report_no_tie_note_when_scores_distinct() {
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(
             !report.contains("ordered by current risk score"),
             "no tie → no tie note, got: {report}"
@@ -847,7 +1104,8 @@ mod tests {
         let never = never_forecast_files(&snapshots, &pairs);
         assert_eq!(never.len(), 12);
         let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
         assert!(
             report.contains("12 scored files have never appeared in any prediction"),
             "honest total must be printed, got: {report}"
@@ -886,7 +1144,8 @@ mod tests {
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         assert!(ranking.is_empty(), "fixture must produce an empty ranking");
         let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
-        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
         assert!(
             report.contains("no ungraded predictions"),
             "existing empty-ranking message stays, got: {report}"
@@ -906,7 +1165,8 @@ mod tests {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
         let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &never);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
         for line in report.lines() {
             let plain: String = line.replace(RESET.0, "").replace(DIM.0, "");
             if plain.contains("src/update.rs") {
@@ -922,7 +1182,8 @@ mod tests {
     fn test_report_never_forecast_section_absent_when_empty() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let report = format_epistemic_report(&snapshots, &ranking, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(
             !report.contains("never forecast"),
             "no unforecast files → no section, got: {report}"
@@ -1058,12 +1319,22 @@ mod tests {
         let risk = vec![("src/a.rs".to_string(), 3.0), ("src/b.rs".to_string(), 1.0)];
         let never = never_forecast_files(&snapshots, &risk);
         let with_empty = compute_epistemic_ranking(&snapshots, &events, &risk, &[]);
-        let report = format_epistemic_report(&snapshots, &with_empty, &never);
+        let report = format_epistemic_report(
+            &snapshots,
+            &with_empty,
+            &never,
+            &ExperimentFamilies::default(),
+        );
         // The default path (no ledger on disk) must be provably unchanged.
         let parsed_empty = parse_experiment_grades("");
         let with_missing_file =
             compute_epistemic_ranking(&snapshots, &events, &risk, &parsed_empty);
-        let report2 = format_epistemic_report(&snapshots, &with_missing_file, &never);
+        let report2 = format_epistemic_report(
+            &snapshots,
+            &with_missing_file,
+            &never,
+            &ExperimentFamilies::default(),
+        );
         assert_eq!(report, report2);
         assert!(
             !report.contains("studied by graded experiment"),
@@ -1094,5 +1365,169 @@ mod tests {
             a.score,
             a_before.score
         );
+    }
+
+    // ---- hypothesis-family tally (archive-derived vs file-specific) ----
+
+    /// Legacy ledger: every line predates per-hypothesis provenance. Both real
+    /// families stay empty; the predating experiments are counted and named.
+    #[test]
+    fn test_families_legacy_ledger_counts_predating_experiments() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":150,"target":"src/a.rs","graded":"miss"}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/b.rs","graded":"hit"}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.archive, FamilyTally::default());
+        assert_eq!(fam.file_specific, FamilyTally::default());
+        assert_eq!(fam.unknown, FamilyTally::default());
+        assert_eq!(fam.experiments_without_hypotheses, 2);
+
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        assert!(
+            report.contains("2 earlier experiment(s) predate per-hypothesis provenance"),
+            "predating experiments are named: {report}"
+        );
+        assert!(
+            report.contains("(no file-specific hypotheses recorded yet)"),
+            "empty family says so instead of showing a rate: {report}"
+        );
+        assert!(
+            !report.contains("0 hit / 0 graded"),
+            "never a rate over an empty denominator: {report}"
+        );
+    }
+
+    /// Mixed ledger: a file-specific hit, an archive miss, and an unrecognised
+    /// provenance. The unrecognised one is an explicit third value — it must
+    /// not be absorbed into either real family.
+    #[test]
+    fn test_families_mixed_ledger_unknown_is_its_own_bucket() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":151,"target":"src/a.rs","hypotheses":[{"id":"h1","provenance":"file_specific","claim":"c","evidence":"e"}]}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","provenance":"file_specific","graded":"hit"},{"id":"h2","provenance":"archive","graded":"miss"},{"id":"h3","provenance":"wat","graded":"hit"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.file_specific.graded, 1);
+        assert_eq!(fam.file_specific.hits, 1);
+        assert_eq!(fam.archive.graded, 1);
+        assert_eq!(fam.archive.hits, 0);
+        assert_eq!(fam.unknown.graded, 1, "\"wat\" is Unknown, not archive");
+        assert_eq!(fam.unknown.hits, 1);
+        // This result carried per-hypothesis records, so it does not predate them.
+        assert_eq!(fam.experiments_without_hypotheses, 0);
+
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        assert!(report.contains("file-specific"), "{report}");
+        assert!(report.contains("archive"), "{report}");
+        assert!(
+            report.contains("unrecognised provenance"),
+            "unknown bucket is disclosed, not hidden: {report}"
+        );
+    }
+
+    /// An ungraded hypothesis counts in neither `graded` nor `hits`.
+    #[test]
+    fn test_families_ungraded_hypothesis_counts_nowhere() {
+        let ledger = concat!(
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","provenance":"archive","graded":null},{"id":"h2","provenance":"archive","graded":"partial"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.archive.graded, 1);
+        assert_eq!(fam.archive.hits, 0);
+        assert_eq!(fam.archive.partials, 1);
+    }
+
+    /// Provenance declared on the `experiment` line is used when the grade
+    /// record omits it — same target, same hypothesis id.
+    #[test]
+    fn test_families_provenance_falls_back_to_declaration() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":151,"target":"src/a.rs","hypotheses":[{"id":"h1","provenance":"file_specific","claim":"c"}]}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","graded":"hit"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.file_specific.hits, 1);
+        assert_eq!(fam.unknown.graded, 0);
+    }
+
+    /// Malformed lines are skipped without panicking, and don't poison the rest.
+    #[test]
+    fn test_families_malformed_lines_are_skipped() {
+        let ledger = concat!(
+            "not json at all\n",
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":"oops"}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/b.rs","graded":"hit","hypothesis_grades":[{"id":"h1","provenance":"archive","graded":"hit"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.archive.hits, 1);
+        // The `"oops"` line has no usable per-hypothesis records but IS graded,
+        // so it counts as predating — absence is not absorbed into a family.
+        assert_eq!(fam.experiments_without_hypotheses, 1);
+    }
+
+    /// Empty / missing ledger → the block prints nothing at all. Silence beats
+    /// an empty scoreboard, and today's output stays byte-identical.
+    #[test]
+    fn test_families_empty_ledger_prints_nothing() {
+        let fam = tally_hypothesis_families("");
+        assert!(fam.is_empty());
+        let snapshots = vec![snap(1, &["src/a.rs"], &[])];
+        let with = format_epistemic_report(&snapshots, &[], &[], &fam);
+        let without = format_epistemic_report(&snapshots, &[], &[], &ExperimentFamilies::default());
+        assert_eq!(with, without);
+        assert!(
+            !with.contains("chosen-experiment record"),
+            "no header when there is nothing to report: {with}"
+        );
+    }
+
+    /// Consumer guard: no line of the new block may look like a ranked entry
+    /// (`N. path score`) to `scripts/extract_trajectory.py::EPISTEMIC_ENTRY_RE`.
+    #[test]
+    fn test_families_block_does_not_look_like_a_ranked_entry() {
+        let ledger = concat!(
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","provenance":"archive","graded":"hit"},{"id":"h2","provenance":"file_specific","graded":"miss"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let block: Vec<&str> = report
+            .lines()
+            .skip_while(|l| !l.contains("chosen-experiment record"))
+            .collect();
+        assert!(!block.is_empty(), "block rendered: {report}");
+        // Mirrors EPISTEMIC_ENTRY_RE: ^\s*\d+\.\s+(\S+)\s+(\d+(\.\d+)?)\s*$
+        for line in &block {
+            let t = line.trim();
+            let looks_ranked = t
+                .split_once(". ")
+                .map(|(n, rest)| {
+                    !n.is_empty()
+                        && n.chars().all(|c| c.is_ascii_digit())
+                        && rest.split_whitespace().count() == 2
+                })
+                .unwrap_or(false);
+            assert!(
+                !looks_ranked,
+                "block line looks like a ranked entry: {line}"
+            );
+            assert!(
+                !t.starts_with('\u{2022}'),
+                "block must not reuse the reason bullet: {line}"
+            );
+        }
     }
 }
