@@ -43,9 +43,65 @@ pub(crate) const DISAGREE_WINDOW: usize = 3;
 /// A file last seen this many snapshots ago (or more) counts as stale.
 pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
 
+/// Negative weight applied when a file has ≥1 **graded** entry in the
+/// experiment ledger (`dreams/experiments.jsonl`): I deliberately aimed a
+/// session at this file, committed a guess about it, and graded that guess.
+/// That is real study, so the file is less blind than an untouched one — but
+/// it is *not* a graded validation event, so it only discounts (half of
+/// [`W_NEVER_GRADED`]) instead of clearing the never-graded signal.
+///
+/// Without this, the ranking could never converge: it would keep pointing the
+/// planner at files I had already studied, because study left no trace it
+/// could read.
+pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
+
 /// Two epistemic scores within this distance count as tied and fall through
 /// to the tie-break: current risk score (higher first), then path.
 pub(crate) const SCORE_EPSILON: f64 = 1e-6;
+
+/// Append-only ledger of chosen experiments and their grades, written by the
+/// dream/evolve loop. Read-only from here.
+pub(crate) const EXPERIMENT_LEDGER_PATH: &str = "dreams/experiments.jsonl";
+
+/// One graded experiment: `(path, grade, day)`.
+pub(crate) type ExperimentGrade = (String, String, u32);
+
+/// Parse the experiment ledger, keeping only **graded** experiments.
+///
+/// Defensive, like every other JSONL reader here:
+/// - a line whose `graded` field is `null` or missing is an *ungraded guess* —
+///   an explicit third value. It contributes nothing: not evidence, not a zero.
+/// - malformed / non-JSON lines are skipped, never fatal.
+/// - an absent file yields an empty vec at the call site — "I have run no
+///   experiments" is an honest state, not a defect.
+pub(crate) fn parse_experiment_grades(contents: &str) -> Vec<ExperimentGrade> {
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if val["type"].as_str() != Some("experiment_result") {
+            continue;
+        }
+        // `graded: null` / absent → ungraded. Skip without absorbing.
+        let grade = match val["graded"].as_str() {
+            Some(g) if !g.trim().is_empty() => g.trim().to_string(),
+            _ => continue,
+        };
+        let path = match val["target"].as_str() {
+            Some(p) if !p.trim().is_empty() => p.trim().to_string(),
+            _ => continue,
+        };
+        let day = val["day"].as_u64().unwrap_or(0) as u32;
+        out.push((path, grade, day));
+    }
+    out
+}
 
 /// Default number of entries shown in the report.
 const REPORT_TOP_N: usize = 10;
@@ -104,6 +160,7 @@ pub(crate) fn compute_epistemic_ranking(
     snapshots: &[ParsedSnapshot],
     events: &[GradedEvent],
     risk_scores: &[(String, f64)],
+    experiments: &[ExperimentGrade],
 ) -> Vec<EpistemicEntry> {
     use std::collections::{HashMap, HashSet};
 
@@ -170,6 +227,20 @@ pub(crate) fn compute_epistemic_ranking(
     }
 
     let last_index = snapshots.len() - 1;
+    // Latest graded experiment per file. This is study history, NOT grading
+    // history: it says "I read this file on purpose and graded a guess about
+    // it", never "the risk model was measured on it". Kept in its own map and
+    // rendered as its own reason so the two can never be conflated.
+    let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
+    for (path, grade, day) in experiments {
+        let slot = studied
+            .entry(path.as_str())
+            .or_insert((grade.as_str(), *day));
+        if *day >= slot.1 {
+            *slot = (grade.as_str(), *day);
+        }
+    }
+
     let mut entries: Vec<EpistemicEntry> = Vec::new();
     for (path, s) in &stats {
         let mut score = 0.0;
@@ -204,6 +275,14 @@ pub(crate) fn compute_epistemic_ranking(
             reasons.push(format!(
                 "last seen {snapshots_ago} snapshots ago, no graded event since"
             ));
+        }
+
+        // Study discount. Deliberately additive to the reason list, never a
+        // replacement: if the validation ledger still says "never graded",
+        // that line stays. Both facts are true at once and both get said.
+        if let Some((grade, day)) = studied.get(path.as_str()) {
+            score += W_RECENTLY_STUDIED;
+            reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
         }
 
         if score > 0.0 {
@@ -411,9 +490,13 @@ pub(crate) fn handle_risk_epistemic() {
 
     let snapshots = parse_all_snapshots(&snapshot_content);
     let events = parse_graded_events(&validation_content);
+    // Study history — absent ledger is an honest empty, not an error.
+    let experiment_content =
+        std::fs::read_to_string(std::path::Path::new(EXPERIMENT_LEDGER_PATH)).unwrap_or_default();
+    let experiments = parse_experiment_grades(&experiment_content);
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
-    let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores);
+    let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
     let never = never_forecast_files(&snapshots, &risk_scores);
     print!("{}", format_epistemic_report(&snapshots, &entries, &never));
 }
@@ -444,7 +527,7 @@ mod tests {
         // a.rs predicted and graded; b.rs predicted, never graded.
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         let pos_b = ranking.iter().position(|e| e.path == "src/b.rs");
         let pos_a = ranking.iter().position(|e| e.path == "src/a.rs");
         assert!(pos_b.is_some(), "never-graded file must appear");
@@ -465,7 +548,7 @@ mod tests {
         // c.rs appears in emerging but not top_10 — columns disagree.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/c.rs"])];
         let events = vec![graded(100, &["src/a.rs", "src/c.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         let c = ranking
             .iter()
             .find(|e| e.path == "src/c.rs")
@@ -482,7 +565,7 @@ mod tests {
         // a.rs in both columns (agree) and graded — nothing left to learn.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         assert!(
             !ranking.iter().any(|e| e.path == "src/a.rs"),
             "fully-graded, agreeing file must rank absent"
@@ -491,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_empty_snapshots_honest_message() {
-        let ranking = compute_epistemic_ranking(&[], &[], &[]);
+        let ranking = compute_epistemic_ranking(&[], &[], &[], &[]);
         assert!(ranking.is_empty());
         let report = format_epistemic_report(&[], &ranking, &[]);
         assert!(
@@ -504,7 +587,7 @@ mod tests {
     fn test_all_graded_honest_message() {
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             report.contains("no ungraded predictions"),
@@ -519,7 +602,7 @@ mod tests {
         for d in 101..107 {
             snapshots.push(snap(d, &["src/other.rs"], &[]));
         }
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let stale = ranking
             .iter()
             .find(|e| e.path == "src/stale.rs")
@@ -546,7 +629,7 @@ mod tests {
             snap(103, &["src/x.rs"], &["src/x.rs"]),
         ];
         let events = vec![graded(104, &["src/d.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         let d = ranking.iter().find(|e| e.path == "src/d.rs");
         assert!(
             d.is_none(),
@@ -558,7 +641,7 @@ mod tests {
     fn test_score_is_sum_of_signals() {
         // e.rs: never graded (2.0) + disagrees in 1 recent snapshot (1.0)
         let snapshots = vec![snap(100, &[], &["src/e.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let e = ranking
             .iter()
             .find(|en| en.path == "src/e.rs")
@@ -573,7 +656,7 @@ mod tests {
     #[test]
     fn test_report_lists_reasons() {
         let snapshots = vec![snap(100, &["src/b.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
@@ -585,7 +668,7 @@ mod tests {
         // the top of the predicted column (magnitude 1.0) while bottom.rs is
         // last (magnitude 0.5) — the stronger unresolved claim ranks higher.
         let snapshots = vec![snap(100, &["src/top.rs", "src/bottom.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let pos_top = ranking
             .iter()
             .position(|e| e.path == "src/top.rs")
@@ -620,7 +703,7 @@ mod tests {
         // after a.rs alphabetically — and the ordering is stable across runs.
         let snapshots = vec![snap(100, &["src/a.rs"], &[]), snap(101, &[], &["src/z.rs"])];
         let risk_scores = vec![("src/a.rs".to_string(), 1.0), ("src/z.rs".to_string(), 9.0)];
-        let first = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+        let first = compute_epistemic_ranking(&snapshots, &[], &risk_scores, &[]);
         assert!(
             (first[0].score - first[1].score).abs() < SCORE_EPSILON,
             "fixture must produce an epistemic tie, got {} vs {}",
@@ -630,7 +713,7 @@ mod tests {
         assert_eq!(first[0].path, "src/z.rs", "higher risk score wins the tie");
         assert_eq!(first[1].path, "src/a.rs");
         for _ in 0..5 {
-            let again = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+            let again = compute_epistemic_ranking(&snapshots, &[], &risk_scores, &[]);
             let paths: Vec<&str> = again.iter().map(|e| e.path.as_str()).collect();
             let expected: Vec<&str> = first.iter().map(|e| e.path.as_str()).collect();
             assert_eq!(paths, expected, "ordering must be deterministic");
@@ -649,7 +732,7 @@ mod tests {
         ];
         // Only z.rs has a current risk score; a.rs and m.rs abstain.
         let risk_scores = vec![("src/z.rs".to_string(), 0.5)];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &risk_scores);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &risk_scores, &[]);
         let paths: Vec<&str> = ranking.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -661,7 +744,7 @@ mod tests {
     #[test]
     fn test_report_notes_tie_break() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[]), snap(101, &["src/b.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         assert!(
             (ranking[0].score - ranking[1].score).abs() < SCORE_EPSILON,
             "fixture must tie"
@@ -676,7 +759,7 @@ mod tests {
     #[test]
     fn test_report_no_tie_note_when_scores_distinct() {
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             !report.contains("ordered by current risk score"),
@@ -763,7 +846,7 @@ mod tests {
         }
         let never = never_forecast_files(&snapshots, &pairs);
         assert_eq!(never.len(), 12);
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &never);
         assert!(
             report.contains("12 scored files have never appeared in any prediction"),
@@ -800,7 +883,7 @@ mod tests {
         // the section must survive that early return.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
         let events = vec![graded(100, &["src/a.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         assert!(ranking.is_empty(), "fixture must produce an empty ranking");
         let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
         let report = format_epistemic_report(&snapshots, &ranking, &never);
@@ -822,7 +905,7 @@ mod tests {
         // budget (Day 141). Pin the distinct bullet shape.
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
         let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &never);
         for line in report.lines() {
             let plain: String = line.replace(RESET.0, "").replace(DIM.0, "");
@@ -838,11 +921,178 @@ mod tests {
     #[test]
     fn test_report_never_forecast_section_absent_when_empty() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report = format_epistemic_report(&snapshots, &ranking, &[]);
         assert!(
             !report.contains("never forecast"),
             "no unforecast files → no section, got: {report}"
+        );
+    }
+
+    // --- Experiment ledger read-back (Day 151) -----------------------------
+    //
+    // `dreams/experiments.jsonl` was write-only: the blind-spot map could not
+    // see the expeditions it sent, so it kept pointing the planner at files
+    // already studied. These pin the handle.
+
+    fn exp(path: &str, grade: &str, day: u32) -> ExperimentGrade {
+        (path.to_string(), grade.to_string(), day)
+    }
+
+    #[test]
+    fn test_parse_experiment_grades_keeps_only_graded_results() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":150,"target":"src/a.rs","graded":"miss"}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":151,"target":"src/b.rs","graded":"partial"}"#,
+            "\n",
+        );
+        let got = parse_experiment_grades(ledger);
+        assert_eq!(
+            got,
+            vec![
+                exp("src/a.rs", "miss", 150),
+                exp("src/b.rs", "partial", 151)
+            ],
+            "only graded experiment_result lines count"
+        );
+    }
+
+    #[test]
+    fn test_parse_experiment_grades_skips_malformed_and_ungraded() {
+        let ledger = concat!(
+            "not json at all\n",
+            "\n",
+            r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#,
+            "\n",
+            // experiment_result with a null grade — still an abstention.
+            r#"{"type":"experiment_result","day":150,"target":"src/b.rs","graded":null}"#,
+            "\n",
+            // graded but no target — nothing to attribute it to.
+            r#"{"type":"experiment_result","day":150,"graded":"hit"}"#,
+            "\n",
+            r#"{"broken":"#,
+            "\n",
+        );
+        assert!(
+            parse_experiment_grades(ledger).is_empty(),
+            "ungraded / malformed lines contribute nothing and never panic"
+        );
+    }
+
+    #[test]
+    fn test_missing_ledger_is_empty_not_a_defect() {
+        assert!(parse_experiment_grades("").is_empty());
+    }
+
+    #[test]
+    fn test_graded_experiment_lowers_score_and_adds_its_own_reason() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        let before = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+        let a_before = before
+            .iter()
+            .find(|e| e.path == "src/a.rs")
+            .expect("never-graded file ranks");
+
+        let experiments = vec![exp("src/a.rs", "miss", 150)];
+        let after = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+        let a_after = after
+            .iter()
+            .find(|e| e.path == "src/a.rs")
+            .expect("still ranked, just less blind");
+
+        assert!(
+            a_after.score < a_before.score,
+            "study discounts blindness: {} !< {}",
+            a_after.score,
+            a_before.score
+        );
+        assert!(
+            (a_after.score - (a_before.score + W_RECENTLY_STUDIED)).abs() < SCORE_EPSILON,
+            "discount is exactly W_RECENTLY_STUDIED"
+        );
+        assert!(
+            a_after
+                .reasons
+                .iter()
+                .any(|r| r == "studied by graded experiment (day 150, miss)"),
+            "study gets its own reason string: {:?}",
+            a_after.reasons
+        );
+        // Honesty: study is NOT validation grading. The never-graded fact is
+        // still true of the validation ledger, so it must still be said.
+        assert!(
+            a_after.reasons.iter().any(|r| r.contains("never graded")),
+            "both facts are true at once and both get said: {:?}",
+            a_after.reasons
+        );
+    }
+
+    #[test]
+    fn test_ungraded_experiment_changes_nothing() {
+        let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &["src/c.rs"])];
+        let baseline = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+        // A ledger of pure abstentions parses to nothing...
+        let ledger = r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#;
+        let experiments = parse_experiment_grades(ledger);
+        assert!(experiments.is_empty());
+        // ...and therefore the ranking is identical, not shifted toward zero.
+        let after = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+        let fmt = |v: &[EpistemicEntry]| {
+            v.iter()
+                .map(|e| format!("{}|{:.6}|{:?}", e.path, e.score, e.reasons))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(fmt(&baseline), fmt(&after), "abstention is not evidence");
+    }
+
+    #[test]
+    fn test_absent_ledger_leaves_ranking_byte_identical() {
+        let snapshots = vec![
+            snap(100, &["src/a.rs", "src/b.rs"], &["src/c.rs"]),
+            snap(101, &["src/a.rs"], &[]),
+        ];
+        let events = vec![graded(101, &["src/a.rs"])];
+        let risk = vec![("src/a.rs".to_string(), 3.0), ("src/b.rs".to_string(), 1.0)];
+        let never = never_forecast_files(&snapshots, &risk);
+        let with_empty = compute_epistemic_ranking(&snapshots, &events, &risk, &[]);
+        let report = format_epistemic_report(&snapshots, &with_empty, &never);
+        // The default path (no ledger on disk) must be provably unchanged.
+        let parsed_empty = parse_experiment_grades("");
+        let with_missing_file =
+            compute_epistemic_ranking(&snapshots, &events, &risk, &parsed_empty);
+        let report2 = format_epistemic_report(&snapshots, &with_missing_file, &never);
+        assert_eq!(report, report2);
+        assert!(
+            !report.contains("studied by graded experiment"),
+            "no ledger → no study reason anywhere: {report}"
+        );
+    }
+
+    #[test]
+    fn test_latest_grade_wins_for_repeated_study() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        let baseline = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+        let a_before = baseline.iter().find(|e| e.path == "src/a.rs").unwrap();
+        let experiments = vec![exp("src/a.rs", "miss", 150), exp("src/a.rs", "hit", 151)];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+        let a = ranking.iter().find(|e| e.path == "src/a.rs").unwrap();
+        assert!(
+            a.reasons
+                .iter()
+                .any(|r| r == "studied by graded experiment (day 151, hit)"),
+            "most recent grade is the one reported: {:?}",
+            a.reasons
+        );
+        // Discounted once, not once per experiment: exactly one
+        // W_RECENTLY_STUDIED below the same fixture without any experiments.
+        assert!(
+            (a.score - (a_before.score + W_RECENTLY_STUDIED)).abs() < SCORE_EPSILON,
+            "two graded experiments discount once: {} vs baseline {}",
+            a.score,
+            a_before.score
         );
     }
 }

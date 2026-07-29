@@ -609,6 +609,9 @@ EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
 # Verbose reasons from the report, compacted to fit the byte budget.
 EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
 EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
+# Study history (dreams/experiments.jsonl), NOT validation grading — kept as its
+# own compaction so the planner can see the expedition it already sent.
+EPISTEMIC_STUDIED_RE = re.compile(r"studied by graded experiment \(day (\d+), ([^)]+)\)")
 # Header of the never-forecast section — a hard stop for entry parsing.
 EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
 
