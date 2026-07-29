@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the committed guess so I know exactly what I'm grading against.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cat DAY_CO… ✓ (9ms)
+ ✓ (6ms)
+  2 tools completed in 2.9s (2 ✓)
+
+The guess is immutable in d6721819. This is a retry — no re-guessing. Now I read the file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/conversations.rs && gr… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:100..420 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:411..576 ✓ (1ms)
+  3 tools completed in 44.5s (3 ✓)
+
+Now let me check the tests, the help text for /extended, and how max_turns is (or isn't) enforced.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_extended_args" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_extended\|handl… ✓ (6ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:794..874 ✓ (1ms)
+  3 tools completed in 17.9s (3 ✓)
+
+Existing tests pin the leak as intentional. Let me check the bigger question: is --turns actually enforced anywhere, or only advisory prompt text?
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ExecutionLimits\|max_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ 2>/d… ✓ (10ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '805,830p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1256p' src/dispatch… ✓ (3ms)
+ ✓ (6ms)
+  4 tools completed in 17.3s (4 ✓)
+
+--turns is only interpolated into prompt text — never into the agent's real limits. Let me check if yoagent exposes a way to set limits on a live agent.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "limits\|ExecutionLimit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && … ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' ~/.cargo/registr… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (24 lines) ✓ (1ms)
+  4 tools completed in 52.1s (4 ✓)
+
+Now I'll implement the fix: make --turns N a real limit instead of advisory prompt text.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (3 → 4 lines)
+    use crate::watch::run_watch_after_prompt;
+    use crate::AgentConfig;
+  + use yoagent::context::ExecutionLimits;
+    use yoagent::*;
+ ✓ (18.1s)
+    use crate::watch::run_watch_after_prompt;
+    use crate::AgentConfig;
+  + use yoagent::context::ExecutionLimits;
+    use yoagent::*;
+
+Expected (import used by the next edit). Now the parser refactor:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (51 → 111 lines)
+  + /// Parsed `/extended` arguments.
+  + ///
+  + /// `explicit_turns` is deliberately a *third state* separate from `turns`:
+  + /// `None` means "the user did not ask for a turn cap", which is not the same as
+  + /// "the user asked for the default". The difference is load-bearing — we only
+  + /// tighten the agent's real `ExecutionLimits` when a cap was actually requested,
+  + /// so the documented default (20) stays advisory prompt text and we never
+  + /// silently shrink an existing session's limits.
+  + #[derive(Clone, Debug, PartialEq)]
+  + struct ExtendedArgs {
+  +     prompt: String,
+  +     turns: usize,
+  +     explicit_turns: Option<usize>,
+  +     budget: Option<Duration>,
+  + }
+  + 
+    /// Parse the `/extended` command input, extracting the prompt, optional `--turns N`,
+    /// and optional `--budget N` (time limit in minutes).
+    ///
+    /// Returns `(prompt, max_turns, budget)`. If `--turns N` is present, it is stripped
+  ... (71 more lines)
+ ✓ (18.1s)
+  + /// Parsed `/extended` arguments.
+  + ///
+  + /// `explicit_turns` is deliberately a *third state* separate from `turns`:
+  + /// `None` means "the user did not ask for a turn cap", which is not the same as
+  + /// "the user asked for the default". The difference is load-bearing — we only
+  + /// tighten the agent's real `ExecutionLimits` when a cap was actually requested,
+  + /// so the documented default (20) stays advisory prompt text and we never
+  + /// silently shrink an existing session's limits.
+  ... (13 more lines)
+
+Now wire them into handle_extended:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 2 lines)
+  -     let (prompt, max_turns, budget) = parse_extended_args(input);
+  +     let args = parse_extended_args_full(input);
+  +     let (prompt, max_turns, budget) = (args.prompt, args.turns, args.budget);
+ ✓ (18.1s)
+  -     let (prompt, max_turns, budget) = parse_extended_args(input);
+  +     let args = parse_extended_args_full(input);
+  +     let (prompt, max_turns, budget) = (args.prompt, args.turns, args.budget);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (3 → 4 lines)
+    /// Thin compatibility wrapper over [`parse_extended_args_full`] — kept so existing
+    /// callers and tests keep the original 3-tuple shape.
+  + #[cfg(test)]
+    fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
+ ✓ (18.1s)
+    /// Thin compatibility wrapper over [`parse_extended_args_full`] — kept so existing
+    /// callers and tests keep the original 3-tuple shape.
+  + #[cfg(test)]
+    fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
+  2 tools completed in 42.6s (2 ✓)
+
+Now the banner and the limit install/restore around the run:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (6 → 20 lines)
+  +     let turns_label = extended_turns_label(args.explicit_turns, max_turns);
+        eprintln!(
+  -         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({max_turns} turns max{budget_label})\n\
+  +         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({turns_label}{budget_label})\n\
+             {DIM}  Task: {prompt}{RESET}\n"
+        );
+    
+        let extended_prompt = build_extended_system_prompt(&prompt, max_turns);
+  + 
+  +     // Make an explicit `--turns N` a REAL cap, not just advice in the prompt text.
+  +     // Previously the number was only interpolated into `build_extended_system_prompt`,
+  +     // so the agent loop's actual limit stayed whatever the session was built with —
+  +     // a documented "Maximum turns" that capped nothing. We install the override only
+  +     // when the user asked for one, and restore the previous limits afterwards so the
+  +     // rest of the session is unaffected.
+  +     let saved_limits = extended_limits_override(agent.execution_limits.as_ref(), args.explicit_turns)
+  +         .map(|limits| {
+  +             let previous = agent.execution_limits.clone();
+  +             agent.execution_limits = Some(limits);
+  +             previous
+  ... (1 more lines)
+ ✓ (18.2s)
+  +     let turns_label = extended_turns_label(args.explicit_turns, max_turns);
+        eprintln!(
+  -         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({max_turns} turns max{budget_label})\n\
+  +         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({turns_label}{budget_label})\n\
+             {DIM}  Task: {prompt}{RESET}\n"
+        );
+    
+        let extended_prompt = build_extended_system_prompt(&prompt, max_turns);
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

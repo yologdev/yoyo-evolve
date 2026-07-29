@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking whether a guess already exists (retry detection), then gather outside-the-file evidence — without opening the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --follow --oneline src/c… ✓ (8ms)
+ ✓ (12ms)
+  2 tools completed in 3.1s (2 ✓)
+
+No existing guess — this is a fresh run. Gathering outside-the-file evidence (not touching the target).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== plain log ===" && git …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== callers of conversatio… ✓ (15ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== repo depth ===" && git…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1220,1260p' src/dispatch… ✓ (6ms)
+ ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A12 '"side"' src/help_d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "side\b\|/quick\|/exten… ✓ (6ms)
+ ✓ (9ms)
+  6 tools completed in 55.1s (6 ✓)
+
+Evidence gathered without touching the target. Key file-specific findings:
+
+• Call-site asymmetry (src/dispatch.rs:1248 vs :1252): handle_side is handed the live main agent (ctx.agent); handle_quick receives only agent_config.
+• **Documented promise** (src/help_data.rs:575–582): /side's exchange is "NOT added to the main conversation history"; `/quick says "Like /side" — yet only /side` structurally can leak.
+• `handle_extended` returns Option<String> stored into last_input with `CommandResult::Continue — it runs its own loop; documented flags --turns N / --budget N (help_data.rs:281–292`).
+• No test anywhere outside the file exercises handle_side/handle_quick/`handle_extended`.
+• Repo is shallow (depth 50), so churn/age is unmeasurable here — I'll state that honestly rather than invent it.
+
+Committing the guess now, before any read:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (79 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add drea… (13 lines) ✓ (14ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Guess is immutable in git history. Now I can read the file.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110,330p' src/conversati… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,560p' src/conversati… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '424,450p' src/conversati…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "CommandRoute::Side\|Co… ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/conversati… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "max_turns\|You have abo… ✓ (7ms)
+  7 tools completed in 1m 5s (7 ✓)
+
+Confirmed at src/conversations.rs:467: --turns N is **only interpolated into prompt text**, while line 503 tells the user "working autonomously (N turns max)". Checking whether yoagent exposes a real limits setter:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-*/src 2>/dev/null && pwd && grep -rn "pub fn.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B5 -A15 "ExecutionLimit… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+  watch: no files changed this turn — skipping
+
