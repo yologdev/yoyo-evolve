@@ -60,6 +60,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --editor-model <name>  Model the editor uses in /architect mode (default: --model)"
+    );
+    let _ = writeln!(
+        s,
         "  --provider <name> Provider: anthropic (default), openai, google, openrouter,"
     );
     let _ = writeln!(
@@ -96,6 +100,11 @@ pub fn cli_help_text() -> String {
         s,
         "  --prompt, -p <t>  Run a single prompt and exit (no REPL)"
     );
+    let _ = writeln!(
+        s,
+        "  --image <file>    Attach an image to the prompt (png/jpg/jpeg/gif/webp/bmp;"
+    );
+    let _ = writeln!(s, "                    requires -p, ignored in REPL mode)");
     let _ = writeln!(s, "  --output, -o <f>  Write final response text to a file");
     let _ = writeln!(
         s,
@@ -196,6 +205,14 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(
         s,
         "  --deny-dir <d>    Block file access to this directory (repeatable)"
+    );
+    let _ = writeln!(
+        s,
+        "  --allowed-tools <names>  Comma-separated tool names to allow, disabling all"
+    );
+    let _ = writeln!(
+        s,
+        "                    others (repeatable; conflicts with --disallowed-tools)"
     );
     let _ = writeln!(
         s,
@@ -1591,6 +1608,88 @@ mod tests {
                 "cli_help_text() must document flag {flag}"
             );
         }
+    }
+
+    /// Short aliases skipped by `cli_help_documents_every_known_flag`, each
+    /// paired with the long form that IS asserted in its place. Reason: a bare
+    /// substring search for `-p` is vacuous (it matches inside `--prompt`), and
+    /// `--help` documents each pair on one line (`--prompt, -p <t>`), so the
+    /// long form's presence is the real signal. Same spirit as the `/exit`
+    /// alias exception in help_data.rs. Keep this list tiny — a NEW short flag
+    /// belongs in `--help` prose, not in here.
+    const SHORT_ALIAS_LONG_FORM: &[(&str, &str)] = &[
+        ("-p", "--prompt"),
+        ("-o", "--output"),
+        ("-v", "--verbose"),
+        ("-q", "--quiet"),
+        ("-y", "--yes"),
+        ("-c", "--continue"),
+        ("-h", "--help"),
+        ("-V", "--version"),
+    ];
+
+    /// True if `text` mentions `flag` as a whole token — i.e. the next char
+    /// isn't one that would make it a longer flag. Without the boundary check
+    /// `--print` would "pass" on the strength of `--print-system-prompt`.
+    fn help_mentions(text: &str, flag: &str) -> bool {
+        text.match_indices(flag)
+            .any(|(i, _)| match text[i + flag.len()..].chars().next() {
+                None => true,
+                Some(c) => !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+            })
+    }
+
+    #[test]
+    fn help_mentions_requires_a_token_boundary() {
+        // Pin the matcher so a prefix collision can't make a missing flag
+        // look documented (the whole point of the walk below).
+        assert!(help_mentions(
+            "  --print   Output only the response",
+            "--print"
+        ));
+        assert!(!help_mentions(
+            "  --print-system-prompt  Print it",
+            "--print"
+        ));
+        assert!(help_mentions("  --allow <pat>  Auto-approve", "--allow"));
+        assert!(!help_mentions("  --allow-dir <d>  Restrict", "--allow"));
+        assert!(help_mentions("ends with --version", "--version"));
+    }
+
+    #[test]
+    fn cli_help_documents_every_known_flag() {
+        // The flag list `parse_args` accepts is owned by cli.rs; --help is prose
+        // a human maintains. They drift one flag at a time (Day 151 found three
+        // accepted-but-undocumented flags, including a whole input modality).
+        // Walk the real enumeration — never hand-copy it here (Day 140).
+        let flags = crate::cli::KNOWN_FLAGS;
+        assert!(
+            flags.len() > 40,
+            "expected the full KNOWN_FLAGS list, found {} — a near-empty list \
+             would make this completeness test pass vacuously",
+            flags.len()
+        );
+        let text = cli_help_text();
+        let mut undocumented: Vec<&str> = Vec::new();
+        for flag in flags {
+            if let Some((_, long)) = SHORT_ALIAS_LONG_FORM.iter().find(|(s, _)| s == flag) {
+                assert!(
+                    help_mentions(&text, long),
+                    "short alias {flag} is exempt only because {long} is documented — \
+                     but {long} is missing from cli_help_text()"
+                );
+                continue;
+            }
+            if !help_mentions(&text, flag) {
+                undocumented.push(flag);
+            }
+        }
+        assert!(
+            undocumented.is_empty(),
+            "cli_help_text() is missing flag(s): {undocumented:?} — \
+             every flag parse_args accepts must appear in --help, or users \
+             can't discover it"
+        );
     }
 
     /// Extract the top-level `yoyo <subcmd>` match arm names from the real

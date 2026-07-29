@@ -218,7 +218,11 @@ pub fn compute_lite_disallowed_tools() -> Vec<String> {
 }
 
 /// All known CLI flags (both boolean and value-taking).
-const KNOWN_FLAGS: &[&str] = &[
+///
+/// `pub(crate)` so `help.rs` can walk this list against `cli_help_text()` —
+/// a flag accepted here but absent from `--help` is a capability no user can
+/// discover (Day 151).
+pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--model",
     "--editor-model",
     "--provider",
