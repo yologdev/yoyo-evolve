@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and the never-forecast list — my Day 152 lesson says to check before touching a file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (8ms)
+ ✓ (95ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Build is green. Day 152's lesson says: check the never-forecast list before touching a file, and if the target is on it, commit a guess first. Let me do that.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk episte… ✓ (448ms)
+
+Never-forecast list found — src/symbols.rs tops it (risk 0.4, never appeared in any prediction). Per Day 152's lesson, I commit the blind guess **before** reading the file.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (26ms)
+
+Guess is committed and unrevisable. Now I look.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/symbols.rs && grep -n … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_rust_symbols… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RE_RUST_FN\|RE_RUST_STR… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/symbols.rs ✓ (2ms)
+  4 tools completed in 22.1s (4 ✓)
+
+h1 is a HIT. The visibility group is pub(?:\(crate\))? — it knows pub and pub(crate) but not pub(super). And the qualifier slot only allows async, not unsafe/const/extern. Let me check the check order to see if there's a worse variant:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '836,900p' src/symbols.rs ✓ (3ms)
+
+Confirmed — and there's a worse variant than my guess predicted: const fn foo() falls through re_fn into re_const, which captures a symbol literally named `fn` (silent wrong-op, not just omission). Failing test first:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_rust_pub_vis… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/symbols.rs (1 → 106 lines)
+  +     fn extract_rust_restricted_visibility_forms() {
+  +         // Day 152 blind-guess target: the visibility group used to be
+  +         // `pub(?:\(crate\))?`, so every restricted form other than `pub(crate)`
+  +         // failed to match and the symbol was SILENTLY OMITTED.
+  +         let code = "\
+  + pub(super) fn from_super() {}
+  + pub(self) fn from_self() {}
+  + pub(in crate::foo) fn from_path() {}
+  + pub(crate) fn from_crate() {}
+  + pub(super) struct SuperStruct;
+  + pub(super) enum SuperEnum { A }
+  + pub(super) trait SuperTrait {}
+  + pub(super) const SUPER_CONST: u8 = 1;
+  + pub(super) mod supermod;
+  + ";
+  +         let symbols = extract_symbols(code, "rust");
+  +         for expected in [
+  +             "from_super",
+  +             "from_self",
+  +             "from_path",
+  ... (86 more lines)
+ ✓ (1m 7s)
+  +     fn extract_rust_restricted_visibility_forms() {
+  +         // Day 152 blind-guess target: the visibility group used to be
+  +         // `pub(?:\(crate\))?`, so every restricted form other than `pub(crate)`
+  +         // failed to match and the symbol was SILENTLY OMITTED.
+  +         let code = "\
+  + pub(super) fn from_super() {}
+  + pub(self) fn from_self() {}
+  + pub(in crate::foo) fn from_path() {}
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet symbols::test… ✓ (139ms)
+  3 tools completed in 1m 41s (3 ✓)
+
+Both new tests fail as predicted; the near-miss guard passes. Now the fix — extending the visibility group and the qualifier slot across the whole Rust regex family (sibling sweep in the same fix, per my Day 142 lesson):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/symbols.rs (14 → 36 lines)
+  - static RE_RUST_FN: LazyLock<Regex> =
+  -     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap());
+  + /// Leading visibility for a Rust item, as capture group 1.
+  + ///
+  + /// Covers every restricted form the language allows — `pub`, `pub(crate)`,
+  + /// `pub(super)`, `pub(self)`, `pub(in path::to)` — not just the two that
+  + /// happened to be common in this repo. A narrower group silently OMITS the
+  + /// symbol (the regex simply fails to match the line).
+  + const RUST_VIS: &str = r"(pub(?:\s*\([^)]*\))?\s+)?";
+  + 
+  + /// Qualifiers that may sit between visibility and `fn`.
+  + ///
+  + /// Repeated (`*`) because they combine: `pub async unsafe fn`. Omitting
+  + /// `const` was worse than a missed symbol — `const fn foo()` fell through to
+  + /// the const/static regex and was recorded as a symbol literally named `fn`.
+  + const RUST_FN_QUALIFIERS: &str = r#"(?:(?:const|async|unsafe|extern\s+"[^"]*"|extern)\s+)*"#;
+  + 
+  + static RE_RUST_FN: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(&format!(r"^\s*{RUST_VIS}{RUST_FN_QUALIFIERS}fn\s+(\w+)")).unwrap()
+  + });
+  ... (27 more lines)
+ ✓ (1m 10s)
+  - static RE_RUST_FN: LazyLock<Regex> =
+  -     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap());
+  + /// Leading visibility for a Rust item, as capture group 1.
+  + ///
+  + /// Covers every restricted form the language allows — `pub`, `pub(crate)`,
+  + /// `pub(super)`, `pub(self)`, `pub(in path::to)` — not just the two that
+  + /// happened to be common in this repo. A narrower group silently OMITS the
+  + /// symbol (the regex simply fails to match the line).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet symbols:: 2>&… ✓ (207ms)
+  2 tools completed in 1m 13s (2 ✓)
+
+All 86 symbol tests green. Full check suite:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 17s)
+
+  watch: no files changed this turn — skipping
+
