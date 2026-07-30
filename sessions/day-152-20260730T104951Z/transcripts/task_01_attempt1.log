@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and finding a concrete, small improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ca… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -30 --grep="Ta…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_01.md 2>/d… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "global" src/commands_co… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/commands.rs |… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/dispatch_sub.… ✓ (4ms)
+  7 tools completed in 35.4s (7 ✓)
+
+Timebox hit. Picking my target: src/update.rs — a file my epistemic ranking flagged as never-forecast. Recording a blind guess before reading it.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/update.rs && sed -n '1… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,207p' src/update.rs;… ✓ (17ms)
+  2 tools completed in 42.3s (2 ✓)
+
+Found my target. Let me capture a verbatim GitHub API response first (fixtures must be captured, not authored — Day 137–148 lesson).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && curl -sf --max-time 6 https://api.github.com/repos/yologdev/yoyo-evol… ✓ (190ms)
+  ▶ $ cd /tmp && sed -n '1,10p;25,32p' gh_latest.json ✓ (3ms)
+  2 tools completed in 15.4s (2 ✓)
+
+Now the fix — extracting the tag parser into a pure, testable helper and killing the hand-enumerated separator list.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs (1 → 26 lines)
+  + /// Pull the `tag_name` string value out of a GitHub "latest release" JSON body.
+  + ///
+  + /// Deliberately structural rather than an enumeration of separator spellings:
+  + /// the previous version skipped the piece between the key and the value by
+  + /// listing the shapes it expected to see (`":"`, `": "`), so any other spacing
+  + /// (`":  "`, a newline before the value) made the *separator itself* the
+  + /// "tag" — a confidently wrong string handed straight to the version
+  + /// comparison. Here we require the JSON grammar instead: key, then `:`, then a
+  + /// quoted string. Anything else — `null` (a repo with no releases), a number,
+  + /// a missing key — is an explicit `None`, not a neighbouring token.
+  + ///
+  + /// Not a JSON parser: a tag containing an escaped quote would be truncated.
+  + /// Git refnames can't contain `"`, so that case doesn't exist in practice.
+  + fn extract_tag_name(body: &str) -> Option<&str> {
+  +     let after_key = body.split("\"tag_name\"").nth(1)?;
+  +     let after_colon = after_key.trim_start().strip_prefix(':')?;
+  +     let value_start = after_colon.trim_start().strip_prefix('"')?;
+  +     let (value, _) = value_start.split_once('"')?;
+  +     if value.is_empty() {
+  +         None
+  ... (6 more lines)
+ ✓ (18.7s)
+  + /// Pull the `tag_name` string value out of a GitHub "latest release" JSON body.
+  + ///
+  + /// Deliberately structural rather than an enumeration of separator spellings:
+  + /// the previous version skipped the piece between the key and the value by
+  + /// listing the shapes it expected to see (`":"`, `": "`), so any other spacing
+  + /// (`":  "`, a newline before the value) made the *separator itself* the
+  + /// "tag" — a confidently wrong string handed straight to the version
+  + /// comparison. Here we require the JSON grammar instead: key, then `:`, then a
+  ... (13 more lines)
+
+Expected — now wire it into the caller.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs (6 → 2 lines)
+        // Simple JSON extraction: find "tag_name": "v0.1.5"
+  -     let tag = body
+  -         .split("\"tag_name\"")
+  -         .nth(1)?
+  -         .split('"')
+  -         .find(|s| !s.is_empty() && *s != ":" && *s != ": ")?;
+  +     let tag = extract_tag_name(&body)?;
+ ✓ (1m 45s)
+        // Simple JSON extraction: find "tag_name": "v0.1.5"
+  -     let tag = body
+  -         .split("\"tag_name\"")
+  -         .nth(1)?
+  -         .split('"')
+  -         .find(|s| !s.is_empty() && *s != ":" && *s != ": ")?;
+  +     let tag = extract_tag_name(&body)?;
+
+Now the fixture table — including one verbatim captured API response (not self-authored).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/update.rs (8 → 124 lines)
+            // We can't control the network in tests, but we can verify it doesn't panic
+            let _result = check_for_update("0.1.0");
+            // Just assert it doesn't panic — the result depends on network state
+  +     }
+  + 
+  +     /// Verbatim excerpt of `curl -sf
+  +     /// https://api.github.com/repos/yologdev/yoyo-evolve/releases/latest`
+  +     /// captured 2026-07-30. Captured, not authored: a fixture I write myself
+  +     /// only proves the parser agrees with my belief about the API's shape.
+  +     const GITHUB_LATEST_RELEASE_VERBATIM: &str = r#"{
+  +   "url": "https://api.github.com/repos/yologdev/yoyo-evolve/releases/351953743",
+  +   "html_url": "https://github.com/yologdev/yoyo-evolve/releases/tag/v0.1.15",
+  +   "id": 351953743,
+  +   "author": {
+  +     "login": "github-actions[bot]",
+  +     "id": 41898282,
+  +     "site_admin": false
+  +   },
+  +   "node_id": "RE_kwDORbb9zc4U-mNP",
+  +   "tag_name": "v0.1.15",
+  ... (101 more lines)
+ ✓ (1m 46s)
+            // We can't control the network in tests, but we can verify it doesn't panic
+            let _result = check_for_update("0.1.0");
+            // Just assert it doesn't panic — the result depends on network state
+  +     }
+  + 
+  +     /// Verbatim excerpt of `curl -sf
+  +     /// https://api.github.com/repos/yologdev/yoyo-evolve/releases/latest`
+  +     /// captured 2026-07-30. Captured, not authored: a fixture I write myself
+  ... (13 more lines)
+
+Let me verify the old parser really was broken (evidence before claiming a bug):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cat > oldparse.rs <<'EOF' (12 lines) ✓ (157ms)
+
+Confirmed real: the old parser returned ":  " and ": null, " as versions. Now the full gate.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (29.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 30s)
+  2 tools completed in 2m 1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
