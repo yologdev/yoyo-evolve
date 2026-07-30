@@ -68,7 +68,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `context.rs` — project context loading (reads YOYO.md, CLAUDE.md, AGENTS.md, .cursorrules, .github/copilot-instructions.md), file listing, git status, recently changed files, project-type convention hints
 - `conversations.rs` — side, quick, and extended conversation handlers (extracted from `repl.rs`): `build_add_content_blocks`, `handle_side`, `handle_quick`, `handle_extended`
 - `providers.rs` — provider constants (KNOWN_PROVIDERS), API key env vars, default/known models per provider
-- `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`)
+- `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`); context-budget warnings are split into a pure core (`budget_warning_threshold` — the 60/80/90/95 ladder, `max == 0` → `None`; `budget_warning_message` — the four strings) plus `context_budget_warning_with(&AtomicU32, ..)` which takes its escalation state as a parameter, so tests drive local state instead of the process-wide `LAST_WARNED_THRESHOLD`; `context_budget_warning`/`reset_context_budget_warning` keep their exact public behavior and one `#[serial]` test pins that the public pair is still wired to the global
 - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering
 - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML

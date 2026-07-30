@@ -764,29 +764,33 @@ static LAST_WARNED_THRESHOLD: AtomicU32 = AtomicU32::new(0);
 /// Only warns once per threshold crossing. Call `reset_context_budget_warning()`
 /// after a `/clear` to re-arm.
 pub fn context_budget_warning(used: u64, max: u64) -> Option<String> {
+    context_budget_warning_with(&LAST_WARNED_THRESHOLD, used, max)
+}
+
+/// Pure classifier: which budget threshold (60/80/90/95) does this usage cross?
+///
+/// `max == 0` is an explicit "unknown budget" third value → `None`, not 0%.
+/// Below 60% → `None`. No globals, no formatting, no escalation memory.
+pub fn budget_warning_threshold(used: u64, max: u64) -> Option<u32> {
     if max == 0 {
         return None;
     }
     let pct = ((used as f64 / max as f64) * 100.0).min(100.0) as u32;
-
-    let threshold = if pct >= 95 {
-        95
+    if pct >= 95 {
+        Some(95)
     } else if pct >= 90 {
-        90
+        Some(90)
     } else if pct >= 80 {
-        80
+        Some(80)
     } else if pct >= 60 {
-        60
+        Some(60)
     } else {
-        return None;
-    };
-
-    let prev = LAST_WARNED_THRESHOLD.load(Ordering::Relaxed);
-    if threshold <= prev {
-        return None;
+        None
     }
-    LAST_WARNED_THRESHOLD.store(threshold, Ordering::Relaxed);
+}
 
+/// Pure renderer: the message for a given threshold. Unknown threshold → `None`.
+pub fn budget_warning_message(threshold: u32) -> Option<String> {
     let msg = match threshold {
         95 => format!(
             "{BOLD}{RED}  🔴 Context nearly full! /clear now or risk overflow errors{RESET}"
@@ -797,13 +801,25 @@ pub fn context_budget_warning(used: u64, max: u64) -> Option<String> {
         80 => format!(
             "{YELLOW}  ⚠ Context is 80% full — /compact or /save + /clear recommended{RESET}"
         ),
-        60 => format!(
-            "{DIM}  Context is 60% full — consider /compact to free space{RESET}"
-        ),
+        60 => format!("{DIM}  Context is 60% full — consider /compact to free space{RESET}"),
         _ => return None,
     };
-
     Some(msg)
+}
+
+/// Escalation logic over *injected* state: warn only when crossing a threshold
+/// strictly higher than the last one recorded in `state`.
+///
+/// Taking the state as a parameter is what makes this testable without touching
+/// the process-wide global — local state can't be raced by another test.
+pub fn context_budget_warning_with(state: &AtomicU32, used: u64, max: u64) -> Option<String> {
+    let threshold = budget_warning_threshold(used, max)?;
+    let prev = state.load(Ordering::Relaxed);
+    if threshold <= prev {
+        return None;
+    }
+    state.store(threshold, Ordering::Relaxed);
+    budget_warning_message(threshold)
 }
 
 /// Reset the context budget warning tracker so warnings re-arm after `/clear`.
@@ -1931,25 +1947,27 @@ mod tests {
 
     // ── context_budget_warning tests ───────────────────────────────────
 
+    // === context budget warning tests ===
+    //
+    // These drive a LOCAL `AtomicU32` through `context_budget_warning_with`, so
+    // no two tests (here or anywhere else in the crate) can race each other via
+    // the process-wide `LAST_WARNED_THRESHOLD`. The flake class is gone by
+    // construction rather than by a wider lock. One test below still exercises
+    // the global path, to prove the public function is actually wired to it.
+
     #[test]
     fn test_context_budget_warning_below_60_returns_none() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        assert!(context_budget_warning(0, 100_000).is_none());
-        assert!(context_budget_warning(10_000, 100_000).is_none()); // 10%
-        assert!(context_budget_warning(50_000, 100_000).is_none()); // 50%
-        assert!(context_budget_warning(59_999, 100_000).is_none()); // 59.999%
+        let state = AtomicU32::new(0);
+        assert!(context_budget_warning_with(&state, 0, 100_000).is_none());
+        assert!(context_budget_warning_with(&state, 30_000, 100_000).is_none());
+        assert!(context_budget_warning_with(&state, 59_999, 100_000).is_none());
+        // 59.999%
     }
 
     #[test]
     fn test_context_budget_warning_60_threshold() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let warn = context_budget_warning(60_000, 100_000);
+        let state = AtomicU32::new(0);
+        let warn = context_budget_warning_with(&state, 60_000, 100_000);
         assert!(warn.is_some(), "should warn at 60%");
         let msg = warn.unwrap();
         assert!(msg.contains("60% full"), "got: {msg}");
@@ -1958,11 +1976,8 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_80_threshold() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let warn = context_budget_warning(80_000, 100_000);
+        let state = AtomicU32::new(0);
+        let warn = context_budget_warning_with(&state, 80_000, 100_000);
         assert!(warn.is_some(), "should warn at 80%");
         let msg = warn.unwrap();
         assert!(msg.contains("80% full"), "got: {msg}");
@@ -1973,11 +1988,8 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_90_threshold() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let warn = context_budget_warning(90_000, 100_000);
+        let state = AtomicU32::new(0);
+        let warn = context_budget_warning_with(&state, 90_000, 100_000);
         assert!(warn.is_some(), "should warn at 90%");
         let msg = warn.unwrap();
         assert!(msg.contains("90% full"), "got: {msg}");
@@ -1987,11 +1999,8 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_95_threshold() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let warn = context_budget_warning(95_000, 100_000);
+        let state = AtomicU32::new(0);
+        let warn = context_budget_warning_with(&state, 95_000, 100_000);
         assert!(warn.is_some(), "should warn at 95%");
         let msg = warn.unwrap();
         assert!(msg.contains("nearly full"), "got: {msg}");
@@ -2000,53 +2009,102 @@ mod tests {
 
     #[test]
     fn test_context_budget_warning_same_threshold_no_repeat() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
+        let state = AtomicU32::new(0);
         // First call at 60% should warn
-        let first = context_budget_warning(60_000, 100_000);
+        let first = context_budget_warning_with(&state, 60_000, 100_000);
         assert!(first.is_some(), "first call should warn");
         // Second call at same threshold should NOT warn
-        let second = context_budget_warning(65_000, 100_000);
+        let second = context_budget_warning_with(&state, 65_000, 100_000);
         assert!(second.is_none(), "same threshold should not repeat");
     }
 
     #[test]
     fn test_context_budget_warning_escalates() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let w60 = context_budget_warning(60_000, 100_000);
+        let state = AtomicU32::new(0);
+        let w60 = context_budget_warning_with(&state, 60_000, 100_000);
         assert!(w60.is_some());
         // Jumping to 80% should warn again (higher threshold)
-        let w80 = context_budget_warning(80_000, 100_000);
+        let w80 = context_budget_warning_with(&state, 80_000, 100_000);
         assert!(w80.is_some(), "should warn at new higher threshold");
         assert!(w80.unwrap().contains("80% full"));
     }
 
     #[test]
     fn test_context_budget_warning_reset_rearms() {
-        let _guard = BUDGET_WARNING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        reset_context_budget_warning();
-        let w1 = context_budget_warning(60_000, 100_000);
+        let state = AtomicU32::new(0);
+        let w1 = context_budget_warning_with(&state, 60_000, 100_000);
         assert!(w1.is_some());
-        // Reset should allow the same threshold to warn again
-        reset_context_budget_warning();
-        let w2 = context_budget_warning(60_000, 100_000);
+        // Resetting the state should allow the same threshold to warn again
+        state.store(0, Ordering::Relaxed);
+        let w2 = context_budget_warning_with(&state, 60_000, 100_000);
         assert!(w2.is_some(), "should warn again after reset");
     }
 
     #[test]
     fn test_context_budget_warning_zero_max_returns_none() {
+        let state = AtomicU32::new(0);
+        assert!(context_budget_warning_with(&state, 100, 0).is_none());
+    }
+
+    // === pure-half tests: threshold classifier and message renderer ===
+
+    #[test]
+    fn test_budget_warning_threshold_ladder() {
+        assert_eq!(budget_warning_threshold(0, 100_000), None);
+        assert_eq!(budget_warning_threshold(59_999, 100_000), None);
+        assert_eq!(budget_warning_threshold(60_000, 100_000), Some(60));
+        assert_eq!(budget_warning_threshold(79_999, 100_000), Some(60));
+        assert_eq!(budget_warning_threshold(80_000, 100_000), Some(80));
+        assert_eq!(budget_warning_threshold(90_000, 100_000), Some(90));
+        assert_eq!(budget_warning_threshold(95_000, 100_000), Some(95));
+        // Over-budget clamps to 100% → still the top threshold, never a panic.
+        assert_eq!(budget_warning_threshold(500_000, 100_000), Some(95));
+        // Unknown budget is an explicit third value, not 0%.
+        assert_eq!(budget_warning_threshold(100, 0), None);
+    }
+
+    #[test]
+    fn test_budget_warning_message_unknown_threshold_is_none() {
+        assert!(budget_warning_message(0).is_none());
+        assert!(budget_warning_message(70).is_none());
+        assert!(budget_warning_message(100).is_none());
+        for t in [60, 80, 90, 95] {
+            assert!(
+                budget_warning_message(t).is_some(),
+                "threshold {t} should render"
+            );
+        }
+    }
+
+    /// The refactor could silently disconnect the public function from its
+    /// global state and every local-state test above would stay green. This is
+    /// the one test that asserts the wiring itself: `context_budget_warning`
+    /// escalates against `LAST_WARNED_THRESHOLD`, and
+    /// `reset_context_budget_warning` re-arms *that* state.
+    ///
+    /// Still takes the shared lock (and `#[serial]`) because it genuinely
+    /// mutates process-wide state.
+    #[test]
+    #[serial]
+    fn test_context_budget_warning_global_is_wired_to_shared_state() {
         let _guard = BUDGET_WARNING_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         reset_context_budget_warning();
-        assert!(context_budget_warning(100, 0).is_none());
+        assert_eq!(LAST_WARNED_THRESHOLD.load(Ordering::Relaxed), 0);
+
+        // Public fn writes the global...
+        assert!(context_budget_warning(80_000, 100_000).is_some());
+        assert_eq!(LAST_WARNED_THRESHOLD.load(Ordering::Relaxed), 80);
+        // ...and reads it back to suppress a repeat.
+        assert!(context_budget_warning(80_000, 100_000).is_none());
+
+        // reset re-arms the same global.
+        reset_context_budget_warning();
+        assert_eq!(LAST_WARNED_THRESHOLD.load(Ordering::Relaxed), 0);
+        assert!(context_budget_warning(80_000, 100_000).is_some());
+
+        reset_context_budget_warning();
     }
 
     #[test]
