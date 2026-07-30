@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the committed guess line so I know exactly what I predicted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/… ✓ (7ms)
+ ✓ (5ms)
+  2 tools completed in 8.1s (2 ✓)
+
+Guess is committed and immutable (b308fa86). The evaluator feedback disclosed nothing about the file's contents, so blindness holds — I only need Steps 2 and 3. Reading src/banner.rs now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs ✓ (3ms)
+
+Line 468 already looks like evidence for h1 (a test writes "{}" and asserts a hint appears). Let me read the truncated middle.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs:98..298 ✓ (1ms)
+
+h1 looks like a clear hit (metadata-only, no content read). Now let me verify the other three against the code they depend on.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_PROVIDERS" -A 20 … ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+h2 is confirmed (banner hardcodes the auto-save path; --continue falls back to yoyo-session.json). Now checking h4's enumerations against reality.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn user_config_path" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "api_key\s*=\|\"api_key… ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 7.5s (2 ✓)
+
+h3 and h4 both look like misses. Now verifying h1's downstream half — what --continue actually does with a contentless auto-save.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn auto_save_on_exit" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue_session_path\|… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '620,665p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '905,925p' src/repl.rs ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 29.1s (4 ✓)
+
+Now let me check the saved-session JSON shape so any content check I write is correct, not a guess.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn save_messages\|fn r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/last-session.json 2… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 23.0s (2 ✓)
+
+save_messages is serde_json::to_string(&self.messages) — a JSON array, so an empty session is []. Let me see the remaining tests before touching anything.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs:395..465 ✓ (1ms)
+
+I now have everything I need to grade. Two hypotheses confirmed (h1, h2), two refuted (h3, h4). Both confirmed defects are small and live in one file, so I'll fix them with regression tests.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (16 → 56 lines)
+    /// Maximum session age (7 days) before we consider it stale and stop hinting.
+    const MAX_SESSION_AGE_SECS: u64 = 7 * 24 * 3600;
+    
+  - /// Check for an auto-saved session at `path` and return a resume hint if one exists
+  - /// and is less than 7 days old. Returns `None` if no session file or if it's stale.
+  + /// Largest session file we will parse to confirm it holds a conversation.
+  + /// Anything bigger is self-evidently non-empty, so we skip the parse rather
+  + /// than pay it on every startup.
+  + const MAX_SESSION_VERIFY_BYTES: u64 = 256 * 1024;
+  + 
+  + /// Whether a saved-session file's *contents* actually hold a conversation.
+  + ///
+  + /// `Agent::save_messages` serializes the message list with `serde_json`, so a
+  + /// real session is a JSON **array** with at least one element. An empty file, a
+  + /// whitespace-only file, `[]`, `{}`, and a write truncated by a crash all mean
+  + /// "there is nothing here to resume", and the banner must not promise a resume
+  + /// for any of them.
+  + ///
+  + /// This verifies the payload, not merely that the bytes parse: it deliberately
+  + /// answers `false` for malformed JSON, because `--continue` cannot restore it.
+  ... (37 more lines)
+ ✓ (1m 19s)
+    /// Maximum session age (7 days) before we consider it stale and stop hinting.
+    const MAX_SESSION_AGE_SECS: u64 = 7 * 24 * 3600;
+    
+  - /// Check for an auto-saved session at `path` and return a resume hint if one exists
+  - /// and is less than 7 days old. Returns `None` if no session file or if it's stale.
+  + /// Largest session file we will parse to confirm it holds a conversation.
+  + /// Anything bigger is self-evidently non-empty, so we skip the parse rather
+  + /// than pay it on every startup.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (8 → 12 lines)
+  - /// Check for an auto-saved session and return a resume hint if one exists.
+  + /// Check for a resumable session and return a resume hint if one exists.
+    ///
+  - /// Uses the default `AUTO_SAVE_SESSION_PATH`. Returns `None` if the file
+  - /// doesn't exist or is older than 7 days.
+  + /// Uses the same path `--continue` would load, via
+  + /// [`crate::commands_session::continue_session_path`], so the banner's notion of
+  + /// "a resumable session exists" cannot drift from what `--continue` actually
+  + /// restores. Returns `None` if the file doesn't exist, is older than 7 days, or
+  + /// holds no conversation.
+    pub fn session_resume_hint() -> Option<String> {
+  -     use crate::cli_config::AUTO_SAVE_SESSION_PATH;
+  -     session_resume_hint_at(std::path::Path::new(AUTO_SAVE_SESSION_PATH))
+  +     session_resume_hint_at(std::path::Path::new(
+  +         crate::commands_session::continue_session_path(),
+  +     ))
+    }
+ ✓ (1m 21s)
+  - /// Check for an auto-saved session and return a resume hint if one exists.
+  + /// Check for a resumable session and return a resume hint if one exists.
+    ///
+  - /// Uses the default `AUTO_SAVE_SESSION_PATH`. Returns `None` if the file
+  - /// doesn't exist or is older than 7 days.
+  + /// Uses the same path `--continue` would load, via
+  + /// [`crate::commands_session::continue_session_path`], so the banner's notion of
+  + /// "a resumable session exists" cannot drift from what `--continue` actually
+  ... (9 more lines)
+  2 tools completed in 2m 47s (2 ✓)
+
+Now the tests — the existing {} fixture pins the old behavior, so I'll correct the fixture (not delete the test) and add regressions.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (27 → 78 lines)
+            let dir = std::env::temp_dir().join("yoyo-test-session-hint");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("last-session.json");
+  -         std::fs::write(&path, "{}").expect("write test session file");
+  +         // A real saved session is `serde_json::to_string(&messages)` — a
+  +         // non-empty JSON array. The previous fixture here was `{}`, which
+  +         // `--continue` cannot restore at all.
+  +         std::fs::write(&path, r#"[{"role":"user","content":"hi"}]"#).expect("write test session");
+    
+            let hint = session_resume_hint_at(&path);
+            assert!(hint.is_some(), "should return hint for recent file");
+  ···
+    
+            // Cleanup
+            let _ = std::fs::remove_file(&path);
+  +         let _ = std::fs::remove_dir(&dir);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_session_file_has_messages_payload_not_container() {
+  ... (45 more lines)
+ ✓ (1m 23s)
+            let dir = std::env::temp_dir().join("yoyo-test-session-hint");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("last-session.json");
+  -         std::fs::write(&path, "{}").expect("write test session file");
+  +         // A real saved session is `serde_json::to_string(&messages)` — a
+  +         // non-empty JSON array. The previous fixture here was `{}`, which
+  +         // `--continue` cannot restore at all.
+  +         std::fs::write(&path, r#"[{"role":"user","content":"hi"}]"#).expect("write test session");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.1s)
+  2 tools completed in 1m 42s (2 ✓)
+
+Clippy is clean and banner tests pass. Running the full suite.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (51.1s)
+
+All 4,686 tests pass. Now Step 3 — appending the grading line with per-hypothesis provenance grades.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (117 lines) ✓ (40ms)
+
+Now the task's own verification: yoyo risk epistemic must no longer print "0 graded hypotheses".
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk episte… ✓ (583ms)
+
+  watch: no files changed this turn — skipping
+

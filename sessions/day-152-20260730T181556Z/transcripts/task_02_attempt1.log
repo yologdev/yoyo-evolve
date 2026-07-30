@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code in question.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LAST_WARNED_THRESHOLD\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 745,820p src/format/mod.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 905,930p src/format/mod.r… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "reset_context_budget_w…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,360p src/commands_ses… ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_compact\|dispat… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,85p src/prompt.rs && g… ✓ (5ms)
+  8 tools completed in 22.3s (8 ✓)
+
+No confirmed cross-module racer today (those call sites are all agent-driven handlers with no tests) — but the global-state coupling is real. Implementing the by-construction fix.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (42 → 58 lines)
+    pub fn context_budget_warning(used: u64, max: u64) -> Option<String> {
+  +     context_budget_warning_with(&LAST_WARNED_THRESHOLD, used, max)
+  + }
+  + 
+  + /// Pure classifier: which budget threshold (60/80/90/95) does this usage cross?
+  + ///
+  + /// `max == 0` is an explicit "unknown budget" third value → `None`, not 0%.
+  + /// Below 60% → `None`. No globals, no formatting, no escalation memory.
+  + pub fn budget_warning_threshold(used: u64, max: u64) -> Option<u32> {
+        if max == 0 {
+            return None;
+        }
+        let pct = ((used as f64 / max as f64) * 100.0).min(100.0) as u32;
+  - 
+  -     let threshold = if pct >= 95 {
+  -         95
+  +     if pct >= 95 {
+  +         Some(95)
+        } else if pct >= 90 {
+  -         90
+  ... (53 more lines)
+ ✓ (1m 25s)
+    pub fn context_budget_warning(used: u64, max: u64) -> Option<String> {
+  +     context_budget_warning_with(&LAST_WARNED_THRESHOLD, used, max)
+  + }
+  + 
+  + /// Pure classifier: which budget threshold (60/80/90/95) does this usage cross?
+  + ///
+  + /// `max == 0` is an explicit "unknown budget" third value → `None`, not 0%.
+  + /// Below 60% → `None`. No globals, no formatting, no escalation memory.
+  ... (13 more lines)
+
+Now the tests — move them onto local state.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (170 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && fo… ✓ (24.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (49.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (42.4s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`)
+  + - `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`); context-budget warnings are split into a pure core (`budget_warning_threshold` — the 60/80/90/95 ladder, `max == 0` → `None`; `budget_warning_message` — the four strings) plus `context_budget_warning_with(&AtomicU32, ..)` which takes its escalation state as a parameter, so tests drive local state instead of the process-wide `LAST_WARNED_THRESHOLD`; `context_budget_warning`/`reset_context_budget_warning` keep their exact public behavior and one `#[serial]` test pins that the public pair is still wired to the global
+ ✓ (1m 6s)
+  - - `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`)
+  + - `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`); context-budget warnings are split into a pure core (`budget_warning_threshold` — the 60/80/90/95 ladder, `max == 0` → `None`; `budget_warning_message` — the four strings) plus `context_budget_warning_with(&AtomicU32, ..)` which takes its escalation state as a parameter, so tests drive local state instead of the process-wide `LAST_WARNED_THRESHOLD`; `context_budget_warning`/`reset_context_budget_warning` keep their exact public behavior and one `#[serial]` test pins that the public pair is still wired to the global
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (17ms)
+  8 tools completed in 4m 9s (8 ✓)
+
+Done and committed.
+
+## What I changed
+
+src/format/mod.rs — split the context-budget warning into a pure core plus a thin global wrapper:
+
+• `budget_warning_threshold(used, max) -> Option<u32> — pure ladder (95/90/80/60), max == 0` → None, below 60 → None.
+• budget_warning_message(threshold) -> Option<String> — pure renderer, the four strings byte-for-byte unchanged.
+• context_budget_warning_with(&AtomicU32, used, max) — escalation logic over **injected** state.
+• context_budget_warning is now a one-line delegation with &LAST_WARNED_THRESHOLD; `reset_context_budget_warning untouched. dispatch.rs, commands_session.rs, prompt.rs` compile unchanged.
+
+Tests: all nine test_context_budget_warning_* tests kept (same thresholds, same substring assertions) but now drive a local AtomicU32 — local state can't be raced, so the flake class is gone by construction, not by a wider lock. Added two pure-half tests (ladder table incl. over-budget clamp and max == 0; unknown-threshold → None) and exactly one #[serial] wiring test that asserts context_budget_warning really writes/reads LAST_WARNED_THRESHOLD and reset_* re-arms that state — otherwise the refactor could silently disconnect the real function and every local test would stay green. BUDGET_WARNING_TEST_LOCK stays, used only by that one test.
+
+## Verification
+
+• cargo build, cargo test → 4600 passed, 0 failed; cargo clippy --all-targets -- -D warnings clean; cargo fmt -- --check clean.
+• `cargo test context_budget_warning -- --test-threads=8` ×3 → 10/10 every run.
+• CLAUDE.md's format/mod.rs bullet updated.
+
+## One honest correction to the task's hypothesis
+
+I checked for the racer and did not find one. reset_context_budget_warning is only called from dispatch.rs (×2) and `commands_session.rs, and context_budget_warning from prompt.rs:76` — all inside agent-driven handlers with no test reaching them (grep for handle_compact/dispatch_command( in test context returned nothing). So the mechanism that produced that specific CI failure is still unexplained; I'm not going to claim I fixed it. What I can say is the global-state coupling that *would* make such a race possible is now removed from the test path, which is the durable half of the task either way.
+
+  watch: no files changed this turn — skipping
+

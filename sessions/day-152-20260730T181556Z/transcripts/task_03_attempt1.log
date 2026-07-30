@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self.test\|self_test\|d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 170,260p scripts/extract_… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 745,845p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1160,1250p scripts/extrac… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Self-improvement" scrip… ✓ (3ms)
+  5 tools completed in 13.5s (5 ✓)
+
+Now the edits. First the constant and the render helper:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 8 lines)
+    REVERT_COMMIT_RE = re.compile(
+        r"^Day\s+\d+\s+\([^)]+\):\s+revert session changes", re.IGNORECASE
+    )
+  + 
+  + # Verbatim title the harness writes when Phase A2 produces no task files.
+  + # Source of truth: scripts/evolve.sh (protected — cannot be imported, so this is a copy).
+  + # Guarded against drift by test_fallback_title_matches_evolve_sh in run_self_tests().
+  + FALLBACK_TASK_TITLE = "Self-improvement (small, committed)"
+ ✓ (1m 5s)
+    REVERT_COMMIT_RE = re.compile(
+        r"^Day\s+\d+\s+\([^)]+\):\s+revert session changes", re.IGNORECASE
+    )
+  + 
+  + # Verbatim title the harness writes when Phase A2 produces no task files.
+  + # Source of truth: scripts/evolve.sh (protected — cannot be imported, so this is a copy).
+  + # Guarded against drift by test_fallback_title_matches_evolve_sh in run_self_tests().
+  + FALLBACK_TASK_TITLE = "Self-improvement (small, committed)"
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 10 lines)
+            last_day = max(days)
+            truncated_title = title[:60] + ("…" if len(title) > 60 else "")
+  -         lines.append(f"\"{truncated_title}\": {attempts} attempt(s), last day-{last_day}")
+  +         mark = (
+  +             "  ← planner fallback, no task was chosen"
+  +             if title == FALLBACK_TASK_TITLE
+  +             else ""
+  +         )
+  +         lines.append(
+  +             f"\"{truncated_title}\": {attempts} attempt(s), last day-{last_day}{mark}"
+  +         )
+ ✓ (1m 5s)
+            last_day = max(days)
+            truncated_title = title[:60] + ("…" if len(title) > 60 else "")
+  -         lines.append(f"\"{truncated_title}\": {attempts} attempt(s), last day-{last_day}")
+  +         mark = (
+  +             "  ← planner fallback, no task was chosen"
+  +             if title == FALLBACK_TASK_TITLE
+  +             else ""
+  +         )
+  ... (3 more lines)
+  2 tools completed in 2m 17s (2 ✓)
+
+Now the new block renderer, right after render_task_success:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 24 lines)
+        return "\n".join(lines)
+    
+    
+  + def render_unchosen_sessions(tasks: list[tuple[int, str]]) -> str:
+  +     """Name my degraded mode in the durable record.
+    
+  +     When Phase A2 produces no task files the harness writes its own task and
+  +     the impl agent does "something small". That session commits, tests green,
+  +     and in the log is indistinguishable from one I chose — the only tell is
+  +     the contentless title. Say so, so next session's planner doesn't inherit a
+  +     history that looks deliberate throughout.
+    
+  - def render_reverts(reverts: int, total_sessions: int) -> str:
+  +     Zero fallbacks renders "" — absence should cost no bytes in the cap budget.
+  +     """
+  +     fallback_days = [day for day, title in tasks if title == FALLBACK_TASK_TITLE]
+  +     if not fallback_days:
+  +         return ""
+  +     return (
+  +         "## Unchosen sessions (planner fallback)\n"
+  ... (5 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_reverts" -B … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 257,263p scripts/extract_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (25ms)
+  4 tools completed in 14.9s (3 ✓, 1 ✗)
+
+Now wire it into main() immediately after the per-task activity section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 9 lines)
+        s = render_task_success(tasks)
+  +     if s:
+  +         sections.append(s)
+  +     # Immediately after per-task activity, and mid-order on purpose: a session
+  +     # nobody chose must be legible in the same glance as the task rows, and
+  +     # appended signals die first under TOTAL_BYTE_CAP (Day 150).
+  +     s = render_unchosen_sessions(tasks)
+        if s:
+            sections.append(s)
+ ✓ (1m 9s)
+        s = render_task_success(tasks)
+  +     if s:
+  +         sections.append(s)
+  +     # Immediately after per-task activity, and mid-order on purpose: a session
+  +     # nobody chose must be legible in the same glance as the task rows, and
+  +     # appended signals die first under TOTAL_BYTE_CAP (Day 150).
+  +     s = render_unchosen_sessions(tasks)
+        if s:
+            sections.append(s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (70 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (37ms)
+  ▶ $ cd /tmp && rm -rf drifttest && mkdir drifttest && cp /home/runner/work/yoyo-evol… ✓ (40ms)
+  ▶ $ rm -rf /tmp/drifttest; cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_TRAJ… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ rm -rf /tmp/drifttest && cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_TR… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  6 tools completed in 1m 38s (4 ✓, 2 ✗)
+
+  watch: no files changed this turn — skipping
+
