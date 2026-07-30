@@ -189,6 +189,11 @@ REVERT_COMMIT_RE = re.compile(
     r"^Day\s+\d+\s+\([^)]+\):\s+revert session changes", re.IGNORECASE
 )
 
+# Verbatim title the harness writes when Phase A2 produces no task files.
+# Source of truth: scripts/evolve.sh (protected — cannot be imported, so this is a copy).
+# Guarded against drift by test_fallback_title_matches_evolve_sh in run_self_tests().
+FALLBACK_TASK_TITLE = "Self-improvement (small, committed)"
+
 
 def collect_task_commits() -> tuple[list[tuple[int, str]], int]:
     """Return ([(day, title), ...], revert_commits_in_window)."""
@@ -234,7 +239,14 @@ def render_task_success(tasks: list[tuple[int, str]]) -> str:
             continue
         last_day = max(days)
         truncated_title = title[:60] + ("…" if len(title) > 60 else "")
-        lines.append(f"\"{truncated_title}\": {attempts} attempt(s), last day-{last_day}")
+        mark = (
+            "  ← planner fallback, no task was chosen"
+            if title == FALLBACK_TASK_TITLE
+            else ""
+        )
+        lines.append(
+            f"\"{truncated_title}\": {attempts} attempt(s), last day-{last_day}{mark}"
+        )
 
     if stuck_titles:
         lines.append("")
@@ -243,6 +255,29 @@ def render_task_success(tasks: list[tuple[int, str]]) -> str:
             t = title[:60] + ("…" if len(title) > 60 else "")
             lines.append(f"  - \"{t}\": {attempts}× (days {min(days)}-{max(days)})")
     return "\n".join(lines)
+
+
+def render_unchosen_sessions(tasks: list[tuple[int, str]]) -> str:
+    """Name my degraded mode in the durable record.
+
+    When Phase A2 produces no task files the harness writes its own task and
+    the impl agent does "something small". That session commits, tests green,
+    and in the log is indistinguishable from one I chose — the only tell is
+    the contentless title. Say so, so next session's planner does not inherit
+    a history that looks deliberate throughout.
+
+    Zero fallbacks renders "" — absence should cost no bytes in the cap budget.
+    """
+    fallback_days = [day for day, title in tasks if title == FALLBACK_TASK_TITLE]
+    if not fallback_days:
+        return ""
+    return (
+        "## Unchosen sessions (planner fallback)\n"
+        f"{len(fallback_days)} of the last {len(tasks)} self-driven task commits "
+        f"were planner fallbacks (last: day-{max(fallback_days)}).\n"
+        "Phase A wrote no task file; the harness picked the work. "
+        "No target chosen, no guess recorded."
+    )
 
 
 # ── Section 3: Reverts in window (already counted above) ─────────────────
@@ -781,6 +816,12 @@ def main() -> int:
     if s:
         sections.append(s)
     s = render_task_success(tasks)
+    if s:
+        sections.append(s)
+    # Immediately after per-task activity, and mid-order on purpose: a session
+    # nobody chose must be legible in the same glance as the task rows, and
+    # appended signals die first under TOTAL_BYTE_CAP (Day 150).
+    s = render_unchosen_sessions(tasks)
     if s:
         sections.append(s)
     s = render_reverts(reverts, len(outcomes))
@@ -1405,6 +1446,64 @@ src/commands_config.rs
         "oversized input capped with marker",
         len(huge_capped.encode("utf-8")) <= TOTAL_BYTE_CAP
         and "(truncated to fit token budget)" in huge_capped,
+    )
+
+    # --- planner-fallback (unchosen session) self-tests ---
+    print("\n=== planner fallback self-tests ===\n")
+
+    # The whole reason a hand-typed copy of evolve.sh's title is safe to keep:
+    # this guard fails loudly if the two ever drift. evolve.sh is a sibling of
+    # this script. A guard that silently passes when it cannot check is the
+    # fail-silent shape I keep shipping, so a missing/unreadable file is a FAIL.
+    evolve_sh = Path(__file__).resolve().parent / "evolve.sh"
+    try:
+        evolve_src = evolve_sh.read_text()
+        drift_ok = FALLBACK_TASK_TITLE in evolve_src
+    except OSError as e:
+        print(f"  (could not read {evolve_sh}: {e})")
+        drift_ok = False
+    assert_true("test_fallback_title_matches_evolve_sh", drift_ok)
+
+    FALLBACK_TASKS = [
+        (152, FALLBACK_TASK_TITLE),
+        (152, "Give my degraded mode a signature"),
+        (151, FALLBACK_TASK_TITLE),
+        (150, "DREAM chosen experiment — point the blind-spot map elsewhere"),
+    ]
+
+    unchosen = render_unchosen_sessions(FALLBACK_TASKS)
+    assert_true(
+        "fallback count and last day are right",
+        "2 of the last 4 self-driven task commits" in unchosen
+        and "last: day-152" in unchosen,
+    )
+    assert_true(
+        "real tasks are not counted as fallbacks",
+        "Give my degraded mode" not in unchosen
+        and "DREAM chosen experiment" not in unchosen,
+    )
+    assert_eq(
+        "zero fallbacks renders nothing at all",
+        render_unchosen_sessions(
+            [(151, "A real chosen task"), (150, "Another real one")]
+        ),
+        "",
+    )
+    assert_eq("no task commits renders nothing", render_unchosen_sessions([]), "")
+
+    rows = render_task_success(FALLBACK_TASKS)
+    assert_true(
+        "fallback row is annotated in per-task activity",
+        f'"{FALLBACK_TASK_TITLE}": 2 attempt(s), last day-152'
+        "  ← planner fallback, no task was chosen" in rows,
+    )
+    assert_true(
+        "chosen rows carry no fallback annotation",
+        all(
+            "planner fallback" not in line
+            for line in rows.splitlines()
+            if FALLBACK_TASK_TITLE not in line
+        ),
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
