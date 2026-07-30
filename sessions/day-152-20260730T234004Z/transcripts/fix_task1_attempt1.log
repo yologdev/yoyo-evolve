@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual current shape of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 460,660p src/prompt.rs ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "InspectError" -A 60 src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/prompt_retry.rs… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,180p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 820,960p src/prompt.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,105p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1090,1200p src/prompt.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1270,1310p src/repl.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1800,2000p src/prompt.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ | gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|is_… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.14.2/src && grep -rn "StopReason::Error" --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 290,395p src/prompt_retry… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.14.2/src && sed -n 750,790p agent_loop.rs &… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.14.2/src && sed -n 200,240p types.rs && gre… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.14.2/src && grep -rn "arguments" --include=… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 890,940p src/prompt.rs &&… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:898..934 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_once\|handle… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Message::Assistant" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/prompt.rs && gr… ✓ (4ms)
+ ✓ (7ms)
+  22 tools completed in 1m 26s (22 ✓)
+
+Now implementing. First the classifier in prompt_retry.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 31 lines)
+  + /// The substring identifying the yoagent ≥0.14.1 terminal error raised when a
+  + /// turn's tool-call arguments never assembled (the provider streamed a tool
+  + /// call whose JSON arguments were unusable, so nothing was executed).
+  + ///
+  + /// yoagent phrases it as
+  + /// `"tool call(s) with unusable arguments, not executed: <detail>"`.
+  + const UNUSABLE_TOOL_ARGS_SUBSTR: &str = "unusable arguments";
+  + 
+  + /// True when a `StopReason::Error` message names the "tool arguments never
+  + /// assembled" class (#646).
+  + ///
+  + /// This class is **fatal, not retriable**: re-sending the identical prompt can
+  + /// reproduce the same dropped-args turn and burn another slot. The check exists
+  + /// so surface-and-stop wins even when the message incidentally contains a
+  + /// keyword `is_retriable_error` would match (e.g. "incomplete") — callers must
+  + /// consult this **before** `is_retriable_error`.
+  + pub fn is_fatal_turn_error(error_msg: &str) -> bool {
+  +     error_msg
+  +         .to_lowercase()
+  +         .contains(UNUSABLE_TOOL_ARGS_SUBSTR)
+  ... (11 more lines)
+ ✓ (16.6s)
+  + /// The substring identifying the yoagent ≥0.14.1 terminal error raised when a
+  + /// turn's tool-call arguments never assembled (the provider streamed a tool
+  + /// call whose JSON arguments were unusable, so nothing was executed).
+  + ///
+  + /// yoagent phrases it as
+  + /// `"tool call(s) with unusable arguments, not executed: <detail>"`.
+  + const UNUSABLE_TOOL_ARGS_SUBSTR: &str = "unusable arguments";
+  + 
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 5 lines)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_fatal_turn_error, is_overflow_error, is_retriable_error, retry_delay,
+  +     StopHandling, EMPTY_ERROR_MESSAGE_NOTICE, MAX_AUTO_RETRIES,
+    };
+ ✓ (17.0s)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_fatal_turn_error, is_overflow_error, is_retriable_error, retry_delay,
+  +     StopHandling, EMPTY_ERROR_MESSAGE_NOTICE, MAX_AUTO_RETRIES,
+    };
+  2 tools completed in 39.5s (2 ✓)
+
+Now the `PromptResult variant, state field, branch, and into_result`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 14 lines)
+        RetriableError { error_msg: String, usage: Usage },
+        /// A context overflow error — caller should compact and retry.
+        ContextOverflow { error_msg: String, usage: Usage },
+  +     /// A fatal, non-retriable turn error (#646) — e.g. yoagent's "tool call(s)
+  +     /// with unusable arguments, not executed", or a `StopReason::Error` with no
+  +     /// message at all (`pause_turn` shape).
+  +     ///
+  +     /// **Surface-and-stop**: the caller records it as `last_api_error` so the
+  +     /// turn is caller-visible (auto-continue's `had_error` gate closes) and
+  +     /// deliberately does NOT re-send the prompt — re-running an identical
+  +     /// dropped-args turn can reproduce it and burn another slot.
+  +     FatalError { error_msg: String, usage: Usage },
+    }
+ ✓ (10.8s)
+        RetriableError { error_msg: String, usage: Usage },
+        /// A context overflow error — caller should compact and retry.
+        ContextOverflow { error_msg: String, usage: Usage },
+  +     /// A fatal, non-retriable turn error (#646) — e.g. yoagent's "tool call(s)
+  +     /// with unusable arguments, not executed", or a `StopReason::Error` with no
+  +     /// message at all (`pause_turn` shape).
+  +     ///
+  +     /// **Surface-and-stop**: the caller records it as `last_api_error` so the
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "overflow_error: Option<… ✓ (4ms)
+  2 tools completed in 12.8s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
