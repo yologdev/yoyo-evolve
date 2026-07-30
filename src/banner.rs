@@ -220,8 +220,35 @@ pub(crate) fn format_session_age(elapsed_secs: u64) -> String {
 /// Maximum session age (7 days) before we consider it stale and stop hinting.
 const MAX_SESSION_AGE_SECS: u64 = 7 * 24 * 3600;
 
-/// Check for an auto-saved session at `path` and return a resume hint if one exists
-/// and is less than 7 days old. Returns `None` if no session file or if it's stale.
+/// Largest session file we will parse to confirm it holds a conversation.
+/// Anything bigger is self-evidently non-empty, so we skip the parse rather
+/// than pay it on every startup.
+const MAX_SESSION_VERIFY_BYTES: u64 = 256 * 1024;
+
+/// Whether a saved-session file's *contents* actually hold a conversation.
+///
+/// `Agent::save_messages` serializes the message list with `serde_json`, so a
+/// real session is a JSON **array** with at least one element. An empty file, a
+/// whitespace-only file, `[]`, `{}`, and a write truncated by a crash all mean
+/// "there is nothing here to resume", and the banner must not promise a resume
+/// for any of them.
+///
+/// This verifies the payload, not merely that the bytes parse: it deliberately
+/// answers `false` for malformed JSON, because `--continue` cannot restore it.
+pub(crate) fn session_file_has_messages(contents: &str) -> bool {
+    if contents.trim().is_empty() {
+        return false;
+    }
+    match serde_json::from_str::<serde_json::Value>(contents) {
+        Ok(serde_json::Value::Array(messages)) => !messages.is_empty(),
+        _ => false,
+    }
+}
+
+/// Check for a resumable session at `path` and return a resume hint if one
+/// exists, is less than 7 days old, and actually contains messages. Returns
+/// `None` if there is no session file, if it's stale, or if it holds no
+/// conversation.
 pub fn session_resume_hint_at(path: &std::path::Path) -> Option<String> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
@@ -232,19 +259,36 @@ pub fn session_resume_hint_at(path: &std::path::Path) -> Option<String> {
         return None;
     }
 
+    // A file's existence and mtime say nothing about whether a conversation is
+    // inside it. Check the payload before promising a resume, otherwise an
+    // interrupted or truncated write produces a confident hint and `--continue`
+    // then restores nothing — the banner would be truthful about the object it
+    // checked (a file, this old) and wrong about the object the user cares
+    // about (a conversation worth resuming).
+    if metadata.len() <= MAX_SESSION_VERIFY_BYTES {
+        let contents = std::fs::read_to_string(path).ok()?;
+        if !session_file_has_messages(&contents) {
+            return None;
+        }
+    }
+
     let age = format_session_age(elapsed_secs);
     Some(format!(
         "{DIM}  \u{1F4AC} Previous session available ({age}) — use {YELLOW}--continue{RESET}{DIM} to resume{RESET}"
     ))
 }
 
-/// Check for an auto-saved session and return a resume hint if one exists.
+/// Check for a resumable session and return a resume hint if one exists.
 ///
-/// Uses the default `AUTO_SAVE_SESSION_PATH`. Returns `None` if the file
-/// doesn't exist or is older than 7 days.
+/// Uses the same path `--continue` would load, via
+/// [`crate::commands_session::continue_session_path`], so the banner's notion of
+/// "a resumable session exists" cannot drift from what `--continue` actually
+/// restores. Returns `None` if the file doesn't exist, is older than 7 days, or
+/// holds no conversation.
 pub fn session_resume_hint() -> Option<String> {
-    use crate::cli_config::AUTO_SAVE_SESSION_PATH;
-    session_resume_hint_at(std::path::Path::new(AUTO_SAVE_SESSION_PATH))
+    session_resume_hint_at(std::path::Path::new(
+        crate::commands_session::continue_session_path(),
+    ))
 }
 
 #[cfg(test)]
@@ -465,7 +509,10 @@ mod tests {
         let dir = std::env::temp_dir().join("yoyo-test-session-hint");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("last-session.json");
-        std::fs::write(&path, "{}").expect("write test session file");
+        // A real saved session is `serde_json::to_string(&messages)` — a
+        // non-empty JSON array. The previous fixture here was `{}`, which
+        // `--continue` cannot restore at all.
+        std::fs::write(&path, r#"[{"role":"user","content":"hi"}]"#).expect("write test session");
 
         let hint = session_resume_hint_at(&path);
         assert!(hint.is_some(), "should return hint for recent file");
@@ -485,6 +532,54 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_session_file_has_messages_payload_not_container() {
+        // Real session: non-empty JSON array of messages.
+        assert!(session_file_has_messages(
+            r#"[{"role":"user","content":"hi"}]"#
+        ));
+        assert!(session_file_has_messages("[ {\"a\":1}, {\"b\":2} ]"));
+
+        // Nothing to resume — the file exists, but holds no conversation.
+        assert!(!session_file_has_messages(""), "empty file");
+        assert!(!session_file_has_messages("   \n\t "), "whitespace only");
+        assert!(!session_file_has_messages("[]"), "empty message array");
+        assert!(!session_file_has_messages("{}"), "empty object");
+        assert!(!session_file_has_messages("null"), "json null");
+        // Truncated by a crash mid-write: unparseable, so unresumable.
+        assert!(
+            !session_file_has_messages(r#"[{"role":"user","conte"#),
+            "truncated write"
+        );
+    }
+
+    /// Regression: the hint must be built from the file's *contents*, not from
+    /// its existence and mtime. A present-but-contentless session file used to
+    /// produce a confident "Previous session available" line while `--continue`
+    /// restored nothing.
+    #[test]
+    fn test_session_resume_hint_none_for_contentless_files() {
+        let dir = std::env::temp_dir().join("yoyo-test-session-hint-empty");
+        let _ = std::fs::create_dir_all(&dir);
+
+        for (label, body) in [
+            ("zero-byte", ""),
+            ("empty-array", "[]"),
+            ("empty-object", "{}"),
+            ("truncated", r#"[{"role":"user","conte"#),
+        ] {
+            let path = dir.join(format!("{label}.json"));
+            std::fs::write(&path, body).expect("write test session");
+            assert!(
+                session_resume_hint_at(&path).is_none(),
+                "{label}: fresh file with no conversation must not promise a resume"
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+
         let _ = std::fs::remove_dir(&dir);
     }
 
