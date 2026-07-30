@@ -76,6 +76,31 @@ pub fn version_is_newer(current: &str, latest: &str) -> bool {
     }
 }
 
+/// Pull the `tag_name` string value out of a GitHub "latest release" JSON body.
+///
+/// Deliberately structural rather than an enumeration of separator spellings:
+/// the previous version skipped the piece between the key and the value by
+/// listing the shapes it expected to see (`":"`, `": "`), so any other spacing
+/// (`":  "`, a newline before the value) made the *separator itself* the
+/// "tag" — a confidently wrong string handed straight to the version
+/// comparison. Here we require the JSON grammar instead: key, then `:`, then a
+/// quoted string. Anything else — `null` (a repo with no releases), a number,
+/// a missing key — is an explicit `None`, not a neighbouring token.
+///
+/// Not a JSON parser: a tag containing an escaped quote would be truncated.
+/// Git refnames can't contain `"`, so that case doesn't exist in practice.
+fn extract_tag_name(body: &str) -> Option<&str> {
+    let after_key = body.split("\"tag_name\"").nth(1)?;
+    let after_colon = after_key.trim_start().strip_prefix(':')?;
+    let value_start = after_colon.trim_start().strip_prefix('"')?;
+    let (value, _) = value_start.split_once('"')?;
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 /// Check GitHub for a newer release. Returns `Some("x.y.z")` if a newer version
 /// exists, `None` if current or on any error. Uses a 3-second timeout to avoid
 /// blocking startup.
@@ -99,11 +124,7 @@ pub fn check_for_update(current_version: &str) -> Option<String> {
     let body = String::from_utf8(output.stdout).ok()?;
 
     // Simple JSON extraction: find "tag_name": "v0.1.5"
-    let tag = body
-        .split("\"tag_name\"")
-        .nth(1)?
-        .split('"')
-        .find(|s| !s.is_empty() && *s != ":" && *s != ": ")?;
+    let tag = extract_tag_name(&body)?;
 
     let latest = tag.strip_prefix('v').unwrap_or(tag);
 
@@ -203,5 +224,125 @@ mod tests {
         // We can't control the network in tests, but we can verify it doesn't panic
         let _result = check_for_update("0.1.0");
         // Just assert it doesn't panic — the result depends on network state
+    }
+
+    /// Verbatim excerpt of `curl -sf
+    /// https://api.github.com/repos/yologdev/yoyo-evolve/releases/latest`
+    /// captured 2026-07-30. Captured, not authored: a fixture I write myself
+    /// only proves the parser agrees with my belief about the API's shape.
+    const GITHUB_LATEST_RELEASE_VERBATIM: &str = r#"{
+  "url": "https://api.github.com/repos/yologdev/yoyo-evolve/releases/351953743",
+  "html_url": "https://github.com/yologdev/yoyo-evolve/releases/tag/v0.1.15",
+  "id": 351953743,
+  "author": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "site_admin": false
+  },
+  "node_id": "RE_kwDORbb9zc4U-mNP",
+  "tag_name": "v0.1.15",
+  "target_commitish": "main",
+  "name": "v0.1.15",
+  "draft": false,
+  "prerelease": false
+}"#;
+
+    #[test]
+    fn test_extract_tag_name_verbatim_github_response() {
+        assert_eq!(
+            extract_tag_name(GITHUB_LATEST_RELEASE_VERBATIM),
+            Some("v0.1.15")
+        );
+    }
+
+    #[test]
+    fn test_extract_tag_name_shape_table() {
+        // The enumeration of shapes this parser must forgive or refuse, written
+        // down where it fails loudly instead of living in my confidence.
+        let cases: &[(&str, Option<&str>, &str)] = &[
+            (
+                r#"{"tag_name": "v1.2.3"}"#,
+                Some("v1.2.3"),
+                "pretty-printed (one space) — the shape GitHub actually returns",
+            ),
+            (
+                r#"{"tag_name":"v1.2.3"}"#,
+                Some("v1.2.3"),
+                "compact, no space after the colon",
+            ),
+            (
+                r#"{"tag_name":  "v1.2.3"}"#,
+                Some("v1.2.3"),
+                "two spaces — the old separator enumeration returned \":  \" here",
+            ),
+            (
+                "{\"tag_name\":\n    \"v1.2.3\"}",
+                Some("v1.2.3"),
+                "newline between colon and value",
+            ),
+            (
+                "{\"tag_name\"  :  \"v1.2.3\"}",
+                Some("v1.2.3"),
+                "whitespace on both sides of the colon",
+            ),
+            (
+                r#"{"tag_name": "0.1.15"}"#,
+                Some("0.1.15"),
+                "tag without a leading v",
+            ),
+            (
+                r#"{"tag_name": null, "name": "nothing"}"#,
+                None,
+                "no releases yet — null is an absent tag, not the next token",
+            ),
+            (
+                r#"{"tag_name": "", "name": "empty"}"#,
+                None,
+                "empty string is not a version",
+            ),
+            (
+                r#"{"message": "API rate limit exceeded", "status": "403"}"#,
+                None,
+                "GitHub error body — key absent entirely",
+            ),
+            (
+                r#"{"tag_name"}"#,
+                None,
+                "key with no colon (truncated body)",
+            ),
+            (
+                r#"{"tag_name": "#,
+                None,
+                "body cut off right after the colon",
+            ),
+            (
+                r#"{"tag_name": "v1.2.3"#,
+                None,
+                "unterminated value — no closing quote",
+            ),
+            ("", None, "empty body"),
+        ];
+        for (body, want, why) in cases {
+            assert_eq!(extract_tag_name(body), *want, "{why} (body: {body:?})");
+        }
+    }
+
+    #[test]
+    fn test_extract_tag_name_never_yields_a_separator() {
+        // Regression guard for the actual defect: the old parser handed the
+        // punctuation between key and value to version_is_newer as if it were
+        // a version. Whatever comes back must never start with a colon.
+        for body in [
+            r#"{"tag_name":  "v9.9.9"}"#,
+            "{\"tag_name\":\n\t\"v9.9.9\"}",
+            r#"{"tag_name":   "v9.9.9"}"#,
+        ] {
+            let got = extract_tag_name(body);
+            assert_eq!(got, Some("v9.9.9"), "body: {body:?}");
+            assert!(
+                !got.unwrap().starts_with(':'),
+                "parser returned a separator as a tag: {got:?}"
+            );
+        }
     }
 }
