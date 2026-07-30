@@ -5,20 +5,40 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 // ── Rust symbol regexes ──────────────────────────────────────────────
-static RE_RUST_FN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap());
+/// Leading visibility for a Rust item, as capture group 1.
+///
+/// Covers every restricted form the language allows — `pub`, `pub(crate)`,
+/// `pub(super)`, `pub(self)`, `pub(in path::to)` — not just the two that
+/// happened to be common in this repo. A narrower group silently OMITS the
+/// symbol (the regex simply fails to match the line).
+const RUST_VIS: &str = r"(pub(?:\s*\([^)]*\))?\s+)?";
+
+/// Qualifiers that may sit between visibility and `fn`.
+///
+/// Repeated (`*`) because they combine: `pub async unsafe fn`. Omitting
+/// `const` was worse than a missed symbol — `const fn foo()` fell through to
+/// the const/static regex and was recorded as a symbol literally named `fn`.
+const RUST_FN_QUALIFIERS: &str = r#"(?:(?:const|async|unsafe|extern\s+"[^"]*"|extern)\s+)*"#;
+
+static RE_RUST_FN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r"^\s*{RUST_VIS}{RUST_FN_QUALIFIERS}fn\s+(\w+)")).unwrap()
+});
 static RE_RUST_STRUCT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?struct\s+(\w+)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"^\s*{RUST_VIS}struct\s+(\w+)")).unwrap());
 static RE_RUST_ENUM: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?enum\s+(\w+)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"^\s*{RUST_VIS}enum\s+(\w+)")).unwrap());
 static RE_RUST_TRAIT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?trait\s+(\w+)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"^\s*{RUST_VIS}(?:unsafe\s+)?trait\s+(\w+)")).unwrap());
 static RE_RUST_IMPL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(.+?)(?:\s*\{|$)").unwrap());
-static RE_RUST_CONST: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:const|static)\s+(\w+)").unwrap());
+    LazyLock::new(|| Regex::new(r"^\s*(?:unsafe\s+)?impl(?:<[^>]*>)?\s+(.+?)(?:\s*\{|$)").unwrap());
+static RE_RUST_CONST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"^\s*{RUST_VIS}(?:const|static)\s+(?:mut\s+)?(\w+)"
+    ))
+    .unwrap()
+});
 static RE_RUST_MOD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?mod\s+(\w+)").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"^\s*{RUST_VIS}mod\s+(\w+)")).unwrap());
 static RE_RUST_CFG_TEST: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[cfg\(test\)\]").unwrap());
 
@@ -1745,6 +1765,111 @@ mod tests {
             !symbols.iter().any(|s| s.name == "test_something"),
             "should skip test_something inside #[cfg(test)]"
         );
+    }
+
+    #[test]
+    fn extract_rust_restricted_visibility_forms() {
+        // Day 152 blind-guess target: the visibility group used to be
+        // `pub(?:\(crate\))?`, so every restricted form other than `pub(crate)`
+        // failed to match and the symbol was SILENTLY OMITTED.
+        let code = "\
+pub(super) fn from_super() {}
+pub(self) fn from_self() {}
+pub(in crate::foo) fn from_path() {}
+pub(crate) fn from_crate() {}
+pub(super) struct SuperStruct;
+pub(super) enum SuperEnum { A }
+pub(super) trait SuperTrait {}
+pub(super) const SUPER_CONST: u8 = 1;
+pub(super) mod supermod;
+";
+        let symbols = extract_symbols(code, "rust");
+        for expected in [
+            "from_super",
+            "from_self",
+            "from_path",
+            "from_crate",
+            "SuperStruct",
+            "SuperEnum",
+            "SuperTrait",
+            "SUPER_CONST",
+            "supermod",
+        ] {
+            assert!(
+                symbols.iter().any(|s| s.name == expected),
+                "restricted-visibility symbol {expected} should be extracted, got {:?}",
+                symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+            );
+        }
+        // All of these are `pub(...)` forms — they must read as public.
+        assert!(
+            symbols.iter().all(|s| s.is_public),
+            "pub(...) forms should be marked public"
+        );
+    }
+
+    #[test]
+    fn extract_rust_fn_qualifiers() {
+        // The qualifier slot only allowed `async`. `const fn` was the
+        // maximal-harm variant: it fell through to the const regex and was
+        // recorded as a symbol literally NAMED "fn" (silent wrong-op, not a
+        // silent omission).
+        let code = "\
+const fn compile_time() {}
+pub const fn pub_compile_time() {}
+unsafe fn danger() {}
+pub unsafe fn pub_danger() {}
+pub async unsafe fn async_danger() {}
+extern \"C\" fn c_abi() {}
+pub extern \"C\" fn pub_c_abi() {}
+";
+        let symbols = extract_symbols(code, "rust");
+        for expected in [
+            "compile_time",
+            "pub_compile_time",
+            "danger",
+            "pub_danger",
+            "async_danger",
+            "c_abi",
+            "pub_c_abi",
+        ] {
+            let sym = symbols.iter().find(|s| s.name == expected);
+            assert!(
+                sym.is_some(),
+                "qualified fn {expected} should be extracted, got {:?}",
+                symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                sym.unwrap().kind,
+                SymbolKind::Function,
+                "{expected} should be a Function, not miscategorised"
+            );
+        }
+        assert!(
+            !symbols.iter().any(|s| s.name == "fn"),
+            "no symbol should ever be named \"fn\" — that is the const-regex \
+             swallowing a `const fn` declaration: {:?}",
+            symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn extract_rust_real_const_still_works() {
+        // Guard the near-miss side: genuine consts/statics must keep working.
+        let code = "\
+const MAX: usize = 100;
+pub const NAME: &str = \"x\";
+static COUNTER: u32 = 0;
+pub(crate) static TABLE: [u8; 2] = [0, 1];
+";
+        let symbols = extract_symbols(code, "rust");
+        for expected in ["MAX", "NAME", "COUNTER", "TABLE"] {
+            let sym = symbols
+                .iter()
+                .find(|s| s.name == expected)
+                .unwrap_or_else(|| panic!("const/static {expected} should be extracted"));
+            assert_eq!(sym.kind, SymbolKind::Const);
+        }
     }
 
     #[test]
