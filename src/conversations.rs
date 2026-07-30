@@ -13,6 +13,7 @@ use crate::session::SessionChanges;
 use crate::sync_util::lock_or_recover;
 use crate::watch::run_watch_after_prompt;
 use crate::AgentConfig;
+use yoagent::context::ExecutionLimits;
 use yoagent::*;
 
 /// Build content blocks from `/add` results, ensuring images always have
@@ -399,16 +400,15 @@ pub(crate) async fn handle_quick(input: &str, agent_config: &AgentConfig) {
 
 // ── Extended mode ──
 
-/// Default maximum turns for extended autonomous mode.
-const DEFAULT_EXTENDED_TURNS: usize = 20;
-
 /// Parse the `/extended` command input, extracting the prompt, optional `--turns N`,
 /// and optional `--budget N` (time limit in minutes).
 ///
-/// Returns `(prompt, max_turns, budget)`. If `--turns N` is present, it is stripped
-/// from the prompt and used as the turn limit. If `--budget N` is present, it is
-/// stripped and returned as `Some(Duration)`. Otherwise defaults apply.
-fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
+/// Returns `(prompt, explicit_turns, budget)`. `explicit_turns` is `Some(n)` **only**
+/// when the user actually wrote `--turns n` — absence is its own value, not
+/// `DEFAULT_EXTENDED_TURNS`, because "user asked for a cap" and "user said nothing"
+/// resolve to different enforced limits (see [`extended_turn_limit`]).
+/// If `--budget N` is present, it is stripped and returned as `Some(Duration)`.
+fn parse_extended_args(input: &str) -> (String, Option<usize>, Option<Duration>) {
     let raw = input
         .strip_prefix("/extended")
         .unwrap_or(input)
@@ -416,7 +416,7 @@ fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
         .to_string();
 
     // Look for --turns N and --budget N anywhere in the string
-    let mut turns = DEFAULT_EXTENDED_TURNS;
+    let mut turns: Option<usize> = None;
     let mut budget: Option<Duration> = None;
     let mut prompt_parts: Vec<&str> = Vec::new();
     let words: Vec<&str> = raw.split_whitespace().collect();
@@ -430,7 +430,7 @@ fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
         if *word == "--turns" {
             if let Some(next) = words.get(i + 1) {
                 if let Ok(n) = next.parse::<usize>() {
-                    turns = n.max(1); // At least 1 turn
+                    turns = Some(n.max(1)); // At least 1 turn
                     skip_next = true;
                     continue;
                 }
@@ -454,8 +454,67 @@ fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
     (prompt, turns, budget)
 }
 
+/// What `/extended` will actually enforce for this run.
+///
+/// `/extended` used to print "N turns max" and inject N into the prompt text while
+/// enforcing nothing — the flag was a suggestion to the model, not a limit. This type
+/// makes the three cases explicit so the banner can report the number that is really
+/// installed on the agent, including the case where nothing is enforced at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExtendedTurnLimit {
+    /// A turn cap is enforced for this run.
+    Enforced(usize),
+    /// No turn cap is enforced: the agent has execution limits disabled and the user
+    /// did not ask for one. This is an explicit third value, not `Enforced(0)`.
+    Unlimited,
+}
+
+/// Decide the turn limit `/extended` should enforce.
+///
+/// - The user wrote `--turns n` → enforce `n` (even when the agent has no limits).
+/// - Otherwise the agent's own configured `max_turns` stands — `/extended` never
+///   silently *lowers* a limit the user configured elsewhere.
+/// - No flag and no configured limits → nothing is enforced.
+pub(crate) fn extended_turn_limit(
+    current: Option<&ExecutionLimits>,
+    explicit_turns: Option<usize>,
+) -> ExtendedTurnLimit {
+    match (explicit_turns, current) {
+        (Some(n), _) => ExtendedTurnLimit::Enforced(n.max(1)),
+        (None, Some(limits)) => ExtendedTurnLimit::Enforced(limits.max_turns),
+        (None, None) => ExtendedTurnLimit::Unlimited,
+    }
+}
+
+/// Build the `ExecutionLimits` to install on the agent for one `/extended` run,
+/// preserving every other limit (tokens, duration) from the agent's current config.
+pub(crate) fn extended_limits_override(
+    current: Option<&ExecutionLimits>,
+    max_turns: usize,
+) -> ExecutionLimits {
+    let mut limits = current.cloned().unwrap_or_default();
+    limits.max_turns = max_turns.max(1);
+    limits
+}
+
+/// Human-readable turn description for the extended-mode banner.
+fn extended_turns_label(limit: ExtendedTurnLimit) -> String {
+    match limit {
+        ExtendedTurnLimit::Enforced(n) => format!("{n} turns max"),
+        ExtendedTurnLimit::Unlimited => "no turn limit".to_string(),
+    }
+}
+
 /// Build the system-level instruction for extended autonomous mode.
-fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {
+fn build_extended_system_prompt(task: &str, limit: ExtendedTurnLimit) -> String {
+    let turn_rule = match limit {
+        ExtendedTurnLimit::Enforced(n) => {
+            format!("- You have up to {n} turns to complete this task.")
+        }
+        ExtendedTurnLimit::Unlimited => {
+            "- No turn limit is enforced — stop as soon as the task is done.".to_string()
+        }
+    };
     format!(
         "You are in EXTENDED AUTONOMOUS MODE. Work on this task step by step:\n\n\
          {task}\n\n\
@@ -464,7 +523,7 @@ fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {
          - Break the task into steps and execute them one at a time.\n\
          - Run tests after making changes to verify correctness.\n\
          - If you get stuck, explain what you tried and move on.\n\
-         - You have up to {max_turns} turns to complete this task.\n\
+         {turn_rule}\n\
          - When the task is complete, summarize what you did and what files were modified."
     )
 }
@@ -477,12 +536,13 @@ pub(crate) async fn handle_extended(
     model: &str,
     session_changes: &SessionChanges,
 ) -> Option<String> {
-    let (prompt, max_turns, budget) = parse_extended_args(input);
+    let (prompt, explicit_turns, budget) = parse_extended_args(input);
 
     if prompt.is_empty() {
         eprintln!(
             "{YELLOW}  Usage: /extended <task description> [--turns N] [--budget N]{RESET}\n\
-             {DIM}  Run the agent autonomously on a task (default: {DEFAULT_EXTENDED_TURNS} turns).\n\
+             {DIM}  Run the agent autonomously on a task.\n\
+             {DIM}  --turns N caps turns for this run (default: the agent's configured limit).\n\
              {DIM}  --budget N sets a wall-clock time limit in minutes.\n\
              \n\
              {DIM}  Examples:\n\
@@ -499,12 +559,25 @@ pub(crate) async fn handle_extended(
         String::new()
     };
 
+    let limit = extended_turn_limit(agent.execution_limits.as_ref(), explicit_turns);
+    let turns_label = extended_turns_label(limit);
+
     eprintln!(
-        "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({max_turns} turns max{budget_label})\n\
+        "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({turns_label}{budget_label})\n\
          {DIM}  Task: {prompt}{RESET}\n"
     );
 
-    let extended_prompt = build_extended_system_prompt(&prompt, max_turns);
+    let extended_prompt = build_extended_system_prompt(&prompt, limit);
+
+    // Actually enforce the turn cap for this run. Before Day 151 the parsed
+    // `--turns N` only reached the prompt *text* — the agent's real
+    // `ExecutionLimits` were untouched, so the banner and the prompt both
+    // claimed a cap that nothing enforced (silent wrong-op). Save the previous
+    // limits and restore them after the run so `/extended` stays scoped.
+    let saved_limits = agent.execution_limits.clone();
+    if let ExtendedTurnLimit::Enforced(n) = limit {
+        agent.execution_limits = Some(extended_limits_override(saved_limits.as_ref(), n));
+    }
 
     // Run the task using the existing prompt infrastructure with auto-retry.
     // If a budget is set, wrap in tokio::time::timeout.
@@ -544,6 +617,9 @@ pub(crate) async fn handle_extended(
     }
 
     let elapsed = prompt_start.elapsed();
+
+    // Restore the agent's previous limits — the cap applies to this run only.
+    agent.execution_limits = saved_limits;
 
     if timed_out {
         let budget_mins = budget.map(|d| d.as_secs() / 60).unwrap_or(0);
@@ -754,7 +830,7 @@ mod tests {
     fn test_parse_extended_args_basic_prompt() {
         let (prompt, turns, budget) = parse_extended_args("/extended build a REST API");
         assert_eq!(prompt, "build a REST API");
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert!(budget.is_none());
     }
 
@@ -762,7 +838,7 @@ mod tests {
     fn test_parse_extended_args_with_turns() {
         let (prompt, turns, budget) = parse_extended_args("/extended refactor auth --turns 10");
         assert_eq!(prompt, "refactor auth");
-        assert_eq!(turns, 10);
+        assert_eq!(turns, Some(10));
         assert!(budget.is_none());
     }
 
@@ -770,7 +846,7 @@ mod tests {
     fn test_parse_extended_args_turns_at_start() {
         let (prompt, turns, budget) = parse_extended_args("/extended --turns 5 fix all bugs");
         assert_eq!(prompt, "fix all bugs");
-        assert_eq!(turns, 5);
+        assert_eq!(turns, Some(5));
         assert!(budget.is_none());
     }
 
@@ -779,7 +855,7 @@ mod tests {
         let (prompt, turns, budget) =
             parse_extended_args("/extended add tests --turns 15 for parser");
         assert_eq!(prompt, "add tests for parser");
-        assert_eq!(turns, 15);
+        assert_eq!(turns, Some(15));
         assert!(budget.is_none());
     }
 
@@ -787,7 +863,7 @@ mod tests {
     fn test_parse_extended_args_no_prompt() {
         let (prompt, turns, budget) = parse_extended_args("/extended");
         assert!(prompt.is_empty());
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert!(budget.is_none());
     }
 
@@ -795,7 +871,7 @@ mod tests {
     fn test_parse_extended_args_turns_minimum_one() {
         let (prompt, turns, budget) = parse_extended_args("/extended do stuff --turns 0");
         assert_eq!(prompt, "do stuff");
-        assert_eq!(turns, 1); // Clamped to 1
+        assert_eq!(turns, Some(1)); // Clamped to 1
         assert!(budget.is_none());
     }
 
@@ -803,7 +879,7 @@ mod tests {
     fn test_parse_extended_args_invalid_turns_kept_as_prompt() {
         let (prompt, turns, budget) = parse_extended_args("/extended do stuff --turns abc");
         assert_eq!(prompt, "do stuff --turns abc");
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert!(budget.is_none());
     }
 
@@ -811,7 +887,7 @@ mod tests {
     fn test_parse_extended_args_turns_without_value() {
         let (prompt, turns, budget) = parse_extended_args("/extended do stuff --turns");
         assert_eq!(prompt, "do stuff --turns");
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert!(budget.is_none());
     }
 
@@ -819,7 +895,7 @@ mod tests {
     fn test_parse_extended_budget() {
         let (prompt, turns, budget) = parse_extended_args("/extended do stuff --budget 10");
         assert_eq!(prompt, "do stuff");
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert_eq!(budget, Some(Duration::from_secs(600)));
     }
 
@@ -828,7 +904,7 @@ mod tests {
         let (prompt, turns, budget) =
             parse_extended_args("/extended rebuild tests --turns 30 --budget 15");
         assert_eq!(prompt, "rebuild tests");
-        assert_eq!(turns, 30);
+        assert_eq!(turns, Some(30));
         assert_eq!(budget, Some(Duration::from_secs(900)));
     }
 
@@ -836,7 +912,7 @@ mod tests {
     fn test_parse_extended_no_budget() {
         let (prompt, turns, budget) = parse_extended_args("/extended simple task");
         assert_eq!(prompt, "simple task");
-        assert_eq!(turns, DEFAULT_EXTENDED_TURNS);
+        assert_eq!(turns, None, "no --turns flag means no explicit override");
         assert!(budget.is_none());
     }
 
@@ -864,7 +940,7 @@ mod tests {
 
     #[test]
     fn test_build_extended_system_prompt_contains_task() {
-        let prompt = build_extended_system_prompt("build a REST API", 20);
+        let prompt = build_extended_system_prompt("build a REST API", ExtendedTurnLimit::Enforced(20));
         assert!(prompt.contains("build a REST API"));
         assert!(prompt.contains("20"));
         assert!(prompt.contains("EXTENDED AUTONOMOUS MODE"));
