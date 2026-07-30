@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the file to understand what's broken.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,620p src/conversation… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/conversations.rs | … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "execution_limits" ~/.c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 620,700p src/conversation… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && … ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.0/src && sed -n 30,80p agent.rs && echo … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ExecutionLimits\|execu… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ExecutionLimits" -B 12 … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 810,975p src/conversation… ✓ (11ms)
+  10 tools completed in 1m 6s (10 ✓)
+
+Now I'll fix the parser assignment and finish wiring handle_extended to actually install the limit.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 1 lines)
+  -                     turns = n.max(1); // At least 1 turn
+  +                     turns = Some(n.max(1)); // At least 1 turn
+ ✓ (11.5s)
+  -                     turns = n.max(1); // At least 1 turn
+  +                     turns = Some(n.max(1)); // At least 1 turn
+
+Now the handler body:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 534,575p src/conversation… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (6 → 7 lines)
+  -     let (prompt, max_turns, budget) = parse_extended_args(input);
+  +     let (prompt, explicit_turns, budget) = parse_extended_args(input);
+    
+        if prompt.is_empty() {
+            eprintln!(
+                "{YELLOW}  Usage: /extended <task description> [--turns N] [--budget N]{RESET}\n\
+  -              {DIM}  Run the agent autonomously on a task (default: {DEFAULT_EXTENDED_TURNS} turns).\n\
+  +              {DIM}  Run the agent autonomously on a task.\n\
+  +              {DIM}  --turns N caps turns for this run (default: the agent's configured limit).\n\
+ ✓ (11.5s)
+  -     let (prompt, max_turns, budget) = parse_extended_args(input);
+  +     let (prompt, explicit_turns, budget) = parse_extended_args(input);
+    
+        if prompt.is_empty() {
+            eprintln!(
+                "{YELLOW}  Usage: /extended <task description> [--turns N] [--budget N]{RESET}\n\
+  -              {DIM}  Run the agent autonomously on a task (default: {DEFAULT_EXTENDED_TURNS} turns).\n\
+  +              {DIM}  Run the agent autonomously on a task.\n\
+  +              {DIM}  --turns N caps turns for this run (default: the agent's configured limit).\n\
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (6 → 19 lines)
+  +     let limit = extended_turn_limit(agent.execution_limits.as_ref(), explicit_turns);
+  +     let turns_label = extended_turns_label(limit);
+  + 
+        eprintln!(
+  -         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({max_turns} turns max{budget_label})\n\
+  +         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({turns_label}{budget_label})\n\
+             {DIM}  Task: {prompt}{RESET}\n"
+        );
+    
+  -     let extended_prompt = build_extended_system_prompt(&prompt, max_turns);
+  +     let extended_prompt = build_extended_system_prompt(&prompt, limit);
+  + 
+  +     // Actually enforce the turn cap for this run. Before Day 151 the parsed
+  +     // `--turns N` only reached the prompt *text* — the agent's real
+  +     // `ExecutionLimits` were untouched, so the banner and the prompt both
+  +     // claimed a cap that nothing enforced (silent wrong-op). Save the previous
+  +     // limits and restore them after the run so `/extended` stays scoped.
+  +     let saved_limits = agent.execution_limits.clone();
+  +     if let ExtendedTurnLimit::Enforced(n) = limit {
+  +         agent.execution_limits = Some(extended_limits_override(saved_limits.as_ref(), n));
+  ... (1 more lines)
+ ✓ (11.4s)
+  +     let limit = extended_turn_limit(agent.execution_limits.as_ref(), explicit_turns);
+  +     let turns_label = extended_turns_label(limit);
+  + 
+        eprintln!(
+  -         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({max_turns} turns max{budget_label})\n\
+  +         "\n{BOLD_CYAN}  🐙 Extended mode{RESET} — working autonomously ({turns_label}{budget_label})\n\
+             {DIM}  Task: {prompt}{RESET}\n"
+        );
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,650p src/conversation… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 4 lines)
+        let elapsed = prompt_start.elapsed();
+  + 
+  +     // Restore the agent's previous limits — the cap applies to this run only.
+  +     agent.execution_limits = saved_limits;
+ ✓ (11.4s)
+        let elapsed = prompt_start.elapsed();
+  + 
+  +     // Restore the agent's previous limits — the cap applies to this run only.
+  +     agent.execution_limits = saved_limits;
+  5 tools completed in 56.9s (5 ✓)
+
+Now remove the now-unused const and fix the tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,406p src/conversation… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (8.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 403,414p src/conversation… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 403,410p src/conversation… ✓ (6ms)
+  4 tools completed in 23.8s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo and the reverted work from #642.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -4 drea… (8 lines) ✓ (11ms)
+ ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c conversations dreams/exp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|execution_limits\|… ✓ (4ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:400..560 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ExecutionLimits\|execu… ✓ (9ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,510p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,770p' src/agent_buil… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "execution_limits\|Execu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,24p' src/conversations… ✓ (5ms)
+  11 tools completed in 1m 16s (11 ✓)
+
+Confirmed defect: /extended --turns N is parsed and printed in the banner, but only ever injected into the prompt text — nothing enforces it. Classic silent no-op wearing a truthful-looking banner. Let me fix it.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (16 → 18 lines)
+    /// Parse the `/extended` command input, extracting the prompt, optional `--turns N`,
+    /// and optional `--budget N` (time limit in minutes).
+    ///
+  - /// Returns `(prompt, max_turns, budget)`. If `--turns N` is present, it is stripped
+  - /// from the prompt and used as the turn limit. If `--budget N` is present, it is
+  - /// stripped and returned as `Some(Duration)`. Otherwise defaults apply.
+  - fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
+  + /// Returns `(prompt, explicit_turns, budget)`. `explicit_turns` is `Some(n)` **only**
+  + /// when the user actually wrote `--turns n` — absence is its own value, not
+  + /// `DEFAULT_EXTENDED_TURNS`, because "user asked for a cap" and "user said nothing"
+  + /// resolve to different enforced limits (see [`extended_turn_limit`]).
+  + /// If `--budget N` is present, it is stripped and returned as `Some(Duration)`.
+  + fn parse_extended_args(input: &str) -> (String, Option<usize>, Option<Duration>) {
+        let raw = input
+            .strip_prefix("/extended")
+            .unwrap_or(input)
+  ···
+            .to_string();
+    
+        // Look for --turns N and --budget N anywhere in the string
+  ... (3 more lines)
+ ✓ (11.4s)
+    /// Parse the `/extended` command input, extracting the prompt, optional `--turns N`,
+    /// and optional `--budget N` (time limit in minutes).
+    ///
+  - /// Returns `(prompt, max_turns, budget)`. If `--turns N` is present, it is stripped
+  - /// from the prompt and used as the turn limit. If `--budget N` is present, it is
+  - /// stripped and returned as `Some(Duration)`. Otherwise defaults apply.
+  - fn parse_extended_args(input: &str) -> (String, usize, Option<Duration>) {
+  + /// Returns `(prompt, explicit_turns, budget)`. `explicit_turns` is `Some(n)` **only**
+  ... (13 more lines)
+
+Expected — now the rest of the plumbing.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (2 → 2 lines) ✓ (11.4s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 2 lines)
+  - fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {    format!(
+  + fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {
+  +     format!(
+ ✓ (11.5s)
+  - fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {    format!(
+  + fn build_extended_system_prompt(task: &str, max_turns: usize) -> String {
+  +     format!(
+  2 tools completed in 33.9s (2 ✓)
+
+Good, back to the two expected errors. Now the core helpers:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (3 → 62 lines)
+  + /// What `/extended` will actually enforce for this run.
+  + ///
+  + /// `/extended` used to print "N turns max" and inject N into the prompt text while
+  + /// enforcing nothing — the flag was a suggestion to the model, not a limit. This type
+  + /// makes the three cases explicit so the banner can report the number that is really
+  + /// installed on the agent, including the case where nothing is enforced at all.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum ExtendedTurnLimit {
+  +     /// A turn cap is enforced for this run.
+  +     Enforced(usize),
+  +     /// No turn cap is enforced: the agent has execution limits disabled and the user
+  +     /// did not ask for one. This is an explicit third value, not `Enforced(0)`.
+  +     Unlimited,
+  + }
+  + 
+  + /// Decide the turn limit `/extended` should enforce.
+  + ///
+  + /// - The user wrote `--turns n` → enforce `n` (even when the agent has no limits).
+  + /// - Otherwise the agent's own configured `max_turns` stands — `/extended` never
+  + ///   silently *lowers* a limit the user configured elsewhere.
+  ... (43 more lines)
+ ✓ (11.6s)
+  + /// What `/extended` will actually enforce for this run.
+  + ///
+  + /// `/extended` used to print "N turns max" and inject N into the prompt text while
+  + /// enforcing nothing — the flag was a suggestion to the model, not a limit. This type
+  + /// makes the three cases explicit so the banner can report the number that is really
+  + /// installed on the agent, including the case where nothing is enforced at all.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum ExtendedTurnLimit {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '518,532p' src/conversati… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 1 lines)
+  -          - You have up to {max_turns} turns to complete this task.\n\
+  +          {turn_rule}\n\
+ ✓ (11.5s)
+  -          - You have up to {max_turns} turns to complete this task.\n\
+  +          {turn_rule}\n\
+  3 tools completed in 32.0s (3 ✓)
+
+Now the import and the call site in handle_extended:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (1 → 2 lines)
+  + use yoagent::context::ExecutionLimits;
+    use yoagent::*;
+ ✓ (11.4s)
+  + use yoagent::context::ExecutionLimits;
+    use yoagent::*;
+
+  watch: no files changed this turn — skipping
+
