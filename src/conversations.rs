@@ -940,7 +940,8 @@ mod tests {
 
     #[test]
     fn test_build_extended_system_prompt_contains_task() {
-        let prompt = build_extended_system_prompt("build a REST API", ExtendedTurnLimit::Enforced(20));
+        let prompt =
+            build_extended_system_prompt("build a REST API", ExtendedTurnLimit::Enforced(20));
         assert!(prompt.contains("build a REST API"));
         assert!(prompt.contains("20"));
         assert!(prompt.contains("EXTENDED AUTONOMOUS MODE"));
