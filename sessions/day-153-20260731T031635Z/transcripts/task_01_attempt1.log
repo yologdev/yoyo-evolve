@@ -1,0 +1,102 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual state of the code the reverted task touched — that's the most concrete lead I have.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110,150p' src/prompt.rs ✓ (3ms)
+ ✓ (10ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Tree is clean; the reverted work is fully gone. Let me read the actual shape of the swallow bug rather than guess.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,650p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult::" src/*.r… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '538,600p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' src/prompt_retry… ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:540..600 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:826..956 ✓ (1ms)
+  6 tools completed in 37.9s (6 ✓)
+
+Now I see the swallow: line 565's else prints but sets no outcome field → into_result returns Done. Let me check the retry classifier and the consumer gate before editing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "last_api_error" src/re… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,700p' src/repl.rs &&… ✓ (6ms)
+  3 tools completed in 10.6s (3 ✓)
+
+`last_api_error is exactly the caller-visible gate, and run_prompt_auto_retry retries only on last_tool_error` — so surface-and-stop holds. Writing the tests first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1820..1890 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_agent_end\|Messa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Assistant {" -A 20 ~/.c… ✓ (4ms)
+  3 tools completed in 15.4s (3 ✓)
+
+Now I have everything. Writing the red tests first.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 123 lines)
+  +     /// Build an assistant message that ended with `StopReason::Error`.
+  +     fn error_assistant_msg(error_message: Option<&str>) -> AgentMessage {
+  +         let base = Message::assistant(
+  +             Vec::new(),
+  +             StopReason::Error,
+  +             "claude-test",
+  +             "anthropic",
+  +             Usage::default(),
+  +         );
+  +         let msg = match error_message {
+  +             Some(m) => base.with_error_message(m),
+  +             None => base,
+  +         };
+  +         AgentMessage::Llm(msg)
+  +     }
+  + 
+  +     fn state_for_test() -> PromptEventState {
+  +         let mut state = PromptEventState::new();
+  +         if let Some(s) = state.spinner.take() {
+  +             s.stop();
+  ... (103 more lines)
+ ✓ (11.4s)
+  +     /// Build an assistant message that ended with `StopReason::Error`.
+  +     fn error_assistant_msg(error_message: Option<&str>) -> AgentMessage {
+  +         let base = Message::assistant(
+  +             Vec::new(),
+  +             StopReason::Error,
+  +             "claude-test",
+  +             "anthropic",
+  +             Usage::default(),
+  ... (13 more lines)
+
+Red exactly as intended. Now the implementation.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 13 lines)
+        /// A context overflow error — caller should compact and retry.
+        ContextOverflow { error_msg: String, usage: Usage },
+  +     /// A fatal, non-retriable turn failure (#646).
+  +     ///
+  +     /// The turn ended with `StopReason::Error` for a reason that is neither a
+  +     /// context overflow nor a known-retriable API class — e.g. yoagent 0.14.1+
+  +     /// reporting that a tool call's arguments never assembled. Re-running the
+  +     /// identical prompt can reproduce it and burn a slot, so this is
+  +     /// **surface-and-stop**: it never feeds the auto-retry path, it only makes
+  +     /// the failure visible to the caller so a turn that accomplished nothing
+  +     /// cannot read as a clean `Done`.
+  +     FatalError { error_msg: String, usage: Usage },
+    }
+ ✓ (11.2s)
+        /// A context overflow error — caller should compact and retry.
+        ContextOverflow { error_msg: String, usage: Usage },
+  +     /// A fatal, non-retriable turn failure (#646).
+  +     ///
+  +     /// The turn ended with `StopReason::Error` for a reason that is neither a
+  +     /// context overflow nor a known-retriable API class — e.g. yoagent 0.14.1+
+  +     /// reporting that a tool call's arguments never assembled. Re-running the
+  +     /// identical prompt can reproduce it and burn a slot, so this is
+  ... (5 more lines)
+
+That's the exhaustiveness wall the last attempt died on — three sites, all named. Handling each deliberately.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '172,180p' src/prompt.rs … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (26ms)
+  2 tools completed in 7.3s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

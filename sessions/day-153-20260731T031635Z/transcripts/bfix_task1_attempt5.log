@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n 110…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E "^(er… ✓ (10ms)
+ ✓ (3.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --color never 2>&1 |… ✓ (3.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,680p src/prompt.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,650p src/prompt.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:563..643 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 1 lines)
+  -                         let empty_message = error_message.map(|m| m.is_empty()).unwrap_or(true);
+  +                         let empty_message = error_message.as_deref().unwrap_or("").is_empty();
+ ✓ (11.3s)
+  -                         let empty_message = error_message.map(|m| m.is_empty()).unwrap_or(true);
+  +                         let empty_message = error_message.as_deref().unwrap_or("").is_empty();
+  7 tools completed in 43.1s (7 ✓)
+
+Now the three match sites.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:860..990 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:986..1016 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1160..1240 ✓ (1ms)
+  3 tools completed in 13.0s (3 ✓)
+
+Now adding the three arms.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (7 → 26 lines)
+  +                         api_error = Some(retry_err);
+  +                     }
+  +                     PromptResult::FatalError {
+  +                         error_msg: retry_err,
+  +                         usage: retry_usage,
+  +                     } => {
+  +                         // #646: already printed by handle_agent_end; surface for
+  +                         // control flow without retrying.
+  +                         accumulate_usage(&mut total_usage, &retry_usage);
+                            api_error = Some(retry_err);
+                        }
+                    }
+  +                 break;
+  +             }
+  +             PromptResult::FatalError { error_msg, usage } => {
+  +                 // #646: surface-and-stop. The message was already shown by
+  +                 // handle_agent_end. Re-running the identical prompt can reproduce
+  +                 // this class of failure, so it is deliberately NOT retried — but it
+  +                 // must not read as a clean `Done` either, so record it as an API
+  +                 // error the caller can see.
+  ... (5 more lines)
+ ✓ (11.3s)
+  +                         api_error = Some(retry_err);
+  +                     }
+  +                     PromptResult::FatalError {
+  +                         error_msg: retry_err,
+  +                         usage: retry_usage,
+  +                     } => {
+  +                         // #646: already printed by handle_agent_end; surface for
+  +                         // control flow without retrying.
+  ... (13 more lines)
+
+Two down. Now the third site (with_messages variant):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (7 → 14 lines)
+                        "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
+                    );
+                    eprintln!("{DIM}  ({error_msg}){RESET}");
+  +                 api_error = Some(error_msg);
+  +                 break;
+  +             }
+  +             PromptResult::FatalError { error_msg, usage } => {
+  +                 // #646: surface-and-stop — already printed by handle_agent_end,
+  +                 // never auto-retried, but visible to the caller.
+  +                 accumulate_usage(&mut total_usage, &usage);
+                    api_error = Some(error_msg);
+                    break;
+                }
+ ✓ (17.8s)
+                        "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
+                    );
+                    eprintln!("{DIM}  ({error_msg}){RESET}");
+  +                 api_error = Some(error_msg);
+  +                 break;
+  +             }
+  +             PromptResult::FatalError { error_msg, usage } => {
+  +                 // #646: surface-and-stop — already printed by handle_agent_end,
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal_error\|is_dropped… ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:652..692 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 9 lines)
+  +         } else if let Some(err_msg) = self.fatal_error {
+  +             // #646: a fatal turn failure is deliberately checked BEFORE the
+  +             // retriable branch — surface-and-stop wins even if the message
+  +             // incidentally contains a retriable keyword.
+  +             PromptResult::FatalError {
+  +                 error_msg: err_msg,
+  +                 usage: self.usage,
+  +             }
+            } else if let Some(err_msg) = self.retriable_error {
+ ✓ (1m 44s)
+  +         } else if let Some(err_msg) = self.fatal_error {
+  +             // #646: a fatal turn failure is deliberately checked BEFORE the
+  +             // retriable branch — surface-and-stop wins even if the message
+  +             // incidentally contains a retriable keyword.
+  +             PromptResult::FatalError {
+  +                 error_msg: err_msg,
+  +                 usage: self.usage,
+  +             }
+            } else if let Some(err_msg) = self.retriable_error {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --color never 2>&1 |… ✓ (169ms)
+  5 tools completed in 2m 17s (5 ✓)
+
+Build is green. Now the full gate:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --color never 2>&1 | … ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_.*fatal\|fn tes… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --color never fatal 2… ✓ (176ms)
+  4 tools completed in 1m 35s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
