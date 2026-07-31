@@ -1,0 +1,154 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,160p src/prompt.rs ✓ (3ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- src/prom…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FatalError\|fatal_error… ✓ (9ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && gr… ✓ (186ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 960,1015p src/prompt.rs &… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_prompt_stream_js… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1280,1440p src/prompt.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1330,1400p src/prompt.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1335..1395 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:540..650 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_prompt_stream_json… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,275p src/main.rs && e… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1960..2030 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (6 → 5 lines)
+                            let empty_message = error_message.as_deref().unwrap_or("").is_empty();
+                            if empty_message {
+  -                             let msg = "turn ended with an error but no message — \
+  -                                        treating the response as incomplete (no resume path)";
+  +                             let msg = ERROR_WITHOUT_MESSAGE;
+                                eprintln!("\n{RED}  error: {msg}{RESET}");
+                                self.fatal_error = Some(msg.to_string());
+ ✓ (13.2s)
+                            let empty_message = error_message.as_deref().unwrap_or("").is_empty();
+                            if empty_message {
+  -                             let msg = "turn ended with an error but no message — \
+  -                                        treating the response as incomplete (no resume path)";
+  +                             let msg = ERROR_WITHOUT_MESSAGE;
+                                eprintln!("\n{RED}  error: {msg}{RESET}");
+                                self.fatal_error = Some(msg.to_string());
+  15 tools completed in 1m 23s (15 ✓)
+
+Now add the constant and the pure helper.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 8 lines)
+  + /// Message used when a turn ends with `StopReason::Error` but carries no
+  + /// `error_message` at all (the `pause_turn` shape). Shared by the interactive
+  + /// path and the stream-JSON path so both transports say the same thing.
+  + const ERROR_WITHOUT_MESSAGE: &str = "turn ended with an error but no message — \
+  +                                      treating the response as incomplete (no resume path)";
+  + 
+    /// Result of a single prompt attempt — either success or a retriable/fatal error.
+    enum PromptResult {
+ ✓ (1m 52s)
+  + /// Message used when a turn ends with `StopReason::Error` but carries no
+  + /// `error_message` at all (the `pause_turn` shape). Shared by the interactive
+  + /// path and the stream-JSON path so both transports say the same thing.
+  + const ERROR_WITHOUT_MESSAGE: &str = "turn ended with an error but no message — \
+  +                                      treating the response as incomplete (no resume path)";
+  + 
+    /// Result of a single prompt attempt — either success or a retriable/fatal error.
+    enum PromptResult {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 36 lines)
+  + /// Extract a caller-visible turn error from the assistant messages of an
+  + /// `AgentEnd`, for the stream-JSON transport.
+  + ///
+  + /// The interactive path records `StopReason::Error` turns (#646) so callers
+  + /// can see them, but the stream-JSON path only ever tracked `InputRejected` —
+  + /// so a turn that died with `StopReason::Error` (e.g. tool-call arguments that
+  + /// never assembled, or the `pause_turn` shape) was emitted on the wire and
+  + /// then exited **0**, reading as a clean success to any script driving
+  + /// `--output-format stream-json`. This helper closes that gap.
+  + ///
+  + /// Returns the last error found. A benign "stream ended" message (#612) is
+  + /// deliberately not an error, and non-error stop reasons yield `None`.
+  + fn stream_json_turn_error(messages: &[AgentMessage]) -> Option<String> {
+  +     let mut found: Option<String> = None;
+  +     for msg in messages {
+  +         let AgentMessage::Llm(Message::Assistant {
+  +             stop_reason,
+  +             error_message,
+  +             ..
+  +         }) = msg
+  ... (16 more lines)
+ ✓ (19.1s)
+  + /// Extract a caller-visible turn error from the assistant messages of an
+  + /// `AgentEnd`, for the stream-JSON transport.
+  + ///
+  + /// The interactive path records `StopReason::Error` turns (#646) so callers
+  + /// can see them, but the stream-JSON path only ever tracked `InputRejected` —
+  + /// so a turn that died with `StopReason::Error` (e.g. tool-call arguments that
+  + /// never assembled, or the `pause_turn` shape) was emitted on the wire and
+  + /// then exited **0**, reading as a clean success to any script driving
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (15 → 22 lines)
+                                {
+                                    accumulate_usage(&mut usage, msg_usage);
+                                }
+  +                         }
+  +                         // #646 (stream-JSON half): a turn that ended with
+  +                         // StopReason::Error must not exit 0. An InputRejected
+  +                         // error already recorded above wins — it is the more
+  +                         // specific diagnosis.
+  +                         if last_api_error.is_none() {
+  +                             last_api_error = stream_json_turn_error(messages);
+                            }
+                            // Finalize agent state
+                            agent.finish().await;
+ ✓ (1m 46s)
+                                {
+                                    accumulate_usage(&mut usage, msg_usage);
+                                }
+  +                         }
+  +                         // #646 (stream-JSON half): a turn that ended with
+  +                         // StopReason::Error must not exit 0. An InputRejected
+  +                         // error already recorded above wins — it is the more
+  +                         // specific diagnosis.
+  ... (5 more lines)
+  3 tools completed in 4m 14s (3 ✓)
+
+Now the tests.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_fatal_error_doe… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 44 lines)
+  +     #[test]
+  +     fn test_stream_json_surfaces_fatal_turn_error() {
+  +         // #646 (stream-JSON half): main.rs exits 1 only when last_api_error is
+  +         // set, so a StopReason::Error turn used to exit 0 here — a silent false
+  +         // success for any script driving --output-format stream-json.
+  +         let err = stream_json_turn_error(&[error_assistant_msg(Some(
+  +             "tool call arguments for `read_file` were never assembled",
+  +         ))])
+  +         .expect("a fatal StopReason::Error must be caller-visible in stream-json mode");
+  +         assert!(err.contains("read_file"), "got: {err}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_stream_json_surfaces_empty_message_error_as_incomplete() {
+  +         // pause_turn shape: StopReason::Error with no message at all.
+  +         let err = stream_json_turn_error(&[error_assistant_msg(None)])
+  +             .expect("empty-message StopReason::Error must still be caller-visible");
+  +         assert_eq!(err, ERROR_WITHOUT_MESSAGE);
+  +         assert!(err.to_lowercase().contains("incomplete"));
+  +     }
+  ... (24 more lines)
+ ✓ (13.0s)
+  +     #[test]
+  +     fn test_stream_json_surfaces_fatal_turn_error() {
+  +         // #646 (stream-JSON half): main.rs exits 1 only when last_api_error is
+  +         // set, so a StopReason::Error turn used to exit 0 here — a silent false
+  +         // success for any script driving --output-format stream-json.
+  +         let err = stream_json_turn_error(&[error_assistant_msg(Some(
+  +             "tool call arguments for `read_file` were never assembled",
+  +         ))])
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub enum StopReason" -… ✓ (6ms)
+  3 tools completed in 25.3s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

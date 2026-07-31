@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking what actually happened this session before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null && … ✓ (3ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat ec2a90f5 | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FatalError\|fatal_error… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,610p' src/prompt.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1975,2090p' src/prompt.r… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1010p' src/prompt.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal\|FatalError\|#646… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet fatal 2>&1 | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`prompt.rs\`" CLAUD… ✓ (5ms)
+ ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1285,1295p' src/repl.rs ✓ (4ms)
+  11 tools completed in 30.3s (11 ✓)
+
+The fix for #646 landed and is verified. One piece the task asked for is missing — the CLAUDE.md doc sentence. Let me close that gap.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+  + - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic. A fatal `StopReason::Error` (yoagent 0.14.1+: dropped tool-call arguments, or `pause_turn` with no `error_message`) is recorded in `PromptEventState::fatal_error` and surfaces as `PromptResult::FatalError` → `PromptOutcome.last_api_error` — a caller-visible error that is **never auto-retried** (surface-and-stop, #646). `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths.
+ ✓ (1m 31s)
+  - - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+  + - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic. A fatal `StopReason::Error` (yoagent 0.14.1+: dropped tool-call arguments, or `pause_turn` with no `error_message`) is recorded in `PromptEventState::fatal_error` and surfaces as `PromptResult::FatalError` → `PromptOutcome.last_api_error` — a caller-visible error that is **never auto-retried** (surface-and-stop, #646). `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --quiet 2>&1 | tail …

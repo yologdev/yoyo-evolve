@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code shape for the reverted task — the backlog points at a real, decided bug.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,150p' src/prompt.rs ✓ (3ms)
+ ✓ (10ms)
+  2 tools completed in 3.2s (2 ✓)
+
+The FatalError variant already exists at HEAD — so part of that work landed. Let me check whether it's actually wired through.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FatalError\|fatal_error…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,650p' src/prompt.rs ✓ (5ms)
+ ✓ (10ms)
+  2 tools completed in 8.5s (2 ✓)
+
+That backlog item already landed (Day 153 02:44). Let me verify the tree is green and check whether the landed version covered the whole spec.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,615p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,695p' src/prompt.rs … ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 8.3s (2 ✓)
+
+#646 landed fully with tests. Let me verify its payload — whether `FatalError actually reaches the had_error gate in repl.rs` (the reason the fix existed).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1015p' src/prompt.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "had_error\|last_api_err… ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 9.8s (2 ✓)
+
+Chain is complete. Now the sibling sweep my archive demands — do the other prompt entry points (`run_prompt_stream_json*`) have the same swallow?
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_prompt_stream_js… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1281,1420p' src/prompt.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1325 && NR<=1400' src/p… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1392p' src/prompt.r… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1368..1396 ✓ (1ms)
+  5 tools completed in 22.8s (5 ✓)
+
+Found the structural twin: handle_stream_json_events destructures Message::Assistant for usage only — stop_reason/error_message are ignored, so the exact #646 swallow is still live in stream-json mode. Let me confirm the payload matters.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_prompt_stream_json…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn state_for_test\|fn e… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,275p' src/main.rs &&… ✓ (5ms)
+  3 tools completed in 13.9s (3 ✓)
+
+Confirmed real bug with a worse payload than #646: in stream-json mode a fatal turn exits 0 — a dead turn reported as success to any harness. Let me see the vocabulary the interactive path already uses.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:563..609  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' src/prompt_retry… ✓ (1ms)
+ ✓ (5ms)
+  2 tools completed in 11.2s (2 ✓)
+
+I have the full picture. Writing the test first (it should go red), plus a shared const so the two transports can't drift.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StopReason" src/prompt.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/prompt.rs | g… ✓ (4ms)
+  2 tools completed in 3.6s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
