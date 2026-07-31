@@ -1372,10 +1372,27 @@ async fn handle_stream_json_events(
                         for msg in messages {
                             if let AgentMessage::Llm(Message::Assistant {
                                 usage: msg_usage,
+                                stop_reason,
+                                error_message,
                                 ..
                             }) = msg
                             {
                                 accumulate_usage(&mut usage, msg_usage);
+
+                                // #652/#654: surface-and-stop. A fatal turn must not report
+                                // success in stream-json mode. Mirrors handle_agent_end
+                                // (#646); never retried.
+                                if last_api_error.is_none()
+                                    && classify_stop_reason(stop_reason)
+                                        == StopHandling::InspectError
+                                {
+                                    let text = error_message.clone().unwrap_or_else(|| {
+                                        "turn ended with a fatal error".to_string()
+                                    });
+                                    if !is_benign_stream_end(&text) {
+                                        last_api_error = Some(text);
+                                    }
+                                }
                             }
                         }
                         // Finalize agent state
