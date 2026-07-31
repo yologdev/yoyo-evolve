@@ -1,0 +1,65 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual seam and the existing test shapes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1495,1545p' src/prompt.r… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1270,1420p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 2b03042c && git … ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1420p' src/prompt.r… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1365..1410 ✓ (1ms)
+  ▶ $ cd ~/.cargo/registry/src/*/ && ls -d yoagent-* 2>/dev/null; grep -n "pub fn assi…  ▶ $ grep -rn "pub fn mock\|impl MockProvider\|pub fn text" ~/.cargo/registry/src/*/y… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.14.2; grep -n…  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.14.2; sed -n … ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.14.2; grep -n… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "646" src/prompt.rs | he… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1965..1995 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2004,2110p' src/prompt.r… ✓ (5ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.14.2; sed -n … ✓ (5ms)
+  15 tools completed in 44.8s (15 ✓)
+
+Now adding the test.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 55 lines)
+  +     /// Drive `handle_stream_json_events` with a hand-fed event stream and return
+  +     /// the resulting `PromptOutcome`. The `rx` channel IS the seam: the agent
+  +     /// never produces anything, it only exists to satisfy the `&mut Agent`
+  +     /// parameter (same shape as `agent_messages_empty_until_finish_is_called`).
+  +     async fn stream_json_outcome_for(messages: Vec<AgentMessage>) -> PromptOutcome {
+  +         use yoagent::provider::MockProvider;
+  + 
+  +         let provider = MockProvider::text("unused");
+  +         let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+  +             .with_api_key("not-a-real-key");
+  + 
+  +         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+  +         tx.send(AgentEvent::AgentEnd { messages }).unwrap();
+  +         drop(tx); // closing the channel ends the loop
+  + 
+  +         let (outcome, _usage) = handle_stream_json_events(&mut agent, rx, "claude-test").await;
+  +         outcome
+  +     }
+  + 
+  +     #[tokio::test]
+  ... (35 more lines)
+ ✓ (1m 50s)
+  +     /// Drive `handle_stream_json_events` with a hand-fed event stream and return
+  +     /// the resulting `PromptOutcome`. The `rx` channel IS the seam: the agent
+  +     /// never produces anything, it only exists to satisfy the `&mut Agent`
+  +     /// parameter (same shape as `agent_messages_empty_until_finish_is_called`).
+  +     async fn stream_json_outcome_for(messages: Vec<AgentMessage>) -> PromptOutcome {
+  +         use yoagent::provider::MockProvider;
+  + 
+  +         let provider = MockProvider::text("unused");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib stream_json_fat… ✓ (113ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test stream_json_fatal 2>&… ✓ (147ms)
+  3 tools completed in 2m 1s (3 ✓)
+
+Now the red-check: temporarily remove the fix and confirm the test fails.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (36 lines) ✓ (22.8s)
+
+  watch: no files changed this turn — skipping
+

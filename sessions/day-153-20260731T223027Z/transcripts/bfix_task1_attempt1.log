@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the actual code path and the new tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_stream_json_even… ✓ (10ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1310,1450p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2060,2140p src/prompt.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1316,1420p src/prompt.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1316..1416 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --all | grep -… ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt.rs ✓ (5ms)
+  8 tools completed in 19.1s (8 ✓)
+
+The tests fail because the temporary "prove the pin pins" edit — commenting out the stop_reason/error_message bindings — was never reverted. Restoring the production arm:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/prompt.rs | se… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/prompt.rs > /t… ✓ (11ms)
+  ▶ read /tmp/head_prompt.rs:1370..1402 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (8 → 25 lines)
+                                if let AgentMessage::Llm(Message::Assistant {
+                                    usage: msg_usage,
+  +                                 stop_reason,
+  +                                 error_message,
+                                    ..
+                                }) = msg
+                                {
+                                    accumulate_usage(&mut usage, msg_usage);
+  + 
+  +                                 // #652/#654: surface-and-stop. A fatal turn must not report
+  +                                 // success in stream-json mode. Mirrors handle_agent_end
+  +                                 // (#646); never retried.
+  +                                 if last_api_error.is_none()
+  +                                     && classify_stop_reason(stop_reason)
+  +                                         == StopHandling::InspectError
+  +                                 {
+  +                                     let text = error_message.clone().unwrap_or_else(|| {
+  +                                         "turn ended with a fatal error".to_string()
+  +                                     });
+  +                                     if !is_benign_stream_end(&text) {
+  ... (5 more lines)
+ ✓ (1m 52s)
+                                if let AgentMessage::Llm(Message::Assistant {
+                                    usage: msg_usage,
+  +                                 stop_reason,
+  +                                 error_message,
+                                    ..
+                                }) = msg
+                                {
+                                    accumulate_usage(&mut usage, msg_usage);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat src/prompt.rs &&… ✓ (8ms)
+  5 tools completed in 2m 5s (5 ✓)
+
+The production arm is byte-identical to HEAD again; the diff is now test-only (+53, −0). Verifying:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (56.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 17s)
+  4 tools completed in 3m 21s (4 ✓)
+
+All green. Committing, per the task's verify+commit step:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (18 lines) ✓ (16ms)
+
+## Root cause
+
+The tests weren't wrong — the production fix was missing. The task's "prove the pin actually pins" step (temporarily remove the stop_reason / error_message bindings from the AgentEnd arm, confirm red) was performed but never reverted. git diff showed +53/−17: 53 test lines added, and the 17-line `#652/#654 fix from commit 2b03042c` deleted.
+
+So the run you saw was the red-check — both new tests failed exactly as they should when the arm stops setting last_api_error. That's evidence the pin works.
+
+## Fix
+
+Restored the AgentEnd arm in src/prompt.rs:1373-1397 to its HEAD state (stop_reason/error_message bindings + the classify_stop_reason / is_benign_stream_end check). Verified byte-identical to the previous commit — git diff against HEAD now reports 53 insertions, 0 deletions, i.e. test-only, honoring hard constraints #1 and #2.
+
+## Verification (all run, all green)
+
+• cargo build — clean
+• cargo test — 4620 passed, 0 failed (+89 integration), both `stream_json_fatal_*` tests pass
+• cargo clippy --all-targets -- -D warnings — clean
+• `cargo fmt -- --check` — clean
+
+Committed as fb56087, src/prompt.rs confirmed in the diff.
+
+  watch: no files changed this turn — skipping
+
