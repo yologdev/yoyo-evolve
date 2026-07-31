@@ -82,6 +82,25 @@ pub fn auto_discovered_skill_count() -> usize {
     *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
 }
 
+/// Directories that actually *contributed* auto-discovered skills this run.
+///
+/// The count above is a total across two directories (`~/.yoyo/skills/` and
+/// `.yoyo/skills/`), so it cannot answer "where did these come from?". Any
+/// surface that names a directory must read this, not hard-code one of them —
+/// a user whose skills all live in `~/.yoyo/skills/` was previously told they
+/// came from `.yoyo/skills/` and sent to an empty directory.
+static AUTO_DISCOVERED_SKILL_SOURCES: std::sync::OnceLock<Vec<String>> =
+    std::sync::OnceLock::new();
+
+/// Return the directories that contributed auto-discovered skills.
+///
+/// Empty means "not recorded" — either nothing was discovered, or discovery
+/// has not run yet. Callers must treat that as *unknown provenance* and say
+/// nothing about directories, rather than guessing one.
+pub fn auto_discovered_skill_sources() -> Vec<String> {
+    AUTO_DISCOVERED_SKILL_SOURCES.get().cloned().unwrap_or_default()
+}
+
 /// Directories passed via `--skills` on this run (empty if none or not yet parsed).
 static SKILL_FLAG_DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
 
@@ -106,6 +125,9 @@ pub fn skill_flag_dirs() -> Vec<std::path::PathBuf> {
 fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     let mut auto_skills = SkillSet::empty();
     let mut count = 0usize;
+    // Directories that actually yielded at least one skill. A directory that
+    // exists but is empty contributed nothing and must not be named.
+    let mut sources: Vec<String> = Vec::new();
 
     // 1. User-global: ~/.yoyo/skills/
     if let Ok(home) = std::env::var("HOME") {
@@ -113,6 +135,9 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
         if global_dir.is_dir() {
             match SkillSet::load_dir(&global_dir, "global") {
                 Ok(set) => {
+                    if !set.is_empty() {
+                        sources.push("~/.yoyo/skills/".to_string());
+                    }
                     count += set.len();
                     auto_skills.merge(set);
                 }
@@ -131,6 +156,9 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     if project_dir.is_dir() {
         match SkillSet::load_dir(&project_dir, "project") {
             Ok(set) => {
+                if !set.is_empty() {
+                    sources.push(".yoyo/skills/".to_string());
+                }
                 count += set.len();
                 auto_skills.merge(set);
             }
@@ -154,6 +182,7 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     }
 
     let _ = AUTO_DISCOVERED_SKILL_COUNT.set(count);
+    let _ = AUTO_DISCOVERED_SKILL_SOURCES.set(sources);
     count
 }
 

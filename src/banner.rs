@@ -38,9 +38,11 @@ pub fn print_banner() {
     println!("{DIM}  Type /help for commands, /quit to exit{RESET}");
 
     // Show auto-loaded skill count if any were found
-    let auto_count = crate::cli::auto_discovered_skill_count();
-    if auto_count > 0 {
-        println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+    if let Some(line) = auto_skill_line(
+        crate::cli::auto_discovered_skill_count(),
+        &crate::cli::auto_discovered_skill_sources(),
+    ) {
+        println!("{DIM}  \u{1F9E0} {line}{RESET}");
     }
 
     // Warn if EXA_API_KEY is missing — web search won't work without it
@@ -51,6 +53,31 @@ pub fn print_banner() {
     }
 
     println!();
+}
+
+/// Build the banner's auto-discovered-skills line, or `None` when there is
+/// nothing to say.
+///
+/// Skills are auto-discovered from **two** directories (`~/.yoyo/skills/` and
+/// `.yoyo/skills/`), so the count alone cannot answer "where did these come
+/// from?". This names only the directories that actually contributed, which is
+/// the difference between a helpful pointer and sending a user to an empty
+/// directory.
+///
+/// `sources` being empty is an explicit third value — *unknown provenance* —
+/// and is rendered without any directory claim rather than being absorbed into
+/// whichever directory is most convenient to name.
+pub(crate) fn auto_skill_line(count: usize, sources: &[String]) -> Option<String> {
+    if count == 0 {
+        return None;
+    }
+    if sources.is_empty() {
+        return Some(format!("{count} skill(s) auto-loaded"));
+    }
+    Some(format!(
+        "{count} skill(s) auto-loaded from {}",
+        sources.join(", ")
+    ))
 }
 
 /// Build the project context line for the startup banner.
