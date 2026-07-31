@@ -1058,6 +1058,38 @@ mod tests {
         assert!(!is_side_pull("/side "));
     }
 
+    /// Pins the behaviour the Day 153 blind experiment mispredicted (h2): the
+    /// pull discriminator is EXACT whole-argument equality on the bare word
+    /// `pull`, not a head-of-string keyword match. The guess said a real
+    /// question starting with "pull" would be swallowed as a pull; it is not.
+    ///
+    /// The flip side, also pinned here: the flag-shaped spellings a user may
+    /// reasonably try (`/side --pull`, `/side -p`) are NOT pulls — they are
+    /// forwarded to the side agent as questions. That is the residual cost of
+    /// the strict form, and it is behaviour, not a defect, so it is pinned
+    /// rather than "fixed".
+    #[test]
+    fn test_side_pull_discriminator_is_exact_not_prefix() {
+        // A genuine question that merely begins with the word "pull" is a
+        // question, not a pull.
+        assert!(!is_side_pull("/side pull requests vs merge commits?"));
+        assert_eq!(
+            parse_side_question("/side pull requests vs merge commits?").unwrap(),
+            "pull requests vs merge commits?"
+        );
+
+        // Flag-shaped spellings are not recognised as the subcommand; they go
+        // to the model as questions.
+        assert!(!is_side_pull("/side --pull"));
+        assert!(!is_side_pull("/side -p"));
+        assert_eq!(parse_side_question("/side --pull").unwrap(), "--pull");
+        assert_eq!(parse_side_question("/side -p").unwrap(), "-p");
+
+        // Only the bare word, alone, is the subcommand.
+        assert!(is_side_pull("/side pull"));
+        assert!(!is_side_pull("/side Pull"));
+    }
+
     #[test]
     fn test_parse_quick_question_basic() {
         let q = parse_quick_question("/quick what does borrow of moved value mean?");
