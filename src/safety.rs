@@ -1735,6 +1735,57 @@ fn detect_redirection(stripped: &str) -> Option<String> {
 /// (first token of a `;`/`|`/`&`/`(`/backtick-separated segment, after
 /// unwrapping `sudo`/`env`/`xargs`-style wrappers and env assignments),
 /// so `grep tee file` and paths merely containing `mv` pass.
+/// Perl switches that consume the rest of their token as an argument
+/// (`-e 'code'`, `-MList::Util`, `-I/opt/lib`). Cluster scanning stops at
+/// one of these, so a lowercase `i` inside the *argument* (`-I/opt/lib`,
+/// `-MList::Util`) is never mistaken for the in-place switch.
+const PERL_ARG_TAKING_SWITCHES: &[char] = &['e', 'E', 'M', 'm', 'I', 'F', 'x', 'S', 'D'];
+
+/// Does this `perl` invocation edit files in place (`-i`)?
+///
+/// `perl -pi -e 's/a/b/' file` is a routine file mutation that the write-verb
+/// list misses (the command is `perl`, not a write verb) — the same class as
+/// `sed -i`, which is already caught.
+///
+/// Perl's own switches must precede the script/file arguments, so only the
+/// leading flag run is scanned and the scan stops at the first non-flag token.
+/// That keeps `perl script.pl -i` (where `-i` belongs to the *script*) from
+/// being read as an in-place edit. Clustered forms (`-pi`, `-ni.bak`) count.
+fn perl_edits_in_place(segment: &str) -> bool {
+    let mut tokens = segment.split_whitespace();
+    // Advance past wrappers / env assignments up to and including `perl`.
+    let found_perl = tokens.by_ref().any(|t| {
+        let base = t.rsplit('/').next().unwrap_or(t);
+        base == "perl"
+    });
+    if !found_perl {
+        return false;
+    }
+    for token in tokens {
+        // `--` ends switch parsing; a long option is never `-i`.
+        if token == "--" {
+            return false;
+        }
+        let Some(cluster) = token.strip_prefix('-') else {
+            // First non-flag token: the script or file argument. Anything
+            // after this belongs to the script, not to perl.
+            return false;
+        };
+        if cluster.is_empty() || cluster.starts_with('-') {
+            continue;
+        }
+        for c in cluster.chars() {
+            if c == 'i' {
+                return true;
+            }
+            if !c.is_ascii_alphabetic() || PERL_ARG_TAKING_SWITCHES.contains(&c) {
+                break;
+            }
+        }
+    }
+    false
+}
+
 pub fn detect_write_command(cmd: &str) -> Option<String> {
     let stripped = strip_quoted_regions(cmd);
 
@@ -1753,6 +1804,9 @@ pub fn detect_write_command(cmd: &str) -> Option<String> {
                 .any(|t| t.starts_with("-i") || t.starts_with("--in-place"))
         {
             return Some("`sed -i` edits files in place".to_string());
+        }
+        if base == "perl" && perl_edits_in_place(segment) {
+            return Some("`perl -i` edits files in place".to_string());
         }
         if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
             return Some("`dd of=...` writes to a file".to_string());
@@ -2850,6 +2904,9 @@ mod tests {
             "ln -s a b",
             "sed -i 's/a/b/' file.txt",
             "sed --in-place=.bak 's/a/b/' f",
+            "perl -pi -e 's/a/b/' file.txt", // clustered in-place switch
+            "perl -i.bak -pe 's/a/b/' f",    // in-place with a backup suffix
+            "sudo perl -i -pe 's/a/b/' f",   // wrapper-unwrapped perl -i
             "dd if=/dev/zero of=/tmp/img bs=1M",
             "echo hi > out.txt",                // truncating redirection
             "cat a >> b",                       // appending redirection
@@ -2891,8 +2948,14 @@ mod tests {
             "cargo check 2>&1",       // fd duplication, not a file write
             "grep foo . 2>/dev/null", // /dev/null target is not a write
             "git diff > /dev/null",
-            "sed -n '5p' file", // sed without -i is read-only
-            "dd if=/dev/sda",   // dd without of= writes nothing
+            "sed -n '5p' file",             // sed without -i is read-only
+            "perl -ne 'print' file",        // perl without -i only reads
+            "perl -e 'print 1'",            // one-liner, no file touched
+            "perl -MList::Util -e 'print'", // `i` inside a -M argument
+            "perl -I/opt/lib -e 'print'",   // `i` inside an -I argument
+            "perl script.pl -i",            // -i belongs to the script
+            "grep perl file",               // perl as an argument, not command
+            "dd if=/dev/sda",               // dd without of= writes nothing
             "man mv",
             "rsync -n -a src/ dst/",        // rsync --dry-run does not write
             "rsync --dry-run -a src/ dst/", // long form of the dry-run near-miss
@@ -2927,6 +2990,12 @@ mod tests {
         assert!(
             what.contains("sed -i"),
             "message should name sed -i: {what}"
+        );
+
+        let what = detect_write_command("perl -pi -e 's/a/b/' f").expect("perl -i must match");
+        assert!(
+            what.contains("perl -i"),
+            "message should name perl -i: {what}"
         );
     }
 
