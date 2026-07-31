@@ -128,6 +128,16 @@ enum PromptResult {
     RetriableError { error_msg: String, usage: Usage },
     /// A context overflow error — caller should compact and retry.
     ContextOverflow { error_msg: String, usage: Usage },
+    /// A fatal, non-retriable turn failure (#646).
+    ///
+    /// The turn ended with `StopReason::Error` for a reason that is neither a
+    /// context overflow nor a known-retriable API class — e.g. yoagent 0.14.1+
+    /// reporting that a tool call's arguments never assembled. Re-running the
+    /// identical prompt can reproduce it and burn a slot, so this is
+    /// **surface-and-stop**: it never feeds the auto-retry path, it only makes
+    /// the failure visible to the caller so a turn that accomplished nothing
+    /// cannot read as a clean `Done`.
+    FatalError { error_msg: String, usage: Usage },
 }
 
 /// Execute a single prompt attempt and process all events.
@@ -154,7 +164,25 @@ async fn run_prompt_once_with_messages(
     handle_prompt_events(agent, rx, changes, model).await
 }
 
+/// True when a `StopReason::Error` message names the #646 class: the turn's
+/// tool-call arguments never assembled, so the tool never ran.
+///
+/// This class is deliberately checked BEFORE `is_retriable_error`: the message
+/// can incidentally contain a retriable keyword (e.g. "incomplete"), but
+/// re-running the identical prompt can reproduce a dropped-args turn and burn a
+/// slot. Surface-and-stop wins here (creator decision, 2026-07-30).
+fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+    let lower = error_msg.to_lowercase();
+    (lower.contains("tool call") || lower.contains("tool_call") || lower.contains("arguments"))
+        && (lower.contains("never assembled")
+            || lower.contains("never completed")
+            || lower.contains("were not assembled")
+            || lower.contains("incomplete arguments")
+            || lower.contains("no arguments"))
+}
+
 /// Internal state for the prompt event-handling loop.
+/// Bundles the 15+ local variables that were previously declared inline.
 /// Bundles the 15+ local variables that were previously declared inline.
 struct PromptEventState {
     usage: Usage,
@@ -164,6 +192,8 @@ struct PromptEventState {
     collected_text: String,
     retriable_error: Option<String>,
     overflow_error: Option<String>,
+    /// #646: a fatal, non-retriable `StopReason::Error`. Surface-and-stop.
+    fatal_error: Option<String>,
     last_tool_error: Option<String>,
     last_tool_name: Option<String>,
     md_renderer: MarkdownRenderer,
@@ -200,6 +230,7 @@ impl PromptEventState {
             collected_text: String::new(),
             retriable_error: None,
             overflow_error: None,
+            fatal_error: None,
             last_tool_error: None,
             last_tool_name: None,
             md_renderer: MarkdownRenderer::new(),
@@ -541,14 +572,31 @@ impl PromptEventState {
 
                 match classify_stop_reason(stop_reason) {
                     StopHandling::InspectError => {
-                        if let Some(err_msg) = error_message {
-                            if self.in_text {
-                                println!();
-                                self.in_text = false;
-                            }
+                        if self.in_text {
+                            println!();
+                            self.in_text = false;
+                        }
+                        // #646: `StopReason::Error` with no message at all is the
+                        // `pause_turn` shape. Nothing used to be printed and nothing
+                        // set — a silent dead turn. Surface it honestly as incomplete;
+                        // this transport has no resume path.
+                        let empty_message = error_message.as_deref().unwrap_or("").is_empty();
+                        if empty_message {
+                            let msg = "turn ended with an error but no message — \
+                                       treating the response as incomplete (no resume path)";
+                            eprintln!("\n{RED}  error: {msg}{RESET}");
+                            self.fatal_error = Some(msg.to_string());
+                        } else if let Some(err_msg) = error_message {
                             // Check for context overflow first — needs special handling
                             if is_overflow_error(err_msg) {
                                 self.overflow_error = Some(err_msg.clone());
+                            } else if is_dropped_tool_args_error(err_msg) {
+                                // #646: this class is deterministic — re-running the
+                                // identical prompt can reproduce it and burn a slot.
+                                // Surface-and-stop wins even though the message can
+                                // incidentally contain a retriable keyword.
+                                eprintln!("\n{RED}  error: {err_msg}{RESET}");
+                                self.fatal_error = Some(err_msg.clone());
                             } else if is_retriable_error(err_msg) {
                                 // Check if this error is worth retrying
                                 self.retriable_error = Some(err_msg.clone());
@@ -623,6 +671,14 @@ impl PromptEventState {
     fn into_result(self) -> PromptResult {
         if let Some(err_msg) = self.overflow_error {
             PromptResult::ContextOverflow {
+                error_msg: err_msg,
+                usage: self.usage,
+            }
+        } else if let Some(err_msg) = self.fatal_error {
+            // #646: a fatal turn failure is deliberately checked BEFORE the
+            // retriable branch — surface-and-stop wins even if the message
+            // incidentally contains a retriable keyword.
+            PromptResult::FatalError {
                 error_msg: err_msg,
                 usage: self.usage,
             }
@@ -929,7 +985,26 @@ pub async fn run_prompt_with_changes(
                         );
                         api_error = Some(retry_err);
                     }
+                    PromptResult::FatalError {
+                        error_msg: retry_err,
+                        usage: retry_usage,
+                    } => {
+                        // #646: already printed by handle_agent_end; surface for
+                        // control flow without retrying.
+                        accumulate_usage(&mut total_usage, &retry_usage);
+                        api_error = Some(retry_err);
+                    }
                 }
+                break;
+            }
+            PromptResult::FatalError { error_msg, usage } => {
+                // #646: surface-and-stop. The message was already shown by
+                // handle_agent_end. Re-running the identical prompt can reproduce
+                // this class of failure, so it is deliberately NOT retried — but it
+                // must not read as a clean `Done` either, so record it as an API
+                // error the caller can see.
+                accumulate_usage(&mut total_usage, &usage);
+                api_error = Some(error_msg);
                 break;
             }
         }
@@ -1163,6 +1238,13 @@ pub async fn run_prompt_with_content_and_changes(
                     "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
                 );
                 eprintln!("{DIM}  ({error_msg}){RESET}");
+                api_error = Some(error_msg);
+                break;
+            }
+            PromptResult::FatalError { error_msg, usage } => {
+                // #646: surface-and-stop — already printed by handle_agent_end,
+                // never auto-retried, but visible to the caller.
+                accumulate_usage(&mut total_usage, &usage);
                 api_error = Some(error_msg);
                 break;
             }
@@ -1877,6 +1959,127 @@ mod tests {
             }
             _ => panic!("expected PromptResult::ContextOverflow"),
         }
+    }
+
+    /// Build an assistant message that ended with `StopReason::Error`.
+    fn error_assistant_msg(error_message: Option<&str>) -> AgentMessage {
+        let base = Message::assistant(
+            Vec::new(),
+            StopReason::Error,
+            "claude-test",
+            "anthropic",
+            Usage::default(),
+        );
+        let msg = match error_message {
+            Some(m) => base.with_error_message(m),
+            None => base,
+        };
+        AgentMessage::Llm(msg)
+    }
+
+    fn state_for_test() -> PromptEventState {
+        let mut state = PromptEventState::new();
+        if let Some(s) = state.spinner.take() {
+            s.stop();
+        }
+        state
+    }
+
+    #[test]
+    fn test_fatal_stop_error_is_caller_visible_not_done() {
+        // #646: a StopReason::Error whose message is neither an overflow nor a
+        // known-retriable class used to print a red line and set NO outcome
+        // field, so into_result() returned Done — the turn was visible on
+        // screen but swallowed for control flow.
+        let mut state = state_for_test();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some(
+                "tool call arguments for `read_file` were never assembled",
+            ))],
+            "claude-test",
+        );
+        assert!(
+            state.fatal_error.is_some(),
+            "a non-retriable, non-overflow StopReason::Error must be recorded"
+        );
+        match state.into_result() {
+            PromptResult::FatalError { error_msg, .. } => {
+                assert!(error_msg.contains("read_file"));
+            }
+            PromptResult::Done { .. } => {
+                panic!("fatal StopReason::Error must NOT surface as Done (the swallow bug)")
+            }
+            _ => panic!("expected PromptResult::FatalError"),
+        }
+    }
+
+    #[test]
+    fn test_fatal_stop_error_without_message_surfaces_as_incomplete() {
+        // pause_turn arrives as StopReason::Error with no error_message at all.
+        // Previously nothing was printed and nothing was set — a totally silent
+        // dead turn. Surface it honestly as incomplete; there is no resume path.
+        let mut state = state_for_test();
+        state.handle_agent_end(vec![error_assistant_msg(None)], "claude-test");
+        let fatal = state
+            .fatal_error
+            .clone()
+            .expect("empty-message StopReason::Error must still be recorded");
+        assert!(
+            fatal.to_lowercase().contains("incomplete"),
+            "expected an honest 'incomplete' message, got: {fatal}"
+        );
+        assert!(
+            matches!(state.into_result(), PromptResult::FatalError { .. }),
+            "empty-message fatal error must not read as Done"
+        );
+    }
+
+    #[test]
+    fn test_fatal_error_does_not_hijack_retriable_or_overflow() {
+        // Surface-and-stop must not steal the retriable/overflow paths: those
+        // classes still get their own results so the retry machinery works.
+        let mut state = state_for_test();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some("429 Too Many Requests"))],
+            "claude-test",
+        );
+        assert!(
+            state.fatal_error.is_none(),
+            "a retriable error must not be marked fatal"
+        );
+        assert!(matches!(
+            state.into_result(),
+            PromptResult::RetriableError { .. }
+        ));
+
+        let mut state = state_for_test();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some(
+                "prompt is too long: 250000 tokens",
+            ))],
+            "claude-test",
+        );
+        assert!(state.fatal_error.is_none());
+        assert!(matches!(
+            state.into_result(),
+            PromptResult::ContextOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn test_benign_stream_end_is_not_fatal() {
+        // #612: "stream ended" is a known-benign outcome — the response was
+        // delivered in full. It must stay a clean Done, not become an error.
+        let mut state = state_for_test();
+        state.collected_text = "full response".to_string();
+        state.handle_agent_end(
+            vec![error_assistant_msg(Some(
+                "stream ended without a terminator",
+            ))],
+            "claude-test",
+        );
+        assert!(state.fatal_error.is_none());
+        assert!(matches!(state.into_result(), PromptResult::Done { .. }));
     }
 
     #[test]
