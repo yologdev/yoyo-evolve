@@ -2098,6 +2098,59 @@ mod tests {
         assert!(matches!(state.into_result(), PromptResult::Done { .. }));
     }
 
+    /// Drive `handle_stream_json_events` with a hand-fed event stream and return
+    /// the resulting `PromptOutcome`. The `rx` channel IS the seam: the agent
+    /// never produces anything, it only exists to satisfy the `&mut Agent`
+    /// parameter (same shape as `agent_messages_empty_until_finish_is_called`).
+    async fn stream_json_outcome_for(messages: Vec<AgentMessage>) -> PromptOutcome {
+        use yoagent::provider::MockProvider;
+
+        let provider = MockProvider::text("unused");
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+            .with_api_key("not-a-real-key");
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tx.send(AgentEvent::AgentEnd { messages }).unwrap();
+        drop(tx); // closing the channel ends the loop
+
+        let (outcome, _usage) = handle_stream_json_events(&mut agent, rx, "claude-test").await;
+        outcome
+    }
+
+    #[tokio::test]
+    async fn stream_json_fatal_stop_reason_surfaces_api_error() {
+        // #654: the four #646 tests above all drive handle_agent_end — the
+        // *interactive* path. Nothing exercised stream-json mode, so the
+        // AgentEnd arm could lose its stop_reason/error_message bindings and
+        // the suite would stay green while `yoyo -p --output-format stream-json`
+        // silently exited 0 on a fatal turn.
+        let outcome = stream_json_outcome_for(vec![error_assistant_msg(Some(
+            "tool call(s) with unusable arguments, not executed: list_files",
+        ))])
+        .await;
+
+        let err = outcome.last_api_error.as_deref().unwrap_or_else(|| {
+            panic!("#654: a fatal StopReason::Error must surface as last_api_error (exit 1)")
+        });
+        assert!(
+            err.contains("list_files"),
+            "the real error text must survive to the caller, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_json_fatal_stop_reason_without_message_still_surfaces() {
+        // The pause_turn shape: StopReason::Error with no error_message at all.
+        // Exercises the `unwrap_or_else` fallback in the AgentEnd arm — a
+        // silent dead turn must not read as a clean success either.
+        let outcome = stream_json_outcome_for(vec![error_assistant_msg(None)]).await;
+
+        assert!(
+            outcome.last_api_error.is_some(),
+            "#654: an empty-message fatal turn must still surface as last_api_error"
+        );
+    }
+
     #[test]
     fn test_prompt_event_state_into_result_overflow_takes_priority() {
         // When both overflow_error and retriable_error are set,
