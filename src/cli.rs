@@ -384,6 +384,62 @@ pub fn warn_unknown_flags(args: &[String], flags_needing_values: &[&str]) {
     }
 }
 
+/// A problem found while validating that value-taking flags actually got values.
+///
+/// Owned (rather than borrowing like [`FlagValueCheck`]) so the scan can be a
+/// pure function returning a list, with all printing/exiting left to the caller.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FlagIssue {
+    /// The flag's "value" is itself flag-shaped (e.g. `--model --skills`).
+    FlagLike { flag: String, next: String },
+    /// The flag was followed by an empty/whitespace-only value.
+    Empty { flag: String },
+    /// The flag was the last token — nothing followed it.
+    Missing { flag: String },
+}
+
+/// Validate that every value-taking flag on the command line has a usable value.
+///
+/// This walks the args left-to-right with the same `skip_next` discipline as
+/// [`collect_positional_args`] and [`warn_unknown_flags`], which matters twice:
+///
+/// 1. **Every occurrence is checked, not just the first.** The previous
+///    implementation used `args.iter().position(..)`, so for a *repeatable*
+///    flag (`--skills`, `--allow`, `--deny`, `--mcp`, …) only the first one was
+///    ever validated — while `collect_repeatable_flag` consumes *all* of them.
+///    Guard and consumer disagreeing meant `--allow a --allow --deny b` sailed
+///    through with zero warnings and silently injected the literal string
+///    `--deny` into the allow-list.
+/// 2. **A flag name appearing as a value is not mistaken for a flag.**
+///    `yoyo -p "--model"` used to be rejected with "--model requires a value",
+///    because `position()` found the *value* token.
+pub(crate) fn check_flag_values(args: &[String], flags_needing_values: &[&str]) -> Vec<FlagIssue> {
+    let mut issues = Vec::new();
+    let mut skip_next = false;
+    for (i, arg) in args.iter().enumerate().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if !flags_needing_values.contains(&arg.as_str()) {
+            continue;
+        }
+        // This token really is a value-taking flag; whatever follows is its value.
+        skip_next = true;
+        let flag = arg.clone();
+        match require_flag_value(args.get(i + 1)) {
+            FlagValueCheck::Ok(_) => {}
+            FlagValueCheck::FlagLike(next) => issues.push(FlagIssue::FlagLike {
+                flag,
+                next: next.to_string(),
+            }),
+            FlagValueCheck::Empty => issues.push(FlagIssue::Empty { flag }),
+            FlagValueCheck::Missing => issues.push(FlagIssue::Missing { flag }),
+        }
+    }
+    issues
+}
+
 // Config-file path resolution and loading functions live in config.rs.
 // Re-exported below so existing `use crate::cli::` imports keep working.
 
@@ -854,25 +910,20 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--fallback",
         "--disallowed-tools",
     ];
-    for flag in &flags_needing_values {
-        if let Some(pos) = args.iter().position(|a| a == flag) {
-            match require_flag_value(args.get(pos + 1)) {
-                FlagValueCheck::Ok(_) => {}
-                FlagValueCheck::FlagLike(next) => {
-                    eprintln!(
-                        "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'"
-                    );
-                }
-                FlagValueCheck::Empty => {
-                    eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
-                    eprintln!("Run with --help for usage information.");
-                    std::process::exit(1);
-                }
-                FlagValueCheck::Missing => {
-                    eprintln!("{RED}error:{RESET} {flag} requires a value");
-                    eprintln!("Run with --help for usage information.");
-                    std::process::exit(1);
-                }
+    for issue in check_flag_values(args, &flags_needing_values) {
+        match issue {
+            FlagIssue::FlagLike { flag, next } => {
+                eprintln!("{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'");
+            }
+            FlagIssue::Empty { flag } => {
+                eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
+                eprintln!("Run with --help for usage information.");
+                std::process::exit(1);
+            }
+            FlagIssue::Missing { flag } => {
+                eprintln!("{RED}error:{RESET} {flag} requires a value");
+                eprintln!("Run with --help for usage information.");
+                std::process::exit(1);
             }
         }
     }
@@ -1663,6 +1714,75 @@ mod tests {
             &flags_needing_values,
         );
         warn_unknown_flags(&["yoyo".to_string()], &flags_needing_values);
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_check_flag_values_clean_command_line_has_no_issues() {
+        let flags = ["--model", "--allow"];
+        let args = argv(&["yoyo", "--model", "opus", "--allow", "bash", "do a thing"]);
+        assert_eq!(check_flag_values(&args, &flags), vec![]);
+    }
+
+    #[test]
+    fn test_check_flag_values_checks_every_occurrence_not_just_the_first() {
+        // `position()` only ever validated the FIRST `--allow`, while
+        // collect_repeatable_flag consumes all of them — so the second one
+        // silently swallowed `--deny` as its value.
+        let flags = ["--allow", "--deny"];
+        let args = argv(&["yoyo", "--allow", "a", "--allow", "--deny", "b"]);
+        assert_eq!(
+            check_flag_values(&args, &flags),
+            vec![FlagIssue::FlagLike {
+                flag: "--allow".to_string(),
+                next: "--deny".to_string(),
+            }],
+            "the second --allow swallowing --deny must be reported"
+        );
+    }
+
+    #[test]
+    fn test_check_flag_values_flag_name_used_as_a_value_is_not_a_flag() {
+        // `yoyo -p "--model"` — the token is a prompt value, not a flag.
+        let flags = ["--model", "-p"];
+        let args = argv(&["yoyo", "-p", "--model"]);
+        assert_eq!(
+            check_flag_values(&args, &flags),
+            vec![FlagIssue::FlagLike {
+                flag: "-p".to_string(),
+                next: "--model".to_string(),
+            }],
+            "only -p should be reported; --model here is a value, not a flag missing one"
+        );
+    }
+
+    #[test]
+    fn test_check_flag_values_missing_and_empty() {
+        let flags = ["--model"];
+        assert_eq!(
+            check_flag_values(&argv(&["yoyo", "--model"]), &flags),
+            vec![FlagIssue::Missing {
+                flag: "--model".to_string()
+            }]
+        );
+        assert_eq!(
+            check_flag_values(&argv(&["yoyo", "--model", "  "]), &flags),
+            vec![FlagIssue::Empty {
+                flag: "--model".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn test_check_flag_values_negative_number_is_a_value() {
+        let flags = ["--temperature"];
+        assert_eq!(
+            check_flag_values(&argv(&["yoyo", "--temperature", "-0.1"]), &flags),
+            vec![]
+        );
     }
 
     #[test]
