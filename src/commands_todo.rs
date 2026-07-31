@@ -200,6 +200,13 @@ pub struct BoardTask {
     pub issue: String,
     /// Files listed on the `Files:` line
     pub files: String,
+    /// The raw `Status:` value when it was present but not recognized.
+    ///
+    /// This is the explicit third value: "no Status line" (silent backlog) and
+    /// "Status line I couldn't read" are different situations, and the second
+    /// must not be absorbed by the first. The task still lands in the backlog
+    /// bucket so it never disappears from the board -- but the board says so.
+    pub unrecognized_status: Option<String>,
 }
 
 /// Parse a single task file's content into a `BoardTask`.
@@ -208,14 +215,23 @@ fn parse_task_file(id: &str, content: &str) -> BoardTask {
     let mut status = "backlog".to_string();
     let mut issue = "none".to_string();
     let mut files = String::new();
+    let mut unrecognized_status: Option<String> = None;
 
     for line in content.lines() {
         if let Some(val) = line.strip_prefix("Title:") {
             title = val.trim().to_string();
         } else if let Some(val) = line.strip_prefix("Status:") {
-            let s = val.trim().to_lowercase();
-            if s == "backlog" || s == "active" || s == "done" {
-                status = s;
+            // Derive from the one function that owns the status vocabulary --
+            // hand-typing the list here is what let reader and writer drift.
+            let raw = val.trim();
+            if raw.is_empty() {
+                // `Status:` with no value == no status. Silent backlog default.
+            } else {
+                match normalize_board_status(raw) {
+                    Some(s) => status = s.to_string(),
+                    // Explicit third value: remembered, reported, not swallowed.
+                    None => unrecognized_status = Some(raw.to_string()),
+                }
             }
         } else if let Some(val) = line.strip_prefix("Issue:") {
             issue = val.trim().to_string();
@@ -230,6 +246,7 @@ fn parse_task_file(id: &str, content: &str) -> BoardTask {
         status,
         issue,
         files,
+        unrecognized_status,
     }
 }
 
@@ -340,6 +357,18 @@ fn render_board(tasks: &[BoardTask], goal: Option<&str>) -> String {
         active.len(),
         done.len()
     ));
+
+    // Statuses I couldn't read are shown in the backlog bucket above (losing the
+    // task would be worse), but they get said out loud here so the board never
+    // reports the wrong bucket with a straight face.
+    for t in tasks.iter() {
+        if let Some(raw) = &t.unrecognized_status {
+            out.push_str(&format!(
+                "{}  warning: {}.md has unrecognized status '{}' -- shown as backlog{}\n",
+                DIM, t.id, raw, RESET
+            ));
+        }
+    }
 
     out
 }
@@ -855,6 +884,68 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_task_file_accepts_writer_aliases() {
+        // The writer (normalize_board_status) teaches these spellings; the reader
+        // must accept every one of them or the board describes the wrong bucket.
+        for alias in ["in-progress", "in_progress", "inprogress", "wip", "WIP"] {
+            let content = format!("Title: Aliased\nStatus: {alias}\n");
+            let task = parse_task_file("task_01", &content);
+            assert_eq!(task.status, "active", "alias {alias} should map to active");
+            assert_eq!(task.unrecognized_status, None);
+        }
+    }
+
+    #[test]
+    fn test_parse_task_file_accepts_done_aliases() {
+        for alias in ["complete", "completed", "Done"] {
+            let content = format!("Title: Aliased\nStatus: {alias}\n");
+            let task = parse_task_file("task_01", &content);
+            assert_eq!(task.status, "done", "alias {alias} should map to done");
+            assert_eq!(task.unrecognized_status, None);
+        }
+    }
+
+    #[test]
+    fn test_parse_task_file_missing_status_is_silent_backlog() {
+        // No `Status:` line at all -- backlog is the correct default and must
+        // stay quiet (no warning to render).
+        let content = "Title: Some task\nFiles: src/main.rs\n";
+        let task = parse_task_file("task_02", content);
+        assert_eq!(task.status, "backlog");
+        assert_eq!(task.unrecognized_status, None);
+        // An empty `Status:` value counts as missing, not as a typo.
+        let task = parse_task_file("task_03", "Title: T\nStatus:   \n");
+        assert_eq!(task.status, "backlog");
+        assert_eq!(task.unrecognized_status, None);
+    }
+
+    #[test]
+    fn test_parse_task_file_typo_status_is_audible() {
+        // The near-miss side: a typo must not vanish into the backlog bucket
+        // silently. It still appears on the board, but it announces itself.
+        let content = "Title: Typo'd status\nStatus: activ\n";
+        let task = parse_task_file("task_03", content);
+        assert_eq!(task.unrecognized_status.as_deref(), Some("activ"));
+
+        let output = render_board(&[task], None);
+        assert!(
+            output.contains("task_03"),
+            "unrecognized task must still appear on the board: {output}"
+        );
+        assert!(
+            output.contains("unrecognized status") && output.contains("activ"),
+            "board must warn about the unrecognized status: {output}"
+        );
+    }
+
+    #[test]
+    fn test_render_board_no_warning_when_all_statuses_known() {
+        let tasks = vec![parse_task_file("task_01", "Title: Fine\nStatus: wip\n")];
+        let output = render_board(&tasks, None);
+        assert!(!output.contains("unrecognized status"), "{output}");
+    }
+
+    #[test]
     fn test_read_task_files_empty_dir() {
         let tmp = make_temp_dir();
         let tasks = read_task_files(tmp.path().to_str().unwrap());
@@ -893,6 +984,7 @@ mod tests {
                 status: "backlog".into(),
                 issue: "none".into(),
                 files: String::new(),
+                unrecognized_status: None,
             },
             BoardTask {
                 id: "task_02".into(),
@@ -900,6 +992,7 @@ mod tests {
                 status: "active".into(),
                 issue: "#10".into(),
                 files: String::new(),
+                unrecognized_status: None,
             },
             BoardTask {
                 id: "task_03".into(),
@@ -907,6 +1000,7 @@ mod tests {
                 status: "done".into(),
                 issue: "none".into(),
                 files: String::new(),
+                unrecognized_status: None,
             },
         ];
         let output = render_board(&tasks, Some("Build it"));
