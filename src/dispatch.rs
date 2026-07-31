@@ -340,6 +340,32 @@ fn resolve_cd_target_with_home(
     Ok(target.canonicalize().unwrap_or(target))
 }
 
+/// The working directory that status/config views should *report*.
+///
+/// [`DispatchContext::cwd`] is captured once when the REPL starts and is held
+/// as a shared `&str`: `/cd` changes the process-global cwd via
+/// `std::env::set_current_dir` and structurally cannot write back through it.
+/// A view that renders `ctx.cwd` directly therefore keeps reporting the
+/// directory the session STARTED in — confidently, with no warning — for the
+/// rest of the session. That is the quiet failure: the line is true about the
+/// wrong object. Read the live value instead, and keep the captured one only
+/// as a fallback for when `current_dir()` fails (deleted or unreadable cwd),
+/// which is the one case it is still the best answer available.
+///
+/// Split from [`current_cwd_display`] so the decision is unit-testable without
+/// mutating the process-global cwd (racy across test threads).
+fn effective_cwd(startup: &str, live: Option<std::path::PathBuf>) -> String {
+    match live {
+        Some(p) => p.display().to_string(),
+        None => startup.to_string(),
+    }
+}
+
+/// [`effective_cwd`] applied to the real process cwd.
+fn current_cwd_display(startup: &str) -> String {
+    effective_cwd(startup, std::env::current_dir().ok())
+}
+
 /// Result of dispatching a slash command in the REPL.
 #[derive(Debug)]
 pub(crate) enum CommandResult {
@@ -398,7 +424,7 @@ async fn dispatch_info_command(
             let ctx_max = effective_context_tokens();
             commands::handle_status(
                 &ctx.agent_config.model,
-                ctx.cwd,
+                &current_cwd_display(ctx.cwd),
                 ctx.session_total,
                 ctx.session_start.elapsed(),
                 ctx.turn_count,
@@ -755,6 +781,7 @@ async fn dispatch_config_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Config => {
+            let cwd_display = current_cwd_display(ctx.cwd);
             commands::handle_config(&ConfigDisplay {
                 provider: &ctx.agent_config.provider,
                 model: &ctx.agent_config.model,
@@ -769,7 +796,7 @@ async fn dispatch_config_command(
                 openapi_count: ctx.openapi_count,
                 hook_count: ctx.agent_config.shell_hooks.len(),
                 agent: ctx.agent,
-                cwd: ctx.cwd,
+                cwd: &cwd_display,
             });
             Some(CommandResult::Continue)
         }
@@ -2231,6 +2258,43 @@ mod tests {
                 "Exact match failed for: {input:?}"
             );
         }
+    }
+
+    // ── effective_cwd tests (Day 153 round-12 experiment, h1) ──
+
+    #[test]
+    fn test_effective_cwd_prefers_live_over_startup() {
+        // `/cd` mutates the process cwd, but DispatchContext.cwd is a `&str`
+        // captured once at REPL start and never written back. Views that report
+        // "cwd" must read the live value, or they truthfully report the wrong
+        // object: the directory the session STARTED in, long after /cd left it.
+        let live = std::path::PathBuf::from("/tmp/after-cd");
+        assert_eq!(
+            effective_cwd("/home/user/original", Some(live)),
+            "/tmp/after-cd"
+        );
+    }
+
+    #[test]
+    fn test_effective_cwd_falls_back_to_startup_when_live_unavailable() {
+        // A deleted or unreadable cwd makes current_dir() fail. Reporting the
+        // startup path is better than reporting nothing — but it is only
+        // correct as a FALLBACK, never as the primary source.
+        assert_eq!(
+            effective_cwd("/home/user/original", None),
+            "/home/user/original"
+        );
+    }
+
+    #[test]
+    fn test_effective_cwd_agrees_with_startup_when_no_cd_happened() {
+        // The overwhelmingly common case: no /cd this session, so the live
+        // value equals the captured one and nothing observable changes.
+        let same = std::path::PathBuf::from("/home/user/original");
+        assert_eq!(
+            effective_cwd("/home/user/original", Some(same)),
+            "/home/user/original"
+        );
     }
 
     #[test]
