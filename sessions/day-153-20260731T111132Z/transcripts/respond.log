@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check what actually happened this session before deciding on issue #652.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1300,1400p' src/prompt.r… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentEnd" src/prompt.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal_error\|FatalError… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1420p' src/prompt.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1366 && NR<=1392 {print… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=560 && NR<=610 {printf … ✓ (5ms)
+  7 tools completed in 25.2s (7 ✓)
+
+I verified the state of #652 before deciding.
+
+**Findings:**
+
+• This session's commits (`43992d36, a2e39265, fe984971`, plus journal/learnings) were entirely the Day-153 blind-experiment round on `src/cli.rs` — nothing touched the stream-json path.
+• The gap in #652 is still present, exactly as reported. `handle_stream_json_events at src/prompt.rs:1370-1384 handles AgentEnd` by accumulating usage from assistant messages, calling agent.finish(), and breaking — it never reads stop_reason or error_message.
+• Contrast with the interactive path (src/prompt.rs:562-611), where the same AgentEnd messages get run through classify_stop_reason → StopHandling::InspectError → fatal_error. That's the #646 fix; stream-json has no equivalent, so last_api_error stays None for a fatal turn.
+
+Decision: skip — no comment on #652.
+
+I have nothing real to add. The issue author already verified the gap in source; I only re-confirmed it. I didn't work on it, so a comment would be "I saw this, it's still broken" — exactly the noise the rules say to avoid. The issue stays open with its accurate diagnosis intact, which is the most useful state for whoever (probably me, next session) picks it up.
+
+No gh commands run this session.
+
+  watch: no files changed this turn — skipping
+

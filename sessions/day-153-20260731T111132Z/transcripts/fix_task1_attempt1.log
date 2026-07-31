@@ -1,0 +1,133 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-*/ 2>/dev/null ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && grep '^n…  ▶ $ ls -d /home/runner/.cargo/registry/src/*/yoagent-0*/ && grep -n "enum StopReason… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_stop_reason" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,700p src/prompt.rs ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,612p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1420p src/prompt.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1314..1404 ✓ (1ms)
+  9 tools completed in 13.9s (9 ✓)
+
+Now let me look at the #646 fatal-error logic in handle_agent_end to mirror its precedence:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:562..612 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:611..641  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_dropped_tool_args_er… ✓ (1ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,200p src/prompt.rs &&… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "last_api_error" src/ |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "last_api_error" src/pr… ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,275p src/main.rs && e… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 165,182p src/prompt.rs &&… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:166..184 ✓ (1ms)
+  9 tools completed in 38.3s (9 ✓)
+
+Now I'll move that predicate into prompt_retry.rs and add the helper there.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (27ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (4 → 4 lines)
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     fatal_error_from_stop, is_benign_stream_end, is_dropped_tool_args_error, is_overflow_error,
+  +     is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+ ✓ (12.3s)
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     fatal_error_from_stop, is_benign_stream_end, is_dropped_tool_args_error, is_overflow_error,
+  +     is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+  2 tools completed in 17.5s (2 ✓)
+
+Expected — now add both to prompt_retry.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 1 lines) ✓ (12.6s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 85 lines)
+  + /// True when a `StopReason::Error` message names the #646 class: the turn's
+  + /// tool-call arguments never assembled, so the tool never ran.
+  + ///
+  + /// This class is deliberately checked BEFORE `is_retriable_error`: the message
+  + /// can incidentally contain a retriable keyword (e.g. "incomplete"), but
+  + /// re-running the identical prompt can reproduce a dropped-args turn and burn a
+  + /// slot. Surface-and-stop wins here (creator decision, 2026-07-30).
+  + pub fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+  +     let lower = error_msg.to_lowercase();
+  +     (lower.contains("tool call") || lower.contains("tool_call") || lower.contains("arguments"))
+  +         && (lower.contains("never assembled")
+  +             || lower.contains("never completed")
+  +             || lower.contains("were not assembled")
+  +             || lower.contains("incomplete arguments")
+  +             || lower.contains("no arguments"))
+  + }
+  + 
+  + /// Honest stand-in message for a fatal turn that carried no explanation at all
+  + /// (yoagent's `pause_turn` shape: `StopReason::Error` with `error_message: None`
+  + /// or an empty string). Absence is a distinct, named case here — it is NOT
+  ... (65 more lines)
+ ✓ (18.8s)
+  + /// True when a `StopReason::Error` message names the #646 class: the turn's
+  + /// tool-call arguments never assembled, so the tool never ran.
+  + ///
+  + /// This class is deliberately checked BEFORE `is_retriable_error`: the message
+  + /// can incidentally contain a retriable keyword (e.g. "incomplete"), but
+  + /// re-running the identical prompt can reproduce a dropped-args turn and burn a
+  + /// slot. Surface-and-stop wins here (creator decision, 2026-07-30).
+  + pub fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (23ms)
+  3 tools completed in 1m 7s (3 ✓)
+
+Now the stream-json wiring — a small pure scanner plus a one-line call:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 26 lines)
+  + /// Scan a terminal `AgentEnd` message list for a fatal, non-retriable turn
+  + /// outcome (#652).
+  + ///
+  + /// Pure (no I/O, no globals) so it can be driven from tests against a
+  + /// hand-built `Vec<AgentMessage>` — the stream-json event loop itself needs a
+  + /// live agent. Delegates the actual verdict to
+  + /// [`fatal_error_from_stop`](crate::prompt_retry::fatal_error_from_stop), so
+  + /// the piped/stream-json path and the interactive path share one rule.
+  + ///
+  + /// Returns the **last** fatal assistant message in the list (the turn's final
+  + /// state wins), or `None` when no assistant message ended fatally.
+  + fn fatal_error_in_messages(messages: &[AgentMessage]) -> Option<String> {
+  +     messages
+  +         .iter()
+  +         .filter_map(|msg| match msg {
+  +             AgentMessage::Llm(Message::Assistant {
+  +                 stop_reason,
+  +                 error_message,
+  +                 ..
+  +             }) => fatal_error_from_stop(stop_reason, error_message.as_deref()),
+  ... (6 more lines)
+ ✓ (12.9s)
+  + /// Scan a terminal `AgentEnd` message list for a fatal, non-retriable turn
+  + /// outcome (#652).
+  + ///
+  + /// Pure (no I/O, no globals) so it can be driven from tests against a
+  + /// hand-built `Vec<AgentMessage>` — the stream-json event loop itself needs a
+  + /// live agent. Delegates the actual verdict to
+  + /// [`fatal_error_from_stop`](crate::prompt_retry::fatal_error_from_stop), so
+  + /// the piped/stream-json path and the interactive path share one rule.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 3 lines)
+        fatal_error_from_stop, is_benign_stream_end, is_dropped_tool_args_error, is_overflow_error,
+  -     is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     is_retriable_error, retry_delay, StopHandling, FATAL_STOP_NO_MESSAGE, MAX_AUTO_RETRIES,
+    };
+ ✓ (19.4s)
+        fatal_error_from_stop, is_benign_stream_end, is_dropped_tool_args_error, is_overflow_error,
+  -     is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     is_retriable_error, retry_delay, StopHandling, FATAL_STOP_NO_MESSAGE, MAX_AUTO_RETRIES,
+    };
+  2 tools completed in 36.4s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
