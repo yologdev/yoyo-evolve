@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code sections.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,320p src/commands_tod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 420,460p src/commands_tod… ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_board\|fn handle… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Color\|DIM\|use crate" … ✓ (5ms)
+  4 tools completed in 18.6s (4 ✓)
+
+Now let me add the failing tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_task_file… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 830,886p src/commands_tod… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (2 → 64 lines)
+  +     #[test]
+  +     fn test_parse_task_file_accepts_writer_aliases() {
+  +         // The writer (normalize_board_status) teaches these spellings; the reader
+  +         // must accept every one of them or the board describes the wrong bucket.
+  +         for alias in ["in-progress", "in_progress", "inprogress", "wip", "WIP"] {
+  +             let content = format!("Title: Aliased\nStatus: {alias}\n");
+  +             let task = parse_task_file("task_01", &content);
+  +             assert_eq!(task.status, "active", "alias {alias} should map to active");
+  +             assert_eq!(task.unrecognized_status, None);
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_task_file_accepts_done_aliases() {
+  +         for alias in ["complete", "completed", "Done"] {
+  +             let content = format!("Title: Aliased\nStatus: {alias}\n");
+  +             let task = parse_task_file("task_01", &content);
+  +             assert_eq!(task.status, "done", "alias {alias} should map to done");
+  +             assert_eq!(task.unrecognized_status, None);
+  +         }
+  ... (44 more lines)
+ ✓ (11.8s)
+  +     #[test]
+  +     fn test_parse_task_file_accepts_writer_aliases() {
+  +         // The writer (normalize_board_status) teaches these spellings; the reader
+  +         // must accept every one of them or the board describes the wrong bucket.
+  +         for alias in ["in-progress", "in_progress", "inprogress", "wip", "WIP"] {
+  +             let content = format!("Title: Aliased\nStatus: {alias}\n");
+  +             let task = parse_task_file("task_01", &content);
+  +             assert_eq!(task.status, "active", "alias {alias} should map to active");
+  ... (13 more lines)
+  3 tools completed in 30.4s (3 ✓)
+
+Tests fail as expected (field doesn't exist). Now the implementation:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (7 → 14 lines)
+        pub issue: String,
+        /// Files listed on the `Files:` line
+        pub files: String,
+  +     /// The raw `Status:` value when it was present but not recognized.
+  +     ///
+  +     /// This is the explicit third value: "no Status line" (silent backlog) and
+  +     /// "Status line I couldn't read" are different situations, and the second
+  +     /// must not be absorbed by the first. The task still lands in the backlog
+  +     /// bucket so it never disappears from the board -- but the board says so.
+  +     pub unrecognized_status: Option<String>,
+    }
+ ✓ (11.3s)
+        pub issue: String,
+        /// Files listed on the `Files:` line
+        pub files: String,
+  +     /// The raw `Status:` value when it was present but not recognized.
+  +     ///
+  +     /// This is the explicit third value: "no Status line" (silent backlog) and
+  +     /// "Status line I couldn't read" are different situations, and the second
+  +     /// must not be absorbed by the first. The task still lands in the backlog
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (6 → 14 lines)
+            } else if let Some(val) = line.strip_prefix("Status:") {
+  -             let s = val.trim().to_lowercase();
+  -             if s == "backlog" || s == "active" || s == "done" {
+  -                 status = s;
+  +             // Derive from the one function that owns the status vocabulary --
+  +             // hand-typing the list here is what let reader and writer drift.
+  +             let raw = val.trim();
+  +             if raw.is_empty() {
+  +                 // `Status:` with no value == no status. Silent backlog default.
+  +             } else {
+  +                 match normalize_board_status(raw) {
+  +                     Some(s) => status = s.to_string(),
+  +                     // Explicit third value: remembered, reported, not swallowed.
+  +                     None => unrecognized_status = Some(raw.to_string()),
+  +                 }
+                }
+            } else if let Some(val) = line.strip_prefix("Issue:") {
+ ✓ (11.5s)
+            } else if let Some(val) = line.strip_prefix("Status:") {
+  -             let s = val.trim().to_lowercase();
+  -             if s == "backlog" || s == "active" || s == "done" {
+  -                 status = s;
+  +             // Derive from the one function that owns the status vocabulary --
+  +             // hand-typing the list here is what let reader and writer drift.
+  +             let raw = val.trim();
+  +             if raw.is_empty() {
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 213,255p src/commands_tod… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (24ms)
+  4 tools completed in 37.3s (4 ✓)
+
+Now the board warning and the existing test literals:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (9 → 24 lines)
+            active.len(),
+            done.len()
+        ));
+  + 
+  +     // Statuses I couldn't read are shown in the backlog bucket above (losing the
+  +     // task would be worse), but they get said out loud here so the board never
+  +     // reports the wrong bucket with a straight face.
+  +     for t in tasks.iter() {
+  +         if let Some(raw) = &t.unrecognized_status {
+  +             out.push_str(&format!(
+  +                 "{}  warning: {}.md has unrecognized status '{}' -- shown as backlog{}\n",
+  +                 Color::DIM,
+  +                 t.id,
+  +                 raw,
+  +                 Color::RESET
+  +             ));
+  +         }
+  +     }
+    
+        out
+  ... (1 more lines)
+ ✓ (11.6s)
+            active.len(),
+            done.len()
+        ));
+  + 
+  +     // Statuses I couldn't read are shown in the backlog bucket above (losing the
+  +     // task would be worse), but they get said out loud here so the board never
+  +     // reports the wrong bucket with a straight face.
+  +     for t in tasks.iter() {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,275p src/format/mod.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (19.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 32s)
+  4 tools completed in 2m 15s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

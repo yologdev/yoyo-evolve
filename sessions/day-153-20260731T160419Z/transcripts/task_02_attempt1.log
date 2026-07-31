@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the contamination check and the blind guess — before reading the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --on… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c conversations dreams/exp… ✓ (3ms)
+ ✓ (28ms)
+  2 tools completed in 5.7s (2 ✓)
+
+No contamination — no prior conversations entry. This is attempt one, genuinely blind. Gathering only external evidence:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/conversations.rs && ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== callers of handle_side… ✓ (8ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1215,1260p' src/dispatch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A12 '"side"\|"quick"\|"… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 drea… (5 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat --oneline 0c2545… ✓ (8ms)
+  6 tools completed in 1m 10s (6 ✓)
+
+Day 152's planner-fallback session put +103/−27 into this file one day ago with a placeholder journal — I have no memory of what it did. That's my sharpest lead. Writing the guess:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (48ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (13ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Guess is locked. Now opening the file for the first time:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,300p' src/conversati… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "LAST_SIDE\|clear_last_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" -A5 src/conv… ✓ (5ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1120p' src/dispatch…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:975..1035 ✓ (0ms)
+ ✓ (4ms)
+  5 tools completed in 1m 7s (5 ✓)
+
+H1 confirmed, H2 and H3 falsified. Reading the exact region to fix:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:122..164 ✓ (1ms)
+
+Now the fix — clear_last_side() plus wiring into both /clear arms:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (3 → 11 lines)
+    /// Module-level store for the last side exchange. One slot: each new answered
+    /// `/side` overwrites the previous. Poison-safe via `lock_or_recover` (Day 58).
+  + ///
+  + /// **Lifetime**: this static outlives any single conversation, so it must be
+  + /// cleared whenever the conversation it belongs to is discarded — see
+  + /// [`clear_last_side`] and its call sites in `dispatch.rs` (`/clear`,
+  + /// `/clear!`). Without that, `/side pull` after a `/clear` reports success
+  + /// truthfully about the wrong object: "last" would mean last-in-process rather
+  + /// than last-in-this-conversation, and stale content from a discarded thread
+  + /// would be injected into the fresh one (found Day 153, blind experiment).
+    static LAST_SIDE: Mutex<Option<LastSide>> = Mutex::new(None);
+ ✓ (1m 48s)
+    /// Module-level store for the last side exchange. One slot: each new answered
+    /// `/side` overwrites the previous. Poison-safe via `lock_or_recover` (Day 58).
+  + ///
+  + /// **Lifetime**: this static outlives any single conversation, so it must be
+  + /// cleared whenever the conversation it belongs to is discarded — see
+  + /// [`clear_last_side`] and its call sites in `dispatch.rs` (`/clear`,
+  + /// `/clear!`). Without that, `/side pull` after a `/clear` reports success
+  + /// truthfully about the wrong object: "last" would mean last-in-process rather
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (5 → 16 lines)
+    /// (i.e. `/side pull` with optional surrounding whitespace).
+    fn is_side_pull(input: &str) -> bool {
+        input.strip_prefix("/side").unwrap_or("").trim() == "pull"
+  + }
+  + 
+  + /// Drop the stored side exchange, if any.
+  + ///
+  + /// Called when the main conversation is discarded (`/clear`, `/clear!`) so a
+  + /// later `/side pull` cannot inject an answer that belongs to a conversation
+  + /// which no longer exists. Idempotent: clearing an already-empty slot is an
+  + /// explicit no-op, not an error.
+  + pub(crate) fn clear_last_side() {
+  +     let mut guard = lock_or_recover(&LAST_SIDE);
+  +     *guard = None;
+    }
+ ✓ (18.5s)
+    /// (i.e. `/side pull` with optional surrounding whitespace).
+    fn is_side_pull(input: &str) -> bool {
+        input.strip_prefix("/side").unwrap_or("").trim() == "pull"
+  + }
+  + 
+  + /// Drop the stored side exchange, if any.
+  + ///
+  + /// Called when the main conversation is discarded (`/clear`, `/clear!`) so a
+  ... (7 more lines)
+  2 tools completed in 2m 13s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

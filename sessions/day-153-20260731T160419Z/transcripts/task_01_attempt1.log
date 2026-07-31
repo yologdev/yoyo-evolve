@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code region in question.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,585p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,115p src/prompt.rs &&… ✓ (8ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentEvent::AgentEnd" s… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1368..1398 ✓ (1ms)
+  4 tools completed in 13.8s (4 ✓)
+
+Exactly as described. Making the edit:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (15 → 32 lines)
+                            for msg in messages {
+                                if let AgentMessage::Llm(Message::Assistant {
+                                    usage: msg_usage,
+  +                                 stop_reason,
+  +                                 error_message,
+                                    ..
+                                }) = msg
+                                {
+                                    accumulate_usage(&mut usage, msg_usage);
+  + 
+  +                                 // #652/#654: surface-and-stop. A fatal turn must not report
+  +                                 // success in stream-json mode. Mirrors handle_agent_end
+  +                                 // (#646); never retried.
+  +                                 if last_api_error.is_none()
+  +                                     && classify_stop_reason(stop_reason)
+  +                                         == StopHandling::InspectError
+  +                                 {
+  +                                     let text = error_message.clone().unwrap_or_else(|| {
+  +                                         "turn ended with a fatal error".to_string()
+  +                                     });
+  ... (7 more lines)
+ ✓ (1m 51s)
+                            for msg in messages {
+                                if let AgentMessage::Llm(Message::Assistant {
+                                    usage: msg_usage,
+  +                                 stop_reason,
+  +                                 error_message,
+                                    ..
+                                }) = msg
+                                {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (164ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && touch src/pro… ✓ (8.9s)
+  3 tools completed in 2m 10s (3 ✓)
+
+Builds. Now the test. Let me look at the existing #646 test shape:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_fatal_stop_error_i… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1975..2045 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 990,1015p ~/.cargo/regist… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn builder\|pub fn … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 125,150p ~/.cargo/registr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokio::test" src/*.rs |… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,200p ~/.cargo/registr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl ModelConfig" -A 40… ✓ (4ms)
+  9 tools completed in 38.8s (9 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the code around that function first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "clear_last_side" --inc… ✓ (9ms)
+ ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/conversations.rs | … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/conversations.rs | … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,200p src/conversation…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LAST_SIDE\|mod tests\|f… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,186p src/conversation… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:134..184 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/clear"\|clear!\|stash… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1090..1130 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "conversations" src/disp… ✓ (4ms)
+  11 tools completed in 40.8s (11 ✓)
+
+Fully-qualified paths are the convention here. Wiring the clear into both /clear branches:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (4 → 8 lines)
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  +             // The side-chat slot belongs to the discarded conversation: without
+  +             // this, a later `/side pull` injects an answer from a thread that no
+  +             // longer exists (silent wrong-object success).
+  +             crate::conversations::clear_last_side();
+                if stashed {
+                    println!("{DIM}  (conversation cleared — /stash pop to restore){RESET}\n");
+ ✓ (1m 49s)
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  +             // The side-chat slot belongs to the discarded conversation: without
+  +             // this, a later `/side pull` injects an answer from a thread that no
+  +             // longer exists (silent wrong-object success).
+  +             crate::conversations::clear_last_side();
+                if stashed {
+                    println!("{DIM}  (conversation cleared — /stash pop to restore){RESET}\n");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (4 → 5 lines)
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  +             crate::conversations::clear_last_side();
+                if stashed {
+                    println!("{DIM}  (conversation force-cleared — /stash pop to restore){RESET}\n");
+ ✓ (1m 54s)
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  +             crate::conversations::clear_last_side();
+                if stashed {
+                    println!("{DIM}  (conversation force-cleared — /stash pop to restore){RESET}\n");
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:996..1046 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (4 → 14 lines)
+  +         // `clear_last_side` empties the slot: after a `/clear` the stored
+  +         // exchange belongs to a conversation that no longer exists, so
+  +         // `/side pull` must find nothing rather than inject stale content.
+  +         clear_last_side();
+  +         assert!(last_side().is_none());
+  + 
+  +         // Idempotent: clearing an already-empty slot is an explicit no-op.
+  +         clear_last_side();
+  +         assert!(last_side().is_none());
+  + 
+            // Reset so we don't leak state to other tests.
+            let mut guard = lock_or_recover(&LAST_SIDE);
+            *guard = None;
+ ✓ (1m 49s)
+  +         // `clear_last_side` empties the slot: after a `/clear` the stored
+  +         // exchange belongs to a conversation that no longer exists, so
+  +         // `/side pull` must find nothing rather than inject stale content.
+  +         clear_last_side();
+  +         assert!(last_side().is_none());
+  + 
+  +         // Idempotent: clearing an already-empty slot is an explicit no-op.
+  +         clear_last_side();
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test …

@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check what I actually did for issue #654 before commenting.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 654 --repo yologde… ✓ (11ms)
+ ✓ (338ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Let me verify the actual change landed as specified.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 2b03042c -- src/prompt.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream_json" src/prompt… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1365,1405p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_.*fatal\|fn tes… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff cd34a80d..HEAD --stat -… ✓ (9ms)
+  5 tools completed in 15.8s (5 ✓)
+
+The code edit landed but no regression test was added — Step 2 of the issue's "Done means". Let me confirm the exact state before commenting.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1370 && NR<=1400' src/p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (6ms)
+ ✓ (328ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Build and clippy green, edit matches spec. Now let me verify the claim that actually matters: does last_api_error reach a non-zero exit code?
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_api_error" src/pro…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_prompt_stream_json… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,275p' src/main.rs &&… ✓ (5ms)
+  3 tools completed in 17.4s (3 ✓)
+
+Fix is genuinely wired end-to-end (exit(1) at both call sites). But the issue's "Done means" required a regression test, and none was added. Let me look at the existing test pattern.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1995,2100p' src/prompt.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 22s)
+  2 tools completed in 1m 46s (2 ✓)
+
+All green. The core fix is real and verified; the regression test is genuinely missing. Let me confirm line numbers for an accurate comment.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "async fn handle_stream_… ✓ (6ms)

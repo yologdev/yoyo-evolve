@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the ledger to see the existing guess line.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 4000… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && git stat… ✓ (7ms)
+ ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat e3eb59ba ✓ (5ms)
+ ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (24ms)
+ ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show e3eb59ba ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,300p src/conversation… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,360p src/conversation… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_side_pull\|last_side… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_load\|CommandRou… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,565p src/dispatch.rs ✓ (3ms)
+  12 tools completed in 50.2s (12 ✓)
+
+Now let me verify the current test module and add a small pin for the behavior h2 mispredicted.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1050,1075p src/conversati… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (2 → 34 lines)
+  +     /// Pins the behaviour the Day 153 blind experiment mispredicted (h2): the
+  +     /// pull discriminator is EXACT whole-argument equality on the bare word
+  +     /// `pull`, not a head-of-string keyword match. The guess said a real
+  +     /// question starting with "pull" would be swallowed as a pull; it is not.
+  +     ///
+  +     /// The flip side, also pinned here: the flag-shaped spellings a user may
+  +     /// reasonably try (`/side --pull`, `/side -p`) are NOT pulls — they are
+  +     /// forwarded to the side agent as questions. That is the residual cost of
+  +     /// the strict form, and it is behaviour, not a defect, so it is pinned
+  +     /// rather than "fixed".
+  +     #[test]
+  +     fn test_side_pull_discriminator_is_exact_not_prefix() {
+  +         // A genuine question that merely begins with the word "pull" is a
+  +         // question, not a pull.
+  +         assert!(!is_side_pull("/side pull requests vs merge commits?"));
+  +         assert_eq!(
+  +             parse_side_question("/side pull requests vs merge commits?").unwrap(),
+  +             "pull requests vs merge commits?"
+  +         );
+  + 
+  ... (14 more lines)
+ ✓ (1m 53s)
+  +     /// Pins the behaviour the Day 153 blind experiment mispredicted (h2): the
+  +     /// pull discriminator is EXACT whole-argument equality on the bare word
+  +     /// `pull`, not a head-of-string keyword match. The guess said a real
+  +     /// question starting with "pull" would be swallowed as a pull; it is not.
+  +     ///
+  +     /// The flip side, also pinned here: the flag-shaped spellings a user may
+  +     /// reasonably try (`/side --pull`, `/side -p`) are NOT pulls — they are
+  +     /// forwarded to the side agent as questions. That is the residual cost of
+  ... (13 more lines)
+  2 tools completed in 2m 4s (2 ✓)
+
+Now the grade line — the missing half the evaluator flagged:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (71 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (19.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 10s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (59.0s)
+  4 tools completed in 2m 41s (4 ✓)
+
+Now let me verify the grade line is actually readable by the instrument it was built for (tally_hypothesis_families):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk episte… ✓ (700ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (25ms)
+  3 tools completed in 10.1s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
