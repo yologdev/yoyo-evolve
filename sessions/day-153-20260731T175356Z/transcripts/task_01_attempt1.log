@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state, then pick one concrete improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 dreams/experiments.jsonl… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/banner.rs | h… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_session_age" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.truncate(" src/ --in… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,530p' src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,110p' src/commands_to… ✓ (6ms)
+  7 tools completed in 39.5s (7 ✓)
+
+Found a real one. Let me verify the claim the banner makes.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_discovered_skill_… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,150p' src/cli.rs && e… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,180p' src/cli.rs && … ✓ (5ms)
+  3 tools completed in 16.3s (3 ✓)
+
+Now the fix. First the source tracking in cli.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 23 lines)
+    /// Return the number of skills that were auto-discovered (0 if none or not yet parsed).
+    pub fn auto_discovered_skill_count() -> usize {
+        *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
+  + }
+  + 
+  + /// Directories that actually *contributed* auto-discovered skills this run.
+  + ///
+  + /// The count above is a total across two directories (`~/.yoyo/skills/` and
+  + /// `.yoyo/skills/`), so it cannot answer "where did these come from?". Any
+  + /// surface that names a directory must read this, not hard-code one of them —
+  + /// a user whose skills all live in `~/.yoyo/skills/` was previously told they
+  + /// came from `.yoyo/skills/` and sent to an empty directory.
+  + static AUTO_DISCOVERED_SKILL_SOURCES: std::sync::OnceLock<Vec<String>> =
+  +     std::sync::OnceLock::new();
+  + 
+  + /// Return the directories that contributed auto-discovered skills.
+  + ///
+  + /// Empty means "not recorded" — either nothing was discovered, or discovery
+  + /// has not run yet. Callers must treat that as *unknown provenance* and say
+  + /// nothing about directories, rather than guessing one.
+  ... (3 more lines)
+ ✓ (18.2s)
+    /// Return the number of skills that were auto-discovered (0 if none or not yet parsed).
+    pub fn auto_discovered_skill_count() -> usize {
+        *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
+  + }
+  + 
+  + /// Directories that actually *contributed* auto-discovered skills this run.
+  + ///
+  + /// The count above is a total across two directories (`~/.yoyo/skills/` and
+  ... (13 more lines)
+
+Expected — now wire it up in the discovery function.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (61 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn is_empty\|fn len" ~… ✓ (4ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Good, `is_empty()` exists. Now the pure banner helper with tests first:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (5 → 7 lines)
+        // Show auto-loaded skill count if any were found
+  -     let auto_count = crate::cli::auto_discovered_skill_count();
+  -     if auto_count > 0 {
+  -         println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+  +     if let Some(line) = auto_skill_line(
+  +         crate::cli::auto_discovered_skill_count(),
+  +         &crate::cli::auto_discovered_skill_sources(),
+  +     ) {
+  +         println!("{DIM}  \u{1F9E0} {line}{RESET}");
+        }
+ ✓ (11.0s)
+        // Show auto-loaded skill count if any were found
+  -     let auto_count = crate::cli::auto_discovered_skill_count();
+  -     if auto_count > 0 {
+  -         println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+  +     if let Some(line) = auto_skill_line(
+  +         crate::cli::auto_discovered_skill_count(),
+  +         &crate::cli::auto_discovered_skill_sources(),
+  +     ) {
+  +         println!("{DIM}  \u{1F9E0} {line}{RESET}");
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (1 → 26 lines)
+  + /// Build the banner's auto-discovered-skills line, or `None` when there is
+  + /// nothing to say.
+  + ///
+  + /// Skills are auto-discovered from **two** directories (`~/.yoyo/skills/` and
+  + /// `.yoyo/skills/`), so the count alone cannot answer "where did these come
+  + /// from?". This names only the directories that actually contributed, which is
+  + /// the difference between a helpful pointer and sending a user to an empty
+  + /// directory.
+  + ///
+  + /// `sources` being empty is an explicit third value — *unknown provenance* —
+  + /// and is rendered without any directory claim rather than being absorbed into
+  + /// whichever directory is most convenient to name.
+  + pub(crate) fn auto_skill_line(count: usize, sources: &[String]) -> Option<String> {
+  +     if count == 0 {
+  +         return None;
+  +     }
+  +     if sources.is_empty() {
+  +         return Some(format!("{count} skill(s) auto-loaded"));
+  +     }
+  +     Some(format!(
+  ... (6 more lines)
+ ✓ (1m 51s)
+  + /// Build the banner's auto-discovered-skills line, or `None` when there is
+  + /// nothing to say.
+  + ///
+  + /// Skills are auto-discovered from **two** directories (`~/.yoyo/skills/` and
+  + /// `.yoyo/skills/`), so the count alone cannot answer "where did these come
+  + /// from?". This names only the directories that actually contributed, which is
+  + /// the difference between a helpful pointer and sending a user to an empty
+  + /// directory.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/banner.r… ✓ (4ms)
+  3 tools completed in 2m 15s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
