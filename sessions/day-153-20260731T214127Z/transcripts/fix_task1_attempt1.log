@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn format_session_age/,… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|XXX:" src… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn detect_write_command… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WRITE_VERBS\|COMMAND_WR… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1615,1640p' src/safety.r… ✓ (6ms)
+  6 tools completed in 53.4s (6 ✓)
+
+Clean tree, no work committed. Picking one concrete gap: detect_write_command (read/plan-mode enforcement) misses `perl -i` in-place edits — a common file-mutating idiom that currently passes the guard silently.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (1 → 4 lines)
+  +         if base == "perl" && perl_edits_in_place(segment) {
+  +             return Some("`perl -i` edits files in place".to_string());
+  +         }
+            if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
+ ✓ (11.3s)
+  +         if base == "perl" && perl_edits_in_place(segment) {
+  +             return Some("`perl -i` edits files in place".to_string());
+  +         }
+            if base == "dd" && segment.split_whitespace().any(|t| t.starts_with("of=")) {
+
+Now the helper:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (1 → 52 lines)
+  + /// Perl switches that consume the rest of their token as an argument
+  + /// (`-e 'code'`, `-MList::Util`, `-I/opt/lib`). Cluster scanning stops at
+  + /// one of these, so a lowercase `i` inside the *argument* (`-I/opt/lib`,
+  + /// `-MList::Util`) is never mistaken for the in-place switch.
+  + const PERL_ARG_TAKING_SWITCHES: &[char] = &['e', 'E', 'M', 'm', 'I', 'F', 'x', 'S', 'D'];
+  + 
+  + /// Does this `perl` invocation edit files in place (`-i`)?
+  + ///
+  + /// `perl -pi -e 's/a/b/' file` is a routine file mutation that the write-verb
+  + /// list misses (the command is `perl`, not a write verb) — the same class as
+  + /// `sed -i`, which is already caught.
+  + ///
+  + /// Perl's own switches must precede the script/file arguments, so only the
+  + /// leading flag run is scanned and the scan stops at the first non-flag token.
+  + /// That keeps `perl script.pl -i` (where `-i` belongs to the *script*) from
+  + /// being read as an in-place edit. Clustered forms (`-pi`, `-ni.bak`) count.
+  + fn perl_edits_in_place(segment: &str) -> bool {
+  +     let mut tokens = segment.split_whitespace();
+  +     // Advance past wrappers / env assignments up to and including `perl`.
+  +     let found_perl = tokens.by_ref().any(|t| {
+  ... (32 more lines)
+ ✓ (1m 47s)
+  + /// Perl switches that consume the rest of their token as an argument
+  + /// (`-e 'code'`, `-MList::Util`, `-I/opt/lib`). Cluster scanning stops at
+  + /// one of these, so a lowercase `i` inside the *argument* (`-I/opt/lib`,
+  + /// `-MList::Util`) is never mistaken for the in-place switch.
+  + const PERL_ARG_TAKING_SWITCHES: &[char] = &['e', 'E', 'M', 'm', 'I', 'F', 'x', 'S', 'D'];
+  + 
+  + /// Does this `perl` invocation edit files in place (`-i`)?
+  + ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (25ms)
+  2 tools completed in 1m 56s (2 ✓)
+
+Also pin the honest-error message:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/sed -i must match/,/^  … ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (5 → 11 lines)
+            assert!(
+                what.contains("sed -i"),
+                "message should name sed -i: {what}"
+  +         );
+  + 
+  +         let what = detect_write_command("perl -pi -e 's/a/b/' f").expect("perl -i must match");
+  +         assert!(
+  +             what.contains("perl -i"),
+  +             "message should name perl -i: {what}"
+            );
+        }
+ ✓ (1m 48s)
+            assert!(
+                what.contains("sed -i"),
+                "message should name sed -i: {what}"
+  +         );
+  + 
+  +         let what = detect_write_command("perl -pi -e 's/a/b/' f").expect("perl -i must match");
+  +         assert!(
+  +             what.contains("perl -i"),
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.9s)
+  5 tools completed in 4m 53s (5 ✓)
+
+All four checks pass. Committing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD ✓ (5ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Fixed the evaluator's finding: there is now a real, committed src/ change.
+
+**What was wrong:** the previous attempt left the tree clean — no src change existed; the only recent commit was an unrelated social-state update.
+
+What I implemented (src/safety.rs, commit 2d496eb7, 71 insertions):
+
+A closed hole in the /read and /plan mode write guard. detect_write_command special-cased `sed -i but not perl -i, so perl -pi -e 's/a/b/' file` — a routine in-place file mutation — passed the guard silently (the command token is perl, which is not in WRITE_VERBS).
+
+• `perl_edits_in_place(segment) — scans only perl's leading switch run and stops at the first non-flag token, so perl script.pl -i (where -i` is the script's flag) is not flagged. Cluster scanning stops at argument-taking switches (PERL_ARG_TAKING_SWITCHES), so the lowercase i inside -I/opt/lib or -MList::Util isn't mistaken for the in-place switch. Uses strip_prefix, no byte indexing.
+• Wired into detect_write_command with an honest message naming what matched ( perl -i edits files in place ), consistent with the existing sed -i refusal.
+• Tests added to the existing fixture tables: 3 positives (-pi, -i.bak, sudo perl -i) and 6 negatives (-ne, -e, -M…, -I…, perl script.pl -i, grep perl file), plus a message-content assertion.
+
+Verification (all run, all green): `cargo fmt -- --check OK, cargo clippy --all-targets -- -D warnings clean, cargo build OK, cargo test` 4618 + 89 passed / 0 failed. Working tree clean after commit.
+
+  watch: no files changed this turn — skipping
+
