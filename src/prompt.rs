@@ -183,7 +183,6 @@ fn is_dropped_tool_args_error(error_msg: &str) -> bool {
 
 /// Internal state for the prompt event-handling loop.
 /// Bundles the 15+ local variables that were previously declared inline.
-/// Bundles the 15+ local variables that were previously declared inline.
 struct PromptEventState {
     usage: Usage,
     in_text: bool,
