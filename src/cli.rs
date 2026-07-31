@@ -89,8 +89,7 @@ pub fn auto_discovered_skill_count() -> usize {
 /// surface that names a directory must read this, not hard-code one of them —
 /// a user whose skills all live in `~/.yoyo/skills/` was previously told they
 /// came from `.yoyo/skills/` and sent to an empty directory.
-static AUTO_DISCOVERED_SKILL_SOURCES: std::sync::OnceLock<Vec<String>> =
-    std::sync::OnceLock::new();
+static AUTO_DISCOVERED_SKILL_SOURCES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
 /// Return the directories that contributed auto-discovered skills.
 ///
@@ -98,7 +97,10 @@ static AUTO_DISCOVERED_SKILL_SOURCES: std::sync::OnceLock<Vec<String>> =
 /// has not run yet. Callers must treat that as *unknown provenance* and say
 /// nothing about directories, rather than guessing one.
 pub fn auto_discovered_skill_sources() -> Vec<String> {
-    AUTO_DISCOVERED_SKILL_SOURCES.get().cloned().unwrap_or_default()
+    AUTO_DISCOVERED_SKILL_SOURCES
+        .get()
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// Directories passed via `--skills` on this run (empty if none or not yet parsed).
