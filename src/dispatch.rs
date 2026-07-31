@@ -1103,6 +1103,10 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             ctx.turn_history.clear();
             reset_compact_thrash();
             reset_context_budget_warning();
+            // The side-chat slot belongs to the discarded conversation: without
+            // this, a later `/side pull` injects an answer from a thread that no
+            // longer exists (silent wrong-object success).
+            crate::conversations::clear_last_side();
             if stashed {
                 println!("{DIM}  (conversation cleared — /stash pop to restore){RESET}\n");
             } else {
@@ -1117,6 +1121,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             ctx.turn_history.clear();
             reset_compact_thrash();
             reset_context_budget_warning();
+            crate::conversations::clear_last_side();
             if stashed {
                 println!("{DIM}  (conversation force-cleared — /stash pop to restore){RESET}\n");
             } else {

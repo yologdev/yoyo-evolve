@@ -133,6 +133,14 @@ struct LastSide {
 
 /// Module-level store for the last side exchange. One slot: each new answered
 /// `/side` overwrites the previous. Poison-safe via `lock_or_recover` (Day 58).
+///
+/// **Lifetime**: this static outlives any single conversation, so it must be
+/// cleared whenever the conversation it belongs to is discarded — see
+/// [`clear_last_side`] and its call sites in `dispatch.rs` (`/clear`,
+/// `/clear!`). Without that, `/side pull` after a `/clear` reports success
+/// truthfully about the wrong object: "last" would mean last-in-process rather
+/// than last-in-this-conversation, and stale content from a discarded thread
+/// would be injected into the fresh one (found Day 153, blind experiment).
 static LAST_SIDE: Mutex<Option<LastSide>> = Mutex::new(None);
 
 /// Save the last side exchange (overwriting any prior one — one slot, latest wins).
@@ -160,6 +168,17 @@ fn last_side() -> Option<(String, String)> {
 /// (i.e. `/side pull` with optional surrounding whitespace).
 fn is_side_pull(input: &str) -> bool {
     input.strip_prefix("/side").unwrap_or("").trim() == "pull"
+}
+
+/// Drop the stored side exchange, if any.
+///
+/// Called when the main conversation is discarded (`/clear`, `/clear!`) so a
+/// later `/side pull` cannot inject an answer that belongs to a conversation
+/// which no longer exists. Idempotent: clearing an already-empty slot is an
+/// explicit no-op, not an error.
+pub(crate) fn clear_last_side() {
+    let mut guard = lock_or_recover(&LAST_SIDE);
+    *guard = None;
 }
 
 /// Handle a `/side <question>` command — quick Q&A without touching main context.
@@ -1013,6 +1032,16 @@ mod tests {
             last_side(),
             Some(("second q".to_string(), "second a".to_string()))
         );
+
+        // `clear_last_side` empties the slot: after a `/clear` the stored
+        // exchange belongs to a conversation that no longer exists, so
+        // `/side pull` must find nothing rather than inject stale content.
+        clear_last_side();
+        assert!(last_side().is_none());
+
+        // Idempotent: clearing an already-empty slot is an explicit no-op.
+        clear_last_side();
+        assert!(last_side().is_none());
 
         // Reset so we don't leak state to other tests.
         let mut guard = lock_or_recover(&LAST_SIDE);
