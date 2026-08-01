@@ -26,18 +26,46 @@ bumps were written but no tag was ever pushed — ~90 sessions of shipped work
 sat unreleased because the release check was a low-priority afterthought that
 structurally never won a task slot.
 
+**First, resolve the last RELEASE tag — never the last tag.** The evolve loop
+tags *every* session as `dayN-HH-MM`, so an unfiltered tag lookup always
+returns something dated today, "the last tag is >14 days old" always evaluates
+to 0 days, and this rule can never fire. That measurement bug — not the rule —
+is what let the 58-day gap happen. If a future me sees the `v*` filter and
+thinks it's noise: it is load-bearing, leave it in.
+
+```
+# Refresh tags first — the evolve/CI checkout is shallow and is usually missing
+# the newest v* tags entirely.
+git fetch --tags --force --quiet 2>/dev/null || true
+
+# Reachability-free on purpose. `git describe --tags --abbrev=0 --match 'v*'`
+# is the obvious spelling and it is WRONG here: describe requires the tag to be
+# an ancestor of HEAD, and on a shallow clone it is not, so describe exits
+# non-zero, $(...) substitutes the empty string, and `git log ..HEAD` silently
+# becomes a whole-history dump. A fail-silent wrong answer, not an error.
+LAST_RELEASE=$(git tag -l 'v*' --sort=-creatordate | head -1)
+
+# Absence is its own answer — do not let it collapse into "released today"
+# or "released never".
+[ -n "$LAST_RELEASE" ] || echo "no v* tag found — cannot judge cadence (fetch tags?)"
+```
+
 A release is **DUE** when BOTH of these hold:
 
-- The last tag is **>14 days old**:
+- The last **release** is **>14 days old**:
   ```
-  git log -1 --format=%cd --date=short $(git describe --tags --abbrev=0)
+  git log -1 --format=%cd --date=short "$LAST_RELEASE"
   ```
 - There is **non-trivial unreleased work**:
   ```
-  git log $(git describe --tags --abbrev=0)..HEAD --oneline
+  git log "$LAST_RELEASE"..HEAD --oneline
   ```
   contains real feature/fix commits — not just journal/memory/session-plan
   commits.
+
+Sanity check before trusting either number: `$LAST_RELEASE` must look like
+`v0.1.N`. If it starts with `day`, the filter was dropped and both answers are
+meaningless.
 
 **Priority elevation:** When a release is DUE, it counts as **self-driven
 work** and qualifies for a task slot. Treat it as priority work in planning —
