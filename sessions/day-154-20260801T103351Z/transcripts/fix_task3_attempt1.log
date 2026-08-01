@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the committed guess so I grade exactly what was predicted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cat DAY_CO… ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 drea… (7 lines) ✓ (25ms)
+  3 tools completed in 6.0s (3 ✓)
+
+The blind guess is committed at ff008e48. Now step 4 — read the file for the first time.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^pub fn \|^fn \|^async … ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:826..1036 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1031..1276 ✓ (2ms)
+  3 tools completed in 34.1s (3 ✓)
+
+Now the truth is visible. Let me check consumers before deciding the fix.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "was_overflow" src/ | g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_prompt_with_conten… ✓ (10ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 680,715p src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_overflow_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 145,175p src/prompt.rs &&… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/prompt.rs; echo… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,70p ~/.cargo/registry/… ✓ (4ms)
+  7 tools completed in 58.2s (7 ✓)
+
+Confirmed the defect. Writing the test first (constitution rule 5).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/prompt.r… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1428,1445p src/prompt.rs … ✓ (4ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now the tests, written before the implementation:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 85 lines)
+            assert!(result.starts_with("[Effort: "));
+            assert!(result.contains("thorough"));
+            assert!(result.ends_with("Hello agent"));
+  +     }
+  + 
+  +     // --- overflow retry for content-block prompts (Day 154) ---------------
+  +     //
+  +     // The content driver used to abandon the turn on a context overflow,
+  +     // printing "cannot retry with image content". Its user message is cloned
+  +     // per attempt, not moved, so the blocks are in fact still available. These
+  +     // tests pin the property that made the old refusal wrong: the attachment
+  +     // survives the retry.
+  + 
+  +     fn img(data: &str) -> Content {
+  +         Content::Image {
+  +             data: data.to_string(),
+  +             mime_type: "image/png".to_string(),
+  +         }
+  +     }
+  + 
+  ... (65 more lines)
+ ✓ (12.2s)
+            assert!(result.starts_with("[Effort: "));
+            assert!(result.contains("thorough"));
+            assert!(result.ends_with("Hello agent"));
+  +     }
+  + 
+  +     // --- overflow retry for content-block prompts (Day 154) ---------------
+  +     //
+  +     // The content driver used to abandon the turn on a context overflow,
+  ... (13 more lines)
+
+Tests are red as intended. Now the implementation:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 20 lines)
+  + /// Build the message content for a post-compaction overflow retry of a
+  + /// content-block prompt.
+  + ///
+  + /// The text driver (`run_prompt_with_changes`) recovers from a context
+  + /// overflow by compacting and re-sending `build_overflow_retry_prompt(input)`.
+  + /// The content driver used to refuse, printing "cannot retry with image
+  + /// content" — but its user message is *cloned* per attempt, never moved away,
+  + /// so the original blocks are still in hand. This prepends the same
+  + /// auto-compaction notice the text path uses and preserves every original
+  + /// block, in order, so the attachment survives the retry.
+  + pub(crate) fn build_overflow_retry_blocks(original: &[Content]) -> Vec<Content> {
+  +     // Reuse the text path's wording so the two drivers can't drift apart.
+  +     let notice = build_overflow_retry_prompt("").trim_end().to_string();
+  +     let mut blocks = Vec::with_capacity(original.len() + 1);
+  +     blocks.push(Content::Text { text: notice });
+  +     blocks.extend(original.iter().cloned());
+  +     blocks
+  + }
+  + 
+    /// Run a prompt with pre-built content blocks and file change tracking.
+ ✓ (19.2s)
+  + /// Build the message content for a post-compaction overflow retry of a
+  + /// content-block prompt.
+  + ///
+  + /// The text driver (`run_prompt_with_changes`) recovers from a context
+  + /// overflow by compacting and re-sending `build_overflow_retry_prompt(input)`.
+  + /// The content driver used to refuse, printing "cannot retry with image
+  + /// content" — but its user message is *cloned* per attempt, never moved away,
+  + /// so the original blocks are still in hand. This prepends the same
+  ... (12 more lines)
+
+Now wire it into the content driver's overflow branch:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (10 → 16 lines)
+        let mut collected_text = String::new();
+        let mut last_tool_error: Option<String> = None;
+        let mut last_tool_name: Option<String> = None;
+  +     let mut did_overflow_compact = false;
+        let mut api_error: Option<String> = None;
+  -     let user_msg = AgentMessage::Llm(Message::User {
+  -         content: effective_blocks,
+  -         timestamp: now_ms(),
+  -     });
+  +     // Kept as blocks (not pre-wrapped into one message) so the overflow branch
+  +     // can re-send them after compaction. Each attempt clones exactly once,
+  +     // the same as the previous `user_msg.clone()`.
+  +     let user_msg = |blocks: Vec<Content>| {
+  +         AgentMessage::Llm(Message::User {
+  +             content: blocks,
+  +             timestamp: now_ms(),
+  +         })
+  +     };
+ ✓ (12.0s)
+        let mut collected_text = String::new();
+        let mut last_tool_error: Option<String> = None;
+        let mut last_tool_name: Option<String> = None;
+  +     let mut did_overflow_compact = false;
+        let mut api_error: Option<String> = None;
+  -     let user_msg = AgentMessage::Llm(Message::User {
+  -         content: effective_blocks,
+  -         timestamp: now_ms(),
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 8 lines)
+  -         match run_prompt_once_with_messages(agent, vec![user_msg.clone()], changes, model).await {
+  +         match run_prompt_once_with_messages(
+  +             agent,
+  +             vec![user_msg(effective_blocks.clone())],
+  +             changes,
+  +             model,
+  +         )
+  +         .await
+  +         {
+ ✓ (19.3s)
+  -         match run_prompt_once_with_messages(agent, vec![user_msg.clone()], changes, model).await {
+  +         match run_prompt_once_with_messages(
+  +             agent,
+  +             vec![user_msg(effective_blocks.clone())],
+  +             changes,
+  +             model,
+  +         )
+  +         .await
+  +         {
+  2 tools completed in 35.0s (2 ✓)
+
+Now the overflow branch itself:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (10 → 77 lines)
+                PromptResult::ContextOverflow { error_msg, usage } => {
+                    accumulate_usage(&mut total_usage, &usage);
+    
+  +                 // The blocks are cloned per attempt, not consumed, so this
+  +                 // path can do exactly what the text driver does: restore,
+  +                 // compact, re-send the same content once.
+                    eprintln!(
+  -                     "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
+  +                     "\n{YELLOW}  ⚡ context overflow detected — auto-compacting and retrying...{RESET}"
+                    );
+                    eprintln!("{DIM}  ({error_msg}){RESET}");
+  -                 api_error = Some(error_msg);
+  + 
+  +                 if let Some(ref json) = saved_state {
+  +                     if let Err(e) = agent.restore_messages(json) {
+  +                         eprintln!(
+  +                             "{DIM}  ⚠ Could not restore state for overflow recovery: {e}{RESET}"
+  +                         );
+  +                     }
+  +                 }
+  ... (59 more lines)
+ ✓ (19.3s)
+                PromptResult::ContextOverflow { error_msg, usage } => {
+                    accumulate_usage(&mut total_usage, &usage);
+    
+  +                 // The blocks are cloned per attempt, not consumed, so this
+  +                 // path can do exactly what the text driver does: restore,
+  +                 // compact, re-send the same content once.
+                    eprintln!(
+  -                     "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1360,1375p src/prompt.rs ✓ (3ms)
+  2 tools completed in 22.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

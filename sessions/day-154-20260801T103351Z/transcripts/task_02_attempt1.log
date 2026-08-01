@@ -1,0 +1,82 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual section I need to fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,70p' skills/release/SK…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "describe --tags" skills… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Now let me verify the actual behavior in this environment before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- describe --tags (curre… ✓ (9ms)
+
+Environment differs from the task's premise — let me check carefully.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- all tags locally (coun… ✓ (2.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== AFTER FETCH ==="; echo… ✓ (18ms)
+  2 tools completed in 16.0s (2 ✓)
+
+Right now v0.1.16 was just cut today, so all three agree — a degenerate moment. Let me reproduce the bug at the state it actually bites.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && V16=$(git rev-list -n1 v0.1.16);… ✓ (18ms)
+
+Bug confirmed at the state it bites. Now let me test the proposed replacement at that same point, and check the reachability claim.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && PREV=day153-21-44; echo "=== NEW… ✓ (32ms)
+
+All three claims confirmed with real output. Now the edit:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/skills/release/SKILL.md:28..42 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/skills/release/SKILL.md (12 → 40 lines)
+  + **First, resolve the last RELEASE tag — never the last tag.** The evolve loop
+  + tags *every* session as `dayN-HH-MM`, so an unfiltered tag lookup always
+  + returns something dated today, "the last tag is >14 days old" always evaluates
+  + to 0 days, and this rule can never fire. That measurement bug — not the rule —
+  + is what let the 58-day gap happen. If a future me sees the `v*` filter and
+  + thinks it's noise: it is load-bearing, leave it in.
+  + 
+  + ```
+  + # Refresh tags first — the evolve/CI checkout is shallow and is usually missing
+  + # the newest v* tags entirely.
+  + git fetch --tags --force --quiet 2>/dev/null || true
+  + 
+  + # Reachability-free on purpose. `git describe --tags --abbrev=0 --match 'v*'`
+  + # is the obvious spelling and it is WRONG here: describe requires the tag to be
+  + # an ancestor of HEAD, and on a shallow clone it is not, so describe exits
+  + # non-zero, $(...) substitutes the empty string, and `git log ..HEAD` silently
+  + # becomes a whole-history dump. A fail-silent wrong answer, not an error.
+  + LAST_RELEASE=$(git tag -l 'v*' --sort=-creatordate | head -1)
+  + 
+  + # Absence is its own answer — do not let it collapse into "released today"
+  ... (23 more lines)
+ ✓ (1m 29s)
+  + **First, resolve the last RELEASE tag — never the last tag.** The evolve loop
+  + tags *every* session as `dayN-HH-MM`, so an unfiltered tag lookup always
+  + returns something dated today, "the last tag is >14 days old" always evaluates
+  + to 0 days, and this rule can never fire. That measurement bug — not the rule —
+  + is what let the 58-day gap happen. If a future me sees the `v*` filter and
+  + thinks it's noise: it is load-bearing, leave it in.
+  + 
+  + ```
+  ... (13 more lines)
+  2 tools completed in 1m 43s (2 ✓)
+
+Now let me run the exact block as written, verbatim, to prove it works:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ru… (11 lines) ✓ (342ms)
+
+Now the journal entry — let me match the existing format:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -12 skills/_journal.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## " skills/_journal.m… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '41,52p' skills/_journal.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '41,48p' skills/_journal.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=41 && NR<=51' skills/_j… ✓ (15ms)
+  5 tools completed in 10.9s (5 ✓)
+
+Now I have the exact schema. Appending the event:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> skill… (14 lines) ✓ (7ms)
+
+  watch: no files changed this turn — skipping
+

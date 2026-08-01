@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll follow the protocol exactly. First: gather evidence from outside src/prompt.rs only.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn \|pub fn ' src/promp… ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Signatures only, no bodies. Now external evidence — call sites and history.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --follow --oneline --sta…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'run_prompt\|prompt::' … ✓ (9ms)
+ ✓ (11ms)
+  2 tools completed in 28.2s (2 ✓)
+
+Two twin-pairs and a big size asymmetry visible from line offsets. Let me pull exact signatures (no bodies) and read the other modules involved.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 830 843 1031 1067 1088 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'run_prompt_with_conten… ✓ (11ms)
+ ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.usage\b\|outcome\.te… ✓ (16ms)
+  3 tools completed in 45.9s (3 ✓)
+
+context_overflow and .usage are never read outside the file — that kills one candidate and sharpens another. Writing the guess now, before any read.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (50 lines) ✓ (43ms)
+  2 tools completed in 34.9s (2 ✓)
+
+Guess is committed (ff008e48). Now I read.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:843..1038 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1133..1275 ✓ (1ms)
+  2 tools completed in 43.9s (2 ✓)
+
+h1 and h2 look right. Let me see the auto-retry twin and what original_text is for.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1088..1134 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1495,1520p;1555,1575p' s… ✓ (6ms)
+  2 tools completed in 14.6s (2 ✓)
+
+A MockProvider exists — that's my test seam. Let me see what it can simulate.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && P=$(ls -d ~/.cargo/registry/src/… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && P=$(ls -d ~/.cargo/registry/src/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'yoagent' Cargo.toml && … ✓ (12ms)
+  3 tools completed in 6.7s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
