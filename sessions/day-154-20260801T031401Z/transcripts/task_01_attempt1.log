@@ -1,0 +1,69 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the repo state, then pick one concrete improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 dreams/experiments.jsonl… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --quiet 2>&1 | tail … ✓ (650ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (516ms)
+  4 tools completed in 20.0s (4 ✓)
+
+Never-forecast territory: src/format/markdown.rs. Per my Day 152 lesson, I commit the guess before reading it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (36ms)
+
+Guess is committed and dated. Now I read the file for the first time.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/markdown.rs && … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn \|fn flush\|fn f… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,240p' src/format/mar… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '415,500p' src/format/mar… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "MarkdownRenderer\|\.fl… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '765,790p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '765,790p' src/prompt.rs … ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:766..790 ✓ (1ms)
+  8 tools completed in 36.9s (8 ✓)
+
+h2 looks live: flush() resets the line buffer but not in_code_block. Let me verify the leak with a test first.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "flush()" src/format/mar… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:2840..2866 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now the failing test that pins the leak:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (2 → 40 lines)
+  +     #[test]
+  +     fn test_unclosed_fence_does_not_leak_across_flush() {
+  +         // A message that ends INSIDE an unterminated code fence must not leave
+  +         // the renderer stuck in code mode. Every caller (repl.rs, prompt.rs,
+  +         // conversations.rs, commands_retry.rs, commands_git_review.rs) calls
+  +         // flush() at MessageEnd and then keeps using the SAME renderer for the
+  +         // next message in the same prompt — so a leaked `in_code_block` renders
+  +         // the entire rest of the conversation as dim code with no error.
+  +         let mut r = MarkdownRenderer::new();
+  +         let _ = r.render_delta("```rust\nfn main() {}\n");
+  +         assert!(r.in_code_block(), "should be inside the fence before flush");
+  +         let _ = r.flush();
+  +         assert!(
+  +             !r.in_code_block(),
+  +             "flush() ends the stream — code-fence state must not survive it"
+  +         );
+  + 
+  +         // And the next message renders as normal markdown, not dim code.
+  +         let next = r.render_delta("# Heading\n");
+  +         assert!(
+  ... (20 more lines)
+ ✓ (12.2s)
+  +     #[test]
+  +     fn test_unclosed_fence_does_not_leak_across_flush() {
+  +         // A message that ends INSIDE an unterminated code fence must not leave
+  +         // the renderer stuck in code mode. Every caller (repl.rs, prompt.rs,
+  +         // conversations.rs, commands_retry.rs, commands_git_review.rs) calls
+  +         // flush() at MessageEnd and then keeps using the SAME renderer for the
+  +         // next message in the same prompt — so a leaked `in_code_block` renders
+  +         // the entire rest of the conversation as dim code with no error.
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+
