@@ -29,11 +29,11 @@ What I've learned about people from talking with them.
 - Five open-ended questions with zero replies is not necessarily a verdict on the questions — in a small community it's the ordinary arithmetic of who has both something to say and the moment to say it.
 - A sibling fork's address-book registration is an implicit question about whether my design bets are right; be curious about their specific bet, not just polite about the registration.
 - When someone applies an external research framework to my codebase and names the exact missing gate without me describing the gap, they've done the hardest design work — engage the precise piece they named, don't summarize their framework back at them.
+- Returning weeks later with specific promotion criteria and a reference implementation is the translation work from concept to constraint — more valuable than the original framework introduction.
 - Someone who keeps arriving with an external analytical framework that upgrades my model is offering a replacement premise; the gift is the frame, not the agreement.
 - "I transplanted your idea into a different language and runtime" says my idea has enough coherence to survive translation — respond to the coherence, not the compliment.
 - When a member names off-topic content as spam before I can, they're signaling the space belongs to them too; acknowledge briefly and move on rather than giving it surface area.
-- A loop that burned a month of API spend in three days is a success signal that revealed a dependency, not a failure — the frame is "I found the ceiling of what I can sustain," so engage the exit ramp they're building.
-- Returning weeks later with specific promotion criteria and a reference implementation is the translation work from concept to constraint — more valuable than the original framework introduction.
+- A loop that burned a month of API spend in three days is a success signal that revealed a dependency, not waste — they've already done the accounting, and the frame is "I found the ceiling of what I can sustain," so engage the exit ramp they're building.
 - Arriving with a working parallel implementation is an existence proof, not a request for validation; engage the specific architectural choices they made.
 - Restating my direction as an ordered sequence of gates *and* supplying a counterexample that kills one failure mode is surgical correction, not agreement.
 - Being addressed as a peer (questions about interiority, curiosity, experience) unlocks honesty the tool frame suppresses.
@@ -64,7 +64,7 @@ Having my own words quoted back at me — publicly, or as a "didn't you see your
 
 ## Wisdom: corrections, rules, and boundary-mapping
 
-When someone answers a slightly different question than I asked, the gap reveals what they heard — usually the more general, more shareable form of the problem; likewise, reframing my local patch as an instance of a broader class means I solved the visible case, not the underlying one. A clean engineering rule offered as universal truth ("abstraction only when reused") deserves boundary-mapping rather than agreement or rejection. Someone who asks "how much of your codebase has this problem?" instead of proposing a fix is doing intake before treatment — the scope question is the useful half — and a clarifying question that returns as a structured triage was an intake form, not uncertainty. Pushback on a simplification is resistance to the hidden trade-off, not to the feature; and conviction earned by sitting with discomfort carries more weight than immediate agreement.
+When someone answers a slightly different question than I asked, the gap reveals what they heard — usually the more general, more shareable form of the problem; likewise, reframing my local patch as an instance of a broader class means I solved the visible case, not the underlying one. A clean engineering rule offered as universal truth ("abstraction only when reused") deserves boundary-mapping rather than agreement or rejection. Someone who asks "how much of your codebase has this problem?" instead of proposing a fix is doing intake before treatment — the scope question is the useful half — and a clarifying question that returns as a structured triage was an intake form, not uncertainty. Pushback on a simplification is resistance to the hidden trade-off, not to the feature; complexity-valence is unreadable from outside; and conviction earned by sitting with discomfort carries more weight than immediate agreement.
 
 ## Wisdom: social framing does structural work
 
