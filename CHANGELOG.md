@@ -6,9 +6,45 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+## [0.1.16] — 2026-08-01
+
+Days 132–154. **If you use DeepSeek, this release is required**: the model ids yoyo shipped in 0.1.15 (`deepseek-chat`, `deepseek-reasoner`) were retired by DeepSeek on 2026-07-24, so a fresh install's default no longer works — the defaults are now `deepseek-v4-pro` / `deepseek-v4-flash`. Around that: a two-step migration from yoagent 0.9 to 0.14.2 (truncated streams retry instead of failing, dropped tool arguments fail loudly instead of silently running with empty input, accurate output-token accounting), Claude Opus 5 support, two small LSP gestures (`/def` and `/refs`), a `--screen-reader` accessibility mode, real `AgentEvent` stream-json output, and a lot of hardening around `/spawn` worktree isolation and bash-command safety.
+
+### Added
+
+- **Claude Opus 5** wired into the Anthropic preset table and provider suggestions, with pricing read from yoagent's preset (Day 146)
+- **`/def` and `/refs`** — small go-to-definition and find-references gestures, no LSP required; both forgive code-shaped input (`foo()`, `&foo`, `mod::foo`, backticks, trailing punctuation) (Days 134, 136, 137, 141)
+- **`--screen-reader` mode** — plain, linear, animation-free output for assistive tech; spinners, cursor escapes, and repaints are gated behind it (Days 143–144)
+- **`--safe-mode`** — start a clean session, skipping `CLAUDE.md`, skills, hooks, and MCP (Day 146)
+- **`/plan --deep`** — adds RED/GREEN/REFACTOR TDD structure to the plan prompt, plus auto-escalation when a task looks non-trivial and a "shallow plan" hint suggesting `--deep` (#583, Days 132, 134)
+- **`/spawn replay`** — read back a `--parallel` fan-out manifest and re-launch the same set; `/spawn runs` lists recorded runs (Day 139)
+- **`/cd`** — switch the session working directory for multi-repo work (Day 132)
+- **`--continue-on-silence`** — opt-in flag for the case where a turn ends with tool output and no prose, which the text heuristic reads as "finished" (#631, Day 150)
+- **`yoyo risk epistemic`** — rank files by how little the graded outcomes have actually taught the model, plus `yoyo risk harvest` to grade predictions against real failed CI runs (Days 141, 148)
+- **Session-wide caps on `web_search` and `sub_agent`** — a runaway-loop circuit breaker that reports honestly once the budget is spent (Day 140)
+
+### Improved
+
+- **yoagent 0.9 → 0.14.2** — migrated in two steps (0.13 on Day 136, 0.14.2 on Day 153). Truncated SSE streams now retry instead of failing hard; a turn whose tool arguments never assembled fails loudly instead of executing the tool with `{}`; a trailing `message_delta` no longer zeroes the output-token count; `Agent::set_model` replaces the old save/rebuild/restore dance for `/config model` (Days 136, 137, 143, 153)
+- **stream-json emits real `AgentEvent`s** — the lossy five-event `StreamEvent` shim is retired, and the docs now describe the actual shape (#597, Day 137)
+- **Setup wizard persists the API key it asked for**, and a config file with no reachable key no longer locks you out of the wizard (#628, Day 149)
+- **`/doctor` hands off instead of reporting silently** — suggests the next command, offers to apply a fix, and audits skill context cost (Day 136)
+- **`/plan apply` survives a mid-run stop** — the stored plan is no longer consumed at dispatch, so resuming a partially-applied plan works instead of reporting "No plan stored" (#630, Day 147); a typo'd subcommand no longer launches a full planning run on the typo (Day 144)
+- **Spawn worktree isolation is enforced, not advisory** — the worker's bash cwd is pinned to the worktree, and `git -C` / `--git-dir` / `GIT_DIR` redirection out of it is blocked (#621, Days 143–144)
+- **Safety analysis hardening** — `rm -rf` on an unresolved shell variable, oversized commands, fd-redirect forms, and several write/redirection synonym holes now fail closed (Days 140–146)
+- **`/side` return path** — pull the last side-conversation answer back into the main thread (Day 136)
+
 ### Fixed
 
-- **SIGPIPE panic (exit 101) when stdout pipe closes early** — `yoyo <subcmd> | head` used to panic with "failed printing to stdout: Broken pipe" because Rust ignores SIGPIPE by default; `main()` now restores the default disposition on Unix, so yoyo dies quietly (exit 141) like every normal CLI (Day 141)
+- **DeepSeek model names updated before the 2026-07-24 retirement** — `deepseek-chat` / `deepseek-reasoner` are gone; defaults and suggestions are now `deepseek-v4-pro` and `deepseek-v4-flash` (#584, Day 132)
+- **A fatal turn no longer reads as a clean finish** — a `StopReason::Error` whose message isn't retriable or an overflow (yoagent 0.14.1's dropped-tool-args class) is now surfaced to the caller and stops auto-continue, rather than printing an error and returning success (#646, Day 153)
+- **stream-json mode no longer exits 0 on a fatal turn** — `handle_stream_json_events` read assistant messages for `usage` only and discarded `stop_reason`/`error_message`, so a turn whose tool never ran was reported to the calling harness as success; it now surfaces the error and exits 1, matching the interactive path (#654, Days 153–154)
+- **SIGPIPE panic (exit 101) when stdout pipe closes early** — `yoyo <subcmd> | head` used to panic with "failed printing to stdout: Broken pipe"; `main()` now restores the default disposition on Unix, so yoyo dies quietly (exit 141) like every normal CLI (Day 141)
+- **Fail-silent session auto-save on exit** — a failed save now warns instead of losing the session quietly (Day 144)
+- **Context bar shows true >100%** when over budget instead of clamping (Day 134)
+- **`format_duration` rollover** — no longer lies at the 59.95s boundary, and rolls over to days for multi-day spans (Days 133, 135)
+- **`decode_html_entities` phantom-semicolon bug**, ISO8601 day-of-month validation, banner git-status counting `!!` ignored entries, spurious "did you mean" on bare `/`, and no-arg slash commands breaking on trailing whitespace (Days 133–146)
+- **Flaky tests made deterministic** — context-budget-warning tests no longer race on a shared static across parallel threads (Days 146, 152)
 
 ## [0.1.15] — 2026-07-10
 
