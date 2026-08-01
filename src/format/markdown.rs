@@ -463,23 +463,37 @@ impl MarkdownRenderer {
 
     /// Flush any remaining buffered content (call after stream ends).
     pub fn flush(&mut self) -> String {
-        if self.line_buffer.is_empty() {
+        let output = if self.line_buffer.is_empty() {
             if self.block_prefix_rendered {
                 // Close any open italic from blockquote prefix
                 self.block_prefix_rendered = false;
-                return format!("{RESET}");
+                format!("{RESET}")
+            } else {
+                String::new()
             }
-            return String::new();
+        } else {
+            let line = std::mem::take(&mut self.line_buffer);
+            self.line_start = true;
+            if self.block_prefix_rendered {
+                self.block_prefix_rendered = false;
+                // Prefix already rendered — just render remaining inline content
+                let formatted = self.render_inline(&line);
+                format!("{formatted}{RESET}")
+            } else {
+                self.render_line(&line)
+            }
+        };
+
+        // The stream has ended. An unterminated code fence must not survive into
+        // the next message — otherwise the rest of the conversation renders as
+        // dim code with no visible error. Close the fence state and the ANSI run.
+        if self.in_code_block {
+            self.in_code_block = false;
+            self.code_lang = None;
+            self.line_start = true;
+            return format!("{output}{RESET}");
         }
-        let line = std::mem::take(&mut self.line_buffer);
-        self.line_start = true;
-        if self.block_prefix_rendered {
-            self.block_prefix_rendered = false;
-            // Prefix already rendered — just render remaining inline content
-            let formatted = self.render_inline(&line);
-            return format!("{formatted}{RESET}");
-        }
-        self.render_line(&line)
+        output
     }
 
     /// Render a single complete line, updating state for code fences.
@@ -2849,6 +2863,44 @@ mod tests {
             out.is_empty() && flushed.is_empty(),
             "Empty input should produce empty output"
         );
+    }
+
+    #[test]
+    fn test_unclosed_fence_does_not_leak_across_flush() {
+        // A message that ends INSIDE an unterminated code fence must not leave
+        // the renderer stuck in code mode. Every caller (repl.rs, prompt.rs,
+        // conversations.rs, commands_retry.rs, commands_git_review.rs) calls
+        // flush() at MessageEnd and then keeps using the SAME renderer for the
+        // next message in the same prompt — so a leaked `in_code_block` renders
+        // the entire rest of the conversation as dim code with no error.
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("```rust\nfn main() {}\n");
+        assert!(r.in_code_block, "should be inside the fence before flush");
+        let _ = r.flush();
+        assert!(
+            !r.in_code_block,
+            "flush() ends the stream — code-fence state must not survive it"
+        );
+
+        // And the next message renders as normal markdown, not dim code.
+        let next = r.render_delta("# Heading\n");
+        assert!(
+            next.contains(BOLD.0),
+            "next message after an unclosed fence should render as a header, got {next:?}"
+        );
+    }
+
+    #[test]
+    fn test_flush_preserves_closed_fence_behavior() {
+        // Regression guard for the normal path: a properly closed fence already
+        // left in_code_block false, and flush() must not change rendering of
+        // the content it emits.
+        let mut r = MarkdownRenderer::new();
+        let mut out = String::new();
+        out.push_str(&r.render_delta("```\ncode\n```\n"));
+        out.push_str(&r.flush());
+        assert!(!r.in_code_block, "closed fence leaves code mode");
+        assert!(out.contains("code"), "code content should still be emitted");
     }
 
     #[test]
