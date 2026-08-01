@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code I'm changing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,180p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,360p' src/commands_r… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '175,265p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tally_hypothesis_famili… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1525p' src/commands… ✓ (5ms)
+  5 tools completed in 9.7s (5 ✓)
+
+Now the tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 72 lines)
+  +     /// A genre prior is a real third family, not a flattering `file_specific`.
+  +     /// "Any stateful line-mode renderer forgets to reset at end of stream" is
+  +     /// true of programs of this kind — a hit there proves the genre, not my
+  +     /// model of the file — so it must land in its own bucket.
+  +     #[test]
+  +     fn test_families_genre_prior_is_its_own_bucket() {
+  +         let ledger = concat!(
+  +             r#"{"type":"experiment_result","day":154,"target":"src/format/markdown.rs","graded":"hit","hypothesis_grades":[{"id":"h2","provenance":"genre_prior","graded":"hit"},{"id":"h1","provenance":"file_specific","graded":"miss"}]}"#,
+  +             "\n",
+  +         );
+  +         let fam = tally_hypothesis_families(ledger);
+  +         assert_eq!(fam.genre_prior.graded, 1);
+  +         assert_eq!(fam.genre_prior.hits, 1);
+  +         assert_eq!(fam.file_specific.graded, 1);
+  +         assert_eq!(fam.file_specific.hits, 0);
+  +         assert_eq!(
+  +             fam.unknown,
+  +             FamilyTally::default(),
+  +             "genre_prior is recognised, so it never falls to unknown"
+  +         );
+  ... (52 more lines)
+ ✓ (12.3s)
+  +     /// A genre prior is a real third family, not a flattering `file_specific`.
+  +     /// "Any stateful line-mode renderer forgets to reset at end of stream" is
+  +     /// true of programs of this kind — a hit there proves the genre, not my
+  +     /// model of the file — so it must land in its own bucket.
+  +     #[test]
+  +     fn test_families_genre_prior_is_its_own_bucket() {
+  +         let ledger = concat!(
+  +             r#"{"type":"experiment_result","day":154,"target":"src/format/markdown.rs","graded":"hit","hypothesis_grades":[{"id":"h2","provenance":"genre_prior","graded":"hit"},{"id":"h1","provenance":"file_specific","graded":"miss"}]}"#,
+  ... (13 more lines)
+
+Tests fail as expected. Now the implementation — all sites in one edit pass.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (16 → 25 lines)
+        /// Derived from something about the file itself — its role, callers, age,
+        /// dependencies, consumers. A hit grades my model of *that file*.
+        FileSpecific,
+  +     /// True of programs *of this kind*, not of this file: "any stateful
+  +     /// line-mode renderer with an `is_in_code_block` flag forgets to reset at
+  +     /// end of stream". A hit grades the **genre prior** — that programs of this
+  +     /// shape commonly have the defect — not my model of this file. Day 154: the
+  +     /// mechanical test is whether the sentence could be pasted verbatim into an
+  +     /// experiment about a stranger's file with the same role; if yes it belongs
+  +     /// here, not in [`Provenance::FileSpecific`].
+  +     GenrePrior,
+        /// Not stated, or stated as something I don't recognise.
+        Unknown,
+    }
+  ···
+            match raw.map(str::trim) {
+                Some("archive") => Provenance::Archive,
+                Some("file_specific") => Provenance::FileSpecific,
+  +             Some("genre_prior") => Provenance::GenrePrior,
+                _ => Provenance::Unknown,
+  ... (2 more lines)
+ ✓ (12.2s)
+        /// Derived from something about the file itself — its role, callers, age,
+        /// dependencies, consumers. A hit grades my model of *that file*.
+        FileSpecific,
+  +     /// True of programs *of this kind*, not of this file: "any stateful
+  +     /// line-mode renderer with an `is_in_code_block` flag forgets to reset at
+  +     /// end of stream". A hit grades the **genre prior** — that programs of this
+  +     /// shape commonly have the defect — not my model of this file. Day 154: the
+  +     /// mechanical test is whether the sentence could be pasted verbatim into an
+  ... (13 more lines)
+
+The exact E0004 the task warned about — one match site. Fixing struct, total, match, and report together.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 5 lines)
+        pub(crate) archive: FamilyTally,
+        pub(crate) file_specific: FamilyTally,
+  +     /// Hypotheses true of programs *of this kind* — see [`Provenance::GenrePrior`].
+  +     pub(crate) genre_prior: FamilyTally,
+        pub(crate) unknown: FamilyTally,
+ ✓ (12.6s)
+        pub(crate) archive: FamilyTally,
+        pub(crate) file_specific: FamilyTally,
+  +     /// Hypotheses true of programs *of this kind* — see [`Provenance::GenrePrior`].
+  +     pub(crate) genre_prior: FamilyTally,
+        pub(crate) unknown: FamilyTally,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 1 lines)
+  -         self.archive.graded + self.file_specific.graded + self.unknown.graded
+  +         self.archive.graded + self.file_specific.graded + self.genre_prior.graded + self.unknown.graded
+ ✓ (12.3s)
+  -         self.archive.graded + self.file_specific.graded + self.unknown.graded
+  +         self.archive.graded + self.file_specific.graded + self.genre_prior.graded + self.unknown.graded
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 2 lines)
+                        Provenance::FileSpecific => out.file_specific.record(grade),
+  +                     Provenance::GenrePrior => out.genre_prior.record(grade),
+ ✓ (1m 49s)
+                        Provenance::FileSpecific => out.file_specific.record(grade),
+  +                     Provenance::GenrePrior => out.genre_prior.record(grade),
+  3 tools completed in 2m 20s (3 ✓)
+
+Now the report row and footer.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 10 lines)
+        out.push_str(&format_family_line("archive", "archive", &fam.archive));
+  +     // Only shown when non-empty, same call as `unrecognised`: until a round
+  +     // files one, an always-zero genre-prior row would be noise.
+  +     if fam.genre_prior.graded > 0 {
+  +         out.push_str(&format_family_line(
+  +             "genre-prior",
+  +             "genre-prior",
+  +             &fam.genre_prior,
+  +         ));
+  +     }
+ ✓ (1m 53s)
+        out.push_str(&format_family_line("archive", "archive", &fam.archive));
+  +     // Only shown when non-empty, same call as `unrecognised`: until a round
+  +     // files one, an always-zero genre-prior row would be noise.
+  +     if fam.genre_prior.graded > 0 {
+  +         out.push_str(&format_family_line(
+  +             "genre-prior",
+  +             "genre-prior",
+  +             &fam.genre_prior,
+  +         ));
+  +     }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 10 lines)
+        out.push_str(&format!(
+            "    {DIM}measure my model of that file. Only the second is what the dream is after.{RESET}\n"
+  +     ));
+  +     out.push_str(&format!(
+  +         "    {DIM}A genre-prior hit is the weakest of the three: it says programs of this KIND{RESET}\n"
+  +     ));
+  +     out.push_str(&format!(
+  +         "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
+        ));
+        out
+ ✓ (1m 50s)
+        out.push_str(&format!(
+            "    {DIM}measure my model of that file. Only the second is what the dream is after.{RESET}\n"
+  +     ));
+  +     out.push_str(&format!(
+  +         "    {DIM}A genre-prior hit is the weakest of the three: it says programs of this KIND{RESET}\n"
+  +     ));
+  +     out.push_str(&format!(
+  +         "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
+        ));
+        out
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (11.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 31s)
+  4 tools completed in 5m 41s (4 ✓)
+
+All green. Now clippy, fmt, and the consumer self-test.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (20.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self_test\|self-test\|a… ✓ (4ms)
+  2 tools completed in 22.9s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the four cited instances against the actual record before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -30 | head -40…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,300p' CLAUDE.md ✓ (3ms)
+ ✓ (25ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Now let me verify each cited instance against the actual record.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 618 647 653 658 660; do… ✓ (1.3s)
+
+All four verified against the real revert records:
+
+• #618 — strip_quoted_regions, detect_git_redirect, detect_git_redirect_in_tokens never used (-D dead-code) ✅ function
+• #653 — fatal_error_in_messages, fatal_error_from_stop never used ✅ function
+• #658 — did_overflow_compact assigned but never read (-D unused-variables/-D unused-assignments) ✅ *variable*
+• #647 — E0004 non-exhaustive patterns for PromptResult::FatalError ✅ enum variant — but note this one is a rustc build error, not a clippy lint. I'll word the rule so it doesn't claim otherwise.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "6-session deadlock" CLA… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (22ms)
+  2 tools completed in 9.6s (2 ✓)
+
+Rule is in place. Now the full verification (including the explicit clippy step the rule itself demands).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (20.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 12s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>&1 && echo "-… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (49 lines) ✓ (1m 31s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+  7 tools completed in 4m 37s (7 ✓)
+
+Done. Clean tree, one commit, CLAUDE.md only.
+
+## What I did
+
+Added two bullets to the Safety Rules section of CLAUDE.md, right after the run_git() guard:
+
+1. **Never add a definition without its consumer in the same edit** — names all three shapes (fn → call site, let → reader, enum variant → every match), states which gate catches each, gives the escape hatch (inline at the call site instead of dangling), and cites #618/#653/#658/#647 so the rule carries its own evidence.
+2. **Run `cargo clippy --all-targets -- -D warnings` explicitly before declaring a task complete** — with the reason: watch runs mid-turn and skips when nothing changed, so the last edit of a task is the one most likely to be unlinted.
+
+## Verification of the four instances — checked, not assumed
+
+I read the revert issue bodies rather than trusting the table. All four hold, with two corrections worth stating:
+
+• #618 added three dead functions, not one — strip_quoted_regions, `detect_git_redirect, detect_git_redirect_in_tokens`. The table undercounts. (The task file for that retry literally said "WIRE FIRST." It knew the failure mode and still shipped the definition without the call site.)
+• #647 is a rustc build error, not a clippy lint. Revert reason reads "Build failed after fix attempt", not "Clippy failed" — E0004 fails earlier and harder than `-D dead-code. I wrote the rule to say so explicitly rather than lumping all four under -D warnings`. A false claim in CLAUDE.md gets re-injected as authoritative context every session (Day 130), so the extra clause was worth its width.
+
+#653 and #658 are exactly as described.
+
+## Checks
+
+cargo fmt --check ✅ · cargo clippy --all-targets -- -D warnings ✅ (ran it explicitly — the rule's own instruction, on its own commit) · cargo build ✅ · cargo test ✅ 4626 + 89 passed, 0 failed.
+
+Response drafted in session_plan/issue_responses.md for the issue-response phase.
+
+One note on why this one lands for me: #658 is mine, from this morning. The dead let was inside the fix for the defect I'd blind-guessed at, so it took the committed guess down with it — the experiment never got graded because a variable nobody read reverted the commit that would have scored it. That's the real cost of an unwired definition: not the definition, everything standing next to it.
+
+  watch: no files changed this turn — skipping
+
