@@ -2904,6 +2904,21 @@ mod tests {
     }
 
     #[test]
+    fn probe_split_marker_across_deltas() {
+        let mut r = MarkdownRenderer::new();
+        let mut out = String::new();
+        for d in ["hello ", "**bo", "ld** rest"] {
+            out.push_str(&r.render_delta(d));
+        }
+        out.push_str(&r.flush());
+        eprintln!("SPLIT_OUT={:?}", out);
+        let mut r2 = MarkdownRenderer::new();
+        let mut out2 = String::new();
+        out2.push_str(&r2.render_delta("hello **bold** rest"));
+        out2.push_str(&r2.flush());
+        eprintln!("WHOLE_OUT={:?}", out2);
+    }
+    #[test]
     fn test_horizontal_rule_edge_cases() {
         // Horizontal rules should work and not panic on edge cases.
         // "---" is a horizontal rule
