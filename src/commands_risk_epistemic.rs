@@ -114,6 +114,14 @@ pub(crate) enum Provenance {
     /// Derived from something about the file itself — its role, callers, age,
     /// dependencies, consumers. A hit grades my model of *that file*.
     FileSpecific,
+    /// True of programs *of this kind*, not of this file: "any stateful
+    /// line-mode renderer with an `is_in_code_block` flag forgets to reset at
+    /// end of stream". A hit grades the **genre prior** — that programs of this
+    /// shape commonly have the defect — not my model of this file. Day 154: the
+    /// mechanical test is whether the sentence could be pasted verbatim into an
+    /// experiment about a stranger's file with the same role; if yes it belongs
+    /// here, not in [`Provenance::FileSpecific`].
+    GenrePrior,
     /// Not stated, or stated as something I don't recognise.
     Unknown,
 }
@@ -123,6 +131,7 @@ impl Provenance {
         match raw.map(str::trim) {
             Some("archive") => Provenance::Archive,
             Some("file_specific") => Provenance::FileSpecific,
+            Some("genre_prior") => Provenance::GenrePrior,
             _ => Provenance::Unknown,
         }
     }
@@ -155,6 +164,8 @@ impl FamilyTally {
 pub(crate) struct ExperimentFamilies {
     pub(crate) archive: FamilyTally,
     pub(crate) file_specific: FamilyTally,
+    /// Hypotheses true of programs *of this kind* — see [`Provenance::GenrePrior`].
+    pub(crate) genre_prior: FamilyTally,
     pub(crate) unknown: FamilyTally,
     /// Graded experiment results written before per-hypothesis provenance
     /// existed. Counted and disclosed, never back-filled — rewriting history
@@ -164,7 +175,10 @@ pub(crate) struct ExperimentFamilies {
 
 impl ExperimentFamilies {
     pub(crate) fn total_graded(&self) -> usize {
-        self.archive.graded + self.file_specific.graded + self.unknown.graded
+        self.archive.graded
+            + self.file_specific.graded
+            + self.genre_prior.graded
+            + self.unknown.graded
     }
 
     /// Nothing to say at all — no graded hypotheses and no predating results.
@@ -259,6 +273,7 @@ pub(crate) fn tally_hypothesis_families(ledger_text: &str) -> ExperimentFamilies
                 match prov {
                     Provenance::Archive => out.archive.record(grade),
                     Provenance::FileSpecific => out.file_specific.record(grade),
+                    Provenance::GenrePrior => out.genre_prior.record(grade),
                     Provenance::Unknown => out.unknown.record(grade),
                 }
             }
@@ -314,6 +329,15 @@ fn format_experiment_families(fam: &ExperimentFamilies) -> String {
         &fam.file_specific,
     ));
     out.push_str(&format_family_line("archive", "archive", &fam.archive));
+    // Only shown when non-empty, same call as `unrecognised`: until a round
+    // files one, an always-zero genre-prior row would be noise.
+    if fam.genre_prior.graded > 0 {
+        out.push_str(&format_family_line(
+            "genre-prior",
+            "genre-prior",
+            &fam.genre_prior,
+        ));
+    }
     // Only shown when non-empty: an "unrecognised provenance" row that is
     // always zero is noise, but hiding real entries in it would be a lie.
     if fam.unknown.graded > 0 {
@@ -337,6 +361,12 @@ fn format_experiment_families(fam: &ExperimentFamilies) -> String {
     ));
     out.push_str(&format!(
         "    {DIM}measure my model of that file. Only the second is what the dream is after.{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "    {DIM}A genre prior hit is the weakest of the three: it says programs of this KIND{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
     ));
     out
 }
@@ -1429,6 +1459,77 @@ mod tests {
         assert!(
             report.contains("unrecognised provenance"),
             "unknown bucket is disclosed, not hidden: {report}"
+        );
+    }
+
+    /// A genre prior is a real third family, not a flattering `file_specific`.
+    /// "Any stateful line-mode renderer forgets to reset at end of stream" is
+    /// true of programs of this kind — a hit there proves the genre, not my
+    /// model of the file — so it must land in its own bucket.
+    #[test]
+    fn test_families_genre_prior_is_its_own_bucket() {
+        let ledger = concat!(
+            r#"{"type":"experiment_result","day":154,"target":"src/format/markdown.rs","graded":"hit","hypothesis_grades":[{"id":"h2","provenance":"genre_prior","graded":"hit"},{"id":"h1","provenance":"file_specific","graded":"miss"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.genre_prior.graded, 1);
+        assert_eq!(fam.genre_prior.hits, 1);
+        assert_eq!(fam.file_specific.graded, 1);
+        assert_eq!(fam.file_specific.hits, 0);
+        assert_eq!(
+            fam.unknown,
+            FamilyTally::default(),
+            "genre_prior is recognised, so it never falls to unknown"
+        );
+        // The header count must agree with the rows.
+        assert_eq!(fam.total_graded(), 2);
+
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        assert!(
+            report.contains("genre-prior"),
+            "genre-prior row is rendered: {report}"
+        );
+        assert!(
+            report.contains("2 graded hypotheses"),
+            "total counts the genre-prior entry: {report}"
+        );
+    }
+
+    /// `genre_prior` declared on the `experiment` line is the fallback when the
+    /// grade record omits provenance — same path as the other two families.
+    #[test]
+    fn test_families_genre_prior_falls_back_to_declaration() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":154,"target":"src/a.rs","hypotheses":[{"id":"h1","provenance":"genre_prior","claim":"c"}]}"#,
+            "\n",
+            r#"{"type":"experiment_result","day":154,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","graded":"hit"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.genre_prior.hits, 1);
+        assert_eq!(fam.unknown.graded, 0);
+        assert_eq!(fam.file_specific.graded, 0);
+    }
+
+    /// An empty genre-prior tally prints no row at all — an always-zero row is
+    /// noise, same call as the `unrecognised` precedent.
+    #[test]
+    fn test_families_empty_genre_prior_prints_no_row() {
+        let ledger = concat!(
+            r#"{"type":"experiment_result","day":151,"target":"src/a.rs","graded":"hit","hypothesis_grades":[{"id":"h1","provenance":"archive","graded":"hit"}]}"#,
+            "\n",
+        );
+        let fam = tally_hypothesis_families(ledger);
+        assert_eq!(fam.genre_prior, FamilyTally::default());
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        assert!(
+            report.contains("chosen-experiment record"),
+            "block still renders: {report}"
+        );
+        assert!(
+            !report.contains("genre-prior"),
+            "no zero row for an empty genre-prior family: {report}"
         );
     }
 
