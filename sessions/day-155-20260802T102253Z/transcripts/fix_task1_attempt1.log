@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read mode is active\|se… ✓ (4ms)
+ ✓ (17ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Confirmed — nothing was implemented. Let me read the relevant code sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p src/tool_wrappers.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 930,1000p src/tool_wrappe… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1035,1106p src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn tool_result_preview"… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,420p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_tool_error" src/*.… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1020,1140p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1060,1135p ~/.cargo/regis… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1090p ~/.cargo/regis… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1082 && NR<=1092' ~/.ca… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolError::Failed(forma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ToolError::Failed(form… ✓ (3ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "check_path" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (6ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn is_retriable_err…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use\|^pub use" src/pro… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 327,370p src/prompt_retry… ✓ (5ms)
+  22 tools completed in 1m 46s (22 ✓)
+
+Now I have the full picture. Let me implement — starting with the const and refusal prefixes in `tool_wrappers.rs`.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (19ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (4 → 14 lines)
+    use yoagent::types::AgentTool;
+  + 
+  + /// Marks a tool error as a *deterministic refusal*: the tool declined by policy, so
+  + /// re-running the identical request produces the identical answer. Read by
+  + /// `prompt_retry::is_deterministic_tool_error` — one definition, two readers, so a
+  + /// reworded refusal cannot silently desync from the classifier that recognises it.
+  + ///
+  + /// Only policy guards carry this marker (read/plan mode, session cap, directory
+  + /// denial). Genuine execution failures — a missing file, a cancelled call, an inner
+  + /// tool's own error — must NOT carry it: those may well succeed on a retry.
+  + pub const TOOL_REFUSAL_PREFIX: &str = "refused: ";
+    
+    // ---------------------------------------------------------------------------
+    // GuardedTool — directory restriction wrapper (Box-based)
+ ✓ (18.9s)
+    use yoagent::types::AgentTool;
+  + 
+  + /// Marks a tool error as a *deterministic refusal*: the tool declined by policy, so
+  + /// re-running the identical request produces the identical answer. Read by
+  + /// `prompt_retry::is_deterministic_tool_error` — one definition, two readers, so a
+  + /// reworded refusal cannot silently desync from the classifier that recognises it.
+  + ///
+  + /// Only policy guards carry this marker (read/plan mode, session cap, directory
+  ... (6 more lines)
+  2 tools completed in 24.2s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
