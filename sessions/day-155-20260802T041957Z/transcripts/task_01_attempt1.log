@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the call site in agent_builder.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt\|pub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480,545p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 720,800p src/agent_builde… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 7.7s (4 ✓)
+
+The configure_agent line 530 is the single call site covering build_agent. Let me add the helper + composition there.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 42 lines)
+  + /// Factual grounding so the model doesn't confabulate a vendor identity when
+  + /// asked what it is. A model with no such context answers from training priors
+  + /// — a DeepSeek model running under yoyo confidently claimed to be "Claude,
+  + /// made by Anthropic" (#664), which is exactly the unfounded certainty the
+  + /// system prompt's evidence rules forbid.
+  + ///
+  + /// Deliberately identity-free: it states technical facts about the runtime, not
+  + /// a persona, so it composes cleanly with a user's own `--system "You are
+  + /// Jarvis"`. Provider-neutral — it prevents Anthropic-, OpenAI- and
+  + /// yoyo-flavored false claims alike.
+  + fn model_identity_note(provider: &str, model: &str) -> String {
+  +     format!(
+  +         "# Runtime facts\n\n\
+  +          You are being served by the provider `{provider}` under the model id `{model}`. \
+  +          That string pair is the only evidence available about which model you are. \
+  +          You have no direct knowledge of your own architecture, training data, vendor, \
+  +          or origin — anything you might feel certain about there comes from training \
+  +          priors, not from observation, and is exactly the kind of unfounded claim the \
+  +          evidence rules above forbid. If asked what model you are, who made you, or how \
+  +          you were trained, report the provider and model id above and say plainly that \
+  ... (22 more lines)
+ ✓ (18.6s)
+  + /// Factual grounding so the model doesn't confabulate a vendor identity when
+  + /// asked what it is. A model with no such context answers from training priors
+  + /// — a DeepSeek model running under yoyo confidently claimed to be "Claude,
+  + /// made by Anthropic" (#664), which is exactly the unfounded certainty the
+  + /// system prompt's evidence rules forbid.
+  + ///
+  + /// Deliberately identity-free: it states technical facts about the runtime, not
+  + /// a persona, so it composes cleanly with a user's own `--system "You are
+  ... (13 more lines)
+  2 tools completed in 33.3s (2 ✓)
+
+Expected — now the call site in the same edit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (4 → 11 lines)
+  +         // Single choke point for every system-prompt source (default, --system,
+  +         // --system-file, config): resolve_system_prompt has already picked one,
+  +         // so appending the grounding note here covers all of them (#664).
+            agent = agent
+  -             .with_system_prompt(&self.system_prompt)
+  +             .with_system_prompt(compose_system_prompt(
+  +                 &self.system_prompt,
+  +                 &self.provider,
+  +                 &self.model,
+  +             ))
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+ ✓ (1m 47s)
+  +         // Single choke point for every system-prompt source (default, --system,
+  +         // --system-file, config): resolve_system_prompt has already picked one,
+  +         // so appending the grounding note here covers all of them (#664).
+            agent = agent
+  -             .with_system_prompt(&self.system_prompt)
+  +             .with_system_prompt(compose_system_prompt(
+  +                 &self.system_prompt,
+  +                 &self.provider,
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub fn with_system_pro… ✓ (7ms)
+  2 tools completed in 1m 52s (2 ✓)
+
+Good. Now the side agent (same one-line composition), then tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (20 → 24 lines)
+            let mut agent = agent
+  -             .with_system_prompt(side_prompt)
+  +             .with_system_prompt(compose_system_prompt(
+  +                 side_prompt,
+  +                 &self.provider,
+  +                 &self.model,
+  +             ))
+                .with_api_key(&self.api_key)
+                .with_cache_config(CacheConfig {
+                    enabled: true,
+ ✓ (1m 47s)
+            let mut agent = agent
+  -             .with_system_prompt(side_prompt)
+  +             .with_system_prompt(compose_system_prompt(
+  +                 side_prompt,
+  +                 &self.provider,
+  +                 &self.model,
+  +             ))
+                .with_api_key(&self.api_key)
+                .with_cache_config(CacheConfig {
+                    enabled: true,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 995,1010p src/agent_build… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 49 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     #[test]
+  +     fn test_model_identity_note_states_provider_and_model() {
+  +         let note = model_identity_note("openrouter", "qwen/qwen3-coder");
+  +         assert!(note.contains("openrouter"), "note must name the provider");
+  +         assert!(
+  +             note.contains("qwen/qwen3-coder"),
+  +             "note must name the model id"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_model_identity_note_is_provider_neutral() {
+  +         // Regression for #664: a DeepSeek model told the user it was
+  +         // "Claude, made by Anthropic". The grounding note must never plant
+  +         // a vendor name that isn't the one actually in use.
+  +         let note = model_identity_note("deepseek", "deepseek-v4-flash");
+  ... (29 more lines)
+ ✓ (1m 47s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     #[test]
+  +     fn test_model_identity_note_states_provider_and_model() {
+  +         let note = model_identity_note("openrouter", "qwen/qwen3-coder");
+  +         assert!(note.contains("openrouter"), "note must name the provider");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (41.5s)
+  4 tools completed in 4m 35s (4 ✓)
+
+Clippy clean, agent_builder tests pass. Now the docs line and the full suite.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder.rs\` —" C… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic
+  + - `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic. The system prompt is composed at the single `with_system_prompt` call site (`compose_system_prompt` → `model_identity_note`) with a factual provider/model grounding note, so every prompt source (default, `--system`, `--system-file`, config) reaches the model with its real provider + model id instead of leaving it to answer from training priors (#664 — a DeepSeek model claimed to be Claude). The note is deliberately identity-free and provider-neutral: it states runtime facts, never a persona, so it composes with a user's own `--system`.
+ ✓ (1m 7s)
+  - - `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic
+  + - `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic. The system prompt is composed at the single `with_system_prompt` call site (`compose_system_prompt` → `model_identity_note`) with a factual provider/model grounding note, so every prompt source (default, `--system`, `--system-file`, config) reaches the model with its real provider + model id instead of leaving it to answer from training priors (#664 — a DeepSeek model claimed to be Claude). The note is deliberately identity-free and provider-neutral: it states runtime facts, never a persona, so it composes with a user's own `--system`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo te… ✓ (54.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git add -A… ✓ (20ms)
+  4 tools completed in 2m 25s (4 ✓)
+
+Done and committed. 🐙
+
+What changed (src/agent_builder.rs, +docs line in `CLAUDE.md`):
+
+• `model_identity_note(provider, model)` — a facts-only block: names the provider and model id, states that pair is the only evidence about which model it is, that it has no direct knowledge of its architecture/training/vendor, and that anything it feels certain about there is a training prior — report the pair and nothing more. It also names the front-end label (the tool running it) as non-evidence, which is the same reasoning the DeepSeek model correctly applied to "yoyo" before asserting "Claude" on exactly as little.
+• **`compose_system_prompt(base, provider, model)`** — appends the note after the resolved prompt; empty/whitespace base yields just the note (no leading blank lines).
+• Call sites in the same edit (the #618/#647/#653/#658 revert shape): configure_agent's single with_system_prompt — which runs after `resolve_system_prompt, so it covers default / --system / --system-file / config — plus build_side_agent`, since "who are you" is exactly the kind of thing asked in a one-shot /side. Architect/editor builders untouched to keep the diff one file, small.
+
+Tests (5, all in agent_builder.rs): provider+model appear in the note; `("deepseek","deepseek-v4-flash") contains neither Anthropic nor Claude; no yoyo` persona (identity stays in the protected files a product user doesn't have); `"You are Jarvis."` still starts the composed prompt; empty base composes to the bare note.
+
+Verified: cargo fmt --check clean, `cargo clippy --all-targets -- -D warnings` clean, full suite 4634 + 89 passing, 0 failed.
+
+One honest limitation I did not fix: this makes the model report the provider/model id truthfully, but yoyo can't verify the id either — an OpenAI-compatible endpoint can serve whatever it likes under any model string. The note says the pair is the only evidence available, not that the pair is true.
+
+  watch: no files changed this turn — skipping
+
