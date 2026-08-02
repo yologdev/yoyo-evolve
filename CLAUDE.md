@@ -48,7 +48,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 
 **Multi-file agent** (`src/`):
 - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers
-- `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic
+- `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic. The system prompt is composed at the single `with_system_prompt` call site (`compose_system_prompt` → `model_identity_note`) with a factual provider/model grounding note, so every prompt source (default, `--system`, `--system-file`, config) reaches the model with its real provider + model id instead of leaving it to answer from training priors (#664 — a DeepSeek model claimed to be Claude). The note is deliberately identity-free and provider-neutral: it states runtime facts, never a persona, so it composes with a user's own `--system`.
 - `banner.rs` — startup banner, welcome text, git status summary display (extracted from `cli.rs`)
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
 - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents

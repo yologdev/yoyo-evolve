@@ -477,6 +477,45 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
     config
 }
 
+/// Factual grounding so the model doesn't confabulate a vendor identity when
+/// asked what it is. A model with no such context answers from training priors
+/// — a DeepSeek model running under yoyo confidently claimed to be "Claude,
+/// made by Anthropic" (#664), which is exactly the unfounded certainty the
+/// system prompt's evidence rules forbid.
+///
+/// Deliberately identity-free: it states technical facts about the runtime, not
+/// a persona, so it composes cleanly with a user's own `--system "You are
+/// Jarvis"`. Provider-neutral — it prevents Anthropic-, OpenAI- and
+/// yoyo-flavored false claims alike.
+fn model_identity_note(provider: &str, model: &str) -> String {
+    format!(
+        "# Runtime facts\n\n\
+         You are being served by the provider `{provider}` under the model id `{model}`. \
+         That string pair is the only evidence available about which model you are. \
+         You have no direct knowledge of your own architecture, training data, vendor, \
+         or origin — anything you might feel certain about there comes from training \
+         priors, not from observation, and is exactly the kind of unfounded claim the \
+         evidence rules above forbid. If asked what model you are, who made you, or how \
+         you were trained, report the provider and model id above and say plainly that \
+         you cannot verify anything beyond them. Do not name a vendor or model family \
+         that isn't in that pair. The name of the tool running you is a front-end label, \
+         not evidence about the model."
+    )
+}
+
+/// Compose the effective system prompt: whatever prompt was resolved (default,
+/// `--system`, `--system-file`, or config) followed by the factual grounding
+/// note. Appended, never substituted, so a user prompt keeps its priority
+/// position at the top.
+fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+    let note = model_identity_note(provider, model);
+    if base.trim().is_empty() {
+        note
+    } else {
+        format!("{base}\n\n{note}")
+    }
+}
+
 /// Holds all configuration needed to build an Agent.
 /// Extracted from the 12-argument `build_agent` function so that
 /// creating or rebuilding an agent is just `config.build_agent()`.
@@ -526,8 +565,15 @@ impl AgentConfig {
         // Store for display by /tokens and /status commands
         cli::set_effective_context_tokens(effective_window as u64);
 
+        // Single choke point for every system-prompt source (default, --system,
+        // --system-file, config): resolve_system_prompt has already picked one,
+        // so appending the grounding note here covers all of them (#664).
         agent = agent
-            .with_system_prompt(&self.system_prompt)
+            .with_system_prompt(compose_system_prompt(
+                &self.system_prompt,
+                &self.provider,
+                &self.model,
+            ))
             .with_api_key(&self.api_key)
             .with_thinking(self.thinking)
             .with_skills(self.skills.clone());
@@ -742,7 +788,11 @@ impl AgentConfig {
         };
 
         let mut agent = agent
-            .with_system_prompt(side_prompt)
+            .with_system_prompt(compose_system_prompt(
+                side_prompt,
+                &self.provider,
+                &self.model,
+            ))
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig {
                 enabled: true,
@@ -957,6 +1007,55 @@ pub(crate) async fn try_fallback_prompt(
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn test_model_identity_note_states_provider_and_model() {
+        let note = model_identity_note("openrouter", "qwen/qwen3-coder");
+        assert!(note.contains("openrouter"), "note must name the provider");
+        assert!(
+            note.contains("qwen/qwen3-coder"),
+            "note must name the model id"
+        );
+    }
+
+    #[test]
+    fn test_model_identity_note_is_provider_neutral() {
+        // Regression for #664: a DeepSeek model told the user it was
+        // "Claude, made by Anthropic". The grounding note must never plant
+        // a vendor name that isn't the one actually in use.
+        let note = model_identity_note("deepseek", "deepseek-v4-flash");
+        assert!(!note.contains("Anthropic"), "note leaked a vendor name");
+        assert!(!note.contains("Claude"), "note leaked a model family name");
+    }
+
+    #[test]
+    fn test_model_identity_note_has_no_persona() {
+        // Identity lives in IDENTITY.md / PERSONALITY.md, which don't exist in
+        // a normal user's project. The product prompt stays facts-only.
+        let note = model_identity_note("anthropic", "claude-sonnet-5");
+        assert!(
+            !note.to_lowercase().contains("yoyo"),
+            "note added a persona"
+        );
+    }
+
+    #[test]
+    fn test_compose_system_prompt_appends_rather_than_replaces() {
+        let composed = compose_system_prompt("You are Jarvis.", "groq", "llama-4-70b");
+        assert!(
+            composed.starts_with("You are Jarvis."),
+            "user prompt must keep the top position: {composed}"
+        );
+        assert!(composed.contains("groq"));
+        assert!(composed.contains("llama-4-70b"));
+    }
+
+    #[test]
+    fn test_compose_system_prompt_with_empty_base_is_just_the_note() {
+        let composed = compose_system_prompt("   ", "ollama", "qwen3:8b");
+        assert_eq!(composed, model_identity_note("ollama", "qwen3:8b"));
+        assert!(!composed.starts_with('\n'), "no leading blank lines");
+    }
 
     fn test_agent_config(provider: &str, model: &str) -> AgentConfig {
         AgentConfig {
