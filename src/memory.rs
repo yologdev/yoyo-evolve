@@ -173,18 +173,35 @@ pub fn auto_remember(note: &str) -> bool {
     auto_remember_to(note, &memory_file_path())
 }
 
+/// Maximum number of entries the automatic (watch-fix) path will store.
+///
+/// A judgment number, not a measurement: every stored memory is injected into the prompt
+/// by [`format_memories_for_prompt`], so the auto path needs *some* ceiling. Dedup is exact
+/// (whole-note), so without a cap near-identical notes — compiler errors carry process ids
+/// and `file:line` positions — could accumulate without bound. 20 is roughly a screenful and
+/// well under any context budget; `/forget` is how a user makes room.
+pub const MAX_AUTO_MEMORIES: usize = 20;
+
 /// Testable variant of [`auto_remember`] that writes to a specific path.
 pub fn auto_remember_to(note: &str, path: &Path) -> bool {
     let mut memory = load_memories_from(path);
 
-    // Dedup: compare the first 50 chars (or whole note if shorter) against existing entries.
-    // Use char-boundary-safe truncation to avoid panics on multi-byte UTF-8.
-    let prefix: String = note.chars().take(50).collect();
-    let is_dup = memory.entries.iter().any(|e| {
-        let existing_prefix: String = e.note.chars().take(50).collect();
-        existing_prefix == prefix
-    });
+    // Dedup on the WHOLE note, not a fixed-width head. The old 50-char prefix compare (#672)
+    // was consumed entirely by the note template plus the watch command, so distinct
+    // learnings about the same command were silently discarded forever.
+    let key = note.trim();
+    let is_dup = memory.entries.iter().any(|e| e.note.trim() == key);
     if is_dup {
+        return false;
+    }
+
+    // Honest dedup means unbounded growth is possible, so the auto path is capped — and says
+    // so out loud. Silence when full is the same failure shape as the bug above: the user
+    // must be able to tell "already known" from "I stopped learning".
+    if memory.entries.len() >= MAX_AUTO_MEMORIES {
+        eprintln!(
+            "  ⚠ memory full ({MAX_AUTO_MEMORIES}) — not auto-saving; use /forget to make room"
+        );
         return false;
     }
 
@@ -1471,6 +1488,115 @@ mod tests {
 
         let memory = load_memories_from(&path);
         assert_eq!(memory.entries.len(), 2);
+
+        cleanup(&path);
+    }
+
+    // #672: the old dedup compared only the first 50 chars, and both note builders put a
+    // fixed template + the watch command in front of the discriminating part. With a
+    // realistic watch command the whole window is consumed before anything varies, so
+    // auto-learning stored at most one memory per (template, watch-command) pair forever.
+    const LONG_WATCH_CMD: &str = "cargo clippy --all-targets -- -D warnings && cargo test";
+
+    #[test]
+    fn test_auto_remember_long_command_fix_notes_both_saved() {
+        let path = temp_memory_path("auto_remember_long_fix");
+        cleanup(&path);
+
+        let note1 = build_fix_memory_note(LONG_WATCH_CMD, 1);
+        let note2 = build_fix_memory_note(LONG_WATCH_CMD, 5);
+        assert_ne!(note1, note2, "fixture must be two distinct notes");
+
+        assert!(auto_remember_to(&note1, &path), "first should save");
+        assert!(
+            auto_remember_to(&note2, &path),
+            "distinct note beyond the old 50-char window should save"
+        );
+
+        let memory = load_memories_from(&path);
+        assert_eq!(
+            memory.entries.len(),
+            2,
+            "both distinct notes should persist"
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_auto_remember_long_command_learn_notes_both_saved() {
+        let path = temp_memory_path("auto_remember_long_learn");
+        cleanup(&path);
+
+        let note1 = build_learn_memory_note(
+            LONG_WATCH_CMD,
+            &["cannot find type `Foo` in this scope".to_string()],
+            "type",
+        )
+        .expect("learn note should be built");
+        let note2 = build_learn_memory_note(
+            LONG_WATCH_CMD,
+            &["mismatched types: expected `u8`, found `String`".to_string()],
+            "type",
+        )
+        .expect("learn note should be built");
+        assert_ne!(note1, note2, "fixture must be two distinct notes");
+
+        assert!(auto_remember_to(&note1, &path), "first should save");
+        assert!(
+            auto_remember_to(&note2, &path),
+            "different error message should save even behind a long watch command"
+        );
+
+        let memory = load_memories_from(&path);
+        assert_eq!(memory.entries.len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_auto_remember_deduplicates_long_command_identical_note() {
+        let path = temp_memory_path("auto_remember_dedup_long");
+        cleanup(&path);
+
+        let note = build_fix_memory_note(LONG_WATCH_CMD, 3);
+        assert!(auto_remember_to(&note, &path), "first save should succeed");
+        assert!(
+            !auto_remember_to(&note, &path),
+            "the identical note should still be deduplicated"
+        );
+
+        let memory = load_memories_from(&path);
+        assert_eq!(memory.entries.len(), 1);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_auto_remember_refuses_when_full() {
+        let path = temp_memory_path("auto_remember_cap");
+        cleanup(&path);
+
+        for i in 0..MAX_AUTO_MEMORIES {
+            let note = format!("fact number {i} about this project");
+            assert!(auto_remember_to(&note, &path), "entry {i} should save");
+        }
+
+        let before = load_memories_from(&path);
+        assert_eq!(before.entries.len(), MAX_AUTO_MEMORIES);
+
+        let saved = auto_remember_to("a genuinely distinct fact that arrives too late", &path);
+        assert!(
+            !saved,
+            "auto-remember should refuse once the cap is reached"
+        );
+
+        let after = load_memories_from(&path);
+        assert_eq!(
+            after.entries.len(),
+            MAX_AUTO_MEMORIES,
+            "the file must not grow past the cap"
+        );
 
         cleanup(&path);
     }
