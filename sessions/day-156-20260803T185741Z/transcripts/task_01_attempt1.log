@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with issue #675 — it's concrete, verified with a verbatim reproduction, and small. Let me confirm the claims against the codebase first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/smart_edit.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate\|max_chars\|sa… ✓ (8ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub fn safe_truncate\|… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1070,1100p src/smart_edit… ✓ (7ms)
+  4 tools completed in 12.4s (4 ✓)
+
+Confirmed both claims. Writing the test first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (2 → 49 lines)
+  +     #[test]
+  +     fn test_snippet_line_is_char_capped() {
+  +         // A file with one very long line (minified JS/CSS, generated tables) must
+  +         // not push tens of KB into a tool error: the near-miss snippet is emitted
+  +         // as Err(..), which TruncatingTool's `?` propagates unmodified, so
+  +         // --max-tool-output cannot reach it. The cap has to live here. (#675)
+  +         let long_line = format!("var a={};", "x".repeat(90_000));
+  +         let file_content = format!("// header\n{long_line}\n// footer\n");
+  +         let old_text = format!("var a={};", "x".repeat(89_999) + "y");
+  +         let result = find_nearest_match(&file_content, &old_text);
+  +         assert!(result.is_some(), "one-char-off line should be a near miss");
+  +         let snippet = result.unwrap().snippet;
+  +         assert!(
+  +             snippet.len() < 4 * SMART_EDIT_MAX_SNIPPET_LINE_CHARS,
+  +             "snippet must be bounded by the per-line char cap, got {} bytes",
+  +             snippet.len()
+  +         );
+  +         assert!(
+  +             snippet.contains(SMART_EDIT_TRUNCATION_MARKER),
+  +             "a truncated line should say so: {snippet}"
+  ... (29 more lines)
+ ✓ (12.9s)
+  +     #[test]
+  +     fn test_snippet_line_is_char_capped() {
+  +         // A file with one very long line (minified JS/CSS, generated tables) must
+  +         // not push tens of KB into a tool error: the near-miss snippet is emitted
+  +         // as Err(..), which TruncatingTool's `?` propagates unmodified, so
+  +         // --max-tool-output cannot reach it. The cap has to live here. (#675)
+  +         let long_line = format!("var a={};", "x".repeat(90_000));
+  +         let file_content = format!("// header\n{long_line}\n// footer\n");
+  ... (13 more lines)
+
+Failing as expected. Now the constant + its consumer, in one edit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (2 → 16 lines)
+    /// Number of context lines to show around the nearest match.
+    const SMART_EDIT_CONTEXT_LINES: usize = 5;
+  + 
+  + /// Maximum bytes of a single file line reproduced in a near-miss snippet.
+  + ///
+  + /// The snippet is emitted inside an `Err(ToolError::Failed(..))`, and
+  + /// `TruncatingTool::execute` propagates `Err` with `?` — so the user's
+  + /// `--max-tool-output` ceiling can never trim it. Five lines of a minified JS
+  + /// bundle (legal input: the file-size gate only refuses above
+  + /// `SMART_EDIT_MAX_FILE_SIZE`) could put ~100KB into the model's context. The
+  + /// cap has to live at the point of construction. (#675)
+  + const SMART_EDIT_MAX_SNIPPET_LINE_CHARS: usize = 400;
+  + 
+  + /// Appended to a snippet line that hit `SMART_EDIT_MAX_SNIPPET_LINE_CHARS`, so
+  + /// a truncated line is never mistaken for the file's real contents.
+  + const SMART_EDIT_TRUNCATION_MARKER: &str = "… (line truncated)";
+ ✓ (19.2s)
+    /// Number of context lines to show around the nearest match.
+    const SMART_EDIT_CONTEXT_LINES: usize = 5;
+  + 
+  + /// Maximum bytes of a single file line reproduced in a near-miss snippet.
+  + ///
+  + /// The snippet is emitted inside an `Err(ToolError::Failed(..))`, and
+  + /// `TruncatingTool::execute` propagates `Err` with `?` — so the user's
+  + /// `--max-tool-output` ceiling can never trim it. Five lines of a minified JS
+  ... (8 more lines)
+
+Exactly the #669 shape. Wiring the consumer now:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (11 → 21 lines)
+    /// Build a snippet of context lines starting at `match_line_idx` (0-indexed).
+  + ///
+  + /// Each reproduced line is capped at `SMART_EDIT_MAX_SNIPPET_LINE_CHARS` bytes
+  + /// (char-boundary-safe) — see that constant for why the cap must live here.
+    fn build_snippet(file_lines: &[&str], match_line_idx: usize) -> String {
+        let snippet_start = match_line_idx;
+        let snippet_end = (match_line_idx + SMART_EDIT_CONTEXT_LINES).min(file_lines.len());
+        file_lines[snippet_start..snippet_end]
+            .iter()
+            .enumerate()
+  -         .map(|(j, line)| format!("{:>4} │ {}", snippet_start + j + 1, line))
+  +         .map(|(j, line)| {
+  +             let shown = crate::format::safe_truncate_with_suffix(
+  +                 line,
+  +                 SMART_EDIT_MAX_SNIPPET_LINE_CHARS,
+  +                 SMART_EDIT_TRUNCATION_MARKER,
+  +             );
+  +             format!("{:>4} │ {}", snippet_start + j + 1, shown)
+  +         })
+            .collect::<Vec<_>>()
+  ... (2 more lines)
+ ✓ (16m 2s)
+    /// Build a snippet of context lines starting at `match_line_idx` (0-indexed).
+  + ///
+  + /// Each reproduced line is capped at `SMART_EDIT_MAX_SNIPPET_LINE_CHARS` bytes
+  + /// (char-boundary-safe) — see that constant for why the cap must live here.
+    fn build_snippet(file_lines: &[&str], match_line_idx: usize) -> String {
+        let snippet_start = match_line_idx;
+        let snippet_end = (match_line_idx + SMART_EDIT_CONTEXT_LINES).min(file_lines.len());
+        file_lines[snippet_start..snippet_end]
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+
