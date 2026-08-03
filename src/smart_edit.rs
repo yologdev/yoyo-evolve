@@ -12,6 +12,20 @@ const SMART_EDIT_MAX_FILE_SIZE: u64 = 100_000;
 /// Number of context lines to show around the nearest match.
 const SMART_EDIT_CONTEXT_LINES: usize = 5;
 
+/// Maximum bytes of a single file line reproduced in a near-miss snippet.
+///
+/// The snippet is emitted inside an `Err(ToolError::Failed(..))`, and
+/// `TruncatingTool::execute` propagates `Err` with `?` — so the user's
+/// `--max-tool-output` ceiling can never trim it. Five lines of a minified JS
+/// bundle (legal input: the file-size gate only refuses above
+/// `SMART_EDIT_MAX_FILE_SIZE`) could put ~100KB into the model's context. The
+/// cap has to live at the point of construction. (#675)
+const SMART_EDIT_MAX_SNIPPET_LINE_CHARS: usize = 400;
+
+/// Appended to a snippet line that hit `SMART_EDIT_MAX_SNIPPET_LINE_CHARS`, so
+/// a truncated line is never mistaken for the file's real contents.
+const SMART_EDIT_TRUNCATION_MARKER: &str = "… (line truncated)";
+
 /// Minimum per-line similarity (0.0–1.0) required for a fuzzy match to be
 /// reported. Below this threshold the match is considered noise.
 const FUZZY_MIN_SIMILARITY: f64 = 0.6;
@@ -89,13 +103,23 @@ struct NearestMatch {
 }
 
 /// Build a snippet of context lines starting at `match_line_idx` (0-indexed).
+///
+/// Each reproduced line is capped at `SMART_EDIT_MAX_SNIPPET_LINE_CHARS` bytes
+/// (char-boundary-safe) — see that constant for why the cap must live here.
 fn build_snippet(file_lines: &[&str], match_line_idx: usize) -> String {
     let snippet_start = match_line_idx;
     let snippet_end = (match_line_idx + SMART_EDIT_CONTEXT_LINES).min(file_lines.len());
     file_lines[snippet_start..snippet_end]
         .iter()
         .enumerate()
-        .map(|(j, line)| format!("{:>4} │ {}", snippet_start + j + 1, line))
+        .map(|(j, line)| {
+            let shown = crate::format::safe_truncate_with_suffix(
+                line,
+                SMART_EDIT_MAX_SNIPPET_LINE_CHARS,
+                SMART_EDIT_TRUNCATION_MARKER,
+            );
+            format!("{:>4} │ {}", snippet_start + j + 1, shown)
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1092,6 +1116,53 @@ mod tests {
         let snippet_lines: Vec<&str> = snippet.lines().collect();
         assert_eq!(snippet_lines.len(), 1, "Snippet limited to remaining lines");
         assert!(snippet.contains("last_line"));
+    }
+
+    #[test]
+    fn test_snippet_line_is_char_capped() {
+        // A file with one very long line (minified JS/CSS, generated tables) must
+        // not push tens of KB into a tool error: the near-miss snippet is emitted
+        // as Err(..), which TruncatingTool's `?` propagates unmodified, so
+        // --max-tool-output cannot reach it. The cap has to live here. (#675)
+        let long_line = format!("var a={};", "x".repeat(90_000));
+        let file_content = format!("// header\n{long_line}\n// footer\n");
+        let old_text = format!("var a={};", "x".repeat(89_999) + "y");
+        let result = find_nearest_match(&file_content, &old_text);
+        assert!(result.is_some(), "one-char-off line should be a near miss");
+        let snippet = result.unwrap().snippet;
+        assert!(
+            snippet.len() < 4 * SMART_EDIT_MAX_SNIPPET_LINE_CHARS,
+            "snippet must be bounded by the per-line char cap, got {} bytes",
+            snippet.len()
+        );
+        assert!(
+            snippet.contains(SMART_EDIT_TRUNCATION_MARKER),
+            "a truncated line should say so: {snippet}"
+        );
+    }
+
+    #[test]
+    fn test_snippet_line_cap_is_char_boundary_safe() {
+        // Multi-byte chars straddling the cap must not panic or split.
+        let long_line = "✓".repeat(SMART_EDIT_MAX_SNIPPET_LINE_CHARS);
+        let file_content = format!("head\n{long_line}\ntail\n");
+        let old_text = format!("{}x", "✓".repeat(SMART_EDIT_MAX_SNIPPET_LINE_CHARS - 1));
+        let result = find_nearest_match(&file_content, &old_text);
+        assert!(result.is_some());
+        let snippet = result.unwrap().snippet;
+        // Round-trips as valid UTF-8 by construction; just assert it got capped.
+        assert!(snippet.contains(SMART_EDIT_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn test_snippet_short_lines_are_untouched() {
+        // Ordinary source lines must be byte-identical to before the cap landed.
+        let file_content = "fn a() {}\nfn target() {\n    work();\n}\n";
+        let old_text = "fn target() {\n    work();\n}";
+        let m = find_nearest_match(file_content, old_text).unwrap();
+        assert!(!m.snippet.contains(SMART_EDIT_TRUNCATION_MARKER));
+        assert!(m.snippet.contains("fn target() {"));
+        assert!(m.snippet.contains("    work();"));
     }
 
     #[test]
