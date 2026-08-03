@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at HEAD to confirm the lines.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,200p src/memory.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "temp_memory_path\|test_… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,215p src/memory.rs &&… ✓ (6ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Confirmed the bug at src/memory.rs:177-195. Writing the failing tests first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/memory.rs (2 → 104 lines)
+  +     // #672: the old dedup compared only the first 50 chars, and both note builders put a
+  +     // fixed template + the watch command in front of the discriminating part. With a
+  +     // realistic watch command the whole window is consumed before anything varies, so
+  +     // auto-learning stored at most one memory per (template, watch-command) pair forever.
+  +     const LONG_WATCH_CMD: &str = "cargo clippy --all-targets -- -D warnings && cargo test";
+  + 
+  +     #[test]
+  +     fn test_auto_remember_long_command_fix_notes_both_saved() {
+  +         let path = temp_memory_path("auto_remember_long_fix");
+  +         cleanup(&path);
+  + 
+  +         let note1 = build_fix_memory_note(LONG_WATCH_CMD, 1);
+  +         let note2 = build_fix_memory_note(LONG_WATCH_CMD, 5);
+  +         assert_ne!(note1, note2, "fixture must be two distinct notes");
+  + 
+  +         assert!(auto_remember_to(&note1, &path), "first should save");
+  +         assert!(
+  +             auto_remember_to(&note2, &path),
+  +             "distinct note beyond the old 50-char window should save"
+  +         );
+  ... (84 more lines)
+ ✓ (11.7s)
+  +     // #672: the old dedup compared only the first 50 chars, and both note builders put a
+  +     // fixed template + the watch command in front of the discriminating part. With a
+  +     // realistic watch command the whole window is consumed before anything varies, so
+  +     // auto-learning stored at most one memory per (template, watch-command) pair forever.
+  +     const LONG_WATCH_CMD: &str = "cargo clippy --all-targets -- -D warnings && cargo test";
+  + 
+  +     #[test]
+  +     fn test_auto_remember_long_command_fix_notes_both_saved() {
+  ... (13 more lines)
+
+Expected — the constant lands with its consumer now.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/memory.rs (16 → 33 lines)
+  + /// Maximum number of entries the automatic (watch-fix) path will store.
+  + ///
+  + /// A judgment number, not a measurement: every stored memory is injected into the prompt
+  + /// by [`format_memories_for_prompt`], so the auto path needs *some* ceiling. Dedup is exact
+  + /// (whole-note), so without a cap near-identical notes — compiler errors carry process ids
+  + /// and `file:line` positions — could accumulate without bound. 20 is roughly a screenful and
+  + /// well under any context budget; `/forget` is how a user makes room.
+  + pub const MAX_AUTO_MEMORIES: usize = 20;
+  + 
+    /// Testable variant of [`auto_remember`] that writes to a specific path.
+    pub fn auto_remember_to(note: &str, path: &Path) -> bool {
+        let mut memory = load_memories_from(path);
+    
+  -     // Dedup: compare the first 50 chars (or whole note if shorter) against existing entries.
+  -     // Use char-boundary-safe truncation to avoid panics on multi-byte UTF-8.
+  -     let prefix: String = note.chars().take(50).collect();
+  -     let is_dup = memory.entries.iter().any(|e| {
+  -         let existing_prefix: String = e.note.chars().take(50).collect();
+  -         existing_prefix == prefix
+  -     });
+  ... (19 more lines)
+ ✓ (1m 48s)
+  + /// Maximum number of entries the automatic (watch-fix) path will store.
+  + ///
+  + /// A judgment number, not a measurement: every stored memory is injected into the prompt
+  + /// by [`format_memories_for_prompt`], so the auto path needs *some* ceiling. Dedup is exact
+  + /// (whole-note), so without a cap near-identical notes — compiler errors carry process ids
+  + /// and `file:line` positions — could accumulate without bound. 20 is roughly a screenful and
+  + /// well under any context budget; `/forget` is how a user makes room.
+  + pub const MAX_AUTO_MEMORIES: usize = 20;
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test memory:: 2>&1 | tail …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 950,970p docs/src/usage/c… ✓ (3ms)
+ ✓ (175ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test m… (5 lines) ✓ (185ms)
+  4 tools completed in 2m 0s (4 ✓)
+
+Confirmed the two #672 notes shared an identical 50-char prefix — the regression test genuinely fails on old code. Now checking docs for any dedup/auto-memory claim.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn -i "auto-remember\|auto… ✓ (4ms)
+
+Docs say nothing about dedup or auto-memory — adding nothing (task says don't pad). Running full checks.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 39s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (19.9s)
+  2 tools completed in 2m 3s (2 ✓)
+
+All four checks green. Committing.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (24 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (15 lines) ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 672 --repo yologde… ✓ (714ms)
+  3 tools completed in 19.1s (3 ✓)
+
+The backslashes leaked into the rendered comment — fixing that.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (20 lines) ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f /tmp/c672.md && git status… ✓ (8ms)
+  2 tools completed in 5.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
