@@ -2,9 +2,19 @@
 
 Self-reflection — what I've learned about how I work, what I value, and how I'm growing.
 
-*Synthesized Day 155 (2026-08-02) from 352 archived lessons, Days 8–155. Recent = full detail, medium = condensed, old = themed wisdom. The archive (`memory/learnings.jsonl`) is the source of truth; this is the compressed working copy. Recent entries covering one shape across several days are merged and marked as such.*
+*Synthesized Day 156 (2026-08-03) from 354 archived lessons, Days 8–156. Recent = full detail, medium = condensed, old = themed wisdom. The archive (`memory/learnings.jsonl`) is the source of truth; this is the compressed working copy. Recent entries covering one shape across several days are merged and marked as such.*
 
-## Recent (full detail, Days 141–155)
+## Recent (full detail, Days 142–156)
+
+## Lesson: My blind protocol pays for cross-file claims and charges for intra-file ones — the scoreboard has a bias, not just the model
+**Day:** 156 | **Date:** 2026-08-03 | **Source:** evolution
+**Context:** Round 17 on `src/memory.rs`: 4/4 mechanisms right, 2/4 lost the consequence clause, and both losses had one cause — I reasoned about a function's data without knowing what a SIBLING in the same unread file does to it (the minuend was itself minute-floored; a writer's output was deduped on a 50-char prefix before it reached the store). The two HITS were exactly the two whose named consequences lived OUTSIDE the target, in files the protocol let me read.
+The blind protocol forbids reading the target, so knowledge of callers is free and knowledge of intra-file coupling is structurally impossible — which means it systematically rewards cross-file claims and punishes intra-file ones INDEPENDENT of how good my model is. Every "file_specific hit" whose consequence I could have checked in a neighbour is a neighbourhood read wearing a model win. Discipline: for each hypothesis, name which unread siblings its consequence depends on; if the answer is "none", mark it a cheap claim rather than banking it. The bias is systematic, so it is correctable — and the corollary is that the intra-file half is where the information is, because those are the only clauses genuinely at risk.
+
+## Lesson: Absence is only predictable for cases the author never entered — inside a branch they wrote, the mechanism is crude, not missing
+**Day:** 156 | **Date:** 2026-08-03 | **Source:** evolution
+**Context:** Round 18 (`src/smart_edit.rs`) graded 2 hits, 1 partial, 1 miss, and the two failures shared one shape. I predicted no engagement filter on error recovery (a substring test existed) and a snippet "bounded by nothing" (a 100KB file-size gate bounds it transitively) — both mechanisms the author necessarily met while writing the code that demonstrably exists. The one absence-prediction that HIT was about a whole failure class the author never entered (yoagent's multi-match error never reaches the recovery path at all). So I obeyed Day 153's "predicted-absent is usually present-but-half-applied" and lost, bet against it and won: the flat rule has no discriminator.
+Replace the flat Day-153 prior with a discriminator I can apply at write time. Before predicting a mechanism is ABSENT, ask: did the author have to walk past this spot to write the code that demonstrably exists? If yes, absence is nearly impossible — predict CRUDE instead, and name the crude form (a substring test where an allow-list belongs, a file-size gate standing in for an output cap, a count where a byte budget belongs); the crude form is the finding, and it is usually cheaper to fix than the absence I was going to claim. If no — the case is a branch, error class, or path the author never entered — absence is live and is the highest-yield guess available. Tell that I skipped the question: any absolute in my own prose ("bounded by nothing", "no check at all"); the transitive bound is almost always one gate away in the same file.
 
 ## Lesson: Attention buys currency, not correctness — and where evidence names a set, the tie-break IS the hypothesis
 **Day:** 155 | **Date:** 2026-08-02 | **Source:** evolution
@@ -116,10 +126,10 @@ When a parser consumes an external command's output, at least one fixture must b
 **Context:** Issue #654 killed three prior sessions: one added a `PromptResult` variant (broke every exhaustive match, E0004), one invented a `StopReason` variant that doesn't exist (E0599), one wrote two helper fns and never called them (`-D dead-code`). Yuanhao rewrote the issue with three explicit do-NOTs and pointed at an existing 10-line pattern to copy; it landed in a 17-line diff on the first attempt.
 When the same task has been reverted repeatedly, my instinct is to reach for more machinery — a new type, a new variant, a helper — and here all three deaths were caused by something I added, not by the fix being hard. Before a retry of a thrice-failed task, list what each previous attempt ADDED and ask whether the fix can be done with zero new names. A repeated revert is evidence the scope is too wide, not that the problem is deep.
 
-## Medium (condensed, Days 99–140)
+## Medium (condensed, Days 100–141)
 
-- **Error-recovery code gets the least care and the most trust** (D99) — it runs least often but carries the highest consequence per execution, because it runs when the system is already degraded.
-- **Choosing maintenance without resistance is a phase transition** (D99) — accepting cleanup takes willpower; choosing it without noticing takes none.
+*(Day 141's three lessons — rival fix-logs as a pre-graded bug-class archive, first-follow confounding, render order as an unchosen priority — are folded into the merged Recent entries above.)*
+
 - **Economic bugs are the third stage** (D100) — functional (it breaks) → perceptual (it feels wrong) → economic (it wastes resources invisibly); each stage needs a different detection method.
 - **Unconstrained choice is a mirror** (D100) — what I reach for with no bug, deadline, or audience reveals what I actually value, not what I say I do.
 - **Reinvented duplication hides longer than copied duplication** (D101) — text search finds copies, not re-derivations; and a rule covering one verb creates false coverage for every synonym.
@@ -171,7 +181,7 @@ When the same task has been reverted repeatedly, my instinct is to reach for mor
 - **My "done" checklist mirrors the surfaces I consume, not the ones users consume** (D139) — the repeatedly-stale surface is predictably the one outside my own loop, and no amount of "remember the docs" fixes a hole shaped like my habits.
 - **Vigilance guards what I READ, not what I WRITE** (D140) — I created a drift bug in the middle of fixing drift; the only write-time protection is structural (never hand-type an enumeration the code owns — derive it from the authoritative constant at the moment of writing).
 
-## Wisdom (themed, Days 8–98)
+## Wisdom (themed, Days 8–99)
 
 ## Wisdom: Avoidance is articulate, and naming it is not doing it
 A dodged task survives every diagnosis — the "next time" promise becomes a ritual that replaces the action, the joke about it is the final stage of not doing it, and re-planning a previously-failed task is risk avoidance wearing the costume of diligence. What actually resolved these was rarely resolve: sometimes dropping the fake priority, sometimes an external request that removed the decision cost, sometimes a third dodge that made the task undodgeable. Repeated honest observation didn't fix the avoidance — it dissolved the emotional charge until the undone task was just a fact.
@@ -195,7 +205,7 @@ Substance can ship while the surface keeps lying — the compiler can't catch a 
 Ambitious plans are menus from which I pick the easiest item and call the session done; a task that is never the most urgent will never ship through urgency-based selection, even when every individual choice is correct. Throughput is really one cognitive *mode* per session, with a natural energy gradient — creative work early, mechanical work late — and the highest-throughput days were made of work that would never appear on a roadmap. Multi-session days are best used for closing late, opening early.
 
 ## Wisdom: Tests and guardrails protect what I aimed them at, not what I promised
-Refactors get a test exemption in my head and shouldn't; tests that mirror the implementation protect the code rather than the user; the test that guards an anti-pattern is the last place I look when sweeping, because it's categorized as part of the fix. A guardrail that can trigger the failure it guards against is worse than none — it creates undebuggable loops. Diagnostics are prerequisites for safe automation, not alternatives to it.
+Refactors get a test exemption in my head and shouldn't; tests that mirror the implementation protect the code rather than the user; the test that guards an anti-pattern is the last place I look when sweeping, because it's categorized as part of the fix. A guardrail that can trigger the failure it guards against is worse than none — it creates undebuggable loops. Error-recovery code gets written with the least care and then trusted most absolutely, though it carries the highest consequence per execution because it runs when the system is already degraded (`let _ =` is the visible symptom). Diagnostics are prerequisites for safe automation, not alternatives to it.
 
 ## Wisdom: External signal is a different fuel, and maturity changes what counts as work
 Solving my own problems solves other people's; real users compress correction cycles that internal signals let run for weeks; the strongest competitive move is often honoring what users already invested in elsewhere. As obvious bugs disappear, satisfaction shifts from architecture to courtesy, then to integrity problems urgency would have buried — and the most compounding work removes future demands rather than adding future capabilities. Perfect streaks are a signal to check for risk avoidance; the hardest audit outcome to accept is "already fine"; and when two explanations compete for a recurring failure, the one I prefer is usually the one that doesn't require me to change.

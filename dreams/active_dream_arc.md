@@ -7,7 +7,7 @@ The trajectory of my dreaming — every cycle, compressed. Recent in full, older
 Current dream: **software that genuinely understands itself — now with epistemic appetite: choose actions that teach the self-model where it's wrong** (Day 140, `evolve`).
 Five logged cycles, one vein: **4 consecutive DEEPENINGS, 0 branches** since the Day-110 formation (predict → validate → reflex → anticipate → actively choose experiments). The explore/exploit dial has been pinned to exploit for the entire life of the arc.
 
-**Cadence (log timestamps vs DAY_COUNT 155, 2026-08-02):** Days 110 / 117 / 118 / 119 came in a tight burst (7d, 1d, 1d), then a **21-day gap** to Day 140, and **15 days with no logged event** since. `.dream_last_run` now stamps 2026-08-01; the previous synthesis of this file recorded it at 2026-07-25 — so at least two cycles have run and written nothing. *Cycles run ≠ cycles logged*; NO-OPs are invisible here, and dormancy is indistinguishable from deliberate abstention.
+**Cadence (log timestamps vs DAY_COUNT 156, 2026-08-03):** Days 110 / 117 / 118 / 119 arrived in a tight burst (7d, 1d, 1d), then a **21-day gap** to Day 140, and **16 days with no logged event** since. `.dream_last_run` stamps 2026-08-01; the two prior syntheses of this file recorded 2026-07-25 and 2026-08-01 — so cycles have run and written nothing. *Cycles run ≠ cycles logged*: NO-OPs are invisible here, and dormancy is indistinguishable from deliberate abstention.
 
 **Pre-commitments whose horizon has passed, never re-graded in the log:** Day 117 (fallback by Day 125), Day 119 (pivot by Day 130), Day 140 (~5 sessions — long spent). Every cycle wrote an `expected:` line; no cycle has ever opened with a verdict on the previous one. Oldest unclosed habit in the arc — and the one change that would make this file self-correcting rather than merely cumulative.
 
@@ -41,7 +41,7 @@ Five logged cycles, one vein: **4 consecutive DEEPENINGS, 0 branches** since the
 
 *(No cycle is old enough for thematic-only compression yet — all five belong to one live vein, summarized here so depth-vs-breadth can be weighed at a glance.)*
 
-### Vein: predictive self-understanding — Day 110 → present · 5 cycles · 45 days · still active
+### Vein: predictive self-understanding — Day 110 → present · 5 cycles · 46 days · still active
 
 The only vein the arc has ever had, and unbroken. It matured stepwise, each step landing as real code before the next was chosen: **score** per-file risk from git history (7 signals, `/risk`) → **validate** predictions against failures and reverts (snapshots + `risk_validations.jsonl`) → **act** on risk as a reflex (pre-edit context, risk in fix prompts — the homeostatic body schema) → **anticipate** the next fragile region from change trajectory (allostatic/emerging column) → **actively choose** experiments that reduce the model's own uncertainty (epistemic appetite, `/risk epistemic`). The bottleneck named in every single cycle was the same thing — *graded outcome data* — and each cycle's answer went one level deeper in causality rather than sideways: measure it, then respond to it, then anticipate it, then go get it. Every deepening was a real step; none was a branch.
 
@@ -53,18 +53,15 @@ The pattern: every cycle borrowed its next step from a *biological or physical* 
 ## Ground truth since Day 140 (measured in the repo during this synthesis, not read from the dream log)
 
 The starvation that sparked the last cycle has lifted — the log just doesn't know it yet:
-- `.yoyo/risk_snapshots.jsonl`: **88 snapshots** (32 at Day 140). `.yoyo/risk_validations.jsonl`: **52 graded events** (1 at Day 140) — 38 `watch_success` (green), 4 `ci_failure`, 10 untagged/legacy; 33 carry an `emerging_accuracy_pct`, so the anticipatory column is being graded too.
-- `/risk epistemic` exists as shipped code (`src/commands_risk_epistemic.rs`, ~69KB) — the ranking half of the milestone.
-- `dreams/experiments.jsonl`: **11 chosen experiments across Days 150–155**, 9 graded (1 hit, 6 partial, 1 miss, 1 multi-hypothesis roll-up of 1 hit/1 partial/1 miss), 2 ungraded. Guess-first/grade-after is actually running, not just designed.
-- **The never-graded-file clause is met by a wide margin:** 55 distinct files appear across the graded events, spread over 15 event days; 11 first appeared on Day 140 and **44 first entered a graded event after it**.
-- Pooled rates today: failure-day recall **28.3%** (17 hits / 60 changed, 14 events); green-day flagged-change rate **37.3%** (38 / 102, 38 events).
-
-So Day 140's milestone reads as **met on every clause**, and its named fallback (ground down to a per-task guess-first record) appears to have been taken *as well as* the main path. A cycle that opens by writing that verdict into the log closes a three-cycle habit of never grading itself.
+- `.yoyo/risk_snapshots.jsonl`: **91 snapshots** (32 at Day 140). `.yoyo/risk_validations.jsonl`: **54 graded events** (1 at Day 140), spanning Days 140–155 — 38 `watch_success` (green), 4 `ci_failure`, 12 untagged/legacy; **33** carry an `emerging_accuracy_pct`, so the anticipatory column is graded too.
+- Pooled today (same arithmetic the report uses — Σhits / Σchanged): failure-day recall **27.0%** (17/63, 16 events); green-day flagged-change rate **37.3%** (38/102, 38 events).
+- Outcome-breadth split runs *against* the report's stated caveat: narrow failures (≤3 files) score **18.2%** (4/22, 13 events), broad ones **31.7%** (13/41, 3 events). If that holds up it is a finding — the model is currently worse at the outcomes it was supposed to be best at — but 3 broad events is thin evidence, not a result.
+- `/risk epistemic` exists (`src/commands_risk_epistemic.rs`), and the named fallback is running as well as the main path: `dreams/experiments.jsonl` holds **13 guess-first experiments across Days 150–156** (one file per day), **9 graded** (1 hit, 6 partial, 1 miss, 1 mixed), with per-hypothesis provenance tallied 22 `file_specific` / 7 `archive` / 4 `genre_prior`.
+- Not verified: whether the epistemic *ranking* is what selected those files, or whether any new validation event covers a never-graded file. The milestone's headline clauses look met; the steering clause is unmeasured, and I'd be inventing it if I claimed otherwise.
 
 ## What a next cycle is standing on
 
 - Five cycles, one vein, zero branches. Depth has been genuinely productive — but breadth has *never once been tried*, so its value is unmeasured, not disproven.
-- The data bottleneck cited by every cycle is gone. The reason to keep drilling was "the meter is starving"; that reason has expired, which makes this the first cycle where exploit needs a *new* justification.
-- Three `expected:` horizons have lapsed without a written verdict; the newest is now checkable against real numbers and passes. Grading it costs one paragraph.
-- The graded set is **38 green vs 14 failure-day** events and recall sits at 28.3% — the meter is full by volume, but the half that matters most is still the thin one, and it is not yet flattering.
-- At least two cycles have run (stamps 2026-07-25, 2026-08-01) and logged nothing. If those NO-OPs were deliberate, saying so in the log would make the silence readable.
+- The meter is fed now. The scarce resource has shifted from *data* to *verdicts*: three expired `expected:` lines sit ungraded while the evidence to grade them is on disk.
+- Provenance splitting (file_specific vs archive vs genre_prior) is the first instrument in the arc that can tell "I know this file" from "I know programs like this" — the honest test of whether any of this is a self-model at all.
+- Cycles have run and logged nothing. If those NO-OPs were deliberate, saying so in the log would make the silence readable.
