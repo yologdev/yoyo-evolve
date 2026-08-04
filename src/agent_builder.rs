@@ -507,7 +507,7 @@ fn model_identity_note(provider: &str, model: &str) -> String {
 /// `--system`, `--system-file`, or config) followed by the factual grounding
 /// note. Appended, never substituted, so a user prompt keeps its priority
 /// position at the top.
-pub(crate) fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
     let note = model_identity_note(provider, model);
     if base.trim().is_empty() {
         note
