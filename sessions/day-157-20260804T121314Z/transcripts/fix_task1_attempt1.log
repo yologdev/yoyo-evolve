@@ -1,0 +1,55 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compose_system_prompt" … ✓ (8ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat dc063ba8 && git …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 495,545p src/agent_builde… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1150,1240p src/tools.rs ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt" src… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub(crate) use … ✓ (5ms)
+  8 tools completed in 22.8s (8 ✓)
+
+Now let me make the edit — the pure helper plus its call site in the same change.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 1 lines)
+  -         .with_system_prompt(
+  -             "You are a focused sub-agent. Complete the given task efficiently \
+  -              using the tools available. Be thorough but concise in your final \
+  -              response — summarize what you did, what you found, and any issues.",
+  -         )
+  +         .with_system_prompt(sub_agent_system_prompt(&config.provider, &config.model))
+ ✓ (11.3s)
+  -         .with_system_prompt(
+  -             "You are a focused sub-agent. Complete the given task efficiently \
+  -              using the tools available. Be thorough but concise in your final \
+  -              response — summarize what you did, what you found, and any issues.",
+  -         )
+  +         .with_system_prompt(sub_agent_system_prompt(&config.provider, &config.model))
+
+Now add the helper (definition and consumer land together in this change):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 23 lines)
+  + /// Base behavioral prompt for a sub-agent, before the runtime grounding note is
+  + /// appended. Kept as a named constant so `sub_agent_system_prompt` is the only
+  + /// place that decides what a sub-agent is told.
+  + const SUB_AGENT_BASE_PROMPT: &str = "You are a focused sub-agent. Complete the given task \
+  +      efficiently using the tools available. Be thorough but concise in your final \
+  +      response — summarize what you did, what you found, and any issues.";
+  + 
+  + /// Compose the sub-agent's system prompt: its base behavioral prompt plus the
+  + /// same factual provider/model grounding note every top-level agent gets
+  + /// (`agent_builder::compose_system_prompt`).
+  + ///
+  + /// Without this, a sub-agent asked what model it is would answer from training
+  + /// priors — the exact confabulation #664 fixed on the main path. The main path
+  + /// composes at a single choke point; this is the sub-agent's choke point, so a
+  + /// sub-agent no longer stands outside that guarantee (#671).
+  + ///
+  + /// Pure so the composed string is assertable in tests (the prompt cannot be read
+  + /// back off a built `SubAgentTool`).
+  + fn sub_agent_system_prompt(provider: &str, model: &str) -> String {
+  +     crate::agent_builder::compose_system_prompt(SUB_AGENT_BASE_PROMPT, provider, model)
+  ... (3 more lines)

@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll take issue #675 — it's concrete, small, verified, and the fix shape is spelled out. Let me look at the actual code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && sed -n '… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "S… ✓ (6ms)
+  2 tools completed in 10.6s (2 ✓)
+
+#675's per-line cap already landed. Moving to #671 (grounding note bypassed by two builders) — small and concrete. Verifying its claims:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_system_prompt\|co… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt\|fn … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1230p' src/tools.rs… ✓ (5ms)
+  3 tools completed in 14.9s (3 ✓)
+
+Confirmed: `build_architect_agent already composes (line 837); the remaining hole in #671 is SubAgentTool`'s hardcoded prompt (src/tools.rs:1199). Smallest correct fix — write the test first:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,520p' src/agent_buil… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  - fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+  + pub(crate) fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+ ✓ (11m 51s)
+  - fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+  + pub(crate) fn compose_system_prompt(base: &str, provider: &str, model: &str) -> String {
+  2 tools completed in 11m 55s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
