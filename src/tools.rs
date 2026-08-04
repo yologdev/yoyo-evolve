@@ -1196,17 +1196,35 @@ fn build_sub_agent_tool_at_depth(
              bounded to a hard nesting cap (recursion is available and finite). \
              It starts with a clean context and returns a summary of what it did.",
         )
-        .with_system_prompt(
-            "You are a focused sub-agent. Complete the given task efficiently \
-             using the tools available. Be thorough but concise in your final \
-             response — summarize what you did, what you found, and any issues.",
-        )
+        .with_system_prompt(sub_agent_system_prompt(&config.provider, &config.model))
         .with_api_key(&config.api_key)
         .with_tools(child_tools)
         .with_thinking(config.thinking)
         .with_max_turns(25)
         .with_shared_state(shared_state.clone())
         .with_skills(config.skills.clone())
+}
+
+/// Base behavioral prompt for a sub-agent, before the runtime grounding note is
+/// appended. Kept as a named constant so `sub_agent_system_prompt` is the only
+/// place that decides what a sub-agent is told.
+const SUB_AGENT_BASE_PROMPT: &str = "You are a focused sub-agent. Complete the given task \
+     efficiently using the tools available. Be thorough but concise in your final \
+     response — summarize what you did, what you found, and any issues.";
+
+/// Compose the sub-agent's system prompt: its base behavioral prompt plus the
+/// same factual provider/model grounding note every top-level agent gets
+/// (`agent_builder::compose_system_prompt`).
+///
+/// Without this, a sub-agent asked what model it is would answer from training
+/// priors — the exact confabulation #664 fixed on the main path. The main path
+/// composes at a single choke point; this is the sub-agent's choke point, so a
+/// sub-agent no longer stands outside that guarantee (#671).
+///
+/// Pure so the composed string is assertable in tests (the prompt cannot be read
+/// back off a built `SubAgentTool`).
+fn sub_agent_system_prompt(provider: &str, model: &str) -> String {
+    crate::agent_builder::compose_system_prompt(SUB_AGENT_BASE_PROMPT, provider, model)
 }
 
 /// Return the tool names a sub-agent built at `depth` would expose to its child.
