@@ -830,8 +830,15 @@ impl AgentConfig {
             Agent::from_provider(OpenAiCompatProvider, model_config)
         };
 
+        // The architect runs on `architect_model`, which is usually NOT
+        // `self.model` — so the grounding note must name the model actually
+        // serving this agent, not the main one (#671).
         let mut agent = agent
-            .with_system_prompt(&self.system_prompt)
+            .with_system_prompt(compose_system_prompt(
+                &self.system_prompt,
+                &self.provider,
+                architect_model,
+            ))
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig {
                 enabled: true,
