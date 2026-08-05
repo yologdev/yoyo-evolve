@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with issue #675 — it's the smallest, most concrete item with a verified reproduction. Let me look at the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && sed -n '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,115p' src/smart_edit.… ✓ (8ms)
+ ✓ (5ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Interesting — the per-line cap constants appear to already exist. Let me check whether they're committed and actually used.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+
+#675 is already done and committed. Checking the next candidates — tests/module_size.rs and tests/system_prompt_chokepoint.rs already exist, so #673/#671 may be done too.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_system_prompt" src… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -25 tests/module_size.rs &&… ✓ (5ms)
+  2 tools completed in 16.5s (2 ✓)
+
+Found my target: `TruncatingTool propagates Err unmodified, so --max-tool-output` can't trim error text (the second half of #675). Small, concrete fix. Let me see the exact code.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '183,215p' src/tool_wrapp… ✓ (6ms)
+
+Now the fix. Writing the test first:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn truncate_tool_ou… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 36 lines)
+  + /// Truncate the message carried by a `ToolError` if it exceeds `max_chars`.
+  + ///
+  + /// Tool *errors* reach the model's context exactly like tool *results* do, but
+  + /// `TruncatingTool::execute` used to propagate them with `?`, so the
+  + /// user-configured `--max-tool-output` ceiling could not touch them (#675).
+  + /// A tool that embeds a file excerpt in its error — `SmartEditTool`'s near-miss
+  + /// hint is the known case — could therefore push far more text into context
+  + /// than the user asked for.
+  + ///
+  + /// Deliberately a no-op below the ceiling: an error message that already fits
+  + /// is returned byte-identical, because `truncate_tool_output` also strips ANSI
+  + /// and collapses repeated lines, and error text is parsed elsewhere
+  + /// (`commands_retry::extract_tool_name_from_error`). `Cancelled` carries no
+  + /// message and is passed through untouched.
+  + pub(crate) fn truncate_tool_error(
+  +     err: yoagent::types::ToolError,
+  +     max_chars: usize,
+  + ) -> yoagent::types::ToolError {
+  +     use yoagent::types::ToolError as E;
+  +     let shrink = |msg: String| {
+  ... (16 more lines)
+ ✓ (19.4s)
+  + /// Truncate the message carried by a `ToolError` if it exceeds `max_chars`.
+  + ///
+  + /// Tool *errors* reach the model's context exactly like tool *results* do, but
+  + /// `TruncatingTool::execute` used to propagate them with `?`, so the
+  + /// user-configured `--max-tool-output` ceiling could not touch them (#675).
+  + /// A tool that embeds a file excerpt in its error — `SmartEditTool`'s near-miss
+  + /// hint is the known case — could therefore push far more text into context
+  + /// than the user asked for.
+  ... (13 more lines)
+  2 tools completed in 33.9s (2 ✓)
+
+Exactly the dead-code trap from #669 — adding the call site now (same edit rule).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 6 lines)
+  -         let result = self.inner.execute(params, ctx).await?;
+  +         let result = self
+  +             .inner
+  +             .execute(params, ctx)
+  +             .await
+  +             .map_err(|e| truncate_tool_error(e, self.max_chars))?;
+            Ok(truncate_result(result, self.max_chars))
+ ✓ (14m 40s)
+  -         let result = self.inner.execute(params, ctx).await?;
+  +         let result = self
+  +             .inner
+  +             .execute(params, ctx)
+  +             .await
+  +             .map_err(|e| truncate_tool_error(e, self.max_chars))?;
+            Ok(truncate_result(result, self.max_chars))
+
+  watch: no files changed this turn — skipping
+

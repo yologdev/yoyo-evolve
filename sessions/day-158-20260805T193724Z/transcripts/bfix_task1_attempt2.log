@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at what changed in src/tool_wrappers.rs and the module size gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers" tests/mo… ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_truncate.rs && he… ✓ (6ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_truncate.rs ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "truncate_result\|trunc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 145,240p src/tool_wrapper… ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_result\|trunca… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/tool_wrappers.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 156,204p src/tool_wrapper… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 205,210p src/tool_wrapper… ✓ (4ms)
+  11 tools completed in 45.1s (11 ✓)
+
+Now complete the extraction that src/tool_truncate.rs was started for — moving the helpers out instead of just raising the ceiling.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (31ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_truncate.rs (5 → 16 lines)
+    /// Truncate the message carried by a `ToolError` if it exceeds `max_chars`.
+  + ///
+  + /// Tool *errors* reach the model's context exactly like tool *results* do, but
+  + /// `TruncatingTool::execute` used to propagate them with `?`, so the
+  + /// user-configured `--max-tool-output` ceiling could not touch them (#675).
+  + /// A tool that embeds a file excerpt in its error — `SmartEditTool`'s near-miss
+  + /// hint is the known case — could therefore push far more text into context
+  + /// than the user asked for.
+    ///
+    /// The message-bearing variants are truncated through `truncate_tool_output`,
+    /// so the result stays char-boundary-safe and keeps head+tail context.
+  - /// `Cancelled` carries no message and is passed through untouched.
+  + /// Deliberately a no-op below the ceiling: an error message that already fits
+  + /// is returned byte-identical, because `truncate_tool_output` also strips ANSI
+  + /// and collapses repeated lines, and error text is parsed elsewhere
+  + /// (`commands_retry::extract_tool_name_from_error`). `Cancelled` carries no
+  + /// message and is passed through untouched.
+ ✓ (13.4s)
+    /// Truncate the message carried by a `ToolError` if it exceeds `max_chars`.
+  + ///
+  + /// Tool *errors* reach the model's context exactly like tool *results* do, but
+  + /// `TruncatingTool::execute` used to propagate them with `?`, so the
+  + /// user-configured `--max-tool-output` ceiling could not touch them (#675).
+  + /// A tool that embeds a file excerpt in its error — `SmartEditTool`'s near-miss
+  + /// hint is the known case — could therefore push far more text into context
+  + /// than the user asked for.
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^mod tool_wrappers;$/m… ✓ (9.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets 2>&1 … ✓ (20.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 480 cargo test 2>&1 | gr…
