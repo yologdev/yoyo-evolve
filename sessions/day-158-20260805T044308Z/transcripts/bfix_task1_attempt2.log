@@ -1,0 +1,20 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the failing test and the code it exercises.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls tests/  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/system_prompt_chokep… ✓ (2ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 99,320p tests/system_prom… ✓ (4ms)
+  4 tools completed in 8.8s (4 ✓)
+
+The failure is a test-expectation bug: the synthetic file never calls compose_system_prompt, so check_call_sites correctly also emits UnusedApprovedComposer. Sibling test raw_call_site_is_a_bypass handles this with the `uncomposed_only` helper — this one didn't.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs (3 → 5 lines)
+            // `#[cfg(test)]` on a *function* must not truncate the scan, or a
+  -         // bypass below it would be invisible.
+  -         let v = check_call_sites(
+  +         // bypass below it would be invisible. This fixture has no composed
+  +         // call site, so it also trips the allow-list hygiene check — that is
+  +         // not what this test is about, so classify call sites only.
+  +         let v = uncomposed_only(

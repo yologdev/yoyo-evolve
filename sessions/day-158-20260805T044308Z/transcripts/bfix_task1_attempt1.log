@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the failing test file to understand what's expected.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs:99..299 ✓ (2ms)
+  4 tools completed in 24.2s (4 ✓)
+
+Both failures have the same cause: check_call_sites also emits UnusedApprovedComposer when the synthetic corpus contains no composed site, and those two tests are only about call-site classification. Let me fix them surgically.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs (1 → 15 lines)
+        const APPROVED: &[&str] = &["compose_system_prompt("];
+  + 
+  +     /// Just the call-site classification, dropping the allow-list hygiene
+  +     /// violation. A synthetic corpus that deliberately contains no *composed*
+  +     /// call site always also trips `UnusedApprovedComposer`, which those tests
+  +     /// are not about; that behaviour is pinned separately by
+  +     /// `unused_approved_composer_is_reported` and
+  +     /// `empty_input_reports_only_the_unused_composer`, so filtering here hides
+  +     /// nothing.
+  +     fn uncomposed_only(files: &[(String, String)], approved: &[&str]) -> Vec<Bypass> {
+  +         check_call_sites(files, approved)
+  +             .into_iter()
+  +             .filter(|b| matches!(b, Bypass::Uncomposed { .. }))
+  +             .collect()
+  +     }
+ ✓ (19.4s)
+        const APPROVED: &[&str] = &["compose_system_prompt("];
+  + 
+  +     /// Just the call-site classification, dropping the allow-list hygiene
+  +     /// violation. A synthetic corpus that deliberately contains no *composed*
+  +     /// call site always also trips `UnusedApprovedComposer`, which those tests
+  +     /// are not about; that behaviour is pinned separately by
+  +     /// `unused_approved_composer_is_reported` and
+  +     /// `empty_input_reports_only_the_unused_composer`, so filtering here hides
+  ... (7 more lines)
+
+Expected — the definition needs its consumers in the same edit. Adding both call sites now:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/system_prompt_chokepoint.rs (6 → 6 lines)
+        #[test]
+        fn raw_call_site_is_a_bypass() {
+  -         let v = check_call_sites(
+  +         let v = uncomposed_only(
+                &files(&[("src/a.rs", "agent.with_system_prompt(&self.system_prompt)")]),
+                APPROVED,
+            );
