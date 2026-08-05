@@ -153,24 +153,9 @@ pub(crate) struct TruncatingTool {
     max_chars: usize,
 }
 
-/// Truncate the text content of a ToolResult if it exceeds the given char limit.
-pub(crate) fn truncate_result(
-    mut result: yoagent::types::ToolResult,
-    max_chars: usize,
-) -> yoagent::types::ToolResult {
-    use yoagent::Content;
-    result.content = result
-        .content
-        .into_iter()
-        .map(|c| match c {
-            Content::Text { text } => Content::Text {
-                text: truncate_tool_output(&text, max_chars),
-            },
-            other => other,
-        })
-        .collect();
-    result
-}
+/// Result/error truncation against `--max-tool-output` lives in its own module
+/// (`tool_truncate`); `TruncatingTool` below is the wiring that calls it.
+pub(crate) use crate::tool_truncate::{truncate_result, truncate_tool_error};
 
 #[async_trait::async_trait]
 impl AgentTool for TruncatingTool {
@@ -195,7 +180,11 @@ impl AgentTool for TruncatingTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
-        let result = self.inner.execute(params, ctx).await?;
+        let result = self
+            .inner
+            .execute(params, ctx)
+            .await
+            .map_err(|e| truncate_tool_error(e, self.max_chars))?;
         Ok(truncate_result(result, self.max_chars))
     }
 }

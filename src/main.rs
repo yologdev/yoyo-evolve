@@ -103,6 +103,7 @@ mod setup;
 mod smart_edit;
 mod symbols;
 mod sync_util;
+mod tool_truncate;
 mod tool_wrappers;
 mod tools;
 mod update;
