@@ -645,7 +645,14 @@ impl AgentConfig {
             system_prompt_tokens: 4_000,
             keep_recent: 10,
             keep_first: 2,
-            tool_output_max_lines: 50,
+            // 200, not 50: as of yoagent 0.15 `truncate_tool_output_on_append`
+            // defaults to true, so this cap applies the moment a tool result is
+            // appended — every call, every session — not only during compaction
+            // as it did in 0.14. At 50 every `cargo build`/`cargo test` result
+            // would lose most of its error list immediately. 200 matches
+            // yoagent's own default for the same reason.
+            tool_output_max_lines: 200,
+            ..ContextConfig::default()
         });
 
         // Enable prompt caching — Anthropic caches the system prompt, tool

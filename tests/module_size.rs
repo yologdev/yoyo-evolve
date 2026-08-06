@@ -37,7 +37,7 @@ const MAX_MODULE_LINES: usize = 2_000;
 /// shrink freely, and may not grow by even one line without this list being
 /// edited on purpose.
 const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
-    ("src/agent_builder.rs", 2636),
+    ("src/agent_builder.rs", 2643),
     ("src/cli.rs", 3717),
     ("src/commands_file.rs", 2568),
     ("src/commands_git.rs", 3172),
