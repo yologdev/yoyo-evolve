@@ -198,9 +198,11 @@ def format_issues(issues, sponsor_logins=None, pick=2, day=0):
         if labels:
             lines.append(f"Labels: {', '.join(labels)}")
         lines.append("")
-        # Truncate long issue bodies
+        # Truncate long issue bodies — name the recovery command, so the cut
+        # is visible and actionable instead of silently absorbed (a 935-char
+        # comment once lost its entire second instruction to the bare "...")
         if len(body) > 500:
-            body = body[:500] + "\n[... truncated]"
+            body = body[:500] + f"\n[... truncated — run `gh issue view {num} --comments` for full text]"
         if body:
             lines.append(body)
         # Include recent comments for context (last 3, truncated)
@@ -214,7 +216,7 @@ def format_issues(issues, sponsor_logins=None, pick=2, day=0):
                 c_body = c.get("body", "").strip()
                 c_body = sanitize_content(c_body, boundary_begin, boundary_end)
                 if len(c_body) > 200:
-                    c_body = c_body[:200] + "..."
+                    c_body = c_body[:200] + f" [truncated — `gh issue view {num} --comments`]"
                 lines.append(f"  - @{c_author}: {c_body}")
         lines.append(boundary_end)
         lines.append("")
