@@ -55,6 +55,27 @@ fn strip_flag_with_value(args: &[String], flag: &str) -> Vec<String> {
     out
 }
 
+/// The note the shell `yoyo todo ...` path owes the user (#679).
+///
+/// `/todo`'s task list is a process-global in-memory `static` — correct as REPL
+/// session state, but each shell invocation is a fresh process, so `yoyo todo
+/// add "x"` prints a green checkmark and then discards the task. That is a
+/// silent wrong-op reported as success. Until the list is either persisted or
+/// dropped from the shell surface (a product decision, not mine to make here),
+/// say so at the boundary.
+///
+/// `todo board` is exempt: it reads and writes `session_plan/*.md` on disk, so
+/// it genuinely persists and the note would be a lie about it.
+fn todo_cli_session_note(args: &[String]) -> Option<&'static str> {
+    match args.get(2).map(|s| s.as_str()) {
+        Some("board") => None,
+        _ => Some(
+            "note: this list is in-memory only -- it does not survive the end of \
+             this command. Use /todo inside an interactive yoyo session.",
+        ),
+    }
+}
+
 /// Build a `/command ...` string from shell args, preserving multi-word tokens.
 ///
 /// Shell args like `["yoyo", "grep", "fn main", "src/"]` become `/grep "fn main" src/`.
@@ -335,6 +356,11 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 let input = quote_args_as_command(args);
                 let output = crate::commands_todo::handle_todo(&input);
                 println!("{output}");
+                // Honesty at the boundary: the in-memory list dies with this
+                // process (#679). stderr, so piped stdout stays clean.
+                if let Some(note) = todo_cli_session_note(args) {
+                    eprintln!("{DIM}  {note}{RESET}");
+                }
                 return Some(None);
             }
             "goal" => {
