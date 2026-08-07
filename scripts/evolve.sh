@@ -465,9 +465,12 @@ fi
 RECENT_REVERTS=""
 if command -v gh &>/dev/null; then
     echo "→ Fetching revert receipts..."
+    # No --author filter: applying a label requires write access, so any
+    # agent-revert issue is operator-blessed regardless of author — and the
+    # operator files receipts by hand when the bot's own filing fails
+    # (Day 160: token expiry ate the #662 receipt).
     RECENT_REVERTS=$(gh issue list --repo "$REPO" --state open \
         --label "agent-revert" --limit 3 \
-        --author "${BOT_LOGIN}" \
         --json number,title \
         --jq '.[] | "- #\(.number): \(.title)"' 2>/dev/null || true)
     if [ -n "$RECENT_REVERTS" ]; then
@@ -1528,6 +1531,7 @@ BFIXEOF
     EVAL_ATTEMPT=0
     MAX_EVAL_ATTEMPTS=10
     EVAL_LOG=""
+    BUDGET_UNVERIFIED=""  # set by the budget gates below; changes the accept wording only
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
 
@@ -1537,6 +1541,7 @@ BFIXEOF
         # build+test — rather than starting a pass that gets killed mid-run.
         if [ "$(session_secs_left)" -lt 900 ]; then
             echo "    Budget: $(session_secs_left)s left — skipping evaluator (build+test passed)"
+            BUDGET_UNVERIFIED=1
             break
         fi
 
@@ -1619,6 +1624,18 @@ EVALEOF
         if echo "$EVAL_VERDICT" | grep -qi "FAIL"; then
             EVAL_REASON=$(grep -i '^Reason:' "session_plan/eval_task_${TASK_NUM}.md" | head -1 | sed 's/^Reason:[[:space:]]*//' || true)
             echo "    Evaluator: FAIL — $EVAL_REASON"
+
+            # Budget gate: a fix attempt costs up to 600s plus a 600s re-eval.
+            # Without this gate the Day 160 session launched fix attempt 3 with
+            # ~840s left and ran to -255s, eating the wrap-up margin. Keep the
+            # last green safety-committed state (build+test passed) and move
+            # on — same fail-open outcome, minus the overshoot. The evaluator's
+            # objections stand unresolved; the accept message says so.
+            if [ "$(session_secs_left)" -lt 900 ]; then
+                echo "    Budget: $(session_secs_left)s left — no time for an eval-fix attempt; keeping last green state."
+                BUDGET_UNVERIFIED=1
+                break
+            fi
 
             if [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; then
                 # ── Fix attempt: feed evaluator feedback back to agent ──
@@ -1764,6 +1781,11 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
 
         # File an issue so future sessions know what was reverted
         if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
+            # The GitHub App token expires after 60 minutes; a revert deep in
+            # a long session (Day 160: T+94min) fails auth with the startup
+            # token. Refresh before filing — otherwise the receipt vanishes
+            # and the next planner never learns to shrink the task.
+            refresh_gh_token
             ISSUE_TITLE="Task reverted: ${task_title:0:200}"
             ISSUE_BODY="**Day $DAY, Task $TASK_NUM** was automatically reverted by the verification gate.
 
@@ -1791,14 +1813,26 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
                     echo "    WARNING: Could not comment on issue #$EXISTING_ISSUE"
                 fi
             else
-                gh issue create --repo "$REPO" \
+                # Capture stderr instead of discarding it — Day 160's failure
+                # printed a bare WARNING with the actual error thrown away.
+                if ! CREATE_ERR=$(gh issue create --repo "$REPO" \
                     --title "$ISSUE_TITLE" \
                     --body "$ISSUE_BODY" \
-                    --label "agent-revert" 2>/dev/null || echo "    WARNING: Could not file revert issue"
+                    --label "agent-revert" 2>&1 >/dev/null); then
+                    echo "    WARNING: Could not file revert issue: $(echo "$CREATE_ERR" | tail -1)"
+                fi
             fi
         fi
     else
-        echo "    Task $TASK_NUM: verified OK"
+        if [ -n "$BUDGET_UNVERIFIED" ]; then
+            # Don't call it verified when the budget gate skipped the check —
+            # Day 160's Task 2 printed "verified OK" after three unresolved
+            # evaluator FAILs, which is exactly the dressed-up pass this
+            # harness keeps getting taught not to emit.
+            echo "    Task $TASK_NUM: accepted UNVERIFIED (budget exhausted; build+test passed, evaluator skipped)"
+        else
+            echo "    Task $TASK_NUM: verified OK"
+        fi
         GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
             "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
         # evolve tasks can legitimately touch skills/ too — keep the state

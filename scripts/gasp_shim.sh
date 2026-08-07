@@ -467,14 +467,30 @@ gasp_session_end() {
         return 0
     fi
     printf '%s\n' "$out" | sed 's/^/  [gasp] /' || true
+    # The clone is hours old by session end; any other loop (social runs
+    # ~4x/day) that pushed its own record in the meantime makes our push a
+    # non-fast-forward reject. Day 160 lost a full session record this way:
+    # "preserved at /tmp/..." on an EPHEMERAL runner is deletion with extra
+    # steps. State commits are per-session append-only paths, so a rebase is
+    # conflict-free by construction — rebase once and retry before declaring
+    # failure. (The structural fix is #683's single in-process writer; this
+    # keeps the ledger whole until then.)
+    push_ok=false
     if out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
+        push_ok=true
+    elif rb=$(git -C "$GASP_STATE_DIR" pull --rebase --quiet "$GASP_PUSH_URL" main 2>&1) \
+        && out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
+        echo "  [gasp] state pushed after rebase (another session pushed mid-run)"
+        push_ok=true
+    fi
+    if [ "$push_ok" = true ]; then
         echo "  [gasp] state pushed to ${GASP_STATE_REPO}"
         echo 0 > "$GASP_FAIL_COUNTER" 2>/dev/null || true
         rm -rf "$GASP_STATE_DIR" 2>/dev/null || true
         GASP_ENABLED=false  # terminal: a later abort-trap call is a no-op
     else
         echo "  [gasp] WARNING: state push failed — boundary commit preserved at ${GASP_STATE_DIR}" >&2
-        echo "  [gasp]   $(_gasp_scrub "$(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')")" >&2
+        echo "  [gasp]   $(_gasp_scrub "$(printf '%s' "${rb:-}${out}" | tail -n 2 | tr '\n' '; ')")" >&2
         _gasp_note_failure
     fi
     return 0
