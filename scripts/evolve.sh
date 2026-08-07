@@ -1493,12 +1493,20 @@ BFIXEOF
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
 
         echo "    Evaluator: checking Task $TASK_NUM quality (attempt $EVAL_ATTEMPT)..."
-        EVAL_TIMEOUT=180
+        # 600s, matching the build-fix and eval-fix loops. Was 180s, which is
+        # below the floor for a model that thinks before answering: on Fable 5
+        # a single request routinely runs several minutes, so a 3-minute
+        # evaluator budget times out — and a timed-out evaluator reverts a task
+        # that had already passed build and tests. Keep this in step with the
+        # stated budget in the prompt below; the evaluator paces itself against
+        # what it is told, so changing one without the other silently keeps the
+        # old behavior.
+        EVAL_TIMEOUT=600
         EVAL_PROMPT=$(mktemp)
         TASK_DIFF=$(git diff "$PRE_TASK_SHA"..HEAD 2>/dev/null || echo "(git diff failed)")
         cat > "$EVAL_PROMPT" <<EVALEOF
 You are an evaluator agent. Your job: verify that a task was implemented correctly.
-You have 3 minutes. Be fast and focused.
+You have 10 minutes. Be focused — judge the diff, don't explore the repo.
 
 Task Kind: $task_kind. RED FLAG: if this is an evolve-kind task whose diff
 changes product surface (config defaults, CLI flags, setup wizard, startup
