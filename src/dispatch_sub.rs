@@ -95,6 +95,17 @@ fn quote_args_as_command(args: &[String]) -> String {
     format!("/{}", parts.join(" "))
 }
 
+/// Build a `/command ...` string from shell args by plain space-join — no
+/// re-quoting. For handlers that take the remainder VERBATIM (`/todo add`,
+/// `/goal set`, `/memories <query>`): those never call `tokenize_quoted`, so
+/// `quote_args_as_command`'s added `"..."` would be stored/searched as literal
+/// quote characters (#679 finding 2). `yoyo todo add "fix the parser"` and
+/// `yoyo todo add fix the parser` now store identical descriptions, matching
+/// the REPL path.
+fn join_args_as_command(args: &[String]) -> String {
+    format!("/{}", args[1..].join(" "))
+}
+
 /// `--version`/`-V` — both print and bail out before any config is built.
 /// This helper is the first slice of the parse_args refactor (#261); it
 /// exists so the "did I handle this?" decision can be unit-tested in
@@ -353,7 +364,9 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "todo" => {
-                let input = quote_args_as_command(args);
+                // Plain join, not quote_args_as_command: handle_todo's add arm
+                // takes the remainder verbatim (#679 finding 2).
+                let input = join_args_as_command(args);
                 let output = crate::commands_todo::handle_todo(&input);
                 println!("{output}");
                 // Honesty at the boundary: the in-memory list dies with this
@@ -1256,6 +1269,42 @@ mod tests {
             matches!(result, Some(None)),
             "expected Some(None) for `memories` subcommand"
         );
+    }
+
+    #[test]
+    fn join_args_multi_word_has_no_quote_chars() {
+        // #679 finding 2: `yoyo todo add "fix the parser"` must not store
+        // literal quote characters — handle_todo takes the remainder verbatim.
+        let args: Vec<String> = vec!["yoyo", "todo", "add", "fix the parser"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let input = join_args_as_command(&args);
+        assert_eq!(input, "/todo add fix the parser");
+        assert!(
+            !input.contains('"'),
+            "plain join must not introduce quote chars"
+        );
+    }
+
+    #[test]
+    fn join_args_single_word_unchanged() {
+        let args: Vec<String> = vec!["yoyo", "todo", "add", "refactor"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(join_args_as_command(&args), "/todo add refactor");
+    }
+
+    #[test]
+    fn join_args_goal_set_multi_word() {
+        // Twin arm (Day 151 sweep): handle_goal's `set` also takes the
+        // remainder verbatim, so the goal description must stay quote-free.
+        let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(join_args_as_command(&args), "/goal set ship the parser fix");
     }
 
     #[test]
