@@ -207,6 +207,14 @@ pub struct BoardTask {
     /// must not be absorbed by the first. The task still lands in the backlog
     /// bucket so it never disappears from the board -- but the board says so.
     pub unrecognized_status: Option<String>,
+    /// Whether the file said anything at all about status.
+    ///
+    /// Absence gets its own value instead of being absorbed by the `backlog`
+    /// default: a planner-written `session_plan/task_NN.md` carries
+    /// `Title:/Kind:/Files:/Issue:` and no `Status:` line, so "not started" and
+    /// "nobody ever said" were rendering identically. `Status:` present with an
+    /// empty value counts as absent too -- the file still said nothing.
+    pub status_declared: bool,
 }
 
 /// Parse a single task file's content into a `BoardTask`.
@@ -216,6 +224,7 @@ fn parse_task_file(id: &str, content: &str) -> BoardTask {
     let mut issue = "none".to_string();
     let mut files = String::new();
     let mut unrecognized_status: Option<String> = None;
+    let mut status_declared = false;
 
     for line in content.lines() {
         if let Some(val) = line.strip_prefix("Title:") {
@@ -225,8 +234,10 @@ fn parse_task_file(id: &str, content: &str) -> BoardTask {
             // hand-typing the list here is what let reader and writer drift.
             let raw = val.trim();
             if raw.is_empty() {
-                // `Status:` with no value == no status. Silent backlog default.
+                // `Status:` with no value == the file said nothing. Backlog
+                // default stands, but absence stays visible via status_declared.
             } else {
+                status_declared = true;
                 match normalize_board_status(raw) {
                     Some(s) => status = s.to_string(),
                     // Explicit third value: remembered, reported, not swallowed.
@@ -247,6 +258,7 @@ fn parse_task_file(id: &str, content: &str) -> BoardTask {
         issue,
         files,
         unrecognized_status,
+        status_declared,
     }
 }
 
@@ -368,6 +380,22 @@ fn render_board(tasks: &[BoardTask], goal: Option<&str>) -> String {
                 DIM, t.id, raw, RESET
             ));
         }
+    }
+
+    // Same honesty for the case that actually occurs: the Phase A2 planner
+    // writes Title:/Kind:/Files:/Issue: and no Status:, so those tasks are in
+    // backlog because nobody spoke, not because they're known to be unstarted.
+    let silent = tasks.iter().filter(|t| !t.status_declared).count();
+    if silent > 0 {
+        let plural = if silent == 1 { "" } else { "s" };
+        out.push_str(&format!(
+            "{}  note: {} task{} ha{} no `Status:` line -- shown as backlog{}\n",
+            DIM,
+            silent,
+            plural,
+            if silent == 1 { "s" } else { "ve" },
+            RESET
+        ));
     }
 
     out
@@ -906,17 +934,50 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_task_file_missing_status_is_silent_backlog() {
-        // No `Status:` line at all -- backlog is the correct default and must
-        // stay quiet (no warning to render).
+    fn test_parse_task_file_missing_status_is_backlog_but_named() {
+        // No `Status:` line at all -- backlog is the right bucket, but the file
+        // never said so, and the board must be able to tell the difference.
         let content = "Title: Some task\nFiles: src/main.rs\n";
         let task = parse_task_file("task_02", content);
         assert_eq!(task.status, "backlog");
         assert_eq!(task.unrecognized_status, None);
+        assert!(!task.status_declared);
         // An empty `Status:` value counts as missing, not as a typo.
         let task = parse_task_file("task_03", "Title: T\nStatus:   \n");
         assert_eq!(task.status, "backlog");
         assert_eq!(task.unrecognized_status, None);
+        assert!(!task.status_declared);
+        // A real status is declared, whether or not it's the backlog bucket.
+        let task = parse_task_file("task_04", "Title: T\nStatus: backlog\n");
+        assert!(task.status_declared);
+    }
+
+    #[test]
+    fn test_render_board_names_statusless_tasks() {
+        // The shape the Phase A2 planner actually writes: four header fields and
+        // no `Status:` line. It used to land in backlog with nothing said.
+        let planner = "Title: no status line at all\nKind: evolve\nFiles: \nIssue: none\n";
+        let tasks = vec![
+            parse_task_file("task_01", planner),
+            parse_task_file("task_02", planner),
+        ];
+        let output = render_board(&tasks, None);
+        assert!(
+            output.contains("2 tasks have no `Status:` line"),
+            "board must say how many tasks never declared a status: {output}"
+        );
+        // Singular reads properly too.
+        let one = render_board(&tasks[..1], None);
+        assert!(
+            one.contains("1 task has no `Status:` line"),
+            "singular phrasing: {one}"
+        );
+        // A declared status stays quiet.
+        let declared = vec![parse_task_file("task_01", "Title: T\nStatus: wip\n")];
+        assert!(
+            !render_board(&declared, None).contains("no `Status:` line"),
+            "declared statuses must not trigger the note"
+        );
     }
 
     #[test]
@@ -985,6 +1046,7 @@ mod tests {
                 issue: "none".into(),
                 files: String::new(),
                 unrecognized_status: None,
+                status_declared: true,
             },
             BoardTask {
                 id: "task_02".into(),
@@ -993,6 +1055,7 @@ mod tests {
                 issue: "#10".into(),
                 files: String::new(),
                 unrecognized_status: None,
+                status_declared: true,
             },
             BoardTask {
                 id: "task_03".into(),
@@ -1001,6 +1064,7 @@ mod tests {
                 issue: "none".into(),
                 files: String::new(),
                 unrecognized_status: None,
+                status_declared: true,
             },
         ];
         let output = render_board(&tasks, Some("Build it"));
