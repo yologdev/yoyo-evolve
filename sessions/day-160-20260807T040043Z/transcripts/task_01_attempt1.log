@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick issue #680 — it's the smallest, most concrete item in the backlog, entirely in one file. Let me verify its claims first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 190,260p src/commands_tod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unrecognized_status\|st… ✓ (6ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 296,385p src/commands_tod… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.1s (3 ✓)
+
+Confirmed the defect exactly as described. Writing the test first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 880,950p src/commands_tod… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (2 → 10 lines)
+        pub unrecognized_status: Option<String>,
+  +     /// Whether the file said anything at all about status.
+  +     ///
+  +     /// Absence gets its own value instead of being absorbed by the `backlog`
+  +     /// default: a planner-written `session_plan/task_NN.md` carries
+  +     /// `Title:/Kind:/Files:/Issue:` and no `Status:` line, so "not started" and
+  +     /// "nobody ever said" were rendering identically. `Status:` present with an
+  +     /// empty value counts as absent too -- the file still said nothing.
+  +     pub status_declared: bool,
+    }
+ ✓ (12.7s)
+        pub unrecognized_status: Option<String>,
+  +     /// Whether the file said anything at all about status.
+  +     ///
+  +     /// Absence gets its own value instead of being absorbed by the `backlog`
+  +     /// default: a planner-written `session_plan/task_NN.md` carries
+  +     /// `Title:/Kind:/Files:/Issue:` and no `Status:` line, so "not started" and
+  +     /// "nobody ever said" were rendering identically. `Status:` present with an
+  +     /// empty value counts as absent too -- the file still said nothing.
+  +     pub status_declared: bool,
+    }
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.4s (2 ✓)
+
+Expected — now the consumers, in the same edit.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (3 → 4 lines)
+        let mut unrecognized_status: Option<String> = None;
+  +     let mut status_declared = false;
+    
+        for line in content.lines() {
+ ✓ (12.7s)
+        let mut unrecognized_status: Option<String> = None;
+  +     let mut status_declared = false;
+    
+        for line in content.lines() {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (5 → 7 lines)
+                let raw = val.trim();
+                if raw.is_empty() {
+  -                 // `Status:` with no value == no status. Silent backlog default.
+  +                 // `Status:` with no value == the file said nothing. Backlog
+  +                 // default stands, but absence stays visible via status_declared.
+                } else {
+  +                 status_declared = true;
+                    match normalize_board_status(raw) {
+ ✓ (13.0s)
+                let raw = val.trim();
+                if raw.is_empty() {
+  -                 // `Status:` with no value == no status. Silent backlog default.
+  +                 // `Status:` with no value == the file said nothing. Backlog
+  +                 // default stands, but absence stays visible via status_declared.
+                } else {
+  +                 status_declared = true;
+                    match normalize_board_status(raw) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (4 → 5 lines)
+            files,
+            unrecognized_status,
+  +         status_declared,
+        }
+    }
+ ✓ (12.9s)
+            files,
+            unrecognized_status,
+  +         status_declared,
+        }
+    }
+  3 tools completed in 46.0s (3 ✓)
+
+Now the render side, then the three test literals.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (14 → 30 lines)
+                    DIM, t.id, raw, RESET
+                ));
+            }
+  +     }
+  + 
+  +     // Same honesty for the case that actually occurs: the Phase A2 planner
+  +     // writes Title:/Kind:/Files:/Issue: and no Status:, so those tasks are in
+  +     // backlog because nobody spoke, not because they're known to be unstarted.
+  +     let silent = tasks.iter().filter(|t| !t.status_declared).count();
+  +     if silent > 0 {
+  +         let plural = if silent == 1 { "" } else { "s" };
+  +         out.push_str(&format!(
+  +             "{}  note: {} task{} ha{} no `Status:` line -- shown as backlog{}\n",
+  +             DIM,
+  +             silent,
+  +             plural,
+  +             if silent == 1 { "s" } else { "ve" },
+  +             RESET
+  +         ));
+        }
+  ... (2 more lines)
+ ✓ (12.4s)
+                    DIM, t.id, raw, RESET
+                ));
+            }
+  +     }
+  + 
+  +     // Same honesty for the case that actually occurs: the Phase A2 planner
+  +     // writes Title:/Kind:/Files:/Issue: and no Status:, so those tasks are in
+  +     // backlog because nobody spoke, not because they're known to be unstarted.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1000,1035p src/commands_t… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.8s (3 ✓)
+
+Now update the two affected tests and add the new regression test.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (13 → 46 lines)
+        #[test]
+  -     fn test_parse_task_file_missing_status_is_silent_backlog() {
+  -         // No `Status:` line at all -- backlog is the correct default and must
+  -         // stay quiet (no warning to render).
+  +     fn test_parse_task_file_missing_status_is_backlog_but_named() {
+  +         // No `Status:` line at all -- backlog is the right bucket, but the file
+  +         // never said so, and the board must be able to tell the difference.
+            let content = "Title: Some task\nFiles: src/main.rs\n";
+            let task = parse_task_file("task_02", content);
+            assert_eq!(task.status, "backlog");
+            assert_eq!(task.unrecognized_status, None);
+  +         assert!(!task.status_declared);
+            // An empty `Status:` value counts as missing, not as a typo.
+            let task = parse_task_file("task_03", "Title: T\nStatus:   \n");
+            assert_eq!(task.status, "backlog");
+            assert_eq!(task.unrecognized_status, None);
+  +         assert!(!task.status_declared);
+  +         // A real status is declared, whether or not it's the backlog bucket.
+  +         let task = parse_task_file("task_04", "Title: T\nStatus: backlog\n");
+  +         assert!(task.status_declared);
+  ... (29 more lines)
+ ✓ (14m 41s)
+        #[test]
+  -     fn test_parse_task_file_missing_status_is_silent_backlog() {
+  -         // No `Status:` line at all -- backlog is the correct default and must
+  -         // stay quiet (no warning to render).
+  +     fn test_parse_task_file_missing_status_is_backlog_but_named() {
+  +         // No `Status:` line at all -- backlog is the right bucket, but the file
+  +         // never said so, and the board must be able to tell the difference.
+            let content = "Title: Some task\nFiles: src/main.rs\n";
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+
