@@ -388,7 +388,10 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "memories" => {
-                let input = quote_args_as_command(args);
+                // Plain join: handle_memories treats the remainder verbatim as
+                // a search query (no tokenize_quoted in commands_memory.rs), so
+                // re-quoting a multi-word query would search for literal `"`s.
+                let input = join_args_as_command(args);
                 crate::commands_memory::handle_memories(&input);
                 return Some(None);
             }
