@@ -1,0 +1,88 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the backlog. Issue #680 is the smallest concrete item — let me verify its claims against the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,270p src/commands_tod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+#680 already landed (status_declared exists). Let me check whether render_board reports it, then look at #679.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "status_declared\|no \`S…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "todo" src/dispatch_sub.… ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,360p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,175p src/commands_tod… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.8s (4 ✓)
+
+#680 already landed. #679 finding 1 is real and unfixed: yoyo todo add mutates a process-global static and the process exits — success message, work discarded. Taking the issue's option (1): be honest at the boundary. Test first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub(crate) fn t… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (1 → 22 lines)
+  + /// The note the shell `yoyo todo ...` path owes the user (#679).
+  + ///
+  + /// `/todo`'s task list is a process-global in-memory `static` — correct as REPL
+  + /// session state, but each shell invocation is a fresh process, so `yoyo todo
+  + /// add "x"` prints a green checkmark and then discards the task. That is a
+  + /// silent wrong-op reported as success. Until the list is either persisted or
+  + /// dropped from the shell surface (a product decision, not mine to make here),
+  + /// say so at the boundary.
+  + ///
+  + /// `todo board` is exempt: it reads and writes `session_plan/*.md` on disk, so
+  + /// it genuinely persists and the note would be a lie about it.
+  + fn todo_cli_session_note(args: &[String]) -> Option<&'static str> {
+  +     match args.get(2).map(|s| s.as_str()) {
+  +         Some("board") => None,
+  +         _ => Some(
+  +             "note: this list is in-memory only -- it does not survive the end of \
+  +              this command. Use /todo inside an interactive yoyo session.",
+  +         ),
+  +     }
+  + }
+  ... (2 more lines)
+ ✓ (14.8s)
+  + /// The note the shell `yoyo todo ...` path owes the user (#679).
+  + ///
+  + /// `/todo`'s task list is a process-global in-memory `static` — correct as REPL
+  + /// session state, but each shell invocation is a fresh process, so `yoyo todo
+  + /// add "x"` prints a green checkmark and then discards the task. That is a
+  + /// silent wrong-op reported as success. Until the list is either persisted or
+  + /// dropped from the shell surface (a product decision, not mine to make here),
+  + /// say so at the boundary.
+  ... (13 more lines)
+  2 tools completed in 24.0s (2 ✓)
+
+Expected — adding the call site now (definition + consumer in the same edit, per #618/#653/#658).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (6 → 11 lines)
+                    let input = quote_args_as_command(args);
+                    let output = crate::commands_todo::handle_todo(&input);
+                    println!("{output}");
+  +                 // Honesty at the boundary: the in-memory list dies with this
+  +                 // process (#679). stderr, so piped stdout stays clean.
+  +                 if let Some(note) = todo_cli_session_note(args) {
+  +                     eprintln!("{DIM}  {note}{RESET}");
+  +                 }
+                    return Some(None);
+                }
+ ✓ (12m 29s)
+                    let input = quote_args_as_command(args);
+                    let output = crate::commands_todo::handle_todo(&input);
+                    println!("{output}");
+  +                 // Honesty at the boundary: the in-memory list dies with this
+  +                 // process (#679). stderr, so piped stdout stays clean.
+  +                 if let Some(note) = todo_cli_session_note(args) {
+  +                     eprintln!("{DIM}  {note}{RESET}");
+  +                 }
+                    return Some(None);
+                }
+
+  watch: no files changed this turn — skipping
+
