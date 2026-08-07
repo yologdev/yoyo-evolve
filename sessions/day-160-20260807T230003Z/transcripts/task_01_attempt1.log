@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1160p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1100p' src/tool_wrap… ✓ (7ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1040 && NR<=1110' src/t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read mode is active\|se… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -A /dev/null; sed -n '1055,1…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|cla… ✓ (4ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:1058..1103  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:925..950 ✓ (1ms)
+ ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:29..129  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:3170..3240  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '610,645p' src/prompt.rs … ✓ (1ms)
+ ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn check_path" -A 25 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,645p' src/prompt.rs … ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn check_path" src/ &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "refusal\|Refusal" src/p… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,100p' src/config.rs &… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '98,115p' src/config.rs &… ✓ (8ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (9 → 10 lines)
+            let used = self.counter.fetch_add(1, Ordering::SeqCst);
+            if used >= self.cap {
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "{} session cap reached ({} calls) — this usually means a runaway \
+  +                 "{} {} ({} calls) — this usually means a runaway \
+                     loop. Use /clear or start a new session to reset.",
+                    self.inner.name(),
+  +                 SESSION_CAP_REFUSAL_STEM,
+                    self.cap
+                )));
+            }
+ ✓ (9.2s)
+            let used = self.counter.fetch_add(1, Ordering::SeqCst);
+            if used >= self.cap {
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "{} session cap reached ({} calls) — this usually means a runaway \
+  +                 "{} {} ({} calls) — this usually means a runaway \
+                     loop. Use /clear or start a new session to reset.",
+                    self.inner.name(),
+  +                 SESSION_CAP_REFUSAL_STEM,
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SESSION_TOOL_CALL_CAP" … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 18 lines)
+    pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Deterministic-refusal stems (#662)
+  + // ---------------------------------------------------------------------------
+  + // Guard wrappers refuse deterministically: the same call gets the same answer
+  + // every time, so auto-retry must not burn its budget re-asking. These stems
+  + // are the single definition of each refusal message's recognisable core —
+  + // the wrappers below format their errors FROM them, and
+  + // `prompt_retry::is_deterministic_tool_error` matches ON them, so a reword
+  + // cannot desync guard and classifier.
+  + 
+  + /// Core of `SessionCapTool`'s refusal message.
+  + pub(crate) const SESSION_CAP_REFUSAL_STEM: &str = "session cap reached";
+  + /// Core of `ReadModeGuardTool`'s refusal messages while `/read` is on.
+  + pub(crate) const READ_MODE_REFUSAL_STEM: &str = "read mode is active";
+  + /// Core of `ReadModeGuardTool`'s refusal messages while `/plan` is on.
+  + pub(crate) const PLAN_MODE_REFUSAL_STEM: &str = "plan mode is active";
+ ✓ (12.8s)
+    pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Deterministic-refusal stems (#662)
+  + // ---------------------------------------------------------------------------
+  + // Guard wrappers refuse deterministically: the same call gets the same answer
+  + // every time, so auto-retry must not burn its budget re-asking. These stems
+  + // are the single definition of each refusal message's recognisable core —
+  ... (10 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  20 tools completed in 2m 11s (20 ✓)
+
+Now the consumers — BlockingMode::label() becomes stem() returning the consts, and the format strings drop the  is active they now carry:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (8 → 9 lines)
+    impl BlockingMode {
+  -     /// "<mode> is active" prefix for refusal messages.
+  -     fn label(self) -> &'static str {
+  +     /// "<mode> is active" stem for refusal messages — the shared consts above,
+  +     /// so `prompt_retry::is_deterministic_tool_error` stays in sync (#662).
+  +     fn stem(self) -> &'static str {
+            match self {
+  -             BlockingMode::Read => "read mode",
+  -             BlockingMode::Plan => "plan mode",
+  +             BlockingMode::Read => READ_MODE_REFUSAL_STEM,
+  +             BlockingMode::Plan => PLAN_MODE_REFUSAL_STEM,
+            }
+        }
+ ✓ (9.2s)
+    impl BlockingMode {
+  -     /// "<mode> is active" prefix for refusal messages.
+  -     fn label(self) -> &'static str {
+  +     /// "<mode> is active" stem for refusal messages — the shared consts above,
+  +     /// so `prompt_retry::is_deterministic_tool_error` stays in sync (#662).
+  +     fn stem(self) -> &'static str {
+            match self {
+  -             BlockingMode::Read => "read mode",
+  ... (5 more lines)
+
+  watch: no files changed this turn — skipping
+

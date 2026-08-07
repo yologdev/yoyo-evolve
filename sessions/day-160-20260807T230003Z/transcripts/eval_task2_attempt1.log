@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quote_args_as_command\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokenize_quoted\|strip_… ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 360..395p src/dispatch_su… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%B' | head … ✓ (3ms)
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (7m 45s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 8m 30s (6 ✓)
+
+Verdict: **FAIL**
+
+Evidence:
+
+1. **Todo arm fix works** — ran the binary: yoyo todo add "fix the parser" → ✓ Added task #1: fix the parser (no literal quotes). This half is correct and tested.
+
+2. **The mandatory twin-arm sweep (step 2) was not done** — the "goal" arm at src/dispatch_sub.rs:380 still calls quote_args_as_command, while handle_goal takes the set remainder verbatim (arg.strip_prefix("set") at src/commands_goal.rs:174, no tokenize_quoted). The task explicitly required: "If verbatim, apply the same plain join." The exact bug the task describes therefore persists for yoyo goal set "two words" — and the goal text gets injected into the system prompt.
+
+3. Misleading coverage claims — the new helper's doc comment names /goal set and `/memories <query> as verbatim handlers that need the plain join, and the test join_args_goal_set_multi_word` is titled "Twin arm (Day 151 sweep)... the goal description must stay quote-free" — but it only tests the helper, not the dispatch arm, which never calls it. The "memories" arm was also left on the re-quoter despite the comment. The commit message contains none of the required audit record.
+
+This isn't a style nit: the task's approach section made the goal-arm sweep an explicit requirement in the same diff, the handler is demonstrably verbatim, and the diff's own comments assert coverage that doesn't exist.
+
+  watch: no files changed this turn — skipping
+

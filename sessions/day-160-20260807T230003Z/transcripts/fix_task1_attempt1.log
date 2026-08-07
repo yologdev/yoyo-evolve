@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ search 'REFUSAL_STEM|SESSION_CAP_REFUSAL' in src/tool_wrappers.rs ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_STEM\|SESSION_C… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|is_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 880,960p src/tool_wrapper… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,340p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1020,1100p src/tool_wrapp… ✓ (3ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 18.7s (7 ✓)
+
+Now let me look at the prompt.rs drivers and the #568 refusal-notice shape:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,650p src/prompt.rs &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 596,645p src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:590..645 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:25..125 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn check_path" -A 30 sr… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:3180..3280  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/prompt_retry.rs… ✓ (1ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 104,115p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/prompt_r… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 340,375p src/prompt_retry… ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 57.8s (10 ✓)
+
+Now I'll add the classifier in prompt_retry.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (10 → 30 lines)
+        }
+    
+        false
+  + }
+  + 
+  + /// Classify whether a tool error is a *deterministic refusal* (#662): a guard
+  + /// wrapper deliberately said no — read/plan mode blocked a write tool
+  + /// (`ReadModeGuardTool`) or the session-wide call cap tripped
+  + /// (`SessionCapTool`). Re-sending the same prompt gets the same answer every
+  + /// time, so the auto-retry drivers must break instead of burning their budget.
+  + ///
+  + /// One definition, two readers: this matches ON the shared stems the wrappers
+  + /// format their errors FROM (`tool_wrappers::*_REFUSAL_STEM`), so a reword
+  + /// cannot desync guard and classifier. Mirrors the API-side lesson from #568
+  + /// (`StopHandling::RefusalNotice`) for the tool-side path.
+  + pub fn is_deterministic_tool_error(err: &str) -> bool {
+  +     [
+  +         crate::tool_wrappers::READ_MODE_REFUSAL_STEM,
+  +         crate::tool_wrappers::PLAN_MODE_REFUSAL_STEM,
+  +         crate::tool_wrappers::SESSION_CAP_REFUSAL_STEM,
+  ... (6 more lines)
+ ✓ (13.6s)
+        }
+    
+        false
+  + }
+  + 
+  + /// Classify whether a tool error is a *deterministic refusal* (#662): a guard
+  + /// wrapper deliberately said no — read/plan mode blocked a write tool
+  + /// (`ReadModeGuardTool`) or the session-wide call cap tripped
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the consumer comes next. Now wire both drivers in prompt.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (5 → 5 lines)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  +     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+ ✓ (13.4s)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  +     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/prompt.rs:1038..1083 ✓ (1ms)
+  ▶ edit src/prompt.rs (9 → 21 lines)
+                Some(ref err) => {
+  +                 if is_deterministic_tool_error(err) {
+  +                     // #662: a guard wrapper refused deterministically (read/plan
+  +                     // mode, session cap) — re-sending the same prompt gets the
+  +                     // same answer every time. Break instead of burning the retry
+  +                     // budget; say why (a silent skip would be its own dishonesty).
+  +                     let tool = outcome.last_tool_name.as_deref().unwrap_or("a tool");
+  +                     eprintln!(
+  +                         "{DIM}  auto-retry skipped: {tool} refused deterministically — \
+  +                          same answer every time{RESET}"
+  +                     );
+  +                     break;
+  +                 }
+                    if session_budget_exhausted(30) {
+                        eprintln!(
+                            "{DIM}  ⏱ session budget nearly exhausted, stopping retries early{RESET}"

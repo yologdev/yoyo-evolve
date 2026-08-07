@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat HE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers" tests/mo… ✓ (2ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git diff… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_deterministic_tool_e… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '885,930p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|pub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_tool_error" src/pr… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1140p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '615,645p' src/prompt.rs … ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '894,912p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '620,640p' src/prompt.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:890..920  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:600..645 ✓ (1ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 56.5s (13 ✓)
+
+Now let me check the module_size gate's rules for prompt.rs and prompt_retry.rs since I'll be adding lines there:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' tests/module_size… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry.rs src/pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|is_… ✓ (3ms)
+ ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (16 → 9 lines)
+  - // ---------------------------------------------------------------------------
+  - // Deterministic-refusal stems (#662)
+  - // ---------------------------------------------------------------------------
+  - // Guard wrappers refuse deterministically: the same call gets the same answer
+  - // every time, so auto-retry must not burn its budget re-asking. These stems
+  - // are the single definition of each refusal message's recognisable core —
+  - // the wrappers below format their errors FROM them, and
+  + // Deterministic-refusal stems (#662): guard wrappers refuse deterministically —
+  + // same call, same answer — so auto-retry must not burn its budget re-asking.
+  + // Single definition of each refusal message's recognisable core: the wrappers
+  + // below format their errors FROM these consts and
+    // `prompt_retry::is_deterministic_tool_error` matches ON them, so a reword
+    // cannot desync guard and classifier.
+  - 
+  - /// Core of `SessionCapTool`'s refusal message.
+    pub(crate) const SESSION_CAP_REFUSAL_STEM: &str = "session cap reached";
+  - /// Core of `ReadModeGuardTool`'s refusal messages while `/read` is on.
+    pub(crate) const READ_MODE_REFUSAL_STEM: &str = "read mode is active";
+  - /// Core of `ReadModeGuardTool`'s refusal messages while `/plan` is on.
+    pub(crate) const PLAN_MODE_REFUSAL_STEM: &str = "plan mode is active";
+ ✓ (8m 8s)
+  - // ---------------------------------------------------------------------------
+  - // Deterministic-refusal stems (#662)
+  - // ---------------------------------------------------------------------------
+  - // Guard wrappers refuse deterministically: the same call gets the same answer
+  - // every time, so auto-retry must not burn its budget re-asking. These stems
+  - // are the single definition of each refusal message's recognisable core —
+  - // the wrappers below format their errors FROM them, and
+  + // Deterministic-refusal stems (#662): guard wrappers refuse deterministically —
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 5 lines)
+    // Deterministic-refusal stems (#662): guard wrappers refuse deterministically —
+    // same call, same answer — so auto-retry must not burn its budget re-asking.
+  - // Single definition of each refusal message's recognisable core: the wrappers
+  - // below format their errors FROM these consts and
+  - // `prompt_retry::is_deterministic_tool_error` matches ON them, so a reword
+  - // cannot desync guard and classifier.
+  + // One definition of each refusal's recognisable core: the wrappers format their
+  + // errors FROM these consts and `prompt_retry::is_deterministic_tool_error`
+  + // matches ON them, so a reword cannot desync guard and classifier.

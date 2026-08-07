@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quote_args_as_command\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokenize_quoted" src/co… ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355..400p src/dispatch_su… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 6 lines)
+                "goal" => {
+  -                 let input = quote_args_as_command(args);
+  +                 // Plain join: handle_goal's `set` arm takes its remainder
+  +                 // verbatim (strip_prefix("set").trim(), no tokenize_quoted in
+  +                 // commands_goal.rs), so re-quoting a multi-word goal would
+  +                 // store literal `"` chars — same shape as #679 finding 2.
+  +                 let input = join_args_as_command(args);
+ ✓ (8m 17s)
+                "goal" => {
+  -                 let input = quote_args_as_command(args);
+  +                 // Plain join: handle_goal's `set` arm takes its remainder
+  +                 // verbatim (strip_prefix("set").trim(), no tokenize_quoted in
+  +                 // commands_goal.rs), so re-quoting a multi-word goal would
+  +                 // store literal `"` chars — same shape as #679 finding 2.
+  +                 let input = join_args_as_command(args);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1220,1330p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,230p' src/commands_g… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|#\[cfg(test)\]\|se… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '319,360p' src/commands_g… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/#\[cfg(test)\]/,/^mod t… ✓ (7ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (10 → 42 lines)
+        #[test]
+        fn join_args_goal_set_multi_word() {
+  -         // Twin arm (Day 151 sweep): handle_goal's `set` also takes the
+  -         // remainder verbatim, so the goal description must stay quote-free.
+  +         // Helper-level check for the goal arm's input shape; the routing-level
+  +         // proof lives in goal_set_routing_stores_multi_word_goal_without_quotes.
+            let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+            assert_eq!(join_args_as_command(&args), "/goal set ship the parser fix");
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn goal_set_routing_stores_multi_word_goal_without_quotes() {
+  +         // #679 finding 2, twin arm (Day 151 sweep): the `goal` CLI arm must
+  +         // plain-join, not re-quote, because handle_goal's `set` takes its
+  +         // remainder verbatim (no tokenize_quoted in commands_goal.rs).
+  +         // End-to-end through try_dispatch_subcommand: what lands in
+  ... (24 more lines)

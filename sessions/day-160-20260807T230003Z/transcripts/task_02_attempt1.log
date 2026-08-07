@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,420p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokenize_quoted" src/co… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokenize_quoted" src/*.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 70,110p src/dispatch_sub.… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 175,330p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,200p src/commands_tod… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_memories" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,240p src/commands_goa… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in commands_lint commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_outline" -A 1… ✓ (4ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_commit_args" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_run" -A 15 sr… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1220,1310p src/dispatch_s… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 38 lines)
+  +     #[test]
+  +     fn join_args_multi_word_has_no_quote_chars() {
+  +         // #679 finding 2: `yoyo todo add "fix the parser"` must not store
+  +         // literal quote characters — handle_todo takes the remainder verbatim.
+  +         let args: Vec<String> = vec!["yoyo", "todo", "add", "fix the parser"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+  +         let input = join_args_as_command(&args);
+  +         assert_eq!(input, "/todo add fix the parser");
+  +         assert!(
+  +             !input.contains('"'),
+  +             "plain join must not introduce quote chars"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn join_args_single_word_unchanged() {
+  +         let args: Vec<String> = vec!["yoyo", "todo", "add", "refactor"]
+  +             .into_iter()
+  ... (18 more lines)
+ ✓ (9.8s)
+  +     #[test]
+  +     fn join_args_multi_word_has_no_quote_chars() {
+  +         // #679 finding 2: `yoyo todo add "fix the parser"` must not store
+  +         // literal quote characters — handle_todo takes the remainder verbatim.
+  +         let args: Vec<String> = vec!["yoyo", "todo", "add", "fix the parser"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (13 → 24 lines)
+            })
+            .collect();
+        format!("/{}", parts.join(" "))
+  + }
+  + 
+  + /// Build a `/command ...` string from shell args by plain space-join — no
+  + /// re-quoting. For handlers that take the remainder VERBATIM (`/todo add`,
+  + /// `/goal set`, `/memories <query>`): those never call `tokenize_quoted`, so
+  + /// `quote_args_as_command`'s added `"..."` would be stored/searched as literal
+  + /// quote characters (#679 finding 2). `yoyo todo add "fix the parser"` and
+  + /// `yoyo todo add fix the parser` now store identical descriptions, matching
+  + /// the REPL path.
+  + fn join_args_as_command(args: &[String]) -> String {
+  +     format!("/{}", args[1..].join(" "))
+    }
+ ✓ (13.5s)
+            })
+            .collect();
+        format!("/{}", parts.join(" "))
+  + }
+  + 
+  + /// Build a `/command ...` string from shell args by plain space-join — no
+  + /// re-quoting. For handlers that take the remainder VERBATIM (`/todo add`,
+  + /// `/goal set`, `/memories <query>`): those never call `tokenize_quoted`, so
+  ... (7 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 4 lines)
+                "todo" => {
+  -                 let input = quote_args_as_command(args);
+  +                 // Plain join, not quote_args_as_command: handle_todo's add arm
+  +                 // takes the remainder verbatim (#679 finding 2).
+  +                 let input = join_args_as_command(args);
+ ✓ (8m 23s)
+                "todo" => {
+  -                 let input = quote_args_as_command(args);
+  +                 // Plain join, not quote_args_as_command: handle_todo's add arm
+  +                 // takes the remainder verbatim (#679 finding 2).
+  +                 let input = join_args_as_command(args);
+  16 tools completed in 10m 58s (16 ✓)
+
+  watch: no files changed this turn — skipping
+
