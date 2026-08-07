@@ -377,7 +377,11 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "goal" => {
-                let input = quote_args_as_command(args);
+                // Plain join: handle_goal's `set` arm takes its remainder
+                // verbatim (strip_prefix("set").trim(), no tokenize_quoted in
+                // commands_goal.rs), so re-quoting a multi-word goal would
+                // store literal `"` chars — same shape as #679 finding 2.
+                let input = join_args_as_command(args);
                 let result = crate::commands_goal::handle_goal(&input);
                 // /goal check sends to agent which requires a session — just print
                 // the goal info for shell usage.
@@ -1301,13 +1305,45 @@ mod tests {
 
     #[test]
     fn join_args_goal_set_multi_word() {
-        // Twin arm (Day 151 sweep): handle_goal's `set` also takes the
-        // remainder verbatim, so the goal description must stay quote-free.
+        // Helper-level check for the goal arm's input shape; the routing-level
+        // proof lives in goal_set_routing_stores_multi_word_goal_without_quotes.
         let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
             .into_iter()
             .map(String::from)
             .collect();
         assert_eq!(join_args_as_command(&args), "/goal set ship the parser fix");
+    }
+
+    #[test]
+    #[serial]
+    fn goal_set_routing_stores_multi_word_goal_without_quotes() {
+        // #679 finding 2, twin arm (Day 151 sweep): the `goal` CLI arm must
+        // plain-join, not re-quote, because handle_goal's `set` takes its
+        // remainder verbatim (no tokenize_quoted in commands_goal.rs).
+        // End-to-end through try_dispatch_subcommand: what lands in
+        // .yoyo/goal.md must be the words, never `"words"`.
+        let tmp = tempfile::TempDir::new().expect("create temp dir");
+        let prev = std::env::current_dir().expect("get cwd");
+        std::env::set_current_dir(tmp.path()).expect("set cwd");
+        let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let result = try_dispatch_subcommand(&args);
+        let stored = crate::commands_goal::load_goal();
+        // Restore cwd before asserting so a failure can't leak the temp cwd
+        // into other tests.
+        std::env::set_current_dir(prev).expect("restore cwd");
+        assert!(
+            matches!(result, Some(None)),
+            "expected Some(None) for `goal set` subcommand"
+        );
+        let stored = stored.expect("goal should have been saved");
+        assert_eq!(stored, "ship the parser fix");
+        assert!(
+            !stored.contains('"'),
+            "stored goal must not contain literal quote chars, got: {stored}"
+        );
     }
 
     #[test]
