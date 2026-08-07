@@ -26,6 +26,26 @@ source "$(dirname "$0")/common.sh"
 MODEL="${MODEL:-claude-opus-4-6}"
 TIMEOUT="${TIMEOUT:-1200}"
 FALLBACK_PROVIDER="${FALLBACK_PROVIDER:-}"
+
+# ── Session wall-clock budget (shell-side half of #262) ──
+# The GH Actions job has a hard timeout-minutes ceiling; a session that runs
+# past it is killed mid-flight and everything unpushed is lost (two sessions
+# in two days: Day 159's 10:36Z run and Day 160's 15:42Z run — both ended
+# `cancelled` at exactly start+150min with completed, evaluated tasks that
+# never got pushed). yoyo's own YOYO_SESSION_BUDGET_SECS timer is per-process
+# and every phase process is already capped by `timeout`, so the wind-down
+# has to happen here: gates below stop STARTING new tasks / fix attempts /
+# eval attempts when the remaining budget can't fit them, so the session
+# reaches wrap-up and push with time to spare instead of being decapitated.
+# Unset → gates never fire (unbounded, exactly the old behavior; fork-safe).
+SESSION_T0=$(date +%s)
+session_secs_left() {
+    if [ -z "${YOYO_SESSION_BUDGET_SECS:-}" ]; then
+        echo 999999
+    else
+        echo $(( YOYO_SESSION_BUDGET_SECS - ( $(date +%s) - SESSION_T0 ) ))
+    fi
+}
 DATE=$(date +%Y-%m-%d)
 SESSION_TIME=$(date +%H:%M)
 # Security nonce for content boundary markers (prevents spoofing)
@@ -1123,6 +1143,16 @@ for TASK_FILE in session_plan/task_*.md; do
         break
     fi
 
+    # Budget gate: a fresh task needs impl (up to TIMEOUT) + verify + one
+    # evaluator pass (600s) before it can possibly be promoted. Starting one
+    # with less than that guarantees either a mid-task kill or a revert —
+    # skip honestly instead and let the session reach wrap-up and push.
+    if [ "$(session_secs_left)" -lt 2400 ]; then
+        echo "    Budget: $(session_secs_left)s left — not starting Task $TASK_NUM (needs ~2400s). Wrapping up."
+        TASK_NUM=$((TASK_NUM - 1))
+        break
+    fi
+
     # Read task content directly — no parsing needed
     if [ ! -s "$TASK_FILE" ]; then
         echo "    WARNING: Task file $TASK_FILE is empty. Skipping."
@@ -1389,9 +1419,18 @@ and commit if needed."
         fi
 
         BUILD_FIX_ATTEMPT=$((BUILD_FIX_ATTEMPT + 1))
+        # Budget gate: a fix attempt costs up to 600s + re-verify. With less
+        # than that left, exhaust the loop now — the task reverts (the tree is
+        # red; keeping it is not an option) but wrap-up and push still happen.
+        BUDGET_ABANDON=""
+        if [ "$(session_secs_left)" -lt 900 ]; then
+            echo "    Budget: $(session_secs_left)s left — abandoning $BUILD_FAILED fix loop."
+            BUDGET_ABANDON="session budget exhausted after $((BUILD_FIX_ATTEMPT - 1)) fix attempt(s)"
+            BUILD_FIX_ATTEMPT=$((MAX_BUILD_FIX + 1))
+        fi
         if [ "$BUILD_FIX_ATTEMPT" -gt "$MAX_BUILD_FIX" ]; then
             TASK_OK=false
-            REVERT_REASON="$BUILD_FAILED failed after $MAX_BUILD_FIX fix attempts"
+            REVERT_REASON="${BUDGET_ABANDON:-$BUILD_FAILED failed after $MAX_BUILD_FIX fix attempts}"
             if [ "$BUILD_FAILED" = "build" ]; then
                 FAIL_OUT="$BUILD_OUT"
             elif [ "$BUILD_FAILED" = "clippy" ]; then
@@ -1491,6 +1530,15 @@ BFIXEOF
     EVAL_LOG=""
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
+
+        # Budget gate: an eval pass costs up to 600s (plus a 600s fix attempt
+        # if it fails). With less than one pass left, skip like the other
+        # evaluator infra failures — fail-open, the task keeps its green
+        # build+test — rather than starting a pass that gets killed mid-run.
+        if [ "$(session_secs_left)" -lt 900 ]; then
+            echo "    Budget: $(session_secs_left)s left — skipping evaluator (build+test passed)"
+            break
+        fi
 
         echo "    Evaluator: checking Task $TASK_NUM quality (attempt $EVAL_ATTEMPT)..."
         # 600s, matching the build-fix and eval-fix loops. Was 180s, which is
