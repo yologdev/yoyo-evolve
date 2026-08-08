@@ -518,20 +518,31 @@ pub const COPY_SUBCOMMANDS: &[&str] = &["last", "code"];
 
 /// Extract the text content of the last assistant message from the message
 /// list.  Returns `None` if there are no assistant messages.
+///
+/// Only the NEWEST turn is considered: the reverse walk stops at the most
+/// recent user message. If that turn produced no assistant text (e.g. it
+/// ended on tool calls), the answer is `None` — an older turn's text must
+/// never be presented as the fresh response (#692).
 pub(crate) fn extract_last_assistant_text(messages: &[yoagent::AgentMessage]) -> Option<String> {
     for msg in messages.iter().rev() {
-        if let yoagent::AgentMessage::Llm(yoagent::Message::Assistant { content, .. }) = msg {
-            let text: String = content
-                .iter()
-                .filter_map(|c| match c {
-                    yoagent::Content::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !text.is_empty() {
-                return Some(text);
+        match msg {
+            yoagent::AgentMessage::Llm(yoagent::Message::Assistant { content, .. }) => {
+                let text: String = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        yoagent::Content::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    return Some(text);
+                }
             }
+            // Turn boundary: the newest turn starts at the most recent user
+            // message. Walking past it would surface a STALE answer.
+            yoagent::AgentMessage::Llm(yoagent::Message::User { .. }) => return None,
+            _ => {}
         }
     }
     None
@@ -1734,6 +1745,103 @@ mod tests {
     fn test_extract_last_assistant_text_empty() {
         let messages: Vec<yoagent::AgentMessage> = vec![];
         assert!(extract_last_assistant_text(&messages).is_none());
+    }
+
+    #[test]
+    fn test_extract_last_assistant_text_newest_turn_no_text_yields_none() {
+        // Regression (#692): when the NEWEST turn produced no assistant text
+        // (e.g. it ended on tool calls), the helper must return None — not
+        // fall back to an OLDER turn's text and present it as fresh.
+        use yoagent::*;
+        let messages = vec![
+            AgentMessage::Llm(Message::User {
+                content: vec![Content::Text {
+                    text: "first prompt".into(),
+                }],
+                timestamp: 0,
+            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: "older turn's answer".into(),
+                    }],
+                    StopReason::Stop,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(1),
+            ),
+            // Newest turn: user prompt, then a tool-call-only assistant
+            // message with no text at all.
+            AgentMessage::Llm(Message::User {
+                content: vec![Content::Text {
+                    text: "second prompt".into(),
+                }],
+                timestamp: 2,
+            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::tool_call(
+                        "t1",
+                        "bash",
+                        serde_json::json!({"command": "ls"}),
+                    )],
+                    StopReason::ToolUse,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(3),
+            ),
+        ];
+        assert!(
+            extract_last_assistant_text(&messages).is_none(),
+            "a text-less newest turn must yield None, not the older turn's text"
+        );
+    }
+
+    #[test]
+    fn test_extract_last_assistant_text_same_turn_interim_text_still_found() {
+        // Within the SAME (newest) turn, interim assistant text that preceded
+        // tool calls is still that turn's text — it must be returned.
+        use yoagent::*;
+        let messages = vec![
+            AgentMessage::Llm(Message::User {
+                content: vec![Content::Text {
+                    text: "prompt".into(),
+                }],
+                timestamp: 0,
+            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![
+                        Content::Text {
+                            text: "let me check".into(),
+                        },
+                        Content::tool_call("t1", "bash", serde_json::json!({"command": "ls"})),
+                    ],
+                    StopReason::ToolUse,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(1),
+            ),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "t1".into(),
+                tool_name: "bash".into(),
+                content: vec![Content::Text {
+                    text: "file.txt".into(),
+                }],
+                is_error: false,
+                timestamp: 2,
+            }),
+        ];
+        assert_eq!(
+            extract_last_assistant_text(&messages).as_deref(),
+            Some("let me check")
+        );
     }
 
     #[test]
