@@ -182,16 +182,33 @@ def _build_payload(issues, bot_login, git_log_recent):
     return trimmed_issues, git_log
 
 
+def _auth_headers(api_key):
+    """Auth headers matching yoagent's provider logic (anthropic.rs:119):
+    an OAuth access token (sk-ant-oat...) must go on `Authorization: Bearer`
+    with the oauth beta header — sent as x-api-key it 401s instantly, which
+    is exactly how this scan silently died every session after the repo
+    secret became an OAuth token (~Jul 24): the binary auto-detected the
+    token type, this script didn't. (The Jul 16 fix 2b37bf9b blamed the
+    model string; the auth path was the real difference.)"""
+    if "sk-ant-oat" in api_key:
+        return {
+            "authorization": f"Bearer {api_key}",
+            "anthropic-beta": "oauth-2025-04-20",
+        }
+    return {"x-api-key": api_key}
+
+
 def _post(api_key, body_bytes):
     """POST to the Messages API, returning the parsed JSON body."""
+    headers = {
+        "Content-Type": "application/json",
+        "anthropic-version": API_VERSION,
+    }
+    headers.update(_auth_headers(api_key))
     req = urllib.request.Request(
         API_URL,
         data=body_bytes,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": API_VERSION,
-        },
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=TIMEOUT_SECS) as resp:
