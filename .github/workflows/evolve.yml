@@ -19,6 +19,13 @@ jobs:
     timeout-minutes: 210  # Fable 5 sessions run long; YOYO_SESSION_BUDGET_SECS winds the session down before this hard kill
 
     steps:
+      - name: Set job deadline
+        # One wall-clock deadline shared by all attempts. Each retry re-runs
+        # evolve.sh with a fresh SESSION_T0, so per-attempt budgets alone
+        # cannot see how much of the 210-min job clock is already spent —
+        # evolve.sh clamps its budget to this epoch (minus a wrap margin).
+        run: echo "JOB_DEADLINE_EPOCH=$(( $(date +%s) + 210*60 ))" >> "$GITHUB_ENV"
+
       - name: Generate bot token
         id: bot-token
         uses: actions/create-github-app-token@v1
@@ -127,7 +134,7 @@ jobs:
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           FALLBACK_PROVIDER: zai
           MODEL: ${{ secrets.MODEL || 'claude-opus-4-6' }}
-          YOYO_SESSION_BUDGET_SECS: '10800'  # shell-side wind-down in evolve.sh (see #262); job clock is shared so retries get less
+          YOYO_SESSION_BUDGET_SECS: '10800'  # per-attempt cap; JOB_DEADLINE_EPOCH (above) clamps all attempts to the shared job clock
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           APP_ID: ${{ secrets.APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -156,7 +163,7 @@ jobs:
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           FALLBACK_PROVIDER: zai
           MODEL: ${{ secrets.MODEL || 'claude-opus-4-6' }}
-          YOYO_SESSION_BUDGET_SECS: '5400'  # shell-side wind-down in evolve.sh (see #262); job clock is shared so retries get less
+          YOYO_SESSION_BUDGET_SECS: '7200'  # per-attempt cap (must exceed ~4950s: A-phases 1200 + one task 3750 — review finding); deadline clamps it
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           APP_ID: ${{ secrets.APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -186,7 +193,7 @@ jobs:
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           FALLBACK_PROVIDER: zai
           MODEL: ${{ secrets.MODEL || 'claude-opus-4-6' }}
-          YOYO_SESSION_BUDGET_SECS: '2700'  # shell-side wind-down in evolve.sh (see #262); job clock is shared so retries get less
+          YOYO_SESSION_BUDGET_SECS: '5400'  # per-attempt cap (was 2700 — BELOW the 3750s task gate: attempt 3 could never run a task); deadline clamps it
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           APP_ID: ${{ secrets.APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

@@ -471,17 +471,25 @@ gasp_session_end() {
     # ~4x/day) that pushed its own record in the meantime makes our push a
     # non-fast-forward reject. Day 160 lost a full session record this way:
     # "preserved at /tmp/..." on an EPHEMERAL runner is deletion with extra
-    # steps. State commits are per-session append-only paths, so a rebase is
-    # conflict-free by construction — rebase once and retry before declaring
-    # failure. (The structural fix is #683's single in-process writer; this
-    # keeps the ledger whole until then.)
+    # steps. A rebase retry recovers DISJOINT-file races only — concurrent
+    # gasp pushes both append to the shared state/events.jsonl (yoagent-state
+    # DEFAULT_EVENTS_PATH) and the memory mirrors rewrite shared files, so
+    # same-file races still conflict unless the state repo's .gitattributes
+    # marks *.jsonl merge=union (added alongside this fix). Best-effort; the
+    # structural fix is #683's single in-process writer.
+    local push_ok rb
     push_ok=false
+    rb=""
     if out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
         push_ok=true
     elif rb=$(git -C "$GASP_STATE_DIR" pull --rebase --quiet "$GASP_PUSH_URL" main 2>&1) \
         && out=$(git -C "$GASP_STATE_DIR" push --quiet "$GASP_PUSH_URL" HEAD:main 2>&1); then
         echo "  [gasp] state pushed after rebase (another session pushed mid-run)"
         push_ok=true
+    else
+        # A failed rebase leaves the clone mid-rebase with conflict markers —
+        # abort so the "preserved" boundary commit is actually readable.
+        git -C "$GASP_STATE_DIR" rebase --abort 2>/dev/null || true
     fi
     if [ "$push_ok" = true ]; then
         echo "  [gasp] state pushed to ${GASP_STATE_REPO}"
@@ -490,7 +498,13 @@ gasp_session_end() {
         GASP_ENABLED=false  # terminal: a later abort-trap call is a no-op
     else
         echo "  [gasp] WARNING: state push failed — boundary commit preserved at ${GASP_STATE_DIR}" >&2
-        echo "  [gasp]   $(_gasp_scrub "$(printf '%s' "${rb:-}${out}" | tail -n 2 | tr '\n' '; ')")" >&2
+        # Label the two errors separately: ${rb}${out} concatenation let the
+        # stale pre-rebase push error shadow the actual rebase failure
+        # (review finding — the message named the wrong cause).
+        if [ -n "$rb" ]; then
+            echo "  [gasp]   rebase failed: $(_gasp_scrub "$(printf '%s' "$rb" | tail -n 2 | tr '\n' '; ')")" >&2
+        fi
+        echo "  [gasp]   push: $(_gasp_scrub "$(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')")" >&2
         _gasp_note_failure
     fi
     return 0
