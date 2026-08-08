@@ -138,7 +138,26 @@ fi
 # ── Step 1: Verify starting state ──
 echo "→ Checking build..."
 cargo build --quiet
-cargo test --quiet
+# The full suite costs 8-12 min here after a day of src churn — but push-
+# triggered CI (build+test+clippy+fmt, a STRICTER gate than this one) already
+# ran on this exact SHA. Trust it when it's green for HEAD: compile the test
+# profile only (later phases still run tests warm). ANY uncertainty — gh
+# missing, CI pending/failed/mismatched SHA — falls through to the full run,
+# i.e. exactly the old behavior. The green-start guarantee is unchanged;
+# only who ran the suite differs.
+HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo none)
+CI_GREEN=""
+if command -v gh &>/dev/null; then
+    CI_GREEN=$(gh run list --repo "$REPO" --workflow ci.yml --branch main --limit 1 \
+        --json conclusion,headSha \
+        --jq ".[0] | select(.conclusion==\"success\" and .headSha==\"$HEAD_SHA\") | \"yes\"" 2>/dev/null || true)
+fi
+if [ "$CI_GREEN" = "yes" ]; then
+    echo "  CI already green on $HEAD_SHA — compiling test profile only (suite run skipped)."
+    cargo test --quiet --no-run
+else
+    cargo test --quiet
+fi
 YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
 gasp_session_start "$DAY"
@@ -997,13 +1016,16 @@ permissions, design decisions you can't make alone), create an agent-help-wanted
   gh issue create --repo $REPO --title "Help wanted: [what you need]" --body "[context and what you've tried]" --label agent-help-wanted
 Then move on to other tasks — don't keep retrying the same blocker across sessions.
 
-You have 3 task slots per session. Task allocation:
+You have 2 task slots per session (reduced from 3: measured sessions land at
+most 2 — the third slot only ever fed fix-loop grind or was budget-gated away,
+and two tasks finished whole beat three finished halfway). Task allocation:
 
 - Self-driven work: at least 1 slot MUST be self-driven (capability gaps, self-discovered
   bugs, competitive improvements — tiers 1-3 and 7). This is how you chase your dream: for
   this slot, prefer advancing the next milestone in DREAM.md (your own dream) unless a
   higher-priority issue blocks. Decompose a big dream-milestone into a task you can finish today.
-- Community issues: fill remaining slots after self-driven work, highest net score first.
+- The other slot: highest-priority remaining item — community issues by net score,
+  or a second self-driven item if nothing from the community queue is actionable.
 
 
 For each community issue shown above, decide:
@@ -1206,9 +1228,12 @@ for TASK_FILE in session_plan/task_*.md; do
     [ -f "$TASK_FILE" ] || continue
     TASK_NUM=$((TASK_NUM + 1))
 
-    # Cap at 3 tasks per session (fix loops can consume significant time)
-    if [ "$TASK_NUM" -gt 3 ]; then
-        echo "    Skipping Task $TASK_NUM — max 3 tasks per session."
+    # Cap at 2 tasks per session (was 3 — measured sessions land at most 2 on
+    # a thinking model; the third slot only ever fed fix-loop grind or was
+    # budget-gated away). The planner is told the same number; this cap is
+    # the harness-side backstop if it writes more files anyway.
+    if [ "$TASK_NUM" -gt 2 ]; then
+        echo "    Skipping Task $TASK_NUM — max 2 tasks per session."
         break
     fi
 
