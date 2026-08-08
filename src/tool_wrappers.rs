@@ -21,6 +21,24 @@ use std::sync::{Arc, Mutex};
 use yoagent::types::AgentTool;
 
 // ---------------------------------------------------------------------------
+// Refusal stems — deterministic tool-refusal messages (#662)
+// ---------------------------------------------------------------------------
+
+/// Stems shared between the refusal messages built in this module and
+/// `prompt_retry::is_deterministic_tool_error`. One definition, two readers:
+/// each wrapper builds its error message FROM its stem and the auto-retry
+/// predicate matches ON the stem, so a reword cannot desync them. These
+/// refusals are deterministic — the same call refuses identically on every
+/// retry — so auto-retry must stop instead of burning attempts on the same
+/// answer.
+/// `ReadModeGuardTool`: "<mode> is active — …" (read mode / plan mode).
+pub const REFUSAL_STEM_MODE_ACTIVE: &str = " is active — ";
+/// `SessionCapTool`: "<tool> session cap reached (<N> calls) …".
+pub const REFUSAL_STEM_SESSION_CAP: &str = " session cap reached (";
+/// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
+pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+
+// ---------------------------------------------------------------------------
 // GuardedTool — directory restriction wrapper (Box-based)
 // ---------------------------------------------------------------------------
 
@@ -511,7 +529,8 @@ impl AgentTool for ConfirmTool {
             diff_preview.as_deref(),
         ) {
             return Err(yoagent::types::ToolError::Failed(format!(
-                "User denied {tool_name} on '{path}'"
+                "{}{} on '{}'",
+                REFUSAL_STEM_PATH_DENIED, tool_name, path
             )));
         }
         self.inner.execute(params, ctx).await
@@ -934,9 +953,10 @@ impl AgentTool for SessionCapTool {
         let used = self.counter.fetch_add(1, Ordering::SeqCst);
         if used >= self.cap {
             return Err(yoagent::types::ToolError::Failed(format!(
-                "{} session cap reached ({} calls) — this usually means a runaway \
+                "{}{}{} calls) — this usually means a runaway \
                  loop. Use /clear or start a new session to reset.",
                 self.inner.name(),
+                REFUSAL_STEM_SESSION_CAP,
                 self.cap
             )));
         }
@@ -1060,8 +1080,9 @@ impl AgentTool for ReadModeGuardTool {
             match self.kind {
                 ReadGuardKind::Write => {
                     return Err(yoagent::types::ToolError::Failed(format!(
-                        "{} is active — {} is a write tool and was blocked. {}",
+                        "{}{}{} is a write tool and was blocked. {}",
                         mode.label(),
+                        REFUSAL_STEM_MODE_ACTIVE,
                         self.inner.name(),
                         mode.exit_hint()
                     )));

@@ -369,6 +369,26 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     false
 }
 
+/// True when a tool error is a *deterministic refusal* — a guard that will
+/// refuse identically on every retry: the read/plan-mode guard
+/// (`ReadModeGuardTool`), the session call cap (`SessionCapTool`), or a
+/// directory-restriction denial (`ConfirmTool`). These are working as
+/// designed, so re-running the whole prompt burns `MAX_AUTO_RETRIES` × the
+/// full prompt cost for the same answer (#662).
+///
+/// Matches on the shared stems in `tool_wrappers` — the same `pub const`
+/// strings the refusal messages are built FROM, so a reword cannot desync
+/// the message and this predicate. Pure; case-sensitive on purpose (the
+/// stems are ours, not a provider's).
+pub fn is_deterministic_tool_error(err: &str) -> bool {
+    use crate::tool_wrappers::{
+        REFUSAL_STEM_MODE_ACTIVE, REFUSAL_STEM_PATH_DENIED, REFUSAL_STEM_SESSION_CAP,
+    };
+    err.contains(REFUSAL_STEM_MODE_ACTIVE)
+        || err.contains(REFUSAL_STEM_SESSION_CAP)
+        || err.contains(REFUSAL_STEM_PATH_DENIED)
+}
+
 /// The substring that identifies the known-benign "stream ended" outcome
 /// (Issue #222/#612): some providers (e.g. MiniMax) close the SSE stream
 /// without the expected termination signal even though the response was
