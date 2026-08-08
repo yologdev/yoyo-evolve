@@ -46,7 +46,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/commands_risk.rs", 4714),
     ("src/commands_search.rs", 3534),
     ("src/commands_spawn.rs", 3814),
-    ("src/commands_web.rs", 2307),
+    // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
+    // newest turn's boundary (no stale-turn fallback) plus the regression tests
+    // pinning that a text-less newest turn yields None, not an older turn's text.
+    ("src/commands_web.rs", 2415),
     ("src/config.rs", 2308),
     ("src/dispatch.rs", 2307),
     ("src/format/cost.rs", 2095),
