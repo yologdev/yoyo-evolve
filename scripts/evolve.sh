@@ -84,7 +84,7 @@ if [ "$(git branch --show-current 2>/dev/null || echo main)" != "main" ]; then
     QUIET_MODE=true
     echo "  [quiet] non-main branch: issue writes, tags, and audit push are disabled"
 fi
-echo "Plan timeout: ${TIMEOUT}s (assess: $((TIMEOUT/2))s + plan: $((TIMEOUT/2))s) | Impl timeout: 1200s/task"
+echo "Plan timeout: ${TIMEOUT}s (assess: $((TIMEOUT/2))s + plan: $((TIMEOUT/2))s) | Impl timeout: 1800s/task"
 echo ""
 
 # ── Step 0: Load sponsor state (informational — no gating, no issue priority) ──
@@ -1029,7 +1029,11 @@ TASK SIZING RULES — follow these strictly:
 - Large refactors (module splits, multi-file renames) MUST be broken into one-module-at-a-time tasks.
   Example: "Split format.rs into 5 modules" → Task 1: "Extract highlight module from format.rs",
   Task 2: "Extract cost module from format.rs", etc. Each task is independently verifiable.
-- Each task must be completable in 20 minutes by a focused agent. If you're unsure, make it smaller.
+- Each task must be completable in 30 minutes by a focused agent. If you're unsure, make it smaller.
+- EVERY numbered step of a task must fit in that single pass — a task whose protocol is half-executed
+  gets REVERTED, however correct the finished half is. Four of the last four reverts/rejections were
+  "implemented step 1 correctly, never reached step N". Prefer 2 steps over 3; when in doubt, move
+  the tail step into its own task file.
 - If a task has been reverted before (check RECENTLY REVERTED above), make it SMALLER than last time.
   The previous approach was too ambitious — simplify, don't retry the same scope.
 - Prefer tasks that add/modify one thing and can be verified with cargo build && cargo test.
@@ -1133,7 +1137,14 @@ safety_commit() {
 echo "  Phase B: Implementation..."
 # Fixed 20 min per implementation task + up to 10x10 min build-fix + up to 9x10 min eval-fix
 # Job timeout (150 min) is the real cap; fix loops exit early on success/API error
-IMPL_TIMEOUT=1200
+# 1800s (was 1200): calibrated for a thinking model. Four of four Fable
+# tasks ended "correct but step N never reached" — the model spends a large
+# share of a 20-min window deliberating, runs out of clock mid-protocol,
+# then burns 1-2h of eval-fix cycles finishing incrementally. One longer
+# pass is cheaper than the grind. Keep in sync with the planner's stated
+# per-task minutes and the task-start budget gate below (impl + one eval
+# pass + margin) — coupled numbers, one setting spelled in three places.
+IMPL_TIMEOUT=1800
 TASK_NUM=0
 TASK_FAILURES=0
 for TASK_FILE in session_plan/task_*.md; do
@@ -1146,12 +1157,12 @@ for TASK_FILE in session_plan/task_*.md; do
         break
     fi
 
-    # Budget gate: a fresh task needs impl (up to TIMEOUT) + verify + one
-    # evaluator pass (600s) before it can possibly be promoted. Starting one
-    # with less than that guarantees either a mid-task kill or a revert —
-    # skip honestly instead and let the session reach wrap-up and push.
-    if [ "$(session_secs_left)" -lt 2400 ]; then
-        echo "    Budget: $(session_secs_left)s left — not starting Task $TASK_NUM (needs ~2400s). Wrapping up."
+    # Budget gate: a fresh task needs impl (up to IMPL_TIMEOUT=1800) + verify
+    # + one evaluator pass (600s) + margin before it can possibly be promoted.
+    # Starting one with less than that guarantees either a mid-task kill or a
+    # revert — skip honestly instead and let the session reach wrap-up + push.
+    if [ "$(session_secs_left)" -lt 3000 ]; then
+        echo "    Budget: $(session_secs_left)s left — not starting Task $TASK_NUM (needs ~3000s). Wrapping up."
         TASK_NUM=$((TASK_NUM - 1))
         break
     fi
