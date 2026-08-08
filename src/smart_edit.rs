@@ -763,6 +763,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_smart_edit_pathological_line_error_text_is_bounded() {
+        // End-to-end #675 repro: the per-line snippet cap is proven above at the
+        // find_nearest_match layer, but the promise is about the *emitted error
+        // text* — the Err that TruncatingTool's `?` propagates past
+        // --max-tool-output. Drive the real execute path with a ~90KB one-liner
+        // and assert the whole error stays bounded and admits the truncation.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("minified.js");
+        let long_line = format!("var a={};", "x".repeat(90_000));
+        std::fs::write(&file_path, format!("// header\n{long_line}\n// footer\n")).unwrap();
+
+        let tool = with_smart_edit(Box::new(SmartEditMockTool {
+            fail_msg: Some("old_text not found in file".into()),
+            result_text: None,
+        }));
+
+        let params = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "old_text": format!("var a={};", "x".repeat(89_999) + "y"),
+            "new_text": "var a=1;"
+        });
+
+        let result = tool.execute(params, test_tool_context()).await;
+        assert!(result.is_err(), "near-miss must still surface an error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.len() < 4_000,
+            "emitted error must be bounded by the snippet cap, got {} bytes",
+            err.len()
+        );
+        assert!(
+            err.contains(SMART_EDIT_TRUNCATION_MARKER),
+            "truncated excerpt must say so: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_smart_edit_detects_whitespace_mismatch() {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("ws.rs");
