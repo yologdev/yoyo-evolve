@@ -779,7 +779,14 @@ if command -v gh &>/dev/null && { [ -n "$REPLY_ISSUES" ] || [ "$REPLY_DISCUSSION
             GIT_LOG_RECENT="$GIT_LOG_RECENT" \
             python3 scripts/scan_commitments.py 2>>/tmp/scan_commitments.stderr
     ) || SCAN_RC=$?
-    if [ "$SCAN_RC" -ne 0 ]; then
+    if [ "$SCAN_RC" -eq 3 ]; then
+        # Transient (rate limit / 5xx / network) after retries: the scan is
+        # UNAVAILABLE, which is not the same as "no commitments" — saying so
+        # was the bug (observed 2026-08-08: three 429s, then "No outstanding
+        # commitments"). Session continues without the block, honestly.
+        echo "  ⚠️ commitments scan unavailable this session (transient failure after retries) — commitments UNKNOWN, not zero."
+        YOYO_COMMITMENTS=""
+    elif [ "$SCAN_RC" -ne 0 ]; then
         echo "  ⚠️ scan_commitments.py exited $SCAN_RC — commitments scan FAILED this session."
         YOYO_COMMITMENTS=""
     fi
@@ -787,13 +794,15 @@ if command -v gh &>/dev/null && { [ -n "$REPLY_ISSUES" ] || [ "$REPLY_DISCUSSION
         echo "  scan_commitments stderr:"
         sed 's/^/    /' /tmp/scan_commitments.stderr
     fi
-    COMMITMENT_COUNT=$(echo "$YOYO_COMMITMENTS" | grep -cE '^### (Issue|Discussion)' || true)
-    COMMITMENT_COUNT="${COMMITMENT_COUNT:-0}"
-    if [ "$COMMITMENT_COUNT" -gt 0 ]; then
-        echo "  $COMMITMENT_COUNT outstanding commitments detected."
-    else
-        echo "  No outstanding commitments."
-        YOYO_COMMITMENTS=""
+    if [ "$SCAN_RC" -eq 0 ]; then
+        COMMITMENT_COUNT=$(echo "$YOYO_COMMITMENTS" | grep -cE '^### (Issue|Discussion)' || true)
+        COMMITMENT_COUNT="${COMMITMENT_COUNT:-0}"
+        if [ "$COMMITMENT_COUNT" -gt 0 ]; then
+            echo "  $COMMITMENT_COUNT outstanding commitments detected."
+        else
+            echo "  No outstanding commitments."
+            YOYO_COMMITMENTS=""
+        fi
     fi
 fi
 echo ""

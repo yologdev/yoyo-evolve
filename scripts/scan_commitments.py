@@ -25,10 +25,11 @@ Exit codes:
   2 — config or auth failure (missing key, missing BOT_LOGIN, 401/403/400);
        the bash wrapper surfaces this as a louder banner so a broken cron
        does not silently lose commitment visibility for hours.
-
-Transient failures (429, 5xx, network, timeout) stay on the silent-fail-soft
-path: warn to stderr, retry with backoff, then return empty. The session
-continues without the commitment block.
+  3 — transient failure (429, 5xx, network, timeout) after retries; the
+       session continues without the commitment block, but the wrapper says
+       "commitments UNKNOWN this session", never "No outstanding commitments"
+       — exit 0 here made the harness assert a fact it never established
+       (observed 2026-08-08: three 429s, then "No outstanding commitments").
 """
 
 import json
@@ -255,7 +256,9 @@ def _call_api_with_retries(api_key, body_bytes):
             time.sleep(delay)
 
     _warn(f"all {MAX_RETRIES} attempts failed: {last_err}")
-    return None
+    # Exit 3, not return-empty: "couldn't check" must be distinguishable from
+    # "checked, none found" (see module docstring).
+    sys.exit(3)
 
 
 def _parse_assistant_json(response):
@@ -311,9 +314,9 @@ def scan(issues, bot_login, git_log_recent, api_key):
     }
 
     body_bytes = json.dumps(request_body).encode("utf-8")
+    # _call_api_with_retries exits the process on failure (2 config, 3
+    # transient) — reaching here means we have a response.
     response = _call_api_with_retries(api_key, body_bytes)
-    if response is None:
-        return []
 
     parsed = _parse_assistant_json(response)
     if parsed is None:
