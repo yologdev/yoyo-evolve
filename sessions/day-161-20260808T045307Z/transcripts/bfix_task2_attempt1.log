@@ -1,0 +1,144 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate flagged src/tool_wrappers.rs at 3672 lines (ceiling 3665). The task file says the sanctioned fix is raising the ceiling in the same commit. Let me look at the gate file.
+  ▶ search 'tool_wrappers' in tests/module_size.rs  ▶ $ wc -l src/tool_wrappers.rs src/prompt.rs src/prompt_retry.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git diff src/… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt_retry.rs && … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session cap reached\|is… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (19.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…  ▶ read src/tool_wrappers.rs:520..545 ✓ (1ms)
+ ✓ (18.9s)
+  ▶ read src/tool_wrappers.rs:945..970  ▶ read src/tool_wrappers.rs:1070..1115 ✓ (1ms)
+ ✓ (2ms)
+  ▶ edit src/tool_wrappers.rs (3 → 3 lines)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "User denied {tool_name} on '{path}'"
+  +                 "{REFUSAL_STEM_PATH_DENIED}{tool_name} on '{path}'"
+                )));
+  ▶ edit src/tool_wrappers.rs (6 → 7 lines)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "{} session cap reached ({} calls) — this usually means a runaway \
+  +                 "{}{}{} calls) — this usually means a runaway \
+                     loop. Use /clear or start a new session to reset.",
+                    self.inner.name(),
+  +                 REFUSAL_STEM_SESSION_CAP,
+                    self.cap
+                )));
+ ✓ (19.1s)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "User denied {tool_name} on '{path}'"
+  +                 "{REFUSAL_STEM_PATH_DENIED}{tool_name} on '{path}'"
+                )));
+ ✓ (38.2s)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "{} session cap reached ({} calls) — this usually means a runaway \
+  +                 "{}{}{} calls) — this usually means a runaway \
+                     loop. Use /clear or start a new session to reset.",
+                    self.inner.name(),
+  +                 REFUSAL_STEM_SESSION_CAP,
+                    self.cap
+                )));
+  ▶ edit src/tool_wrappers.rs (6 → 7 lines)
+                        return Err(yoagent::types::ToolError::Failed(format!(
+  -                         "{} is active — {} is a write tool and was blocked. {}",
+  +                         "{}{}{} is a write tool and was blocked. {}",
+                            mode.label(),
+  +                         REFUSAL_STEM_MODE_ACTIVE,
+                            self.inner.name(),
+                            mode.exit_hint()
+                        )));
+ ✓ (19.4s)
+                        return Err(yoagent::types::ToolError::Failed(format!(
+  -                         "{} is active — {} is a write tool and was blocked. {}",
+  +                         "{}{}{} is a write tool and was blocked. {}",
+                            mode.label(),
+  +                         REFUSAL_STEM_MODE_ACTIVE,
+                            self.inner.name(),
+                            mode.exit_hint()
+                        )));
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 2m 52s (14 ✓)
+
+The inline {CONST} format capture isn't counted as a use by the dead-code lint. Switch to explicit arg form:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 4 lines)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "{REFUSAL_STEM_PATH_DENIED}{tool_name} on '{path}'"
+  +                 "{}{} on '{}'",
+  +                 REFUSAL_STEM_PATH_DENIED, tool_name, path
+                )));
+ ✗ (1ms)
+    │ old_text not found in src/tool_wrappers.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/tool_wrappers.rs (3 → 4 lines)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "User denied {tool_name} on '{path}'"
+  +                 "{}{} on '{}'",
+  +                 REFUSAL_STEM_PATH_DENIED, tool_name, path
+                )));
+ ✓ (19.2s)
+                return Err(yoagent::types::ToolError::Failed(format!(
+  -                 "User denied {tool_name} on '{path}'"
+  +                 "{}{} on '{}'",
+  +                 REFUSAL_STEM_PATH_DENIED, tool_name, path
+                )));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_auto_retry\|… ✓ (4ms)
+  ▶ read src/prompt.rs:1023..1078 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt_retry… ✓ (4ms)
+  ▶ read src/prompt.rs:106..112 ✓ (0ms)
+  ▶ edit src/prompt.rs (5 → 5 lines)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  +     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+ ✓ (19.3s)
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  -     is_benign_stream_end, is_overflow_error, is_retriable_error, retry_delay, StopHandling,
+  -     MAX_AUTO_RETRIES,
+  +     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  +     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+  ▶ edit src/prompt.rs (2 → 11 lines)
+                Some(ref err) => {
+  +                 if is_deterministic_tool_error(err) {
+  +                     // A guard refusal (read/plan mode, session cap, path denial)
+  +                     // answers identically every time — retrying would burn the
+  +                     // whole prompt for the same refusal (#662).
+  +                     eprintln!(
+  +                         "{DIM}  ✋ tool error is a deterministic refusal — not retrying{RESET}"
+  +                     );
+  +                     break;
+  +                 }
+                    if session_budget_exhausted(30) {
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/prompt.rs (9 → 18 lines)
+                Some(ref err) => {
+  +                 if is_deterministic_tool_error(err) {
+  +                     // A guard refusal (read/plan mode, session cap, path denial)
+  +                     // answers identically every time — retrying would burn the
+  +                     // whole prompt for the same refusal (#662).
+  +                     eprintln!(
+  +                         "{DIM}  ✋ tool error is a deterministic refusal — not retrying{RESET}"
+  +                     );
+  +                     break;
+  +                 }
+                    if session_budget_exhausted(30) {
+                        eprintln!(
+                            "{DIM}  ⏱ session budget nearly exhausted, stopping retries early{RESET}"

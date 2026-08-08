@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ search 'read mode is active|session cap reached|User denied' in src/tool_wrappers.rs  ▶ $ grep -n "run_prompt_auto_retry" src/prompt.rs | head; wc -l src/prompt.rs src/to… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ grep -n "read mode" src/tool_wrappers.rs | head; grep -n "session cap" src/tool_… ✓ (7ms)
+  ▶ read src/tool_wrappers.rs:490..530  ▶ read src/tool_wrappers.rs:900..960 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:959..1079 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:1078..1118  ▶ read src/prompt.rs:1020..1100 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ sed -n 1,80p tests/module_size.rs; grep -n "is_quiet" src/prompt.rs | head -5; g… ✓ (8ms)
+  ▶ read src/prompt.rs:100..120  ▶ $ grep -n "is_quiet\|DIM\|RESET" src/prompt.rs | head -15; grep -n "pub fn\|pub co… ✓ (1ms)
+ ✓ (6ms)
+  ▶ read src/prompt_retry.rs:290..320  ▶ $ grep -n "mod tests" src/prompt_retry.rs; grep -n "mod tool_wrappers" src/main.rs ✓ (1ms)
+ ✓ (5ms)
+  ▶ read src/prompt_retry.rs:330..360 ✓ (1ms)
+  ▶ read src/prompt_retry.rs:360..385 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 1m 54s (15 ✓)
+
+Now I'll add the predicate after is_retriable_error:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (10 → 30 lines)
+        }
+    
+        false
+  + }
+  + 
+  + /// True when a tool error is a *deterministic refusal* — a guard that will
+  + /// refuse identically on every retry: the read/plan-mode guard
+  + /// (`ReadModeGuardTool`), the session call cap (`SessionCapTool`), or a
+  + /// directory-restriction denial (`ConfirmTool`). These are working as
+  + /// designed, so re-running the whole prompt burns `MAX_AUTO_RETRIES` × the
+  + /// full prompt cost for the same answer (#662).
+  + ///
+  + /// Matches on the shared stems in `tool_wrappers` — the same `pub const`
+  + /// strings the refusal messages are built FROM, so a reword cannot desync
+  + /// the message and this predicate. Pure; case-sensitive on purpose (the
+  + /// stems are ours, not a provider's).
+  + pub fn is_deterministic_tool_error(err: &str) -> bool {
+  +     use crate::tool_wrappers::{
+  +         REFUSAL_STEM_MODE_ACTIVE, REFUSAL_STEM_PATH_DENIED, REFUSAL_STEM_SESSION_CAP,
+  +     };
+  ... (6 more lines)
+ ✓ (12.4s)
+        }
+    
+        false
+  + }
+  + 
+  + /// True when a tool error is a *deterministic refusal* — a guard that will
+  + /// refuse identically on every retry: the read/plan-mode guard
+  + /// (`ReadModeGuardTool`), the session call cap (`SessionCapTool`), or a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the consts land next. Adding them to tool_wrappers.rs and rebuilding all three refusal messages from them in the same edit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:1..31 ✓ (1ms)
+  ▶ edit src/tool_wrappers.rs (5 → 23 lines)
+    use yoagent::types::AgentTool;
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Refusal stems — deterministic tool-refusal messages (#662)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Stems shared between the refusal messages built in this module and
+  + /// `prompt_retry::is_deterministic_tool_error`. One definition, two readers:
+  + /// each wrapper builds its error message FROM its stem and the auto-retry
+  + /// predicate matches ON the stem, so a reword cannot desync them. These
+  + /// refusals are deterministic — the same call refuses identically on every
+  + /// retry — so auto-retry must stop instead of burning attempts on the same
+  + /// answer.
+  + /// `ReadModeGuardTool`: "<mode> is active — …" (read mode / plan mode).
+  + pub const REFUSAL_STEM_MODE_ACTIVE: &str = " is active — ";
+  + /// `SessionCapTool`: "<tool> session cap reached (<N> calls) …".
+  + pub const REFUSAL_STEM_SESSION_CAP: &str = " session cap reached (";
+  + /// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
+  + pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+    
+  ... (2 more lines)
+ ✓ (19.6s)
+    use yoagent::types::AgentTool;
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Refusal stems — deterministic tool-refusal messages (#662)
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Stems shared between the refusal messages built in this module and
+  + /// `prompt_retry::is_deterministic_tool_error`. One definition, two readers:
+  ... (13 more lines)
+  2 tools completed in 27.3s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
