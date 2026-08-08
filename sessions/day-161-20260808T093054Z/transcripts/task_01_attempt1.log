@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "Interrupted" src/repl.rs | head -20  ▶ $ grep -n "Ctrl" docs/src/usage/repl.md | head -20 ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/repl.rs:930..1040 ✓ (1ms)
+  ▶ $ grep -n "break" src/repl.rs | sed -n '1,30p'; echo ---; awk 'NR>=2900 && NR<=305… ✓ (6ms)
+  ▶ edit src/repl.rs (4 → 8 lines)
+        // Load config for auto-continue settings (re-read each turn for live updates)
+        let repl_file_config = crate::config::load_config_file().0;
+  + 
+  +     // Double-Ctrl+C exit (#689): armed by one Ctrl+C at the idle prompt,
+  +     // cleared by any other event. Consecutive-press semantics, no timers.
+  +     let mut ctrl_c_armed = false;
+    
+        loop {
+ ✓ (18.7s)
+        // Load config for auto-continue settings (re-read each turn for live updates)
+        let repl_file_config = crate::config::load_config_file().0;
+  + 
+  +     // Double-Ctrl+C exit (#689): armed by one Ctrl+C at the idle prompt,
+  +     // cleared by any other event. Consecutive-press semantics, no timers.
+  +     let mut ctrl_c_armed = false;
+    
+        loop {
+  ▶ edit src/repl.rs (7 → 17 lines)
+            let line = match rl.readline(&prompt) {
+  -             Ok(l) => l,
+  +             Ok(l) => {
+  +                 ctrl_c_armed = false;
+  +                 l
+  +             }
+                Err(ReadlineError::Interrupted) => {
+  -                 // Ctrl+C: cancel current line, print new prompt
+  -                 println!();
+  +                 if ctrl_c_armed {
+  +                     // Second consecutive Ctrl+C: exit like Ctrl+D / /quit
+  +                     // (same break, so session auto-save etc. still runs).
+  +                     println!();
+  +                     break;
+  +                 }
+  +                 ctrl_c_armed = true;
+  +                 // Ctrl+C: cancel current line, hint at the exit, re-prompt
+  +                 println!("{DIM}(press Ctrl+C again to exit){RESET}");
+                    continue;
+                }
+ ✓ (14m 25s)
+            let line = match rl.readline(&prompt) {
+  -             Ok(l) => l,
+  +             Ok(l) => {
+  +                 ctrl_c_armed = false;
+  +                 l
+  +             }
+                Err(ReadlineError::Interrupted) => {
+  -                 // Ctrl+C: cancel current line, print new prompt
+  ... (12 more lines)
+  6 tools completed in 15m 11s (6 ✓)
+
+  watch: no files changed this turn — skipping
+
