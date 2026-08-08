@@ -1109,6 +1109,15 @@ pub async fn run_prompt_auto_retry_with_content(
     for attempt in 1..=MAX_AUTO_RETRIES {
         match outcome.last_tool_error {
             Some(ref err) => {
+                if is_deterministic_tool_error(err) {
+                    // A guard refusal (read/plan mode, session cap, path denial)
+                    // answers identically every time — retrying would burn the
+                    // whole prompt for the same refusal (#662).
+                    eprintln!(
+                        "{DIM}  ✋ tool error is a deterministic refusal — not retrying{RESET}"
+                    );
+                    break;
+                }
                 if session_budget_exhausted(30) {
                     eprintln!(
                         "{DIM}  ⏱ session budget nearly exhausted, stopping retries early{RESET}"
