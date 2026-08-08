@@ -70,8 +70,9 @@ fn todo_cli_session_note(args: &[String]) -> Option<&'static str> {
     match args.get(2).map(|s| s.as_str()) {
         Some("board") => None,
         _ => Some(
-            "note: this list is in-memory only -- it does not survive the end of \
-             this command. Use /todo inside an interactive yoyo session.",
+            "note: the todo list is in-memory and per-process -- each `yoyo todo` \
+             shell call is a fresh process, so nothing persists between calls. Use \
+             /todo inside the interactive REPL for a session-scoped list.",
         ),
     }
 }
