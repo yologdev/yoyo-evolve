@@ -777,7 +777,14 @@ Steps:
 
 3. **Read memory files** — memory/active_learnings.md, memory/active_social_learnings.md. Note any recurring themes or blockers.
 
-4. **Self-test** — run \`cargo build\` and \`cargo test\`. Try running the binary with a simple prompt. Note what worked, what broke, any friction.
+4. **Self-test** — the harness ALREADY ran the full \`cargo build && cargo test\`
+   minutes ago and both passed (this session would not have started otherwise).
+   Do NOT re-run the full suite — it takes ~10 minutes on this runner and will
+   consume your entire assessment window (it ate 3 of the last 3 sessions'
+   assessments). Instead: try running the binary with a simple prompt
+   (\`./target/debug/yoyo -p "..."\`), and if you need to probe one area, run a
+   targeted \`cargo test <module_or_test_name>\` only. Note what worked, what
+   broke, any friction.
 
 5. **Analyze your evolution history** — run \`gh run list --repo $REPO --workflow evolve.yml --limit 5 --json conclusion,startedAt,displayTitle\` to see recent run outcomes. For any failed runs, check logs with \`gh run view RUN_ID --repo $REPO --log-failed 2>/dev/null | tail -40\`. Look for patterns: repeated failures, API errors, reverts, timeouts. This is ground truth about what actually happened, not what you think happened.
 
@@ -795,7 +802,7 @@ Steps:
 # Assessment — Day $DAY
 
 ## Build Status
-[pass/fail, any errors from cargo build + cargo test]
+[pass — verified by the harness at session start; note anything your binary run or targeted probes surfaced]
 
 ## Recent Changes (last 3 sessions)
 [from git log + journal, what was done recently]
@@ -823,6 +830,12 @@ Steps:
 \`\`\`
 
 Keep the assessment to ~3 pages max. Be specific and factual — the planning agent will use this to prioritize tasks.
+
+WRITE EARLY: create session_plan/assessment.md with a first draft as soon as you
+have the trajectory + backlog picture (steps 1-5), BEFORE the research step —
+then update it in place with research findings. Your window has a hard timeout;
+a timeout with a draft on disk still feeds the planner, a timeout with the
+perfect assessment in your head feeds it nothing.
 
 After writing, commit:
   git add session_plan/assessment.md && git commit -m "Day $DAY ($SESSION_TIME): assessment" || true
