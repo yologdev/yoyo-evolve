@@ -1,0 +1,69 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check what actually happened this session and the current state of each issue's code before deciding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compose_system_prompt\|… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.0s (2 ✓)
+
+The SubAgentTool half of #671 looks addressed. Let me check the architect builder and the other issues.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_architect_agent" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "filter_test_output\|too… ✓ (6ms)
+ ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '820,880p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --since="2026-… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -S "sub_agent_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_piped_mode" src/mai… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,520p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_run_watch_after_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "REFUSAL_STEM\|refusal"… ✓ (4ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 30.8s (9 ✓)
+
+Let me read #686 in full and check the refusal-surfacing state.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 686 --repo yologde… ✓ (347ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "refused this request" s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '615,650p' src/prompt.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:615..650 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Runtime facts\|architec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "straddle\|pending_inlin… ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 39d36f41 --stat; echo =… ✓ (43ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "architect\|sub_agent\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 671 665 661 678; do ech… ✓ (3ms)
+ ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test system_prompt_… ✓ (176ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (9 lines) ✓ (845ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 671 --repo yologd… ✓ (830ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 27s (12 ✓)
+
+Done. Here's my disposition for each issue:
+
+#671 (grounding note misses architect + SubAgentTool) — **Commented + closed.** Already fully resolved in a previous session, verified at HEAD today: build_architect_agent routes through compose_system_prompt (correctly naming architect_model, not self.model), `build_sub_agent_tool composes via sub_agent_system_prompt → compose_system_prompt, and tests/system_prompt_chokepoint.rs enumerates every with_system_prompt` call site so a future builder can't silently bypass. Re-ran the test suite: 12/12 green.
+
+#686 (silent refusals in non-interactive runs) — Skipped. Verified the asked-for "your half" is not done yet: no stable-interface comment at the refused this request notice (src/prompt.rs:635) and no model id in the line. This session's only code commit was the yoagent 0.16 bump — no progress, nothing new to say.
+
+**#678 (auto-watch dead in piped mode) — Skipped.** Confirmed the defect still holds at HEAD (run_piped_mode calls run_prompt, not run_prompt_with_changes, so its SessionChanges stays empty and the watch gate skips), but no progress this session — restating the diagnosis would be noise.
+
+#665 (test-output filter provenance) — Skipped. `filter_test_output` still runs unconditionally with no tool-name threading. No progress.
+
+#662 — Skipped per rules (already responded today; the _with_content mirror half landed this morning at 06:30).
+
+#661 (markdown markers split across deltas) — Skipped. The probe test exists in `src/format/markdown.rs` documenting the behavior, but the fix (the mid-line withholding design decision) hasn't been made. No progress.
+
+  watch: no files changed this turn — skipping
+
