@@ -1045,13 +1045,20 @@ After writing all files, commit:
   git add session_plan/ && git commit -m "Day $DAY ($SESSION_TIME): session plan" || true
 
 Then STOP. Do not implement anything. Your job is planning only.
+
+Before ending your turn, check: does session_plan/task_01.md exist? If your
+last output is analysis, a candidate list, or a plan stated in prose, that is
+NOT a plan — write the files now with tool calls. A turn that ends without
+task files silently becomes a generic fallback task, and a third of recent
+sessions were lost to exactly that.
 PLANEOF
 
 AGENT_LOG=$(mktemp)
 PLAN_EXIT=0
 STAGE_NAME=plan run_agent_with_fallback "$PLAN_TIMEOUT" "$PLAN_PROMPT" "$AGENT_LOG" || PLAN_EXIT=$?
 
-rm -f "$PLAN_PROMPT"
+# PLAN_PROMPT is cleaned up after the early-stop corrective retry below,
+# which reuses it (fresh process — it needs the full context again).
 
 # Exit early on API errors (after fallback attempt if configured)
 if grep -q '"type":"error"' "$AGENT_LOG" 2>/dev/null; then
@@ -1070,6 +1077,41 @@ fi
 # Check if planning agent produced tasks
 TASK_COUNT=0
 for _f in session_plan/task_*.md; do [ -f "$_f" ] && TASK_COUNT=$((TASK_COUNT + 1)); done
+
+# Thinking models end the planning turn after the *investigation* half without
+# executing the write-the-files half (Day 160, 09:21Z: 20 read-only tool calls
+# in 2m13s, zero task files, no error, no timeout — the documented early-stop
+# behavior). That silent surrender put the generic fallback task in ~1/3 of
+# recent sessions' ledgers. One corrective retry with an explicit
+# finish-your-turn instruction recovers most early-stops cheaply; the fallback
+# below remains the terminal safety net.
+if [ "$TASK_COUNT" -eq 0 ] && [ "$(session_secs_left)" -gt 3600 ]; then
+    echo "  Planning agent produced 0 tasks — one corrective retry (early-stop suspected)."
+    RETRY_PLAN_PROMPT=$(mktemp)
+    # Corrective header + the FULL original planning prompt: the retry is a
+    # fresh process with no memory of the failed turn, so it needs the same
+    # context (issues, backlog, sizing rules, trajectory) plus the one
+    # instruction the early-stop shape needs.
+    {
+        cat <<'REPLAN'
+NOTE — an earlier planning attempt this session ended after investigation
+without writing any task files. A plan stated in text is not a plan; only
+files in session_plan/ exist. Investigate BRIEFLY (the groundwork below is
+the same), then write session_plan/assessment.md, session_plan/task_01.md,
+and session_plan/issue_responses.md with tool calls. Do not end your turn
+until session_plan/task_01.md exists.
+
+REPLAN
+        cat "$PLAN_PROMPT"
+    } > "$RETRY_PLAN_PROMPT"
+    RETRY_PLAN_LOG=$(mktemp)
+    STAGE_NAME=plan_retry run_agent_with_fallback "$PLAN_TIMEOUT" "$RETRY_PLAN_PROMPT" "$RETRY_PLAN_LOG" || true
+    rm -f "$RETRY_PLAN_PROMPT" "$RETRY_PLAN_LOG"
+    for _f in session_plan/task_*.md; do [ -f "$_f" ] && TASK_COUNT=$((TASK_COUNT + 1)); done
+    [ "$TASK_COUNT" -gt 0 ] && echo "  Corrective retry produced $TASK_COUNT task(s)."
+fi
+rm -f "$PLAN_PROMPT"
+
 if [ "$TASK_COUNT" -eq 0 ]; then
     echo "  Planning agent produced 0 tasks — falling back to single task."
     mkdir -p session_plan
