@@ -966,6 +966,10 @@ pub async fn run_repl(
     // Load config for auto-continue settings (re-read each turn for live updates)
     let repl_file_config = crate::config::load_config_file().0;
 
+    // Double-Ctrl+C exit (#689): armed by one Ctrl+C at the idle prompt,
+    // cleared by any other event. Consecutive-press semantics, no timers.
+    let mut ctrl_c_armed = false;
+
     loop {
         // Build mode indicators
         let mode_indicators = {
@@ -989,10 +993,20 @@ pub async fn run_repl(
         };
 
         let line = match rl.readline(&prompt) {
-            Ok(l) => l,
+            Ok(l) => {
+                ctrl_c_armed = false;
+                l
+            }
             Err(ReadlineError::Interrupted) => {
-                // Ctrl+C: cancel current line, print new prompt
-                println!();
+                if ctrl_c_armed {
+                    // Second consecutive Ctrl+C: exit like Ctrl+D / /quit
+                    // (same break, so session auto-save etc. still runs).
+                    println!();
+                    break;
+                }
+                ctrl_c_armed = true;
+                // Ctrl+C: cancel current line, hint at the exit, re-prompt
+                println!("{DIM}(press Ctrl+C again to exit){RESET}");
                 continue;
             }
             Err(ReadlineError::Eof) => {
