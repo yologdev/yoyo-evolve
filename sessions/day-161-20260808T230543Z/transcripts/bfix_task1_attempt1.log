@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff HEAD --st…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_last_assistant_… ✓ (6ms)
+ ✓ (7ms)
+  ▶ read /tmp/webdiff.txt ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 24.6s (7 ✓)
+
+The diff shows only tests were added — the helper fix itself never landed. Let me look at the helper:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,560p' src/commands_w… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_last_assistant_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1689,1740p src/commands_w… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (20 → 31 lines)
+    /// Extract the text content of the last assistant message from the message
+    /// list.  Returns `None` if there are no assistant messages.
+  + ///
+  + /// Only the NEWEST turn is considered: the reverse walk stops at the most
+  + /// recent user message. If that turn produced no assistant text (e.g. it
+  + /// ended on tool calls), the answer is `None` — an older turn's text must
+  + /// never be presented as the fresh response (#692).
+    pub(crate) fn extract_last_assistant_text(messages: &[yoagent::AgentMessage]) -> Option<String> {
+        for msg in messages.iter().rev() {
+  -         if let yoagent::AgentMessage::Llm(yoagent::Message::Assistant { content, .. }) = msg {
+  -             let text: String = content
+  -                 .iter()
+  -                 .filter_map(|c| match c {
+  -                     yoagent::Content::Text { text } => Some(text.as_str()),
+  -                     _ => None,
+  -                 })
+  -                 .collect::<Vec<_>>()
+  -                 .join("\n");
+  -             if !text.is_empty() {
+  -                 return Some(text);
+  ... (21 more lines)
