@@ -48,7 +48,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // conflicted files honestly instead of "all strategies failed".
     // Day 162 fmt: +7 lines — `cargo fmt` reflowed the #699 code after the
     // ceiling was recorded at pre-fmt size. No new code; formatter wrapping only.
-    ("src/commands_file.rs", 2704),
+    // Day 162 (#697): +38 lines — handle_add now returns the successfully-added
+    // paths alongside its results (so /add related-file suggestions derive from
+    // actual adds, not an input re-parse), plus the regression test pinning that
+    // failed adds and URL args never leak into that list.
+    ("src/commands_file.rs", 2742),
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
     ("src/commands_project.rs", 3252),
