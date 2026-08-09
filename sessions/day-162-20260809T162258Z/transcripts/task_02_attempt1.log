@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ search 'Read failed — leave unchanged' in src/commands_file.rs  ▶ $ grep -n "expand_file_mentions" src/commands_file.rs | head ✓ (4ms)
+ ✓ (5ms)
+  ▶ read src/commands_file.rs:340..490 ✓ (1ms)
+  ▶ $ grep -n "is_quiet\|eprintln\|✗" src/commands_file.rs | head -30; echo ---; sed -… ✓ (5ms)
+  ▶ $ grep -n "pub fn read_file_for_add\|pub fn read_image_for_add" src/commands_file.… ✓ (7ms)
+  ▶ read src/commands_file.rs:1625..1670 ✓ (1ms)
+  ▶ edit src/commands_file.rs (6 → 53 lines)
+            let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE");
+            assert_eq!(results.len(), 2);
+            assert_eq!(text, "compare Cargo.toml and LICENSE");
+  +     }
+  + 
+  +     #[test]
+  +     fn mention_read_warning_names_path_and_error() {
+  +         // Emission-point discipline: this string is exactly what the user
+  +         // sees on stderr when an existing @mention can't be read.
+  +         let warning = mention_read_warning("secrets/locked.txt", "permission denied");
+  +         assert!(warning.contains("✗"));
+  +         assert!(warning.contains("could not read @secrets/locked.txt"));
+  +         assert!(warning.contains("permission denied"));
+  +     }
+  + 
+  +     #[test]
+  +     fn expand_file_mentions_nonexistent_mention_is_freeform_text() {
+  +         // Free-form mentions like @yuanhao must pass through untouched —
+  +         // no results, no warning path taken (path doesn't exist).
+  +         let (text, results) = expand_file_mentions("thanks @yuanhao for the review");
+  ... (31 more lines)
+ ✓ (12.2s)
+            let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE");
+            assert_eq!(results.len(), 2);
+            assert_eq!(text, "compare Cargo.toml and LICENSE");
+  +     }
+  + 
+  +     #[test]
+  +     fn mention_read_warning_names_path_and_error() {
+  +         // Emission-point discipline: this string is exactly what the user
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 1s (7 ✓)
+
+Failing as expected. Now the fix — the helper plus both Err arms:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (1 → 9 lines)
+  + /// Build the user-visible warning for an @mention that resolved to an existing
+  + /// file but could not be read. Matches /add's `✗`-style error surface (#704) —
+  + /// without this, only the literal `@path` string reaches the model while the
+  + /// user believes the file content did.
+  + fn mention_read_warning(raw_path: &str, err: &str) -> String {
+  +     format!("{RED}  ✗ could not read @{raw_path}: {err}{RESET}")
+  + }
+  + 
+    /// Helper: get the byte offset corresponding to a char index.
+ ✓ (19.3s)
+  + /// Build the user-visible warning for an @mention that resolved to an existing
+  + /// file but could not be read. Matches /add's `✗`-style error surface (#704) —
+  + /// without this, only the literal `@path` string reaches the model while the
+  + /// user believes the file content did.
+  + fn mention_read_warning(raw_path: &str, err: &str) -> String {
+  +     format!("{RED}  ✗ could not read @{raw_path}: {err}{RESET}")
+  + }
+  + 
+    /// Helper: get the byte offset corresponding to a char index.
+  ▶ edit src/commands_file.rs (8 → 13 lines)
+  -                 Err(_) => {
+  -                     // Read failed — leave unchanged
+  +                 Err(e) => {
+  +                     // Read failed — leave unchanged, but if the file exists
+  +                     // the user meant it as a file: warn instead of silently
+  +                     // absorbing the failure (#704).
+  +                     if path.exists() {
+  +                         eprintln!("{}", mention_read_warning(raw_path, &e));
+  +                     }
+                        output.push('@');
+                        output.push_str(mention);
+                    }
+ ✓ (1m 37s)
+  -                 Err(_) => {
+  -                     // Read failed — leave unchanged
+  +                 Err(e) => {
+  +                     // Read failed — leave unchanged, but if the file exists
+  +                     // the user meant it as a file: warn instead of silently
+  +                     // absorbing the failure (#704).
+  +                     if path.exists() {
+  +                         eprintln!("{}", mention_read_warning(raw_path, &e));
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_file.rs (5 → 10 lines)
+  -                 Err(_) => {
+  -                     // Read failed — leave unchanged
+  +                 Err(e) => {
+  +                     // Read failed — leave unchanged, but if the file exists
+  +                     // the user meant it as a file: warn instead of silently
+  +                     // absorbing the failure (#704).
+  +                     if path.exists() {
+  +                         eprintln!("{}", mention_read_warning(raw_path, &e));
+  +                     }
+                        output.push('@');
+                        output.push_str(mention);
+                    }
+ ✓ (1m 38s)
+  -                 Err(_) => {
+  -                     // Read failed — leave unchanged
+  +                 Err(e) => {
+  +                     // Read failed — leave unchanged, but if the file exists
+  +                     // the user meant it as a file: warn instead of silently
+  +                     // absorbing the failure (#704).
+  +                     if path.exists() {
+  +                         eprintln!("{}", mention_read_warning(raw_path, &e));
+  ... (4 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (58.8s)
+  ▶ $ cargo test --test module_size 2>&1 | grep -A6 "violation" | head -15; wc -l src/… ✓ (183ms)
+  ▶ $ grep -n "commands_file" tests/module_size.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+  ▶ read tests/module_size.rs:30..60 ✓ (0ms)
+  ▶ edit tests/module_size.rs (5 → 9 lines)
+        // paths alongside its results (so /add related-file suggestions derive from
+        // actual adds, not an input re-parse), plus the regression test pinning that
+        // failed adds and URL args never leak into that list.
+  -     ("src/commands_file.rs", 2742),
+  +     // Day 162 (#704): +65 lines — @mention read failures on EXISTING files now
+  +     // warn on stderr (mention_read_warning helper, both Err arms) instead of
+  +     // silently re-emitting the raw @path; plus tests pinning the warning string,
+  +     // free-form-mention silence, and the unreadable-file behavior.
+  +     ("src/commands_file.rs", 2807),
+ ✓ (58.1s)
+        // paths alongside its results (so /add related-file suggestions derive from
+        // actual adds, not an input re-parse), plus the regression test pinning that
+        // failed adds and URL args never leak into that list.
+  -     ("src/commands_file.rs", 2742),
+  +     // Day 162 (#704): +65 lines — @mention read failures on EXISTING files now
+  +     // warn on stderr (mention_read_warning helper, both Err arms) instead of
+  +     // silently re-emitting the raw @path; plus tests pinning the warning string,
+  +     // free-form-mention silence, and the unreadable-file behavior.
+  +     ("src/commands_file.rs", 2807),
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (58.6s)
+  ▶ $ cargo test mention_read_warning_names_path_and_error expand_file_mentions 2>&1 |… ✓ (12ms)
+  10 tools completed in 7m 9s (10 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands_file.rs
+
