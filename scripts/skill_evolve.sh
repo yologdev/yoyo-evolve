@@ -282,8 +282,10 @@ command -v timeout &>/dev/null && TIMEOUT_CMD="timeout"
 command -v gtimeout &>/dev/null && TIMEOUT_CMD="gtimeout"
 
 fallback_flag=""
-# Defaulted: the workflow no longer sets FALLBACK_PROVIDER, and this script
-# runs under `set -u` — a bare $FALLBACK_PROVIDER would abort every cycle.
+# Explicit default at the use site. NOTE: line ~52 already defaults this var,
+# so the bare form was never an abort risk — the commit that added this guard
+# (2b7e832c) claimed otherwise and was wrong (dream.sh still uses the bare form
+# and does not abort). Kept because a use-site default is cheap and correct.
 [ -n "${FALLBACK_PROVIDER:-}" ] && fallback_flag="--fallback ${FALLBACK_PROVIDER}"
 
 exit_code=0

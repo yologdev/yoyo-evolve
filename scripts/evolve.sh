@@ -85,16 +85,23 @@ session_secs_left() {
 # the retry re-files in good faith (Day 162: one .bmp defect filed three
 # times, #694/#695/#698, across attempt waves). Ground truth beats a
 # behavioral instruction: tell the retry exactly what already exists.
-SESSION_START_ISO=$(date -u -r "$SESSION_T0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-    || date -u -d "@$SESSION_T0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+# Anchor to the JOB, not this process: retry attempts re-run this script with a
+# fresh SESSION_T0, so a per-process window structurally excludes everything the
+# previous attempt filed — exactly the cross-attempt case (#694/#695/#698) this
+# section exists to prevent (review finding).
+FILED_SINCE_EPOCH="${JOB_START_EPOCH:-$SESSION_T0}"
+case "$FILED_SINCE_EPOCH" in ''|*[!0-9]*) FILED_SINCE_EPOCH="$SESSION_T0" ;; esac
+SESSION_START_ISO=$(date -u -r "$FILED_SINCE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$FILED_SINCE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
 session_filed_issues_section() {
     local listing
     if [ -z "$SESSION_START_ISO" ] || ! command -v gh &>/dev/null; then
         return 0
     fi
+    refresh_gh_token   # App token expires at 60min; late retries would 401 silently
     if ! listing=$(gh issue list --repo "$REPO" --state all \
         --author "${BOT_LOGIN}" --search "created:>=${SESSION_START_ISO}" \
-        --limit 15 --json number,title \
+        --limit 40 --json number,title \
         --jq '.[] | "- #\(.number): \(.title)"' 2>/dev/null); then
         echo "=== SIDE EFFECTS: could not list issues filed earlier this session ==="
         echo "Before filing ANY issue, check it does not already exist:"
@@ -486,7 +493,13 @@ run_agent_with_fallback() {
     # the fallback model was indistinguishable from a pure $MODEL session — in a
     # repo whose entire product is self-measurement, that silently mis-attributes
     # task outcomes AND evaluator verdicts. Record it; report it at wrap-up.
-    if grep -q "Switching to fallback" "$log_file" 2>/dev/null; then
+    # Gate on configuration first: with no fallback configured the banner can
+    # never print, so any match is a false positive — and the literal string
+    # lives in this repo's own src/, so yoyo reading agent_builder.rs during
+    # assessment would otherwise mark the session provider-contaminated
+    # (review finding). Anchor to yoyo's actual output shape, not the substring.
+    if [ -n "$FALLBACK_PROVIDER" ] \
+        && grep -qE "Primary provider .* failed\. Switching to fallback" "$log_file" 2>/dev/null; then
         SESSION_FALLBACK_PHASES="${SESSION_FALLBACK_PHASES:+$SESSION_FALLBACK_PHASES,}${STAGE_NAME:-unnamed}"
         echo "  ⚡ provider fallback engaged during ${STAGE_NAME:-this phase} — outcome will record it."
     fi
@@ -1634,7 +1647,7 @@ ${FILED_SECTION}"
     # Check 2: Build + tests with fix loop (up to 2 fix attempts on failure)
     BUILD_FIX_ATTEMPT=0
     MAX_BUILD_FIX=10
-    PREEXISTING_NOTE=""   # set by the innocence check below when flakes predate the task
+    PREEXISTING_NOTE=""   # set by the innocence check; cleared each attempt (below)
     while [ "$TASK_OK" = true ]; do
         BUILD_FAILED=""
         BUILD_OUT=""
@@ -1655,19 +1668,44 @@ ${FILED_SECTION}"
             # receipt naming the wrong cause (which then mis-steers the planner).
             # Re-run the named failures at PRE_TASK_SHA in a throwaway worktree:
             # if they fail there too, they are not this task's doing.
-            if [ "$BUILD_FIX_ATTEMPT" -eq 0 ] && [ "$CI_GREEN" = "yes" ]; then
+            # Same condition as the Step 1 fast path: CI green AND a clean tree.
+            # With a dirty tree Step 1 DID run the suite, so this probe can find
+            # nothing and would pay a build for it (review finding).
+            if [ "$BUILD_FIX_ATTEMPT" -eq 0 ] && [ "$CI_GREEN" = "yes" ] \
+                && git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
                 FAILED_TESTS=$(echo "$TEST_OUT" | grep -oE '^test [a-zA-Z0-9_:]+ \.\.\. FAILED' \
                     | awk '{print $2}' | head -5 || true)
-                if [ -n "$FAILED_TESTS" ]; then
+                if [ -z "$FAILED_TESTS" ]; then
+                    echo "    NOTE: innocence check skipped — no 'test … FAILED' lines parsed (doctest or compile failure?)."
+                elif [ "$(session_secs_left)" -lt 1650 ]; then
+                    echo "    NOTE: innocence check skipped — $(session_secs_left)s left; the probe build needs more."
+                else
                     INNOCENCE_WT=$(mktemp -d)
                     if git worktree add --quiet --detach "$INNOCENCE_WT" "$PRE_TASK_SHA" 2>/dev/null; then
                         PREEXISTING=""
-                        for t in $FAILED_TESTS; do
-                            if ! (cd "$INNOCENCE_WT" && cargo test --quiet "$t" >/dev/null 2>&1); then
-                                PREEXISTING="${PREEXISTING:+$PREEXISTING }$t"
-                            fi
-                        done
-                        git worktree remove --force "$INNOCENCE_WT" 2>/dev/null || true
+                        # Reuse the warm target dir: a fresh worktree would cold-build
+                        # ~250 crates. Separate subdir so it can't race the main build.
+                        INNOCENCE_TARGET="$PWD/target/innocence"
+                        # `cargo test <name>` exits non-zero BOTH when the test fails
+                        # and when the crate does not build — so a broken baseline
+                        # would stamp every failure "pre-existing" and tell the fix
+                        # agent to stop working on a real regression (review finding).
+                        # Establish the baseline compiles before trusting any verdict.
+                        if ! (cd "$INNOCENCE_WT" && CARGO_TARGET_DIR="$INNOCENCE_TARGET" \
+                                ${TIMEOUT_CMD:+$TIMEOUT_CMD 900} cargo test --no-run --quiet >/dev/null 2>&1); then
+                            echo "    NOTE: innocence check INCONCLUSIVE — $PRE_TASK_SHA does not build in the probe worktree."
+                            echo "    Treating all failures as this task's until proven otherwise."
+                        else
+                            for t in $FAILED_TESTS; do
+                                if ! (cd "$INNOCENCE_WT" && CARGO_TARGET_DIR="$INNOCENCE_TARGET" \
+                                        ${TIMEOUT_CMD:+$TIMEOUT_CMD 300} cargo test --quiet "$t" >/dev/null 2>&1); then
+                                    PREEXISTING="${PREEXISTING:+$PREEXISTING }$t"
+                                fi
+                            done
+                        fi
+                        git worktree remove --force "$INNOCENCE_WT" 2>/dev/null \
+                            || echo "    NOTE: probe worktree not removed; run 'git worktree prune'."
+                        git worktree prune 2>/dev/null || true
                         if [ -n "$PREEXISTING" ]; then
                             echo "    NOTE: these tests ALSO fail at $PRE_TASK_SHA (pre-existing, not this task): $PREEXISTING"
                             echo "    The fix agent is told so; do not rewrite working code to chase them."
@@ -1675,6 +1713,7 @@ ${FILED_SECTION}"
 Do NOT contort your implementation to satisfy these — fix only failures your diff caused. If ALL failures above are pre-existing, say so and stop."
                         fi
                     else
+                        echo "    NOTE: innocence check skipped — could not create probe worktree at $PRE_TASK_SHA."
                         rmdir "$INNOCENCE_WT" 2>/dev/null || true
                     fi
                 fi
@@ -1691,6 +1730,9 @@ Do NOT contort your implementation to satisfy these — fix only failures your d
             break  # Build + tests pass
         fi
 
+        # The note names the tests that failed on attempt 1; by attempt 5 the
+        # failing set has changed, so injecting it again asserts stale evidence.
+        [ "$BUILD_FIX_ATTEMPT" -gt 0 ] && PREEXISTING_NOTE=""
         BUILD_FIX_ATTEMPT=$((BUILD_FIX_ATTEMPT + 1))
         # Budget gate: a fix attempt costs up to 600s + the ~750s cargo
         # re-verify that follows it. With less than that left, exhaust the
@@ -2142,15 +2184,25 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
 **Evaluator's last verdict (FAIL, attempt ${EVAL_ATTEMPT}):**
 ${UNVERIFIED_FEEDBACK:-${UNVERIFIED_REASON:-no reason captured}}
 
-**Committed anyway:** \\`git diff ${PRE_TASK_SHA}..HEAD\\`
+**Committed anyway:** \`git diff ${PRE_TASK_SHA}..HEAD\`
 
 **For the next session:** decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly."
-                if ! UNVERIFIED_ERR=$(gh issue create --repo "$REPO" \
+                # Write the objection to session staging FIRST: that directory is
+                # pushed to the audit-log branch, so a failed `gh issue create`
+                # (expired token, rate limit) can no longer destroy the only copy
+                # — session_plan/ is deleted at wrap-up (review finding).
+                printf '%s\n' "$UNVERIFIED_BODY" > "$SESSION_STAGING/unverified_task_${TASK_NUM}.md" 2>/dev/null || true
+                UNVERIFIED_ERR_F=$(mktemp)
+                if UNVERIFIED_URL=$(gh issue create --repo "$REPO" \
                     --title "Accepted UNVERIFIED: ${task_title:0:180}" \
                     --body "$UNVERIFIED_BODY" \
-                    --label "agent-revert" 2>&1 >/dev/null); then
-                    echo "    WARNING: could not file unverified-accept note: $(echo "$UNVERIFIED_ERR" | head -1)"
+                    --label "agent-unverified" 2>"$UNVERIFIED_ERR_F"); then
+                    echo "    Filed unverified-accept receipt: $UNVERIFIED_URL"
+                else
+                    echo "    WARNING: could not file unverified-accept note: $(head -1 "$UNVERIFIED_ERR_F")"
+                    echo "    Objection preserved at $SESSION_STAGING/unverified_task_${TASK_NUM}.md (audit-log branch)."
                 fi
+                rm -f "$UNVERIFIED_ERR_F"
             fi
         elif [ -n "$BUDGET_UNVERIFIED" ]; then
             echo "    Task $TASK_NUM: accepted UNVERIFIED (budget exhausted; build+test passed, evaluator skipped)"

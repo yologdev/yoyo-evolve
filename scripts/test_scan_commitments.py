@@ -162,11 +162,17 @@ class ScanIntegration(unittest.TestCase):
             blocks = scan([issue], BOT, "", api_key="sk-fake")
         self.assertEqual(blocks, [])
 
-    def test_api_failure_returns_empty(self):
+    def test_api_failure_exits_3_not_empty(self):
+        # Contract (2026-08): an unusable API response must EXIT 3, never yield
+        # an empty result — "couldn't check" must not reach the harness as
+        # "checked, none found". _call_api_with_retries no longer returns None
+        # on any path, so the old return_value=None mock simulated an
+        # impossible state and masked a real AttributeError crash.
         issue = _issue(418, "X", [_comment(BOT, "Picking this up next session.")])
-        with patch("scan_commitments._call_api_with_retries", return_value=None):
-            blocks = scan([issue], BOT, "", api_key="sk-fake")
-        self.assertEqual(blocks, [])
+        with patch("scan_commitments._call_api_with_retries", side_effect=SystemExit(3)):
+            with self.assertRaises(SystemExit) as cm:
+                scan([issue], BOT, "", api_key="sk-fake")
+        self.assertEqual(cm.exception.code, 3)
 
     def test_unknown_issue_number_in_response_is_skipped(self):
         # Defensive: LLM hallucinates an issue number we didn't pass in.
@@ -422,7 +428,10 @@ class RetryPolicy(unittest.TestCase):
     def test_429_retries_then_gives_up(self):
         with patch("scan_commitments._post", side_effect=self._http_error(429)) as p, \
              patch("scan_commitments.time.sleep"):
-            self.assertIsNone(_call_api_with_retries("sk-fake", b"{}"))
+            # Transient exhaustion exits 3 (was: returned None).
+            with self.assertRaises(SystemExit) as cm:
+                _call_api_with_retries("sk-fake", b"{}")
+            self.assertEqual(cm.exception.code, 3)
             self.assertEqual(p.call_count, MAX_RETRIES)
 
     def test_503_then_success(self):

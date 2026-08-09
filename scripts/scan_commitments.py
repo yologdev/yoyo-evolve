@@ -221,6 +221,9 @@ def _call_api_with_retries(api_key, body_bytes):
 
     Returns the parsed response on success, or None on transient failure
     (caller treats this as silent fail-soft). On auth/config/request-shape
+    Never returns None: every failure path exits (2 config/auth, 3 anything
+    else unusable), so callers can treat a return value as a real response.
+    For config
     errors (401, 403, 400) this calls `sys.exit(2)` directly — those are
     config regressions, not runtime conditions, and must surface loudly.
     """
@@ -243,8 +246,14 @@ def _call_api_with_retries(api_key, body_bytes):
                 if e.code in (401, 403, 400):
                     _warn(f"HTTP {e.code} {e.reason} — config/auth failure; {detail}")
                     sys.exit(2)
+                # Any other non-retryable code (404 from a mistyped MODEL,
+                # 413, 422 …) is still "couldn't check", NOT "checked, none
+                # found". Returning None here fell into _parse_assistant_json
+                # and crashed with AttributeError — the caller's own comment
+                # already assumed this branch exited. Exit 3 like the other
+                # unusable-response paths.
                 _warn(f"HTTP {e.code} {e.reason} (no retry); {detail}")
-                return None
+                sys.exit(3)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last_err = f"network/timeout: {e}"
         except json.JSONDecodeError as e:
