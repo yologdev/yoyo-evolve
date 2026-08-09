@@ -113,7 +113,7 @@ use cli::*;
 use format::*;
 use prompt::{
     run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
-    run_prompt_with_content, PromptOutcome,
+    run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
 };
 use prompt_budget::enable_audit_log;
 use prompt_utils::write_output_file;
@@ -481,7 +481,14 @@ async fn run_piped_mode(
     let mut session_total = Usage::default();
     let session_changes = SessionChanges::new();
     let prompt_start = Instant::now();
-    let initial = run_prompt(agent, input, &mut session_total, &agent_config.model).await;
+    let initial = run_prompt_with_changes(
+        agent,
+        input,
+        &mut session_total,
+        &agent_config.model,
+        &session_changes,
+    )
+    .await;
     // Fallback retry for piped mode
     let (response, should_exit_error) = try_fallback_prompt(
         agent_config,
