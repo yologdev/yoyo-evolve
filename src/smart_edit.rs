@@ -30,6 +30,11 @@ const SMART_EDIT_TRUNCATION_MARKER: &str = "… (line truncated)";
 /// reported. Below this threshold the match is considered noise.
 const FUZZY_MIN_SIMILARITY: f64 = 0.6;
 
+/// Max chars of each line fed into the O(a×b) `edit_distance`. Uncapped, two
+/// ~90k-char lines (minified JS, generated tables) cost billions of cell
+/// updates — minutes of wall clock per comparison (#691).
+const SIMILARITY_MAX_CHARS: usize = 1000;
+
 /// Edit distance between two strings (Levenshtein). Used for fuzzy matching
 /// when exact trimmed matches fail.
 ///
@@ -66,6 +71,22 @@ fn line_similarity(a: &str, b: &str) -> f64 {
     if a_trimmed.is_empty() && b_trimmed.is_empty() {
         return 1.0;
     }
+    // Cap both inputs before the O(a×b) distance computation (#691). Trade-off,
+    // stated honestly: two long lines sharing a 1000-char prefix now score as
+    // similar even if they diverge later — acceptable for a fuzzy "did you mean
+    // this line?" hint, where minutes-long exact scoring would be far worse.
+    // char_indices().nth() yields a char-boundary-safe byte index (never
+    // byte-slice blindly — #250); no allocation.
+    let a_trimmed = a_trimmed
+        .char_indices()
+        .nth(SIMILARITY_MAX_CHARS)
+        .map(|(i, _)| &a_trimmed[..i])
+        .unwrap_or(a_trimmed);
+    let b_trimmed = b_trimmed
+        .char_indices()
+        .nth(SIMILARITY_MAX_CHARS)
+        .map(|(i, _)| &b_trimmed[..i])
+        .unwrap_or(b_trimmed);
     // Use char count, not byte length — edit_distance operates on chars,
     // so the denominator must be in the same units to avoid inflated
     // similarity scores on multibyte UTF-8 content (CJK, emoji, etc.).
@@ -1554,6 +1575,27 @@ mod tests {
         assert!(
             sim < 0.5,
             "Completely different should have low similarity: {sim}"
+        );
+    }
+
+    #[test]
+    fn test_line_similarity_cap_short_lines_unchanged_and_multibyte_boundary_safe() {
+        // Short lines (under SIMILARITY_MAX_CHARS) must score exactly as before
+        // the #691 cap: "cat" vs "bat" = 1 edit over 3 chars = 2/3 similarity.
+        let sim = line_similarity("cat", "bat");
+        assert!(
+            (sim - (2.0 / 3.0)).abs() < f64::EPSILON,
+            "short-line similarity must be unchanged by the cap: {sim}"
+        );
+
+        // Multi-byte chars sitting at/near the 1000-char cap boundary must not
+        // panic (char_indices gives a char-boundary-safe byte index, #250).
+        let a = format!("{}{}", "a".repeat(SIMILARITY_MAX_CHARS - 1), "✓✓✓✓✓");
+        let b = format!("{}{}", "a".repeat(SIMILARITY_MAX_CHARS - 1), "✗✓✓✓✓");
+        let sim = line_similarity(&a, &b);
+        assert!(
+            sim > 0.9,
+            "near-identical capped lines should score high: {sim}"
         );
     }
 
