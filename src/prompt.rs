@@ -26,6 +26,35 @@ pub(crate) fn apply_effort_hint(input: &str) -> String {
     }
 }
 
+/// Stable substring of the refusal notice printed when a provider refuses
+/// (`stop_reason: "refusal"` — HTTP 200, empty content).
+///
+/// **This is a grep contract, not just prose (#686).** External tooling — the
+/// evolve harness — greps phase logs for `refused this request` to tell a
+/// refusal apart from a crash or an empty response. Rewording it silently
+/// breaks that reader, so the substring is pinned by
+/// `test_refusal_notice_keeps_grep_contract` at the emission layer.
+pub(crate) const REFUSAL_NOTICE_MARKER: &str = "refused this request";
+
+/// Build the notice printed on `StopHandling::RefusalNotice`.
+///
+/// Pure so the *emitted* bytes can be asserted directly rather than a flag one
+/// layer below them. `model` is appended when known, so a log reader can see
+/// *which* model refused; the `REFUSAL_NOTICE_MARKER` substring stays
+/// contiguous either way.
+pub(crate) fn refusal_notice(model: &str) -> String {
+    let model = model.trim();
+    let who = if model.is_empty() {
+        "the model".to_string()
+    } else {
+        format!("the model {model}")
+    };
+    format!(
+        "\n{YELLOW}  ⚠ {who} {REFUSAL_NOTICE_MARKER} (safety system). \
+         Rephrase and try again — auto-retry is skipped for refusals.{RESET}"
+    )
+}
+
 /// Accumulate usage from `delta` into `total`.
 ///
 /// Replaces the recurring 4-line pattern:
@@ -631,10 +660,12 @@ impl PromptEventState {
                             println!();
                             self.in_text = false;
                         }
-                        eprintln!(
-                            "\n{YELLOW}  ⚠ the model refused this request (safety system). \
-                             Rephrase and try again — auto-retry is skipped for refusals.{RESET}"
-                        );
+                        // The notice text is built by `refusal_notice` and its
+                        // `refused this request` substring is a CONTRACT: the
+                        // evolve harness greps phase logs for it (#686). Do not
+                        // reword that substring — `REFUSAL_NOTICE_MARKER` and
+                        // `test_refusal_notice_keeps_grep_contract` pin it.
+                        eprintln!("{}", refusal_notice(model));
                         if let Some(err_msg) = error_message {
                             if !err_msg.is_empty() {
                                 eprintln!("{DIM}    reason: {err_msg}{RESET}");
@@ -1451,6 +1482,43 @@ async fn handle_stream_json_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #686: the harness greps phase logs for `refused this request`. This
+    /// asserts the *emitted* notice text (what `eprintln!` receives at the
+    /// emission site), not an internal flag one layer below it — a rewording
+    /// must fail here, loudly, rather than silently break a log reader.
+    #[test]
+    fn test_refusal_notice_keeps_grep_contract() {
+        // With a known model: marker intact AND the model id is visible.
+        let notice = refusal_notice("claude-opus-5");
+        assert!(
+            notice.contains(REFUSAL_NOTICE_MARKER),
+            "refusal notice lost its grep contract substring: {notice:?}"
+        );
+        assert!(
+            notice.contains("claude-opus-5"),
+            "refusal notice should name which model refused: {notice:?}"
+        );
+        // The marker must stay contiguous — a model id spliced *into* it
+        // would still satisfy a naive per-word check.
+        assert!(
+            notice.contains("claude-opus-5 refused this request"),
+            "model id must precede the intact marker: {notice:?}"
+        );
+
+        // Unknown model: still a well-formed sentence, marker still intact.
+        for empty in ["", "   "] {
+            let notice = refusal_notice(empty);
+            assert!(
+                notice.contains(&format!("the model {REFUSAL_NOTICE_MARKER}")),
+                "empty model id must not leave a gap or drop the marker: {notice:?}"
+            );
+        }
+
+        // The literal is the contract; spell it out once so a rename of the
+        // constant cannot quietly change the bytes the harness looks for.
+        assert_eq!(REFUSAL_NOTICE_MARKER, "refused this request");
+    }
 
     #[test]
     fn test_accumulate_usage_adds_all_fields() {
