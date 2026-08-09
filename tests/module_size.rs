@@ -56,7 +56,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/config.rs", 2308),
     ("src/dispatch.rs", 2307),
     ("src/format/cost.rs", 2095),
-    ("src/format/markdown.rs", 2932),
+    // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
+    // deltas (split `**bo` + `ld**` pairs now render bold) plus the
+    // chunking-independence and carry-safety regression tests.
+    ("src/format/markdown.rs", 3160),
     ("src/format/mod.rs", 2455),
     ("src/format/output.rs", 2635),
     ("src/help.rs", 2672),
