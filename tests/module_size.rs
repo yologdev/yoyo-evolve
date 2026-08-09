@@ -39,7 +39,10 @@ const MAX_MODULE_LINES: usize = 2_000;
 const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/agent_builder.rs", 2643),
     ("src/cli.rs", 3717),
-    ("src/commands_file.rs", 2568),
+    // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
+    // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
+    // pinning the extension↔MIME agreement. Tests must live in this module.
+    ("src/commands_file.rs", 2580),
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
     ("src/commands_project.rs", 3252),

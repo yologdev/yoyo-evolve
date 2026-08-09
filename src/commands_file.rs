@@ -118,26 +118,36 @@ pub fn format_add_content(path: &str, content: &str) -> String {
 
 // ── Image support helpers ─────────────────────────────────────────────
 
-/// Check if a file path has an image extension.
+/// The image formats the Anthropic API accepts, as (extension, MIME type) pairs.
+/// Single source of truth for `is_image_extension` and `mime_type_for_extension`
+/// (#698: two hand-typed lists agreed with each other and were jointly wrong —
+/// bmp was accepted here, printed a success, and the API rejected it a turn later).
+pub const SUPPORTED_IMAGE_FORMATS: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+];
+
+/// Check if a file path has an image extension the API supports.
 pub fn is_image_extension(path: &str) -> bool {
     let lower = path.to_lowercase();
-    matches!(
-        lower.rsplit('.').next(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
-    )
+    match lower.rsplit('.').next() {
+        Some(ext) => SUPPORTED_IMAGE_FORMATS.iter().any(|(e, _)| *e == ext),
+        None => false,
+    }
 }
 
 /// Map a file extension to a MIME type string.
 /// Returns `"application/octet-stream"` for unknown extensions.
 pub fn mime_type_for_extension(ext: &str) -> &'static str {
-    match ext.to_lowercase().as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        _ => "application/octet-stream",
-    }
+    let lower = ext.to_lowercase();
+    SUPPORTED_IMAGE_FORMATS
+        .iter()
+        .find(|(e, _)| *e == lower)
+        .map(|(_, mime)| *mime)
+        .unwrap_or("application/octet-stream")
 }
 
 /// Result type for `/add` that distinguishes text files from image files.
@@ -1302,7 +1312,8 @@ error[E0308]: second
         assert!(is_image_extension("photo.jpeg"));
         assert!(is_image_extension("photo.gif"));
         assert!(is_image_extension("photo.webp"));
-        assert!(is_image_extension("photo.bmp"));
+        // #698: bmp is rejected by the API — must NOT be treated as an image.
+        assert!(!is_image_extension("photo.bmp"));
     }
 
     #[test]
@@ -1312,7 +1323,7 @@ error[E0308]: second
         assert!(is_image_extension("banner.JPEG"));
         assert!(is_image_extension("icon.GIF"));
         assert!(is_image_extension("pic.WeBp"));
-        assert!(is_image_extension("scan.BMP"));
+        assert!(!is_image_extension("scan.BMP"));
     }
 
     #[test]
@@ -1363,8 +1374,9 @@ error[E0308]: second
     }
 
     #[test]
-    fn mime_type_bmp() {
-        assert_eq!(mime_type_for_extension("bmp"), "image/bmp");
+    fn mime_type_bmp_not_supported() {
+        // #698: image/bmp is rejected by the API — bmp must not map to an image MIME.
+        assert_eq!(mime_type_for_extension("bmp"), "application/octet-stream");
     }
 
     #[test]
