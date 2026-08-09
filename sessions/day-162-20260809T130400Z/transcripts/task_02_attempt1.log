@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ search 'suggest_related_files|expand_add_paths|parse_add_arg' in src/dispatch.rs  ▶ search 'enum AddResult|fn handle_add|fn read_file_for_add|fn read_im…' in src/commands_file.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ pwd && ls src/dispatch.rs src/commands_file.rs 2>&1 | head; grep -n "suggest_rel… ✓ (10ms)
+  ▶ $ grep -rn "suggest_related_files" src/ | grep -v commands_file.rs ✓ (7ms)
+  ▶ read src/dispatch.rs:820..930 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 13.5s (5 ✓)
+
+Now let me look at AddResult and handle_add in commands_file.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AddResult\|fn handle_add\|fn read_file_for_add\|fn read_image_for_add\|… ✓ (4ms)
+  ▶ read src/commands_file.rs:150..340 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -rn "handle_add" src/ | grep -v "commands_file.rs:" ; grep -n "handle_add" … ✓ (9ms)
+  ▶ $ grep -n "handle_add(" src/commands_file.rs | wc -l; grep -n "^\[lib\]\|^\[\[bin\… ✓ (6ms)
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "handle_add(" src/commands_file.rs ✓ (12ms)
+  ▶ read src/commands_file.rs:1..61 ✓ (1ms)
+  ▶ read src/commands_file.rs:2155..2270 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 17s (7 ✓)
+
+Now the implementation. First the regression test (it will fail to compile until the signature change, which is fine — test-first here means the assertion exists before the fix):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (6 → 37 lines)
+        #[test]
+        fn test_handle_add_multiple_files() {
+            let root = env!("CARGO_MANIFEST_DIR");
+  -         let results = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+  +         let (results, _) = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+            assert_eq!(results.len(), 2, "Should return results for both files");
+  +     }
+  + 
+  +     /// Regression test for #697: the paths fed to related-file suggestions
+  +     /// must be the files that were ACTUALLY added — a failed add (nonexistent
+  +     /// file) and a URL argument must not appear in the added-paths list.
+  +     #[test]
+  +     fn test_handle_add_paths_exclude_failed_adds_and_urls() {
+  +         let root = env!("CARGO_MANIFEST_DIR");
+  +         let good = format!("{root}/Cargo.toml");
+  +         // The .invalid TLD is reserved (RFC 2606) and never resolves, so the
+  +         // URL branch fails fast without depending on any real host.
+  +         let (results, added_paths) = handle_add(&format!(
+  +             "/add {good} nonexistent_file_697.rs https://nonexistent-host-697.invalid/page"
+  +         ));
+  ... (18 more lines)
+ ✓ (12.5s)
+        #[test]
+        fn test_handle_add_multiple_files() {
+            let root = env!("CARGO_MANIFEST_DIR");
+  -         let results = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+  +         let (results, _) = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+            assert_eq!(results.len(), 2, "Should return results for both files");
+  +     }
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_file.rs (16 → 21 lines)
+    /// Handle the `/add` command: read file(s) and return the formatted content
+    /// to be injected as a user message.
+    ///
+  - /// Returns a Vec of `AddResult` — either text or image — for each file.
+  - pub fn handle_add(input: &str) -> Vec<AddResult> {
+  + /// Returns a tuple of:
+  + /// - A Vec of `AddResult` — either text or image — for each file
+  + /// - The list of file paths that were actually added successfully. Failed
+  + ///   reads and URL fetches are excluded, so related-file suggestions are
+  + ///   derived from what was really added, not a re-parse of the input (#697).
+  + pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
+        let args = input.strip_prefix("/add").unwrap_or("").trim();
+    
+        if args.is_empty() {
+  ···
+            println!("         /add <path>:<start>-<end> — inject specific line range");
+            println!("         /add src/*.rs — inject multiple files via glob");
+            println!("         /add https://example.com — fetch and inject web page{RESET}\n");
+  -         return Vec::new();
+  +         return (Vec::new(), Vec::new());
+  ... (4 more lines)
+ ✓ (12.3s)
+    /// Handle the `/add` command: read file(s) and return the formatted content
+    /// to be injected as a user message.
+    ///
+  - /// Returns a Vec of `AddResult` — either text or image — for each file.
+  - pub fn handle_add(input: &str) -> Vec<AddResult> {
+  + /// Returns a tuple of:
+  + /// - A Vec of `AddResult` — either text or image — for each file
+  + /// - The list of file paths that were actually added successfully. Failed
+  ... (13 more lines)
+  ▶ edit src/commands_file.rs (5 → 6 lines)
+                                data,
+                                mime_type,
+                            });
+  +                         added_paths.push(path.clone());
+ ✓ (12.4s)
+                                data,
+                                mime_type,
+                            });
+  +                         added_paths.push(path.clone());
+  3 tools completed in 52.1s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

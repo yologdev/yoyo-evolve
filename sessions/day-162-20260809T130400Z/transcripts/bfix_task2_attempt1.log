@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,340p' src/commands_f… ✓ (4ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:186..346  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '850,940p' src/dispatch.r… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Add" src/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_add" src/ tests… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_add(" src/comman… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (14 → 15 lines)
+                            summary,
+                            content: formatted,
+                        });
+  +                     added_paths.push(path.clone());
+                    }
+                    Err(e) => {
+                        println!("{RED}  ✗ {e}{RESET}");
+  ···
+            }
+        }
+    
+  -     results
+  +     (results, added_paths)
+    }
+ ✓ (11.8s)
+                            summary,
+                            content: formatted,
+                        });
+  +                     added_paths.push(path.clone());
+                    }
+                    Err(e) => {
+                        println!("{RED}  ✗ {e}{RESET}");
+  ···
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (15 → 4 lines)
+            CommandRoute::Add => {
+  -             let results = commands::handle_add(ctx.input);
+  +             let (results, added_paths) = commands::handle_add(ctx.input);
+                if !results.is_empty() {
+  -                 // Collect paths that were added for related-file suggestions
+  -                 let added_paths: Vec<String> = {
+  -                     let args = ctx.input.strip_prefix("/add").unwrap_or("").trim();
+  -                     args.split_whitespace()
+  -                         .flat_map(|arg| {
+  -                             let (raw_path, _) = crate::commands_file::parse_add_arg(arg);
+  -                             crate::commands_file::expand_add_paths(raw_path)
+  -                         })
+  -                         .collect()
+  -                 };
+  - 
+                    // Print summaries
+ ✓ (11.6s)
+            CommandRoute::Add => {
+  -             let results = commands::handle_add(ctx.input);
+  +             let (results, added_paths) = commands::handle_add(ctx.input);
+                if !results.is_empty() {
+  -                 // Collect paths that were added for related-file suggestions
+  -                 let added_paths: Vec<String> = {
+  -                     let args = ctx.input.strip_prefix("/add").unwrap_or("").trim();
+  -                     args.split_whitespace()
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let results = handle_a… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 2s (10 ✓)
+
+All call sites updated. Let me check the regression test from the previous attempt is intact, then run the full verification:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2255,2300p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (10.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 48s (3 ✓)
+
+The module size gate fired — commands_file.rs grew past its grandfathered ceiling due to the doc comment + regression test. Let me look at the gate:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_file" tests/mo… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '48,53p' tests/module_siz… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (3 → 7 lines)
+        // Day 162 fmt: +7 lines — `cargo fmt` reflowed the #699 code after the
+        // ceiling was recorded at pre-fmt size. No new code; formatter wrapping only.
+  -     ("src/commands_file.rs", 2704),
+  +     // Day 162 (#697): +38 lines — handle_add now returns the successfully-added
+  +     // paths alongside its results (so /add related-file suggestions derive from
+  +     // actual adds, not an input re-parse), plus the regression test pinning that
+  +     // failed adds and URL args never leak into that list.
+  +     ("src/commands_file.rs", 2742),
+ ✓ (57.0s)
+        // Day 162 fmt: +7 lines — `cargo fmt` reflowed the #699 code after the
+        // ceiling was recorded at pre-fmt size. No new code; formatter wrapping only.
+  -     ("src/commands_file.rs", 2704),
+  +     // Day 162 (#697): +38 lines — handle_add now returns the successfully-added
+  +     // paths alongside its results (so /add related-file suggestions derive from
+  +     // actual adds, not an input re-parse), plus the regression test pinning that
+  +     // failed adds and URL args never leak into that list.
+  +     ("src/commands_file.rs", 2742),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (58.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (57.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 9s (5 ✓)
+
+All green. Verifying the regression test specifically and the final diff:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_handle_add_paths… ✓ (188ms)
+
+Build fixed. All checks green.
+
+What was broken: the previous attempt changed handle_add's signature to (Vec<AddResult>, Vec<String>) and added `added_paths` tracking, but left three halves dangling:
+
+1. `src/commands_file.rs` — the file-text success branch never pushed its path (only the image branch did), and the function still returned bare results. Fixed: added_paths.push(path.clone()) after the text-success push, return (results, added_paths). URL adds intentionally don't push (per the doc comment / #697).
+2. **`src/dispatch.rs** — the call site still bound let results = handle_add(...) and kept the duplicate parse_add_arg/expand_add_paths` re-parse. Fixed: destructure `let (results, added_paths) = ...` and deleted the 11-line re-parse block (net negative at the call site, as the task expected).
+3. Test call sites — ~11 existing tests called `let results = handle_add(...); updated to destructure (results, _)`.
+
+One additional fallout: the tests/module_size.rs gate fired because commands_file.rs grew to 2742 lines (doc comment + regression test). Following the gate's own convention, I raised the ceiling 2704→2742 with a dated comment explaining the #697 growth.
+
+Verification: cargo fmt clean, cargo build clean, cargo test — 4672 passed / 0 failed (including the #697 regression test test_handle_add_paths_exclude_failed_adds_and_urls, which pins that failed adds and URL args never leak into the suggestion paths), and cargo clippy --all-targets -- -D warnings run explicitly — clean.
+
+  watch: no files changed this turn — skipping
+
