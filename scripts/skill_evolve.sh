@@ -282,7 +282,9 @@ command -v timeout &>/dev/null && TIMEOUT_CMD="timeout"
 command -v gtimeout &>/dev/null && TIMEOUT_CMD="gtimeout"
 
 fallback_flag=""
-[ -n "$FALLBACK_PROVIDER" ] && fallback_flag="--fallback $FALLBACK_PROVIDER"
+# Defaulted: the workflow no longer sets FALLBACK_PROVIDER, and this script
+# runs under `set -u` — a bare $FALLBACK_PROVIDER would abort every cycle.
+[ -n "${FALLBACK_PROVIDER:-}" ] && fallback_flag="--fallback ${FALLBACK_PROVIDER}"
 
 exit_code=0
 # shellcheck disable=SC2086
