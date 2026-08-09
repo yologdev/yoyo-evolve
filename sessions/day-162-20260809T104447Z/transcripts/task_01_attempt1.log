@@ -1,0 +1,82 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/markdown.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "markdown" tests/module_… ✓ (3ms)
+ ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (140 lines) ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:140..520 ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:238..338 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:338..473 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn render_inline\|fn re… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:600..720 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:2080..2125  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:800..835 ✓ (1ms)
+ ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:719..749  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "'_'\|underscore\|find_b… ✓ (1ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_stream\|fn rende… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (2 → 112 lines)
+  +     /// Helper: render a sequence of streaming chunks, then flush (#661 tests).
+  +     fn render_stream(chunks: &[&str]) -> String {
+  +         let mut r = MarkdownRenderer::new();
+  +         let mut out = String::new();
+  +         for c in chunks {
+  +             out.push_str(&r.render_delta(c));
+  +         }
+  +         out.push_str(&r.flush());
+  +         out
+  +     }
+  + 
+  +     #[test]
+  +     fn test_md_inline_marker_split_line_start() {
+  +         // #661 probe LINE_START_SPLIT: a bold pair split across deltas at line
+  +         // start must still render bold — chunking must not change the output.
+  +         let out = render_stream(&["**bo", "ld** rest\n"]);
+  +         assert!(
+  +             out.contains(&format!("{BOLD}bold{RESET}")),
+  +             "split bold pair at line start must render bold, got: {out:?}"
+  +         );
+  ... (92 more lines)
+ ✓ (1m 35s)
+  +     /// Helper: render a sequence of streaming chunks, then flush (#661 tests).
+  +     fn render_stream(chunks: &[&str]) -> String {
+  +         let mut r = MarkdownRenderer::new();
+  +         let mut out = String::new();
+  +         for c in chunks {
+  +             out.push_str(&r.render_delta(c));
+  +         }
+  +         out.push_str(&r.flush());
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 6m 12s (14 ✓)
+
+Tests are in (failing, as expected). Now the implementation — struct field first:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (5 → 14 lines)
+        /// early for streaming, this tracks the prefix so we don't re-render on newline.
+        /// Once set, subsequent tokens stream as inline text until the newline arrives.
+        block_prefix_rendered: bool,
+  +     /// Withheld tail of a delta ending in an unmatched opening inline marker
+  +     /// (`**`, `*`, `` ` ``) — prepended to the next delta so a pair split
+  +     /// across streaming chunks ("**bo" + "ld**") still formats (#661).
+  +     /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
+  +     inline_carry: String,
+    }
+  + 
+  + /// Byte cap for `MarkdownRenderer::inline_carry` (#661). On overflow the
+  + /// carried text is emitted literally — degraded rendering, never lost text.
+  + const INLINE_CARRY_MAX: usize = 160;
+ ✓ (11.4s)
+        /// early for streaming, this tracks the prefix so we don't re-render on newline.
+        /// Once set, subsequent tokens stream as inline text until the newline arrives.
+        block_prefix_rendered: bool,
+  +     /// Withheld tail of a delta ending in an unmatched opening inline marker
+  +     /// (`**`, `*`, `` ` ``) — prepended to the next delta so a pair split
+  +     /// across streaming chunks ("**bo" + "ld**") still formats (#661).
+  +     /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
+  +     inline_carry: String,
+  ... (5 more lines)
+
+  watch: no files changed this turn — skipping
+

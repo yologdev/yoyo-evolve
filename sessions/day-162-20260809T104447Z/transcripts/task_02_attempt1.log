@@ -1,0 +1,172 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/commands_file.rs:500..630  ▶ $ grep -n "commands_file" tests/module_size.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (4ms)
+ ✓ (22ms)
+  ▶ $ grep -n "run_git_output\|use crate" src/commands_file.rs | head -20; grep -n "pu… ✓ (5ms)
+  ▶ $ sed -n 100,140p src/git.rs ✓ (3ms)
+  ▶ $ grep -n "mod tests" src/commands_file.rs; grep -n "apply" docs/src/usage/command… ✓ (6ms)
+  ▶ $ sed -n 1065,1085p src/commands_file.rs; grep -n "test_parse_apply" src/commands_… ✓ (5ms)
+  ▶ $ grep -n "apply" src/commands_file.rs | sed -n 1,40p ✓ (4ms)
+  ▶ $ sed -n 1649,1705p src/commands_file.rs ✓ (3ms)
+  ▶ edit src/commands_file.rs (3 → 55 lines)
+  +     // --- #699: failed --3way mutating the tree must stop the cascade honestly ---
+  + 
+  +     #[test]
+  +     fn test_status_diff_paths_unchanged_tree_detects_nothing() {
+  +         // Identical before/after status → no mutation detected → cascade continues
+  +         // exactly as before (pins zero behavior change on the clean-failure path).
+  +         let status = " M src/lib.rs\n?? notes.txt\n";
+  +         assert!(status_diff_paths(status, status).is_empty());
+  +         assert!(status_diff_paths("", "").is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_status_diff_paths_detects_new_and_modified_entries() {
+  +         let before = " M src/lib.rs\n";
+  +         let after = " M src/lib.rs\nUU src/conflicted.rs\n M src/other.rs\n";
+  +         let changed = status_diff_paths(before, after);
+  +         assert_eq!(changed, vec!["src/conflicted.rs", "src/other.rs"]);
+  +     }
+  + 
+  +     #[test]
+  ... (35 more lines)
+ ✓ (12.2s)
+  +     // --- #699: failed --3way mutating the tree must stop the cascade honestly ---
+  + 
+  +     #[test]
+  +     fn test_status_diff_paths_unchanged_tree_detects_nothing() {
+  +         // Identical before/after status → no mutation detected → cascade continues
+  +         // exactly as before (pins zero behavior change on the clean-failure path).
+  +         let status = " M src/lib.rs\n?? notes.txt\n";
+  +         assert!(status_diff_paths(status, status).is_empty());
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 3s (9 ✓)
+
+Tests fail as expected (helpers don't exist yet). Now the implementation:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (2 → 44 lines)
+  + /// Compare two `git status --porcelain` outputs and return the paths of entries
+  + /// that are new or changed in `after` relative to `before` (#699). A line that
+  + /// appears verbatim in `before` is pre-existing state; anything else — a new
+  + /// path, or an existing path whose status flipped (e.g. ` M` → `UU`) — means
+  + /// the tree was mutated. Pure, so it is testable without touching git.
+  + fn status_diff_paths(before: &str, after: &str) -> Vec<String> {
+  +     let before_lines: std::collections::HashSet<&str> =
+  +         before.lines().filter(|l| !l.trim().is_empty()).collect();
+  +     let mut changed = Vec::new();
+  +     for line in after.lines() {
+  +         if line.trim().is_empty() || before_lines.contains(line) {
+  +             continue;
+  +         }
+  +         // Porcelain v1 format: `XY path` (2 status chars + space + path).
+  +         if line.len() > 3 {
+  +             let path = line[3..].trim();
+  +             if !path.is_empty() && !changed.iter().any(|p| p == path) {
+  +                 changed.push(path.to_string());
+  +             }
+  +         }
+  ... (24 more lines)
+ ✓ (19.2s)
+  + /// Compare two `git status --porcelain` outputs and return the paths of entries
+  + /// that are new or changed in `after` relative to `before` (#699). A line that
+  + /// appears verbatim in `before` is pre-existing state; anything else — a new
+  + /// path, or an existing path whose status flipped (e.g. ` M` → `UU`) — means
+  + /// the tree was mutated. Pure, so it is testable without touching git.
+  + fn status_diff_paths(before: &str, after: &str) -> Vec<String> {
+  +     let before_lines: std::collections::HashSet<&str> =
+  +         before.lines().filter(|l| !l.trim().is_empty()).collect();
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire them into the cascade. Also let me make the slice panic-proof with get(3..) (never byte-index rule):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (7 → 6 lines)
+            // Porcelain v1 format: `XY path` (2 status chars + space + path).
+  -         if line.len() > 3 {
+  -             let path = line[3..].trim();
+  +         if let Some(path) = line.get(3..).map(str::trim) {
+                if !path.is_empty() && !changed.iter().any(|p| p == path) {
+                    changed.push(path.to_string());
+                }
+ ✓ (19.0s)
+            // Porcelain v1 format: `XY path` (2 status chars + space + path).
+  -         if line.len() > 3 {
+  -             let path = line[3..].trim();
+  +         if let Some(path) = line.get(3..).map(str::trim) {
+                if !path.is_empty() && !changed.iter().any(|p| p == path) {
+                    changed.push(path.to_string());
+                }
+  ▶ edit src/commands_file.rs (37 → 61 lines)
+                args.push(flag);
+            }
+            args.push(path);
+  + 
+  +         // #699: `git apply --3way` is not clean-failure — on merge conflict it
+  +         // writes conflict markers into the working tree and exits non-zero.
+  +         // Snapshot the tree state before that attempt (non-check mode only) so
+  +         // a mutating failure can be detected and reported instead of cascading
+  +         // `-C1`/`--recount` against the dirty state. `--check` never writes.
+  +         let status_before = if !check_only && extra_flags.contains(&"--3way") {
+  +             run_git_output(&["status", "--porcelain"])
+  +                 .ok()
+  +                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+  +         } else {
+  +             None
+  +         };
+    
+            match run_git_output(&args) {
+                Ok(output) if output.status.success() => {
+  ···
+  ... (19 more lines)
+ ✓ (1m 38s)
+                args.push(flag);
+            }
+            args.push(path);
+  + 
+  +         // #699: `git apply --3way` is not clean-failure — on merge conflict it
+  +         // writes conflict markers into the working tree and exits non-zero.
+  +         // Snapshot the tree state before that attempt (non-check mode only) so
+  +         // a mutating failure can be detected and reported instead of cascading
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 13s (2 ✓)
+
+Likely the module-size ceiling. Let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_file.rs; cargo test --test module_size 2>&1 | tail -8 ✓ (193ms)
+  ▶ $ sed -n 40,50p tests/module_size.rs ✓ (3ms)
+  ▶ edit tests/module_size.rs (4 → 8 lines)
+        // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
+        // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
+        // pinning the extension↔MIME agreement. Tests must live in this module.
+  -     ("src/commands_file.rs", 2580),
+  +     // Day 162 (#699): +117 lines — /apply cascade detects a tree mutated by a
+  +     // failed --3way (which writes conflict markers on merge conflict), stops
+  +     // before running -C1/--recount against the dirty state, and reports the
+  +     // conflicted files honestly instead of "all strategies failed".
+  +     ("src/commands_file.rs", 2697),
+ ✓ (57.7s)
+        // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
+        // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
+        // pinning the extension↔MIME agreement. Tests must live in this module.
+  -     ("src/commands_file.rs", 2580),
+  +     // Day 162 (#699): +117 lines — /apply cascade detects a tree mutated by a
+  +     // failed --3way (which writes conflict markers on merge conflict), stops
+  +     // before running -C1/--recount against the dirty state, and reports the
+  +     // conflicted files honestly instead of "all strategies failed".
+  +     ("src/commands_file.rs", 2697),
+  3 tools completed in 1m 6s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

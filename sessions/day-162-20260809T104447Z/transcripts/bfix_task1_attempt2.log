@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_streaming_mid_line… ✓ (3ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/format/markdown.rs … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,240p' src/format/mark… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1030p' src/format/ma… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn unmatched_marker_start/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn unmatched_marker_sta… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:160..225 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (4 → 17 lines)
+                    b'`' => {
+  -                     open_tick = if open_tick.is_some() { None } else { Some(i) };
+  -                     i += 1;
+  +                     // A run of 3+ backticks is fence-like literal text, not an
+  +                     // inline-code toggle. Skip it without touching the open
+  +                     // state: treating "```" as open+close+open left a phantom
+  +                     // unmatched backtick that withheld every subsequent token,
+  +                     // breaking the mid-line immediacy guarantee (#661).
+  +                     let mut run_end = i;
+  +                     while run_end < bytes.len() && bytes[run_end] == b'`' {
+  +                         run_end += 1;
+  +                     }
+  +                     if run_end - i >= 3 {
+  +                         i = run_end;
+  +                     } else {
+  +                         open_tick = if open_tick.is_some() { None } else { Some(i) };
+  +                         i += 1;
+  +                     }
+                    }
+ ✓ (1m 37s)
+                    b'`' => {
+  -                     open_tick = if open_tick.is_some() { None } else { Some(i) };
+  -                     i += 1;
+  +                     // A run of 3+ backticks is fence-like literal text, not an
+  +                     // inline-code toggle. Skip it without touching the open
+  +                     // state: treating "```" as open+close+open left a phantom
+  +                     // unmatched backtick that withheld every subsequent token,
+  +                     // breaking the mid-line immediacy guarantee (#661).
+  ... (11 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 3m 25s (9 ✓)
+
+Now add a small regression test pinning this exact case, next to the other #661 tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (2 → 16 lines)
+  +     #[test]
+  +     fn test_md_triple_backtick_mid_line_does_not_carry() {
+  +         // #661 regression: "```" mid-line must not leave a phantom open
+  +         // backtick in the carry — every subsequent mid-line token must still
+  +         // render immediately (mid-line immediacy guarantee).
+  +         assert_eq!(MarkdownRenderer::unmatched_marker_start("```"), None);
+  +         let mut r = MarkdownRenderer::new();
+  +         let _ = r.render_delta("Hello ");
+  +         let _ = r.render_delta("```");
+  +         assert!(r.inline_carry.is_empty(), "``` must not start a carry");
+  +         let out = r.render_delta("#");
+  +         assert!(!out.is_empty(), "token after ``` must render immediately");
+  +     }
+  + 
+        #[test]
+        fn test_md_empty_delta() {
+ ✓ (1m 38s)
+  +     #[test]
+  +     fn test_md_triple_backtick_mid_line_does_not_carry() {
+  +         // #661 regression: "```" mid-line must not leave a phantom open
+  +         // backtick in the carry — every subsequent mid-line token must still
+  +         // render immediately (mid-line immediacy guarantee).
+  +         assert_eq!(MarkdownRenderer::unmatched_marker_start("```"), None);
+  +         let mut r = MarkdownRenderer::new();
+  +         let _ = r.render_delta("Hello ");
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/markdown.rs && … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,65p' tests/module_siz… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 4 lines)
+  -     ("src/format/markdown.rs", 2932),
+  +     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
+  +     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
+  +     // chunking-independence and carry-safety regression tests.
+  +     ("src/format/markdown.rs", 3160),
+ ✓ (1m 0s)
+  -     ("src/format/markdown.rs", 2932),
+  +     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
+  +     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
+  +     // chunking-independence and carry-safety regression tests.
+  +     ("src/format/markdown.rs", 3160),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (9.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/markdown.rs && … ✓ (1m 31s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 4m 40s (6 ✓)
+
+All test suites green. Now clippy explicitly (per CLAUDE.md rule):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo markdown 2… ✓ (180ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.0s (2 ✓)
+
+All fixed and verified. Summary of what was wrong and what I changed:
+
+Root cause of the failure (test_streaming_mid_line_always_immediate): in the new unmatched_marker_start helper, each backtick toggled the open-code-span state. Mid-line "" toggled open→close→open, leaving a phantom unmatched    in the carry buffer. The next token ("#") was then combined into the carry as "inside an open code span" and returned empty output — violating the pre-existing mid-line immediacy guarantee.
+
+Fixes:
+1. src/format/markdown.rs — unmatched_marker_start now treats a run of ≥3 backticks as fence-like literal text and skips it without toggling the open-tick state (runs of 1–2 behave exactly as before). ""` mid-line renders immediately with no carry.
+2. Added `test_md_triple_backtick_mid_line_does_not_carry pinning the regression (both the helper returning None for "" and the token-after-` immediacy).
+3. tests/module_size.rs — the ceiling bump required by step 3 of the task had never been done (entry was still 2932; file is now 3160), so the integration test would have failed next once the unit failure was cleared. Raised to 3160 with the dated // Day 162 (#661) comment per the #692 precedent.
+
+Verification: cargo fmt ✓, cargo build ✓, cargo test ✓ (4666 passed unit + all integration suites including module_size), `cargo clippy --all-targets -- -D warnings` ✓, `cargo fmt -- --check` ✓. All #661 carry tests, the latency-budget test, and the fence tests are green, unmodified.
+
+  watch: no files changed this turn — skipping
+

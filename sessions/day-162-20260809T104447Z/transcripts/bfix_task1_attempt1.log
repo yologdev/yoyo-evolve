@@ -1,0 +1,171 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/format/markdown.rs (80 lines) ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/format/markdown.rs (3 → 4 lines)
+                block_prefix_rendered: false,
+  +             inline_carry: String::new(),
+            }
+        }
+ ✓ (19.4s)
+                block_prefix_rendered: false,
+  +             inline_carry: String::new(),
+            }
+        }
+  ▶ read src/format/markdown.rs:75..205  ▶ $ grep -n "inline_carry\|INLINE_CARRY\|fn flush\|carry" src/format/markdown.rs | h… ✓ (4ms)
+ ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 30.8s (4 ✓)
+
+The tests were written but the mechanism itself was never implemented. Let me read the tests and flush():
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '430,500p' src/format/markdown.rs; echo ===TESTS===; sed -n '820,1010p' s… ✓ (6ms)
+  ▶ $ sed -n '842,935p' src/format/markdown.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n '469,520p' src/format/markdown.rs; echo ===; grep -n "test_md_render_delt… ✓ (5ms)
+  ▶ $ sed -n '2205,2245p' src/format/markdown.rs; echo ===; sed -n '629,650p' src/form… ✓ (5ms)
+  ▶ edit src/format/markdown.rs (2 → 17 lines)
+        pub fn render_delta(&mut self, delta: &str) -> String {
+  +         // #661: a previous chunk ended in an unmatched opening inline marker
+  +         // and its tail was withheld. Prepend it so a pair split across chunks
+  +         // ("**bo" + "ld**") can still format. Bounded: on overflow, emit the
+  +         // carried text literally — degraded rendering, never lost text.
+  +         if !self.inline_carry.is_empty() {
+  +             if self.inline_carry.len() + delta.len() > INLINE_CARRY_MAX {
+  +                 let mut out = std::mem::take(&mut self.inline_carry);
+  +                 out.push_str(&self.render_delta(delta));
+  +                 return out;
+  +             }
+  +             let mut combined = std::mem::take(&mut self.inline_carry);
+  +             combined.push_str(delta);
+  +             return self.render_delta(&combined);
+  +         }
+  + 
+            let mut output = String::new();
+ ✓ (1m 35s)
+        pub fn render_delta(&mut self, delta: &str) -> String {
+  +         // #661: a previous chunk ended in an unmatched opening inline marker
+  +         // and its tail was withheld. Prepend it so a pair split across chunks
+  +         // ("**bo" + "ld**") can still format. Bounded: on overflow, emit the
+  +         // carried text literally — degraded rendering, never lost text.
+  +         if !self.inline_carry.is_empty() {
+  +             if self.inline_carry.len() + delta.len() > INLINE_CARRY_MAX {
+  +                 let mut out = std::mem::take(&mut self.inline_carry);
+  ... (9 more lines)
+  ▶ edit src/format/markdown.rs (7 → 1 lines)
+        /// Render a code block fragment with dim styling for immediate streaming.
+  -     /// Used for mid-line token-by-token output inside code blocks.
+  -     /// Full syntax highlighting is applied to complete lines (at newline boundaries);
+  -     /// fragments get dim styling for responsiveness.
+  -     fn render_code_inline(&self, text: &str) -> String {
+  -         format!("{DIM}{text}{RESET}")
+  -     }
+ ✓ (12.5s)
+        /// Render a code block fragment with dim styling for immediate streaming.
+  -     /// Used for mid-line token-by-token output inside code blocks.
+  -     /// Full syntax highlighting is applied to complete lines (at newline boundaries);
+  -     /// fragments get dim styling for responsiveness.
+  -     fn render_code_inline(&self, text: &str) -> String {
+  -         format!("{DIM}{text}{RESET}")
+  -     }
+  ▶ edit src/format/markdown.rs (1 → 65 lines)
+        /// Render a code block fragment with dim styling for immediate streaming.
+  +     /// Used for mid-line token-by-token output inside code blocks.
+  +     /// Full syntax highlighting is applied to complete lines (at newline boundaries);
+  +     /// fragments get dim styling for responsiveness.
+  +     fn render_code_inline(&self, text: &str) -> String {
+  +         format!("{DIM}{text}{RESET}")
+  +     }
+  + 
+  +     /// Byte index of the earliest inline marker (`**`, `*`, `_`, `` ` ``) that
+  +     /// opens but never closes within `text`, or `None` if all pairs match (#661).
+  +     /// Emphasis markers inside an open backtick span are ignored (code spans
+  +     /// suppress emphasis). All markers are ASCII bytes, so any returned index
+  +     /// is a char boundary — splitting there is UTF-8-safe.
+  +     fn unmatched_marker_start(text: &str) -> Option<usize> {
+  +         let bytes = text.as_bytes();
+  +         let mut open_bold: Option<usize> = None;
+  +         let mut open_star: Option<usize> = None;
+  +         let mut open_underscore: Option<usize> = None;
+  +         let mut open_tick: Option<usize> = None;
+  +         let mut i = 0;
+  ... (45 more lines)
+ ✓ (19.9s)
+        /// Render a code block fragment with dim styling for immediate streaming.
+  +     /// Used for mid-line token-by-token output inside code blocks.
+  +     /// Full syntax highlighting is applied to complete lines (at newline boundaries);
+  +     /// fragments get dim styling for responsiveness.
+  +     fn render_code_inline(&self, text: &str) -> String {
+  +         format!("{DIM}{text}{RESET}")
+  +     }
+  + 
+  ... (13 more lines)
+  ▶ edit src/format/markdown.rs (6 → 8 lines)
+                } else {
+  -                 // No newline — pure mid-line content, render immediately
+  -                 output.push_str(&self.render_inline(delta));
+  +                 // No newline — pure mid-line content. #661: withhold from an
+  +                 // unmatched opening inline marker onward so a pair split
+  +                 // across deltas can still format; text before it renders now.
+  +                 output.push_str(&self.render_inline_carrying(delta));
+                }
+                return output;
+            }
+ ✓ (1m 34s)
+                } else {
+  -                 // No newline — pure mid-line content, render immediately
+  -                 output.push_str(&self.render_inline(delta));
+  +                 // No newline — pure mid-line content. #661: withhold from an
+  +                 // unmatched opening inline marker onward so a pair split
+  +                 // across deltas can still format; text before it renders now.
+  +                 output.push_str(&self.render_inline_carrying(delta));
+                }
+                return output;
+            }
+  ▶ edit src/format/markdown.rs (5 → 7 lines)
+                if !self.needs_line_buffering() {
+  -                 // Definitely not a fence, header, or block element — flush as inline text
+  +                 // Definitely not a fence, header, or block element — flush as
+  +                 // inline text. #661: an unmatched opening marker tail is
+  +                 // withheld via the carry so a split pair can still format.
+                    let buf = std::mem::take(&mut self.line_buffer);
+  -                 output.push_str(&self.render_inline(&buf));
+  +                 output.push_str(&self.render_inline_carrying(&buf));
+                    self.line_start = false;
+ ✓ (1m 35s)
+                if !self.needs_line_buffering() {
+  -                 // Definitely not a fence, header, or block element — flush as inline text
+  +                 // Definitely not a fence, header, or block element — flush as
+  +                 // inline text. #661: an unmatched opening marker tail is
+  +                 // withheld via the carry so a split pair can still format.
+                    let buf = std::mem::take(&mut self.line_buffer);
+  -                 output.push_str(&self.render_inline(&buf));
+  +                 output.push_str(&self.render_inline_carrying(&buf));
+                    self.line_start = false;
+  ▶ edit src/format/markdown.rs (3 → 6 lines)
+        /// Flush any remaining buffered content (call after stream ends).
+        pub fn flush(&mut self) -> String {
+  +         // #661: the stream has ended — emit any withheld inline-marker tail
+  +         // literally so carried text is never lost.
+  +         let carried = std::mem::take(&mut self.inline_carry);
+            let output = if self.line_buffer.is_empty() {
+ ✓ (19.3s)
+        /// Flush any remaining buffered content (call after stream ends).
+        pub fn flush(&mut self) -> String {
+  +         // #661: the stream has ended — emit any withheld inline-marker tail
+  +         // literally so carried text is never lost.
+  +         let carried = std::mem::take(&mut self.inline_carry);
+            let output = if self.line_buffer.is_empty() {
+  ▶ edit src/format/markdown.rs (8 → 8 lines)
+                self.in_code_block = false;
+                self.code_lang = None;
+                self.line_start = true;
+  -             return format!("{output}{RESET}");
+  +             return format!("{carried}{output}{RESET}");
+            }
+  -         output
+  +         format!("{carried}{output}")
+        }
