@@ -864,19 +864,8 @@ async fn dispatch_file_command(
 ) -> Option<CommandResult> {
     match route {
         CommandRoute::Add => {
-            let results = commands::handle_add(ctx.input);
+            let (results, added_paths) = commands::handle_add(ctx.input);
             if !results.is_empty() {
-                // Collect paths that were added for related-file suggestions
-                let added_paths: Vec<String> = {
-                    let args = ctx.input.strip_prefix("/add").unwrap_or("").trim();
-                    args.split_whitespace()
-                        .flat_map(|arg| {
-                            let (raw_path, _) = crate::commands_file::parse_add_arg(arg);
-                            crate::commands_file::expand_add_paths(raw_path)
-                        })
-                        .collect()
-                };
-
                 // Print summaries
                 for result in &results {
                     match result {

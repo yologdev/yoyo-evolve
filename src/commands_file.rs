@@ -189,8 +189,12 @@ pub fn estimate_tokens_simple(text: &str) -> usize {
 /// Handle the `/add` command: read file(s) and return the formatted content
 /// to be injected as a user message.
 ///
-/// Returns a Vec of `AddResult` — either text or image — for each file.
-pub fn handle_add(input: &str) -> Vec<AddResult> {
+/// Returns a tuple of:
+/// - A Vec of `AddResult` — either text or image — for each file
+/// - The list of file paths that were actually added successfully. Failed
+///   reads and URL fetches are excluded, so related-file suggestions are
+///   derived from what was really added, not a re-parse of the input (#697).
+pub fn handle_add(input: &str) -> (Vec<AddResult>, Vec<String>) {
     let args = input.strip_prefix("/add").unwrap_or("").trim();
 
     if args.is_empty() {
@@ -198,10 +202,11 @@ pub fn handle_add(input: &str) -> Vec<AddResult> {
         println!("         /add <path>:<start>-<end> — inject specific line range");
         println!("         /add src/*.rs — inject multiple files via glob");
         println!("         /add https://example.com — fetch and inject web page{RESET}\n");
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let mut results = Vec::new();
+    let mut added_paths: Vec<String> = Vec::new();
 
     // Split on whitespace to support multiple paths: /add foo.rs bar.rs
     for arg in args.split_whitespace() {
@@ -276,6 +281,7 @@ pub fn handle_add(input: &str) -> Vec<AddResult> {
                             data,
                             mime_type,
                         });
+                        added_paths.push(path.clone());
                     }
                     Err(e) => {
                         println!("{RED}  ✗ {e}{RESET}");
@@ -316,6 +322,7 @@ pub fn handle_add(input: &str) -> Vec<AddResult> {
                         summary,
                         content: formatted,
                     });
+                    added_paths.push(path.clone());
                 }
                 Err(e) => {
                     println!("{RED}  ✗ {e}{RESET}");
@@ -324,7 +331,7 @@ pub fn handle_add(input: &str) -> Vec<AddResult> {
         }
     }
 
-    results
+    (results, added_paths)
 }
 
 // ── @file mention expansion ──────────────────────────────────────────
@@ -2160,13 +2167,13 @@ diff --git a/clean.txt b/clean.txt
 
     #[test]
     fn test_handle_add_no_args_returns_empty() {
-        let results = handle_add("/add");
+        let (results, _) = handle_add("/add");
         assert!(results.is_empty(), "No args should return empty results");
     }
 
     #[test]
     fn test_handle_add_with_space_no_args_returns_empty() {
-        let results = handle_add("/add   ");
+        let (results, _) = handle_add("/add   ");
         assert!(
             results.is_empty(),
             "Whitespace-only args should return empty"
@@ -2177,7 +2184,7 @@ diff --git a/clean.txt b/clean.txt
     fn test_handle_add_real_file() {
         let root = env!("CARGO_MANIFEST_DIR");
         let cargo_path = format!("{}/Cargo.toml", root);
-        let results = handle_add(&format!("/add {}", cargo_path));
+        let (results, _) = handle_add(&format!("/add {}", cargo_path));
         assert_eq!(results.len(), 1, "Should return one result for Cargo.toml");
         match &results[0] {
             AddResult::Text { summary, content } => {
@@ -2198,7 +2205,7 @@ diff --git a/clean.txt b/clean.txt
     fn test_handle_add_shows_token_estimate() {
         let root = env!("CARGO_MANIFEST_DIR");
         let cargo_path = format!("{}/Cargo.toml", root);
-        let results = handle_add(&format!("/add {}", cargo_path));
+        let (results, _) = handle_add(&format!("/add {}", cargo_path));
         assert_eq!(results.len(), 1);
         match &results[0] {
             AddResult::Text { summary, .. } => {
@@ -2218,7 +2225,7 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_with_line_range() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let results = handle_add(&format!("/add {}/Cargo.toml:1-3", root));
+        let (results, _) = handle_add(&format!("/add {}/Cargo.toml:1-3", root));
         assert_eq!(results.len(), 1);
         match &results[0] {
             AddResult::Text { summary, content } => {
@@ -2238,21 +2245,52 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_glob_pattern() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let results = handle_add(&format!("/add {}/src/*.rs", root));
+        let (results, _) = handle_add(&format!("/add {}/src/*.rs", root));
         assert!(results.len() > 1, "Should match multiple .rs files in src/");
     }
 
     #[test]
     fn test_handle_add_nonexistent_file() {
-        let results = handle_add("/add nonexistent_xyz_file.rs");
+        let (results, _) = handle_add("/add nonexistent_xyz_file.rs");
         assert!(results.is_empty(), "Nonexistent file should return empty");
     }
 
     #[test]
     fn test_handle_add_multiple_files() {
         let root = env!("CARGO_MANIFEST_DIR");
-        let results = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
+        let (results, _) = handle_add(&format!("/add {}/Cargo.toml {}/LICENSE", root, root));
         assert_eq!(results.len(), 2, "Should return results for both files");
+    }
+
+    /// Regression test for #697: the paths fed to related-file suggestions
+    /// must be the files that were ACTUALLY added — a failed add (nonexistent
+    /// file) and a URL argument must not appear in the added-paths list.
+    #[test]
+    fn test_handle_add_paths_exclude_failed_adds_and_urls() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let good = format!("{root}/Cargo.toml");
+        // The .invalid TLD is reserved (RFC 2606) and never resolves, so the
+        // URL branch fails fast without depending on any real host.
+        let (results, added_paths) = handle_add(&format!(
+            "/add {good} nonexistent_file_697.rs https://nonexistent-host-697.invalid/page"
+        ));
+        assert_eq!(
+            added_paths,
+            vec![good],
+            "only the successfully-added file belongs in added_paths"
+        );
+        assert!(
+            !added_paths.iter().any(|p| p.contains("nonexistent_file")),
+            "a failed add must not leak into added_paths"
+        );
+        assert!(
+            !added_paths.iter().any(|p| p.starts_with("http")),
+            "a URL arg must never leak into added_paths"
+        );
+        // The successful file still produced its normal result.
+        assert!(results.iter().any(
+            |r| matches!(r, AddResult::Text { summary, .. } if summary.contains("Cargo.toml"))
+        ));
     }
 
     // ── build_explain_prompt ─────────────────────────────────────────
@@ -2330,7 +2368,7 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(&big_file, &content).unwrap();
 
         let path = big_file.to_str().unwrap();
-        let results = handle_add(&format!("/add {path}"));
+        let (results, _) = handle_add(&format!("/add {path}"));
         assert_eq!(results.len(), 1);
 
         match &results[0] {
@@ -2381,7 +2419,7 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(&big_file, &content).unwrap();
 
         let path = big_file.to_str().unwrap();
-        let results = handle_add(&format!("/add {path}:1-600"));
+        let (results, _) = handle_add(&format!("/add {path}:1-600"));
         assert_eq!(results.len(), 1);
 
         match &results[0] {
@@ -2482,7 +2520,7 @@ diff --git a/clean.txt b/clean.txt
         // so the result can be empty or contain one entry. Either is fine —
         // the important thing is it took the URL code-path rather than
         // trying to glob-expand the URL as a file path.
-        let results = handle_add("/add https://httpbin.org/status/404");
+        let (results, _) = handle_add("/add https://httpbin.org/status/404");
         assert!(
             results.len() <= 1,
             "URL should produce at most one result, got {}",
@@ -2493,7 +2531,7 @@ diff --git a/clean.txt b/clean.txt
     #[test]
     fn test_handle_add_file_path_not_treated_as_url() {
         // Regular paths should still go through file-path expansion
-        let results = handle_add("/add nonexistent_file_that_does_not_exist.rs");
+        let (results, _) = handle_add("/add nonexistent_file_that_does_not_exist.rs");
         // Should be empty because file doesn't exist (glob returns nothing)
         assert!(results.is_empty());
     }
