@@ -553,15 +553,21 @@ fn status_diff_paths(before: &str, after: &str) -> Vec<String> {
 /// back: the files may have had pre-existing local edits.
 fn three_way_mutation_message(changed: &[String]) -> String {
     let mut msg = String::new();
-    msg.push_str("Failed to apply patch — and the --3way attempt left changes in your working tree.\n");
+    msg.push_str(
+        "Failed to apply patch — and the --3way attempt left changes in your working tree.\n",
+    );
     msg.push_str("Stopped before trying further strategies against the modified files.\n");
     msg.push_str("Files touched by the failed 3-way merge (may contain conflict markers):\n");
     for path in changed {
         msg.push_str(&format!("  {path}\n"));
     }
     msg.push_str("Inspect with `git status` / `git diff`.\n");
-    msg.push_str("To discard the leftover changes in a file that was clean before: git checkout -- <file>\n");
-    msg.push_str("(Nothing was rolled back automatically — files may have had pre-existing local edits.)\n");
+    msg.push_str(
+        "To discard the leftover changes in a file that was clean before: git checkout -- <file>\n",
+    );
+    msg.push_str(
+        "(Nothing was rolled back automatically — files may have had pre-existing local edits.)\n",
+    );
     msg
 }
 
@@ -1800,12 +1806,13 @@ error[E0308]: second
 
     #[test]
     fn test_three_way_mutation_message_names_files_and_recovery() {
-        let msg = three_way_mutation_message(&[
-            "src/conflicted.rs".to_string(),
-            "README.md".to_string(),
-        ]);
+        let msg =
+            three_way_mutation_message(&["src/conflicted.rs".to_string(), "README.md".to_string()]);
         assert!(msg.contains("--3way"), "should name the strategy: {msg}");
-        assert!(msg.contains("src/conflicted.rs"), "should list files: {msg}");
+        assert!(
+            msg.contains("src/conflicted.rs"),
+            "should list files: {msg}"
+        );
         assert!(msg.contains("README.md"), "should list files: {msg}");
         assert!(
             msg.contains("git status") && msg.contains("git checkout --"),
