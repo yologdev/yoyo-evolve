@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "filter_test_output" src/format/output.rs | head; grep -n "truncate_resu…  ▶ read src/format/output.rs:340..460 ✓ (1ms)
+ ✓ (25ms)
+  ▶ read src/format/output.rs:1..81  ▶ read src/tool_truncate.rs ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -rn "compress_tool_output\|truncate_tool_output\|truncate_result\b" src/ | …  ▶ $ grep -n "fn truncate_tool_output" src/format/output.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+ ✓ (18ms)
+  ▶ $ grep -rn "compress_tool_output\|truncate_tool_output\|truncate_result" src/ | aw… ✓ (17ms)
+  ▶ read src/tool_wrappers.rs:120..220  ▶ read src/format/output.rs:555..635 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -n "pub use output\|pub mod output\|mod output" src/format/mod.rs; grep -n … ✓ (9ms)
+  ▶ read src/tool_wrappers.rs:1570..1625 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 2m 28s (11 ✓)
+
+Let me check the crate structure (lib vs bin) for dead-code implications of thin wrappers:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\[lib\]\|\[\[bin\]\]" Cargo.toml; ls src/lib.rs 2>/dev/null; grep -n "^… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n '/fn filter_noisy_patterns/,/^}/p' src/format/output.rs | head -80; sed -… ✓ (7ms)
+  ▶ $ sed -n '2280,2310p' src/tool_wrappers.rs ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (16 → 86 lines)
+            assert_eq!(
+                truncated.details, details,
+                "Details field should be preserved through truncation"
+  +         );
+  +     }
+  + 
+  +     // =========================================================================
+  +     // TruncatingTool — test-output filter is gated on tool provenance (#665)
+  +     // =========================================================================
+  + 
+  +     /// A file that merely QUOTES five cargo-style passing-test lines.
+  +     /// Prose is interleaved so neither the noisy-pattern filter nor the
+  +     /// repetitive-line collapser touches it — only the test-output filter
+  +     /// could alter this payload.
+  +     fn quoted_test_lines_payload() -> String {
+  +         [
+  +             "Example output from the README:",
+  +             "test alpha ... ok",
+  +             "prose line one.",
+  +             "test beta ... ok",
+  ... (56 more lines)
+ ✓ (1m 33s)
+            assert_eq!(
+                truncated.details, details,
+                "Details field should be preserved through truncation"
+  +         );
+  +     }
+  + 
+  +     // =========================================================================
+  +     // TruncatingTool — test-output filter is gated on tool provenance (#665)
+  ... (13 more lines)
+  ▶ $ cargo test quoted_test_lines_verbatim -- --nocapture 2>&1 | tail -15; cargo test… ✓ (328ms)
+  5 tools completed in 2m 47s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat  ▶ search 'filter_test_output|allow_test_filter' (*.rs) ✓ (12ms)
+ ✓ (40ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs | …  ▶ search 'passing tests omitted|fn (compress_tool_output|truncate_tool…' (src/format/output.rs) ✓ (6ms)
+ ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "passing tests omitted"… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs | …  ▶ read src/format/output.rs:370..480 ✓ (2ms)
+ ✓ (7ms)
+  ▶ read src/tool_wrappers.rs:2299..2379  ▶ search 'truncate_result|truncate_tool_output|compress_tool_output|fi…' (src/tool_wrappers.rs) ✓ (3ms)
+ ✓ (29ms)
+  ▶ search 'TruncatingTool|truncate' (src/tool_wrappers.rs) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TruncatingTool\|truncat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "filter_test_output\|co… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "filter_test_output\|co…  ▶ read src/tool_truncate.rs ✓ (1ms)
+ ✓ (10ms)
+  ▶ read src/format/output.rs:1..81  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn truncate_tool_output… ✓ (2ms)
+ ✓ (4ms)
+  ▶ read src/format/output.rs:560..620  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compress_tool_output\|… ✓ (1ms)
+ ✓ (9ms)
+  ▶ read src/tool_wrappers.rs:160..215  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use output\|pub use… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_result(" src/t… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  22 tools completed in 1m 53s (22 ✓)
+
+Now I'll check how many test call sites use compress_tool_output / truncate_tool_output:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compress_tool_output(\|… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct MockTool\|fn tes… ✓ (7ms)
+  ▶ edit src/format/output.rs (12 → 24 lines)
+    /// Called before head/tail truncation so the truncation operates on
+    /// already-compressed output.
+  - pub fn compress_tool_output(output: &str) -> String {
+  + ///
+  + /// `allow_test_filter` gates the test-framework-output filter on tool
+  + /// provenance (#665): only command execution (`bash`) can produce real test
+  + /// runner output, so file-reading tools pass `false` and a README that merely
+  + /// QUOTES five `test foo ... ok` lines survives verbatim instead of coming
+  + /// back as `... (N passing tests omitted)`.
+  + pub fn compress_tool_output(output: &str, allow_test_filter: bool) -> String {
+        if output.is_empty() {
+            return String::new();
+        }
+  ···
+        // Phase 1: strip ANSI escape codes
+        let stripped = strip_ansi_codes(output);
+    
+  -     // Phase 2: filter test framework output (more specific, runs first)
+  -     let filtered = filter_test_output(&stripped);
+  +     // Phase 2: filter test framework output (more specific, runs first).
+  ... (7 more lines)
+ ✓ (12.5s)
+    /// Called before head/tail truncation so the truncation operates on
+    /// already-compressed output.
+  - pub fn compress_tool_output(output: &str) -> String {
+  + ///
+  + /// `allow_test_filter` gates the test-framework-output filter on tool
+  + /// provenance (#665): only command execution (`bash`) can produce real test
+  + /// runner output, so file-reading tools pass `false` and a README that merely
+  + /// QUOTES five `test foo ... ok` lines survives verbatim instead of coming
+  ... (13 more lines)
+  ▶ edit src/format/output.rs (4 → 19 lines)
+    /// Output under the threshold is returned unchanged.
+  + ///
+  + /// Thin wrapper preserving the pre-#665 signature/behavior (test-output
+  + /// filtering enabled) for callers without tool provenance — notably
+  + /// `truncate_tool_error`, where error text has no reliable provenance story.
+    pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
+  +     truncate_tool_output_gated(output, max_chars, true)
+  + }
+  + 
+  + /// Provenance-aware variant of [`truncate_tool_output`] (#665):
+  + /// `allow_test_filter` is threaded down to [`compress_tool_output`] so only
+  + /// bash results get the passing-test-line filter applied.
+  + pub fn truncate_tool_output_gated(
+  +     output: &str,
+  +     max_chars: usize,
+  +     allow_test_filter: bool,
+  + ) -> String {
+        // Phase 1: compress (strip ANSI + collapse repetitive lines)
+  -     let compressed = compress_tool_output(output);
+  +     let compressed = compress_tool_output(output, allow_test_filter);
+ ✓ (12.3s)
+    /// Output under the threshold is returned unchanged.
+  + ///
+  + /// Thin wrapper preserving the pre-#665 signature/behavior (test-output
+  + /// filtering enabled) for callers without tool provenance — notably
+  + /// `truncate_tool_error`, where error text has no reliable provenance story.
+    pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
+  +     truncate_tool_output_gated(output, max_chars, true)
+  + }
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/compress_tool_output(\… ✓ (8ms)
+  5 tools completed in 1m 21s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

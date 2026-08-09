@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,180p' src/commands_f…  ▶ search 'is_image_extension|mime_type_for_extension' in /home/runner/work/yoyo-evolve/yoyo-evolve/src ✓ (9ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_image_extension\|mim… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_image_extension\|mim… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_image_extension\|mim… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_image_extension\|mim… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:55..120  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:235..310 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:370..440 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (7 → 26 lines)
+            assert!(is_image_extension("photo.jpeg"));
+            assert!(is_image_extension("photo.gif"));
+            assert!(is_image_extension("photo.webp"));
+  -         assert!(is_image_extension("photo.bmp"));
+  +         // bmp is NOT supported by the Anthropic API (#698) — accepting it here
+  +         // printed a success message and then failed one turn later with a 400.
+  +         assert!(!is_image_extension("photo.bmp"));
+  +     }
+  + 
+  +     #[test]
+  +     fn every_accepted_image_extension_maps_to_api_supported_mime() {
+  +         // The Anthropic API accepts exactly these four image MIME types (#698).
+  +         // Derived from SUPPORTED_IMAGE_FORMATS so is_image_extension and
+  +         // mime_type_for_extension can never silently diverge again.
+  +         const API_MIMES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+  +         for (ext, mime) in SUPPORTED_IMAGE_FORMATS {
+  +             assert!(
+  +                 API_MIMES.contains(mime),
+  +                 "extension '{ext}' maps to '{mime}', which the API does not accept"
+  +             );
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (2 → 2 lines)
+            assert!(is_image_extension("pic.WeBp"));
+  -         assert!(is_image_extension("scan.BMP"));
+  +         assert!(!is_image_extension("scan.BMP"));
+ ✓ (1m 33s)
+            assert!(is_image_extension("photo.jpeg"));
+            assert!(is_image_extension("photo.gif"));
+            assert!(is_image_extension("photo.webp"));
+  -         assert!(is_image_extension("photo.bmp"));
+  +         // bmp is NOT supported by the Anthropic API (#698) — accepting it here
+  +         // printed a success message and then failed one turn later with a 400.
+  +         assert!(!is_image_extension("photo.bmp"));
+  +     }
+  ... (13 more lines)
+ ✓ (2m 26s)
+            assert!(is_image_extension("pic.WeBp"));
+  -         assert!(is_image_extension("scan.BMP"));
+  +         assert!(!is_image_extension("scan.BMP"));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1375,1400p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1358,1375p' src/commands… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (4 → 5 lines)
+        #[test]
+  -     fn mime_type_bmp() {
+  -         assert_eq!(mime_type_for_extension("bmp"), "image/bmp");
+  +     fn mime_type_bmp_not_supported() {
+  +         // #698: image/bmp is rejected by the API — bmp must not map to an image MIME.
+  +         assert_eq!(mime_type_for_extension("bmp"), "application/octet-stream");
+        }
+ ✓ (1m 32s)
+        #[test]
+  -     fn mime_type_bmp() {
+  -         assert_eq!(mime_type_for_extension("bmp"), "image/bmp");
+  +     fn mime_type_bmp_not_supported() {
+  +         // #698: image/bmp is rejected by the API — bmp must not map to an image MIME.
+  +         assert_eq!(mime_type_for_extension("bmp"), "application/octet-stream");
+        }
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 4m 59s (14 ✓)
+
+Now implement the single source of truth:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (21 → 31 lines)
+  - /// Check if a file path has an image extension.
+  + /// The image formats the Anthropic API accepts, as (extension, MIME type) pairs.
+  + /// Single source of truth for `is_image_extension` and `mime_type_for_extension`
+  + /// (#698: two hand-typed lists agreed with each other and were jointly wrong —
+  + /// bmp was accepted here, printed a success, and the API rejected it a turn later).
+  + pub const SUPPORTED_IMAGE_FORMATS: &[(&str, &str)] = &[
+  +     ("png", "image/png"),
+  +     ("jpg", "image/jpeg"),
+  +     ("jpeg", "image/jpeg"),
+  +     ("gif", "image/gif"),
+  +     ("webp", "image/webp"),
+  + ];
+  + 
+  + /// Check if a file path has an image extension the API supports.
+    pub fn is_image_extension(path: &str) -> bool {
+        let lower = path.to_lowercase();
+  -     matches!(
+  -         lower.rsplit('.').next(),
+  -         Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
+  -     )
+  ... (24 more lines)
+ ✓ (1m 33s)
+  - /// Check if a file path has an image extension.
+  + /// The image formats the Anthropic API accepts, as (extension, MIME type) pairs.
+  + /// Single source of truth for `is_image_extension` and `mime_type_for_extension`
+  + /// (#698: two hand-typed lists agreed with each other and were jointly wrong —
+  + /// bmp was accepted here, printed a success, and the API rejected it a turn later).
+  + pub const SUPPORTED_IMAGE_FORMATS: &[(&str, &str)] = &[
+  +     ("png", "image/png"),
+  +     ("jpg", "image/jpeg"),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_file 2>&1 | … ✓ (529ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1298,1345p' src/commands… ✓ (4ms)
+  3 tools completed in 1m 40s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
