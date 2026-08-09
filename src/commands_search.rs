@@ -381,10 +381,12 @@ pub fn format_project_index(entries: &[IndexEntry]) -> String {
 
     let mut output = String::new();
 
-    // Find max path length for alignment (capped at 50)
+    // Find max path length for alignment (capped at 50). Measured in chars,
+    // not bytes: `{:<width$}` pads by chars, so a byte count over-widens the
+    // column for any non-ASCII path (#707).
     let max_path_len = entries
         .iter()
-        .map(|e| e.path.len())
+        .map(|e| e.path.chars().count())
         .max()
         .unwrap_or(0)
         .min(50);
@@ -406,7 +408,13 @@ pub fn format_project_index(entries: &[IndexEntry]) -> String {
 
     for entry in entries {
         let path_display = if entry.path.len() > 50 {
-            format!("…{}", &entry.path[entry.path.len() - 49..])
+            // Keep the tail, but never slice mid-character: walk the start
+            // offset forward to the next UTF-8 boundary (#707).
+            let mut start = entry.path.len() - 49;
+            while start < entry.path.len() && !entry.path.is_char_boundary(start) {
+                start += 1;
+            }
+            format!("…{}", &entry.path[start..])
         } else {
             entry.path.clone()
         };
@@ -2289,6 +2297,66 @@ mod tests {
         let output = format_project_index(&entries);
         // Should contain the truncation marker
         assert!(output.contains('…'));
+    }
+
+    /// #707: `/index` reads paths straight from `git ls-files`, so a single
+    /// non-ASCII path over 50 bytes used to panic the whole command — the tail
+    /// slice landed mid-character. The ASCII test above walks right over it.
+    #[test]
+    fn format_project_index_multibyte_path_does_not_panic() {
+        let long_path = format!("{}{}", "a".repeat(5), "é".repeat(25));
+        assert!(long_path.len() > 50);
+        // The fixture only bites if the old slice point is INSIDE a character.
+        assert!(
+            !long_path.is_char_boundary(long_path.len() - 49),
+            "fixture drifted back to an ASCII-safe boundary"
+        );
+
+        let entries = vec![IndexEntry {
+            path: long_path.clone(),
+            lines: 3,
+            summary: "multi-byte path".to_string(),
+        }];
+        // Assert at the emission point: this is what a user actually sees.
+        let output = format_project_index(&entries);
+        assert!(output.contains('…'), "truncation marker missing");
+        // The tail survives intact, whichever way the boundary walk snapped.
+        let safe_tail = &long_path[long_path.len() - 48..];
+        assert!(
+            output.contains(safe_tail),
+            "truncated path lost its tail: {output}"
+        );
+    }
+
+    /// #707 (secondary): column width was computed from `path.len()` (bytes)
+    /// while `{:<width$}` pads by chars, so a non-ASCII row inflated the column
+    /// past the widest thing in it.
+    #[test]
+    fn format_project_index_column_width_uses_chars_not_bytes() {
+        let ascii = vec![IndexEntry {
+            path: "src/ab.rs".to_string(), // 9 chars, 9 bytes
+            lines: 7,
+            summary: "same".to_string(),
+        }];
+        let wide = vec![IndexEntry {
+            path: "src/日本.rs".to_string(), // 9 chars, 13 bytes
+            lines: 7,
+            summary: "same".to_string(),
+        }];
+        assert_eq!(
+            ascii[0].path.chars().count(),
+            wide[0].path.chars().count(),
+            "fixtures must have equal display width"
+        );
+
+        let a = format_project_index(&ascii);
+        let w = format_project_index(&wide);
+        let widths = |s: &str| -> Vec<usize> { s.lines().map(|l| l.chars().count()).collect() };
+        assert_eq!(
+            widths(&a),
+            widths(&w),
+            "multi-byte row rendered a different column width:\n{a}\n---\n{w}"
+        );
     }
 
     // ── FindMatch ────────────────────────────────────────────────────

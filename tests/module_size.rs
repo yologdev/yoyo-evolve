@@ -65,7 +65,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
     ("src/commands_risk.rs", 4754),
-    ("src/commands_search.rs", 3534),
+    // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
+    // path tail (live panic on any non-ASCII path >50 bytes) and measures its
+    // column in chars; 62 of the 68 lines are the two regression tests, one of
+    // which asserts the fixture is genuinely boundary-violating so it can't
+    // drift back to ASCII-safe like the old test did.
+    ("src/commands_search.rs", 3602),
     ("src/commands_spawn.rs", 3814),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
