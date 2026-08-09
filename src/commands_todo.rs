@@ -26,8 +26,26 @@ impl std::fmt::Display for TodoStatus {
         match self {
             TodoStatus::Pending => write!(f, "[ ]"),
             TodoStatus::InProgress => write!(f, "[~]"),
-            TodoStatus::Done => write!(f, "[✓]"),
+            // Under --screen-reader, use the same ASCII vocabulary as
+            // render_board's done column ([x]) instead of a glyph.
+            TodoStatus::Done => {
+                if is_plain_output() {
+                    write!(f, "[x]")
+                } else {
+                    write!(f, "[✓]")
+                }
+            }
         }
+    }
+}
+
+/// Success-line marker for /todo messages: "✓" normally, "ok" under
+/// --screen-reader (`is_plain_output`), where decorative glyphs are noise.
+fn success_marker() -> &'static str {
+    if is_plain_output() {
+        "ok"
+    } else {
+        "✓"
     }
 }
 
@@ -122,7 +140,7 @@ pub fn handle_todo(input: &str) -> String {
 
     if arg == "clear" {
         todo_clear();
-        return format!("{GREEN}  ✓ Cleared all tasks{RESET}");
+        return format!("{GREEN}  {} Cleared all tasks{RESET}", success_marker());
     }
 
     if let Some(desc) = arg.strip_prefix("add ") {
@@ -131,7 +149,7 @@ pub fn handle_todo(input: &str) -> String {
             return "  Usage: /todo add <description>".to_string();
         }
         let id = todo_add(desc);
-        return format!("{GREEN}  ✓ Added task #{id}: {desc}{RESET}");
+        return format!("{GREEN}  {} Added task #{id}: {desc}{RESET}", success_marker());
     }
     if arg == "add" {
         return "  Usage: /todo add <description>".to_string();
@@ -141,7 +159,9 @@ pub fn handle_todo(input: &str) -> String {
         let id_str = id_str.trim();
         match id_str.parse::<usize>() {
             Ok(id) => match todo_update(id, TodoStatus::Done) {
-                Ok(()) => return format!("{GREEN}  ✓ Marked #{id} as done{RESET}"),
+                Ok(()) => {
+                    return format!("{GREEN}  {} Marked #{id} as done{RESET}", success_marker())
+                }
                 Err(e) => return format!("{RED}  {e}{RESET}"),
             },
             Err(_) => return format!("{RED}  Invalid ID: {id_str}{RESET}"),
@@ -152,7 +172,12 @@ pub fn handle_todo(input: &str) -> String {
         let id_str = id_str.trim();
         match id_str.parse::<usize>() {
             Ok(id) => match todo_update(id, TodoStatus::InProgress) {
-                Ok(()) => return format!("{GREEN}  ✓ Marked #{id} as in-progress{RESET}"),
+                Ok(()) => {
+                    return format!(
+                        "{GREEN}  {} Marked #{id} as in-progress{RESET}",
+                        success_marker()
+                    )
+                }
                 Err(e) => return format!("{RED}  {e}{RESET}"),
             },
             Err(_) => return format!("{RED}  Invalid ID: {id_str}{RESET}"),
@@ -164,7 +189,11 @@ pub fn handle_todo(input: &str) -> String {
         match id_str.parse::<usize>() {
             Ok(id) => match todo_remove(id) {
                 Ok(item) => {
-                    return format!("{GREEN}  ✓ Removed #{id}: {}{RESET}", item.description)
+                    return format!(
+                        "{GREEN}  {} Removed #{id}: {}{RESET}",
+                        success_marker(),
+                        item.description
+                    )
                 }
                 Err(e) => return format!("{RED}  {e}{RESET}"),
             },
@@ -675,6 +704,63 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_todo_plain_output_uses_ascii_markers() {
+        // is_plain_output is process-global; restore it before leaving.
+        set_plain_output(true);
+        todo_clear();
+        let id = todo_add("plain task");
+
+        let done_msg = handle_todo(&format!("/todo done {id}"));
+        assert!(
+            !done_msg.contains('✓'),
+            "done message should be glyph-free in plain mode: {done_msg}"
+        );
+        let list = handle_todo("/todo");
+        assert!(
+            list.contains("[x]"),
+            "done marker should be [x] in plain mode: {list}"
+        );
+        assert!(!list.contains('✓'), "list should be glyph-free: {list}");
+
+        let add_msg = handle_todo("/todo add another");
+        assert!(!add_msg.contains('✓'), "add glyph-free: {add_msg}");
+        let wip_msg = handle_todo(&format!("/todo wip {id}"));
+        assert!(!wip_msg.contains('✓'), "wip glyph-free: {wip_msg}");
+        let remove_msg = handle_todo(&format!("/todo remove {id}"));
+        assert!(!remove_msg.contains('✓'), "remove glyph-free: {remove_msg}");
+        let clear_msg = handle_todo("/todo clear");
+        assert!(!clear_msg.contains('✓'), "clear glyph-free: {clear_msg}");
+
+        set_plain_output(false);
+        todo_clear();
+    }
+
+    #[test]
+    #[serial]
+    fn test_todo_default_output_keeps_glyph_markers() {
+        // Pin default (non-plain) behavior: byte-identical to the old output.
+        set_plain_output(false);
+        todo_clear();
+        let id = todo_add("glyph task");
+
+        let done_msg = handle_todo(&format!("/todo done {id}"));
+        assert!(
+            done_msg.contains('✓'),
+            "default done message keeps ✓: {done_msg}"
+        );
+        assert_eq!(
+            done_msg,
+            format!("{GREEN}  ✓ Marked #{id} as done{RESET}"),
+            "default done message must stay byte-identical"
+        );
+        let list = handle_todo("/todo");
+        assert!(list.contains("[✓]"), "default done marker stays [✓]: {list}");
+
+        todo_clear();
+    }
 
     #[test]
     #[serial]
