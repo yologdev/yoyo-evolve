@@ -78,6 +78,36 @@ session_secs_left() {
         echo $(( SESSION_END - $(date +%s) ))
     fi
 }
+
+# Issues the bot has filed since this session started — injected into every
+# retry/fix prompt. A retried attempt re-executes its task prompt from
+# scratch, and `gh issue create` leaves no trace in the git checkpoint, so
+# the retry re-files in good faith (Day 162: one .bmp defect filed three
+# times, #694/#695/#698, across attempt waves). Ground truth beats a
+# behavioral instruction: tell the retry exactly what already exists.
+SESSION_START_ISO=$(date -u -r "$SESSION_T0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$SESSION_T0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+session_filed_issues_section() {
+    local listing
+    if [ -z "$SESSION_START_ISO" ] || ! command -v gh &>/dev/null; then
+        return 0
+    fi
+    if ! listing=$(gh issue list --repo "$REPO" --state all \
+        --author "${BOT_LOGIN}" --search "created:>=${SESSION_START_ISO}" \
+        --limit 15 --json number,title \
+        --jq '.[] | "- #\(.number): \(.title)"' 2>/dev/null); then
+        echo "=== SIDE EFFECTS: could not list issues filed earlier this session ==="
+        echo "Before filing ANY issue, check it does not already exist:"
+        echo "  gh issue list --repo $REPO --author '${BOT_LOGIN}' --search '<keywords>'"
+        return 0
+    fi
+    [ -z "$listing" ] && return 0
+    echo "=== SIDE EFFECTS ALREADY PERFORMED THIS SESSION (do NOT repeat) ==="
+    echo "A previous attempt of this session already filed these issues:"
+    echo "$listing"
+    echo "If your task says to file an issue matching one above, that step is"
+    echo "DONE — reference the existing number instead of creating a new issue."
+}
 DATE=$(date +%Y-%m-%d)
 SESSION_TIME=$(date +%H:%M)
 # Security nonce for content boundary markers (prevents spoofing)
@@ -1460,6 +1490,7 @@ TEOF
             echo "    Budget: $(session_secs_left)s left — skipping checkpoint retry (needs ~2550s); proceeding to verify committed progress."
         elif [ "$INTERRUPTED" = true ] && [ "$CURRENT_SHA" != "$PRE_TASK_SHA" ] && [ "$ATTEMPT" -eq 1 ]; then
             echo "    Partial progress detected — building checkpoint for retry..."
+            FILED_SECTION=$(session_filed_issues_section)
 
             # Capture uncommitted work before discarding
             UNCOMMITTED_DIFF=$(git diff 2>/dev/null || true)
@@ -1481,7 +1512,8 @@ TEOF
             # Prefer agent-written checkpoint if available (#185)
             if [ -s "session_plan/checkpoint_task_${TASK_NUM}.md" ]; then
                 CHECKPOINT_SECTION="=== CHECKPOINT: PREVIOUS AGENT WAS INTERRUPTED ===
-$(cat "session_plan/checkpoint_task_${TASK_NUM}.md")"
+$(cat "session_plan/checkpoint_task_${TASK_NUM}.md")
+${FILED_SECTION}"
                 echo "    Using agent-written checkpoint."
             else
                 CHECKPOINT_SECTION="=== CHECKPOINT: PREVIOUS AGENT WAS INTERRUPTED ===
@@ -1505,7 +1537,8 @@ Continue from the committed state. The uncommitted diff shows what
 the previous agent was working on — use it as a hint, not gospel.
 Do NOT redo work that's already committed. Focus on what's remaining.
 If the task appears complete, verify with cargo build && cargo test
-and commit if needed."
+and commit if needed.
+${FILED_SECTION}"
                 echo "    Using mechanical checkpoint (git state)."
             fi
 
@@ -1649,12 +1682,15 @@ $(echo "$FAIL_OUT" | tail -30)
         else
             BFIX_ERRORS=$(echo "$TEST_OUT" | tail -40)
         fi
+        FILED_SECTION=$(session_filed_issues_section)  # fresh — prior attempt may have filed
         cat > "$BFIX_PROMPT" <<BFIXEOF
 The $BUILD_FAILED broke after your implementation. Fix the errors.
 
 === TASK YOU WERE IMPLEMENTING ===
 $TASK_DESC
-
+${FILED_SECTION:+
+$FILED_SECTION
+}
 === ERRORS ===
 $BFIX_ERRORS
 
@@ -1834,13 +1870,16 @@ EVALEOF
                 echo "    Giving agent a chance to fix (fix attempt $EVAL_ATTEMPT of $((MAX_EVAL_ATTEMPTS - 1)))..."
                 FIX_TIMEOUT=600
                 FIX_PROMPT=$(mktemp)
+                FILED_SECTION=$(session_filed_issues_section)  # fresh — prior attempt may have filed
                 EVAL_FEEDBACK=$(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo "$EVAL_REASON")
                 cat > "$FIX_PROMPT" <<FIXEOF
 The evaluator rejected your implementation of this task. Fix the issues and complete the missing work.
 
 === TASK ===
 $TASK_DESC
-
+${FILED_SECTION:+
+$FILED_SECTION
+}
 === EVALUATOR FEEDBACK ===
 $EVAL_FEEDBACK
 
