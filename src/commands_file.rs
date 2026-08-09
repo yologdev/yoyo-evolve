@@ -524,6 +524,47 @@ pub fn parse_apply_args(input: &str) -> ApplyArgs {
     ApplyArgs { file, check_only }
 }
 
+/// Compare two `git status --porcelain` outputs and return the paths of entries
+/// that are new or changed in `after` relative to `before` (#699). A line that
+/// appears verbatim in `before` is pre-existing state; anything else — a new
+/// path, or an existing path whose status flipped (e.g. ` M` → `UU`) — means
+/// the tree was mutated. Pure, so it is testable without touching git.
+fn status_diff_paths(before: &str, after: &str) -> Vec<String> {
+    let before_lines: std::collections::HashSet<&str> =
+        before.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut changed = Vec::new();
+    for line in after.lines() {
+        if line.trim().is_empty() || before_lines.contains(line) {
+            continue;
+        }
+        // Porcelain v1 format: `XY path` (2 status chars + space + path).
+        if let Some(path) = line.get(3..).map(str::trim) {
+            if !path.is_empty() && !changed.iter().any(|p| p == path) {
+                changed.push(path.to_string());
+            }
+        }
+    }
+    changed
+}
+
+/// Build the honest failure report for a `--3way` attempt that failed but left
+/// changes in the working tree (#699). Names the strategy, lists the touched
+/// files, and tells the user how to inspect/undo. Deliberately does NOT roll
+/// back: the files may have had pre-existing local edits.
+fn three_way_mutation_message(changed: &[String]) -> String {
+    let mut msg = String::new();
+    msg.push_str("Failed to apply patch — and the --3way attempt left changes in your working tree.\n");
+    msg.push_str("Stopped before trying further strategies against the modified files.\n");
+    msg.push_str("Files touched by the failed 3-way merge (may contain conflict markers):\n");
+    for path in changed {
+        msg.push_str(&format!("  {path}\n"));
+    }
+    msg.push_str("Inspect with `git status` / `git diff`.\n");
+    msg.push_str("To discard the leftover changes in a file that was clean before: git checkout -- <file>\n");
+    msg.push_str("(Nothing was rolled back automatically — files may have had pre-existing local edits.)\n");
+    msg
+}
+
 /// Apply a patch file using `git apply`. Returns `(success, output_message)`.
 pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
     // Verify file exists
@@ -555,6 +596,19 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
         }
         args.push(path);
 
+        // #699: `git apply --3way` is not clean-failure — on merge conflict it
+        // writes conflict markers into the working tree and exits non-zero.
+        // Snapshot the tree state before that attempt (non-check mode only) so
+        // a mutating failure can be detected and reported instead of cascading
+        // `-C1`/`--recount` against the dirty state. `--check` never writes.
+        let status_before = if !check_only && extra_flags.contains(&"--3way") {
+            run_git_output(&["status", "--porcelain"])
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        } else {
+            None
+        };
+
         match run_git_output(&args) {
             Ok(output) if output.status.success() => {
                 let mut msg = String::new();
@@ -576,7 +630,18 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
                 return (true, msg);
             }
             Ok(_) => {
-                // This strategy failed — try the next one
+                // This strategy failed. If it was --3way and it dirtied the
+                // tree, stop honestly instead of cascading (#699).
+                if let Some(before) = status_before {
+                    if let Ok(o) = run_git_output(&["status", "--porcelain"]) {
+                        let after = String::from_utf8_lossy(&o.stdout).to_string();
+                        let changed = status_diff_paths(&before, &after);
+                        if !changed.is_empty() {
+                            return (false, three_way_mutation_message(&changed));
+                        }
+                    }
+                }
+                // Clean failure — try the next strategy.
                 continue;
             }
             Err(e) => return (false, format!("Failed to run git apply: {e}")),
@@ -1697,6 +1762,58 @@ error[E0308]: second
         assert!(
             msg.contains("Empty"),
             "Expected 'Empty' in message, got: {msg}"
+        );
+    }
+
+    // --- #699: failed --3way mutating the tree must stop the cascade honestly ---
+
+    #[test]
+    fn test_status_diff_paths_unchanged_tree_detects_nothing() {
+        // Identical before/after status → no mutation detected → cascade continues
+        // exactly as before (pins zero behavior change on the clean-failure path).
+        let status = " M src/lib.rs\n?? notes.txt\n";
+        assert!(status_diff_paths(status, status).is_empty());
+        assert!(status_diff_paths("", "").is_empty());
+    }
+
+    #[test]
+    fn test_status_diff_paths_detects_new_and_modified_entries() {
+        let before = " M src/lib.rs\n";
+        let after = " M src/lib.rs\nUU src/conflicted.rs\n M src/other.rs\n";
+        let changed = status_diff_paths(before, after);
+        assert_eq!(changed, vec!["src/conflicted.rs", "src/other.rs"]);
+    }
+
+    #[test]
+    fn test_status_diff_paths_detects_status_change_of_existing_entry() {
+        // A previously-clean-ish entry whose status flips (e.g. ` M` → `UU`)
+        // is a mutation even though the path appeared before.
+        let before = " M src/lib.rs\n";
+        let after = "UU src/lib.rs\n";
+        assert_eq!(status_diff_paths(before, after), vec!["src/lib.rs"]);
+    }
+
+    #[test]
+    fn test_status_diff_paths_ignores_short_lines() {
+        assert!(status_diff_paths("", "x\n\n").is_empty());
+    }
+
+    #[test]
+    fn test_three_way_mutation_message_names_files_and_recovery() {
+        let msg = three_way_mutation_message(&[
+            "src/conflicted.rs".to_string(),
+            "README.md".to_string(),
+        ]);
+        assert!(msg.contains("--3way"), "should name the strategy: {msg}");
+        assert!(msg.contains("src/conflicted.rs"), "should list files: {msg}");
+        assert!(msg.contains("README.md"), "should list files: {msg}");
+        assert!(
+            msg.contains("git status") && msg.contains("git checkout --"),
+            "should tell the user how to inspect/undo: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("not") && msg.to_lowercase().contains("roll"),
+            "should state it was NOT rolled back automatically: {msg}"
         );
     }
 
