@@ -149,7 +149,10 @@ pub fn handle_todo(input: &str) -> String {
             return "  Usage: /todo add <description>".to_string();
         }
         let id = todo_add(desc);
-        return format!("{GREEN}  {} Added task #{id}: {desc}{RESET}", success_marker());
+        return format!(
+            "{GREEN}  {} Added task #{id}: {desc}{RESET}",
+            success_marker()
+        );
     }
     if arg == "add" {
         return "  Usage: /todo add <description>".to_string();
@@ -757,7 +760,10 @@ mod tests {
             "default done message must stay byte-identical"
         );
         let list = handle_todo("/todo");
-        assert!(list.contains("[✓]"), "default done marker stays [✓]: {list}");
+        assert!(
+            list.contains("[✓]"),
+            "default done marker stays [✓]: {list}"
+        );
 
         todo_clear();
     }
