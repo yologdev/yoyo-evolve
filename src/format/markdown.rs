@@ -19,7 +19,16 @@ pub struct MarkdownRenderer {
     /// early for streaming, this tracks the prefix so we don't re-render on newline.
     /// Once set, subsequent tokens stream as inline text until the newline arrives.
     block_prefix_rendered: bool,
+    /// Withheld tail of a delta ending in an unmatched opening inline marker
+    /// (`**`, `*`, `` ` ``) — prepended to the next delta so a pair split
+    /// across streaming chunks ("**bo" + "ld**") still formats (#661).
+    /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
+    inline_carry: String,
 }
+
+/// Byte cap for `MarkdownRenderer::inline_carry` (#661). On overflow the
+/// carried text is emitted literally — degraded rendering, never lost text.
+const INLINE_CARRY_MAX: usize = 160;
 
 impl MarkdownRenderer {
     /// Create a new renderer with empty state.
@@ -30,6 +39,7 @@ impl MarkdownRenderer {
             line_buffer: String::new(),
             line_start: true,
             block_prefix_rendered: false,
+            inline_carry: String::new(),
         }
     }
 
@@ -64,6 +74,21 @@ impl MarkdownRenderer {
     /// footnotes) must preserve the mid-line fast path. Any change that causes
     /// mid-line tokens to return empty strings is a latency regression.
     pub fn render_delta(&mut self, delta: &str) -> String {
+        // #661: a previous chunk ended in an unmatched opening inline marker
+        // and its tail was withheld. Prepend it so a pair split across chunks
+        // ("**bo" + "ld**") can still format. Bounded: on overflow, emit the
+        // carried text literally — degraded rendering, never lost text.
+        if !self.inline_carry.is_empty() {
+            if self.inline_carry.len() + delta.len() > INLINE_CARRY_MAX {
+                let mut out = std::mem::take(&mut self.inline_carry);
+                out.push_str(&self.render_delta(delta));
+                return out;
+            }
+            let mut combined = std::mem::take(&mut self.inline_carry);
+            combined.push_str(delta);
+            return self.render_delta(&combined);
+        }
+
         let mut output = String::new();
 
         // Mid-line fast paths: render tokens immediately without buffering.
@@ -113,8 +138,10 @@ impl MarkdownRenderer {
                     output.push_str(&self.render_delta_buffered(rest));
                 }
             } else {
-                // No newline — pure mid-line content, render immediately
-                output.push_str(&self.render_inline(delta));
+                // No newline — pure mid-line content. #661: withhold from an
+                // unmatched opening inline marker onward so a pair split
+                // across deltas can still format; text before it renders now.
+                output.push_str(&self.render_inline_carrying(delta));
             }
             return output;
         }
@@ -130,6 +157,81 @@ impl MarkdownRenderer {
     /// fragments get dim styling for responsiveness.
     fn render_code_inline(&self, text: &str) -> String {
         format!("{DIM}{text}{RESET}")
+    }
+
+    /// Byte index of the earliest inline marker (`**`, `*`, `_`, `` ` ``) that
+    /// opens but never closes within `text`, or `None` if all pairs match (#661).
+    /// Emphasis markers inside an open backtick span are ignored (code spans
+    /// suppress emphasis). All markers are ASCII bytes, so any returned index
+    /// is a char boundary — splitting there is UTF-8-safe.
+    fn unmatched_marker_start(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut open_bold: Option<usize> = None;
+        let mut open_star: Option<usize> = None;
+        let mut open_underscore: Option<usize> = None;
+        let mut open_tick: Option<usize> = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'`' => {
+                    // A run of 3+ backticks is fence-like literal text, not an
+                    // inline-code toggle. Skip it without touching the open
+                    // state: treating "```" as open+close+open left a phantom
+                    // unmatched backtick that withheld every subsequent token,
+                    // breaking the mid-line immediacy guarantee (#661).
+                    let mut run_end = i;
+                    while run_end < bytes.len() && bytes[run_end] == b'`' {
+                        run_end += 1;
+                    }
+                    if run_end - i >= 3 {
+                        i = run_end;
+                    } else {
+                        open_tick = if open_tick.is_some() { None } else { Some(i) };
+                        i += 1;
+                    }
+                }
+                b'*' if open_tick.is_none() => {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                        open_bold = if open_bold.is_some() { None } else { Some(i) };
+                        i += 2;
+                    } else {
+                        open_star = if open_star.is_some() { None } else { Some(i) };
+                        i += 1;
+                    }
+                }
+                b'_' if open_tick.is_none() => {
+                    open_underscore = if open_underscore.is_some() {
+                        None
+                    } else {
+                        Some(i)
+                    };
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        [open_bold, open_star, open_underscore, open_tick]
+            .iter()
+            .flatten()
+            .min()
+            .copied()
+    }
+
+    /// Render mid-line text, withholding from an unmatched opening inline
+    /// marker onward in `inline_carry` so a pair split across streaming deltas
+    /// can still format (#661). Text before the marker renders immediately.
+    /// Tails larger than `INLINE_CARRY_MAX` are rendered as-is (bounded
+    /// withholding — never unbounded latency).
+    fn render_inline_carrying(&mut self, text: &str) -> String {
+        let Some(pos) = Self::unmatched_marker_start(text) else {
+            return self.render_inline(text);
+        };
+        let tail = &text[pos..];
+        if tail.len() > INLINE_CARRY_MAX {
+            return self.render_inline(text);
+        }
+        self.inline_carry.push_str(tail);
+        self.render_inline(&text[..pos])
     }
 
     /// Buffered rendering: adds delta to line_buffer, processes complete lines,
@@ -166,9 +268,11 @@ impl MarkdownRenderer {
         // or other block-level construct (list, blockquote, hr), flush as inline text.
         if self.line_start && !self.line_buffer.is_empty() && !self.in_code_block {
             if !self.needs_line_buffering() {
-                // Definitely not a fence, header, or block element — flush as inline text
+                // Definitely not a fence, header, or block element — flush as
+                // inline text. #661: an unmatched opening marker tail is
+                // withheld via the carry so a split pair can still format.
                 let buf = std::mem::take(&mut self.line_buffer);
-                output.push_str(&self.render_inline(&buf));
+                output.push_str(&self.render_inline_carrying(&buf));
                 self.line_start = false;
             } else {
                 // Check if we can confirm a block element and render its prefix early,
@@ -463,6 +567,9 @@ impl MarkdownRenderer {
 
     /// Flush any remaining buffered content (call after stream ends).
     pub fn flush(&mut self) -> String {
+        // #661: the stream has ended — emit any withheld inline-marker tail
+        // literally so carried text is never lost.
+        let carried = std::mem::take(&mut self.inline_carry);
         let output = if self.line_buffer.is_empty() {
             if self.block_prefix_rendered {
                 // Close any open italic from blockquote prefix
@@ -491,9 +598,9 @@ impl MarkdownRenderer {
             self.in_code_block = false;
             self.code_lang = None;
             self.line_start = true;
-            return format!("{output}{RESET}");
+            return format!("{carried}{output}{RESET}");
         }
-        output
+        format!("{carried}{output}")
     }
 
     /// Render a single complete line, updating state for code fences.
@@ -816,6 +923,127 @@ mod tests {
         let out5 = r.render_delta("normal\n");
         assert!(out5.contains("normal"));
         assert!(!out5.contains(&format!("{DIM}")));
+    }
+
+    /// Helper: render a sequence of streaming chunks, then flush (#661 tests).
+    fn render_stream(chunks: &[&str]) -> String {
+        let mut r = MarkdownRenderer::new();
+        let mut out = String::new();
+        for c in chunks {
+            out.push_str(&r.render_delta(c));
+        }
+        out.push_str(&r.flush());
+        out
+    }
+
+    #[test]
+    fn test_md_inline_marker_split_line_start() {
+        // #661 probe LINE_START_SPLIT: a bold pair split across deltas at line
+        // start must still render bold — chunking must not change the output.
+        let out = render_stream(&["**bo", "ld** rest\n"]);
+        assert!(
+            out.contains(&format!("{BOLD}bold{RESET}")),
+            "split bold pair at line start must render bold, got: {out:?}"
+        );
+        assert!(
+            !out.contains("**"),
+            "no literal markers should leak, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_md_inline_marker_split_mid_line_matches_whole() {
+        // #661 probes MID_LINE_SPLIT vs MID_LINE_WHOLE: same characters,
+        // different chunkings, identical output.
+        let split = render_stream(&["hello ", "world ", "**bo", "ld** rest\n"]);
+        let whole = render_stream(&["hello ", "world ", "**bold** rest\n"]);
+        assert!(
+            whole.contains(&format!("{BOLD}bold{RESET}")),
+            "whole-chunk bold must stay correct, got: {whole:?}"
+        );
+        assert_eq!(split, whole, "chunking must not change rendering (#661)");
+    }
+
+    #[test]
+    fn test_md_inline_marker_split_mid_marker() {
+        // #661: a chunk ending mid-marker ("*" then "*bold** x") must pair.
+        let out = render_stream(&["hello ", "*", "*bold** x"]);
+        assert!(
+            out.contains(&format!("{BOLD}bold{RESET}")),
+            "mid-marker split must render bold, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_md_inline_backtick_split_across_deltas() {
+        // #661: inline code split across deltas must still format.
+        let out = render_stream(&["see ", "`co", "de` done\n"]);
+        assert!(
+            out.contains(&format!("{CYAN}code{RESET}")),
+            "split inline-code pair must render, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_md_inline_carry_emitted_on_flush() {
+        // #661: carried text must never be lost — flush emits it literally.
+        let out = render_stream(&["price **bo"]);
+        assert!(
+            out.contains("price "),
+            "text before the marker must render, got: {out:?}"
+        );
+        assert!(
+            out.contains("**bo"),
+            "carried text must be emitted on flush, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_md_inline_carry_overflow_emits_literally() {
+        // #661: the carry buffer is bounded — on overflow the carried text is
+        // emitted literally (degraded rendering, never lost text).
+        let mut r = MarkdownRenderer::new();
+        let mut out = String::new();
+        out.push_str(&r.render_delta("x ")); // go mid-line
+        out.push_str(&r.render_delta("**")); // unmatched opener → carried
+        let long_a = "a".repeat(100);
+        out.push_str(&r.render_delta(&long_a)); // carry 102 bytes, still held
+        out.push_str(&r.render_delta(&long_a)); // 202 bytes > cap → emit
+        assert!(
+            out.contains(&format!("**{}", "a".repeat(200))),
+            "overflowed carry must be emitted literally, not lost"
+        );
+        let flushed = r.flush();
+        assert!(
+            !flushed.contains('a'),
+            "carry must be cleared after overflow, got: {flushed:?}"
+        );
+    }
+
+    #[test]
+    fn test_md_inline_carry_ends_at_newline() {
+        // #661: a newline ends withholding — an unmatched marker before the
+        // newline renders literally (spans don't cross lines here).
+        let out = render_stream(&["note **bo\n", "next line\n"]);
+        assert!(
+            out.contains("**bo"),
+            "unmatched marker at end of line must render literally, got: {out:?}"
+        );
+        assert!(out.contains("next line"), "got: {out:?}");
+    }
+
+    #[test]
+    fn test_md_triple_backtick_mid_line_does_not_carry() {
+        // #661 regression: "```" mid-line must not leave a phantom open
+        // backtick in the carry — every subsequent mid-line token must still
+        // render immediately (mid-line immediacy guarantee).
+        assert_eq!(MarkdownRenderer::unmatched_marker_start("```"), None);
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("Hello ");
+        let _ = r.render_delta("```");
+        assert!(r.inline_carry.is_empty(), "``` must not start a carry");
+        let out = r.render_delta("#");
+        assert!(!out.is_empty(), "token after ``` must render immediately");
     }
 
     #[test]
