@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the three grading sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_scoreable_path" -r s… ✓ (10ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 335,420p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 455,540p src/commands_ris… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 338,356p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files\|f… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1620,1740p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2325,2470p src/commands_r… ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:338..358  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2465,2510p src/commands_r… ✓ (1ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4580,4700p src/commands_r… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 43.0s (11 ✓)
+
+Now the fixes. Site 2 (rewire to helper):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 7 lines)
+  -     // Filter to only src/ files — risk predictions focus on source code
+  +     // Filter to only scoreable files — risk predictions cover source code only.
+  +     // Shared predicate: see `is_scoreable_path` for the other two grading sites
+  +     // that must agree with this one.
+        let src_files: Vec<&String> = changed_files
+            .iter()
+  -         .filter(|f| f.starts_with("src/"))
+  +         .filter(|f| is_scoreable_path(f))
+            .collect();
+ ✓ (1m 37s)
+  -     // Filter to only src/ files — risk predictions focus on source code
+  +     // Filter to only scoreable files — risk predictions cover source code only.
+  +     // Shared predicate: see `is_scoreable_path` for the other two grading sites
+  +     // that must agree with this one.
+        let src_files: Vec<&String> = changed_files
+            .iter()
+  -         .filter(|f| f.starts_with("src/"))
+  +         .filter(|f| is_scoreable_path(f))
+            .collect();
+
+Now site 3 — add the helper and its call site in the same edit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 21 lines)
+  + /// Drop paths the risk model can never score from a classified breakage set.
+  + ///
+  + /// The CLI `yoyo risk validate` grading path (`handle_risk_validate`) feeds
+  + /// `classify_broke_files` output into `compute_validation`, whose surprise list
+  + /// becomes the graded denominator. `classify_broke_files` returns *every* file
+  + /// touched by a repair-claiming commit — including `Cargo.toml`,
+  + /// `journals/JOURNAL.md`, `dreams/experiments.jsonl` — none of which the scorer
+  + /// can ever rank, so each one was a guaranteed miss inflating the denominator.
+  + ///
+  + /// Uses the same `is_scoreable_path` predicate as the other two grading sites in
+  + /// `commands_risk_snapshots.rs`; all three must agree.
+  + fn scoreable_broke_files(
+  +     broke: std::collections::HashSet<String>,
+  + ) -> std::collections::HashSet<String> {
+  +     broke
+  +         .into_iter()
+  +         .filter(|f| crate::commands_risk_snapshots::is_scoreable_path(f))
+  +         .collect()
+  + }
+  + 
+  ... (1 more lines)
+ ✓ (19.0s)
+  + /// Drop paths the risk model can never score from a classified breakage set.
+  + ///
+  + /// The CLI `yoyo risk validate` grading path (`handle_risk_validate`) feeds
+  + /// `classify_broke_files` output into `compute_validation`, whose surprise list
+  + /// becomes the graded denominator. `classify_broke_files` returns *every* file
+  + /// touched by a repair-claiming commit — including `Cargo.toml`,
+  + /// `journals/JOURNAL.md`, `dreams/experiments.jsonl` — none of which the scorer
+  + /// can ever rank, so each one was a guaranteed miss inflating the denominator.
+  ... (13 more lines)
+
+Expected — adding the call site now:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 6 lines)
+  -     // 3. Parse commits and classify breakage
+  +     // 3. Parse commits and classify breakage. Filter the outcome set to paths
+  +     //    the scorer can actually rank — an unfiltered set counts `Cargo.toml`
+  +     //    and friends as guaranteed misses (see `scoreable_broke_files`).
+        let entries = parse_git_log_name_only(&log_output);
+        let commit_count = entries.len();
+  -     let broke_files = classify_broke_files(&entries);
+  +     let broke_files = scoreable_broke_files(classify_broke_files(&entries));
+ ✓ (1m 36s)
+  -     // 3. Parse commits and classify breakage
+  +     // 3. Parse commits and classify breakage. Filter the outcome set to paths
+  +     //    the scorer can actually rank — an unfiltered set counts `Cargo.toml`
+  +     //    and friends as guaranteed misses (see `scoreable_broke_files`).
+        let entries = parse_git_log_name_only(&log_output);
+        let commit_count = entries.len();
+  -     let broke_files = classify_broke_files(&entries);
+  +     let broke_files = scoreable_broke_files(classify_broke_files(&entries));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (55.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 -A25 … ✓ (55.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4700,4760p src/commands_r… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (6 → 76 lines)
+            assert!(
+                report.contains("33%"),
+                "report must render the real recall number:\n{report}"
+  +         );
+  +     }
+  + 
+  +     /// A repair-claiming commit that touches src/ AND several paths the risk
+  +     /// scorer can never rank. Verbatim `git log --oneline --name-only` shape.
+  +     const VERBATIM_GIT_LOG_MIXED: &str = "\
+  + 9f3ac21 Day 162: fix the validate grading path
+  + src/commands_risk.rs
+  + src/watch.rs
+  + Cargo.toml
+  + journals/JOURNAL.md
+  + dreams/experiments.jsonl
+  + ";
+  + 
+  +     /// The CLI `yoyo risk validate` grading path must not count unscoreable
+  +     /// paths in its graded outcome set.
+  +     ///
+  ... (56 more lines)
+ ✓ (1m 36s)
+            assert!(
+                report.contains("33%"),
+                "report must render the real recall number:\n{report}"
+  +         );
+  +     }
+  + 
+  +     /// A repair-claiming commit that touches src/ AND several paths the risk
+  +     /// scorer can never rank. Verbatim `git log --oneline --name-only` shape.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_cli_validate_gra… ✓ (184ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_cli_v… ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (11 lines) ✓ (20.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 6m 17s (8 ✓)
+
+The test genuinely fails without the filter. Now fix the false doc claim and the module-size ceiling:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 5 lines)
+    /// All THREE grading sites route through this predicate and must agree:
+    /// `record_green_validation_to` (green day), `auto_validate_after_failure_to`
+    /// (watch failure), and `commands_risk::scoreable_broke_files` (the CLI
+  - /// `yoyo risk validate` path). Two of them had the filter for months and the
+  - /// third — the hot one — did not.
+  + /// `yoyo risk validate` path — the hot one, which lacked the filter for months
+  + /// while the other two had it).

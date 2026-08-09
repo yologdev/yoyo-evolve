@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the emission site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "refused this request\|R… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 590,660p src/prompt.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:600..655 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=480 && NR<=600 && /fn |… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/prompt.rs; ec… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1..15 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt.rs" tests/module… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' tests/module_size… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,200p' tests/module_s… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 30 lines)
+  + /// Stable substring of the refusal notice printed when a provider refuses
+  + /// (`stop_reason: "refusal"` — HTTP 200, empty content).
+  + ///
+  + /// **This is a grep contract, not just prose (#686).** External tooling — the
+  + /// evolve harness — greps phase logs for `refused this request` to tell a
+  + /// refusal apart from a crash or an empty response. Rewording it silently
+  + /// breaks that reader, so the substring is pinned by
+  + /// `test_refusal_notice_keeps_grep_contract` at the emission layer.
+  + pub(crate) const REFUSAL_NOTICE_MARKER: &str = "refused this request";
+  + 
+  + /// Build the notice printed on `StopHandling::RefusalNotice`.
+  + ///
+  + /// Pure so the *emitted* bytes can be asserted directly rather than a flag one
+  + /// layer below them. `model` is appended when known, so a log reader can see
+  + /// *which* model refused; the `REFUSAL_NOTICE_MARKER` substring stays
+  + /// contiguous either way.
+  + pub(crate) fn refusal_notice(model: &str) -> String {
+  +     let model = model.trim();
+  +     let who = if model.is_empty() {
+  +         "the model".to_string()
+  ... (10 more lines)
+ ✓ (18.4s)
+  + /// Stable substring of the refusal notice printed when a provider refuses
+  + /// (`stop_reason: "refusal"` — HTTP 200, empty content).
+  + ///
+  + /// **This is a grep contract, not just prose (#686).** External tooling — the
+  + /// evolve harness — greps phase logs for `refused this request` to tell a
+  + /// refusal apart from a crash or an empty response. Rewording it silently
+  + /// breaks that reader, so the substring is pinned by
+  + /// `test_refusal_notice_keeps_grep_contract` at the emission layer.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 22s (10 ✓)
+
+Expected — now the consumer, in the same edit sequence.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (4 → 6 lines)
+  -                         eprintln!(
+  -                             "\n{YELLOW}  ⚠ the model refused this request (safety system). \
+  -                              Rephrase and try again — auto-retry is skipped for refusals.{RESET}"
+  -                         );
+  +                         // The notice text is built by `refusal_notice` and its
+  +                         // `refused this request` substring is a CONTRACT: the
+  +                         // evolve harness greps phase logs for it (#686). Do not
+  +                         // reword that substring — `REFUSAL_NOTICE_MARKER` and
+  +                         // `test_refusal_notice_keeps_grep_contract` pin it.
+  +                         eprintln!("{}", refusal_notice(model));
+ ✓ (1m 36s)
+  -                         eprintln!(
+  -                             "\n{YELLOW}  ⚠ the model refused this request (safety system). \
+  -                              Rephrase and try again — auto-retry is skipped for refusals.{RESET}"
+  -                         );
+  +                         // The notice text is built by `refusal_notice` and its
+  +                         // `refused this request` substring is a CONTRACT: the
+  +                         // evolve harness greps phase logs for it (#686). Do not
+  +                         // reword that substring — `REFUSAL_NOTICE_MARKER` and
+  +                         // `test_refusal_notice_keeps_grep_contract` pin it.
+  +                         eprintln!("{}", refusal_notice(model));
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests" src/prompt.… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 39 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     /// #686: the harness greps phase logs for `refused this request`. This
+  +     /// asserts the *emitted* notice text (what `eprintln!` receives at the
+  +     /// emission site), not an internal flag one layer below it — a rewording
+  +     /// must fail here, loudly, rather than silently break a log reader.
+  +     #[test]
+  +     fn test_refusal_notice_keeps_grep_contract() {
+  +         // With a known model: marker intact AND the model id is visible.
+  +         let notice = refusal_notice("claude-opus-5");
+  +         assert!(
+  +             notice.contains(REFUSAL_NOTICE_MARKER),
+  +             "refusal notice lost its grep contract substring: {notice:?}"
+  +         );
+  +         assert!(
+  +             notice.contains("claude-opus-5"),
+  +             "refusal notice should name which model refused: {notice:?}"
+  +         );
+  +         // The marker must stay contiguous — a model id spliced *into* it
+  ... (19 more lines)
+ ✓ (1m 36s)
+    mod tests {
+        use super::*;
+  + 
+  +     /// #686: the harness greps phase logs for `refused this request`. This
+  +     /// asserts the *emitted* notice text (what `eprintln!` receives at the
+  +     /// emission site), not an internal flag one layer below it — a rewording
+  +     /// must fail here, loudly, rather than silently break a log reader.
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (55.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs && sed -n '8… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 4 lines)
+  -     ("src/prompt.rs", 2362),
+  +     // Day 162 (#686): +68 lines — REFUSAL_NOTICE_MARKER + the pure
+  +     // `refusal_notice` builder that makes the harness's grep contract
+  +     // mechanical, plus the test that pins the emitted bytes.
+  +     ("src/prompt.rs", 2430),
+ ✓ (56.7s)
+  -     ("src/prompt.rs", 2362),
+  +     // Day 162 (#686): +68 lines — REFUSAL_NOTICE_MARKER + the pure
+  +     // `refusal_notice` builder that makes the harness's grep contract
+  +     // mechanical, plus the test that pins the emitted bytes.
+  +     ("src/prompt.rs", 2430),
+  6 tools completed in 5m 40s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

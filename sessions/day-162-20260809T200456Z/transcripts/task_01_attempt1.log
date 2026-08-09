@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two existing filter sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/" src/commands_risk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files\|c… ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 370,400p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files\|c… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1625,1700p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2380,2430p src/commands_r… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2290,2402p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2402,2500p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4590,4680p src/commands_r… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "VERBATIM_GIT_LOG_3" src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only -3…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn message_claims_repai… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only -4… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only -8… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only -6… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --name-only f2… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 1m 45s (16 ✓)
+
+Now the fix. First the shared predicate in commands_risk_snapshots.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 340,360p src/commands_ris… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 19 lines)
+  + /// Can the risk model score this path at all?
+  + ///
+  + /// The scorer only ever ranks `src/**/*.rs`, so a grading path that feeds
+  + /// anything else into the outcome set manufactures guaranteed misses —
+  + /// `Cargo.toml` and `journals/JOURNAL.md` can never appear on a prediction
+  + /// list, but they were counted in the denominator anyway.
+  + ///
+  + /// All THREE grading sites route through this predicate and must agree:
+  + /// `record_green_validation_to` (green day), `auto_validate_after_failure_to`
+  + /// (watch failure), and `commands_risk::scoreable_broke_files` (the CLI
+  + /// `yoyo risk validate` path). Two of them had the filter for months and the
+  + /// third — the hot one — did not.
+  + pub(crate) fn is_scoreable_path(path: &str) -> bool {
+  +     path.starts_with("src/")
+  + }
+  + 
+    /// Outcome of attempting to record a green (no-failure) validation event.
+    #[derive(Debug, PartialEq)]
+    pub(crate) enum GreenGrade {
+ ✓ (19.4s)
+  + /// Can the risk model score this path at all?
+  + ///
+  + /// The scorer only ever ranks `src/**/*.rs`, so a grading path that feeds
+  + /// anything else into the outcome set manufactures guaranteed misses —
+  + /// `Cargo.toml` and `journals/JOURNAL.md` can never appear on a prediction
+  + /// list, but they were counted in the denominator anyway.
+  + ///
+  + /// All THREE grading sites route through this predicate and must agree:
+  ... (11 more lines)
+  2 tools completed in 31.7s (2 ✓)
+
+Expected — wiring the callers now, same diff.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 5 lines)
+        // Risk predictions cover source code only — mirror the watch path's filter.
+        let src_files: Vec<&String> = changed_files
+            .iter()
+  -         .filter(|f| f.starts_with("src/"))
+  +         .filter(|f| is_scoreable_path(f))
+            .collect();
+ ✓ (1m 37s)
+        // Risk predictions cover source code only — mirror the watch path's filter.
+        let src_files: Vec<&String> = changed_files
+            .iter()
+  -         .filter(|f| f.starts_with("src/"))
+  +         .filter(|f| is_scoreable_path(f))
+            .collect();
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
