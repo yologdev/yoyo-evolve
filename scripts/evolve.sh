@@ -1342,7 +1342,10 @@ safety_commit() {
 echo "  Phase B: Implementation..."
 # 30 min per impl task + up to 10x10 min build-fix + up to 9x10 min eval-fix;
 # the session budget gates are the effective cap (job ceiling 210 min in evolve.yml)
-# 1800s (was 1200): calibrated for a thinking model. Four of four Fable
+# 1800s (was 1200): calibrated for a thinking model — applies to any model
+# that deliberates before acting (Fable 5, Opus 5, …), so it survives a MODEL
+# swap; it is a CAP, not a cost, and a faster model simply finishes early.
+# Four of four Fable
 # tasks (Days 159-160) ended "correct but step N never reached" — the model spends a large
 # share of a 20-min window deliberating, runs out of clock mid-protocol,
 # then burns 1-2h of eval-fix cycles finishing incrementally. One longer
@@ -1824,7 +1827,7 @@ BFIXEOF
 
         echo "    Evaluator: checking Task $TASK_NUM quality (attempt $EVAL_ATTEMPT)..."
         # 600s, matching the build-fix and eval-fix loops. Was 180s, which is
-        # below the floor for a model that thinks before answering: on Fable 5
+        # below the floor for any model that thinks before answering: on Fable 5
         # a single request routinely runs several minutes, so a 3-minute
         # budget produced either a fail-open timeout (no verdict — quality
         # gate silently skipped) or a rushed FAIL verdict, and repeated rushed
