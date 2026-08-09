@@ -313,6 +313,8 @@ mkdir -p "$SESSION_STAGING/transcripts"
 # canceled before its end-of-session truncate ran (#262 overlap-cancel). Pairs with the
 # end-of-session truncate to keep .yoyo/applied_pattern_keys.txt strictly intra-session.
 : > .yoyo/applied_pattern_keys.txt
+# Which phases (if any) were served by the fallback provider instead of $MODEL.
+SESSION_FALLBACK_PHASES=""
 # Track session-level outcome flags (read by Step 7c2 to populate outcome.json).
 SESSION_BUILD_OK="false"
 SESSION_TEST_OK="false"
@@ -476,6 +478,17 @@ run_agent_with_fallback() {
             $fallback_flag \
             $extra_flags \
             < "$prompt_file" 2>&1 | tee "$log_file" || exit_code=$?
+    fi
+
+    # Provider-identity tracking: yoyo switches to $FALLBACK_PROVIDER in-process
+    # on a primary API failure and prints "⚡ Primary provider ... Switching to
+    # fallback". Nothing downstream recorded that, so a session partly served by
+    # the fallback model was indistinguishable from a pure $MODEL session — in a
+    # repo whose entire product is self-measurement, that silently mis-attributes
+    # task outcomes AND evaluator verdicts. Record it; report it at wrap-up.
+    if grep -q "Switching to fallback" "$log_file" 2>/dev/null; then
+        SESSION_FALLBACK_PHASES="${SESSION_FALLBACK_PHASES:+$SESSION_FALLBACK_PHASES,}${STAGE_NAME:-unnamed}"
+        echo "  ⚡ provider fallback engaged during ${STAGE_NAME:-this phase} — outcome will record it."
     fi
 
     return "$exit_code"
@@ -1618,6 +1631,7 @@ ${FILED_SECTION}"
     # Check 2: Build + tests with fix loop (up to 2 fix attempts on failure)
     BUILD_FIX_ATTEMPT=0
     MAX_BUILD_FIX=10
+    PREEXISTING_NOTE=""   # set by the innocence check below when flakes predate the task
     while [ "$TASK_OK" = true ]; do
         BUILD_FAILED=""
         BUILD_OUT=""
@@ -1631,6 +1645,37 @@ ${FILED_SECTION}"
             BUILD_FAILED="tests"
             echo "    BLOCKED: Task $TASK_NUM broke tests"
             echo "$TEST_OUT" | tail -20 | sed 's/^/      /'
+            # Innocence check (first attempt only): Step 1 may have SKIPPED the
+            # suite via the CI-trust fast path, so this can be the run's first
+            # execution of these tests — a pre-existing flake would be blamed on
+            # the task, ground through the fix loop, and possibly reverted with a
+            # receipt naming the wrong cause (which then mis-steers the planner).
+            # Re-run the named failures at PRE_TASK_SHA in a throwaway worktree:
+            # if they fail there too, they are not this task's doing.
+            if [ "$BUILD_FIX_ATTEMPT" -eq 0 ] && [ "$CI_GREEN" = "yes" ]; then
+                FAILED_TESTS=$(echo "$TEST_OUT" | grep -oE '^test [a-zA-Z0-9_:]+ \.\.\. FAILED' \
+                    | awk '{print $2}' | head -5 || true)
+                if [ -n "$FAILED_TESTS" ]; then
+                    INNOCENCE_WT=$(mktemp -d)
+                    if git worktree add --quiet --detach "$INNOCENCE_WT" "$PRE_TASK_SHA" 2>/dev/null; then
+                        PREEXISTING=""
+                        for t in $FAILED_TESTS; do
+                            if ! (cd "$INNOCENCE_WT" && cargo test --quiet "$t" >/dev/null 2>&1); then
+                                PREEXISTING="${PREEXISTING:+$PREEXISTING }$t"
+                            fi
+                        done
+                        git worktree remove --force "$INNOCENCE_WT" 2>/dev/null || true
+                        if [ -n "$PREEXISTING" ]; then
+                            echo "    NOTE: these tests ALSO fail at $PRE_TASK_SHA (pre-existing, not this task): $PREEXISTING"
+                            echo "    The fix agent is told so; do not rewrite working code to chase them."
+                            PREEXISTING_NOTE="PRE-EXISTING (verified failing at ${PRE_TASK_SHA} too, before your changes): $PREEXISTING
+Do NOT contort your implementation to satisfy these — fix only failures your diff caused. If ALL failures above are pre-existing, say so and stop."
+                        fi
+                    else
+                        rmdir "$INNOCENCE_WT" 2>/dev/null || true
+                    fi
+                fi
+            fi
         elif ! CLIPPY_OUT=$(cargo clippy --all-targets -- -D warnings 2>&1); then
             # CI treats clippy warnings as errors; gate here too so a
             # clippy-only failure can't reach main (#591, Day 133 incident).
@@ -1693,6 +1738,10 @@ $FILED_SECTION
 }
 === ERRORS ===
 $BFIX_ERRORS
+${PREEXISTING_NOTE:+
+=== INNOCENCE CHECK ===
+$PREEXISTING_NOTE
+}
 
 === WHAT TO DO ===
 Fix the $BUILD_FAILED errors. Do not start over — fix the specific errors shown above.
@@ -1758,6 +1807,8 @@ BFIXEOF
     MAX_EVAL_ATTEMPTS=10
     EVAL_LOG=""
     BUDGET_UNVERIFIED=""  # set by the budget gates below; changes the accept wording only
+    UNVERIFIED_REASON=""
+    UNVERIFIED_FEEDBACK=""
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
 
@@ -1862,6 +1913,13 @@ EVALEOF
             if [ "$(session_secs_left)" -lt 1650 ]; then
                 echo "    Budget: $(session_secs_left)s left — no time for an eval-fix attempt (600s fix + ~750s verify); keeping last green state despite the FAIL above."
                 BUDGET_UNVERIFIED=eval_failed
+                # Keep the objection: session_plan/ is deleted at wrap-up, so
+                # without this the standing FAIL exists nowhere the next planner
+                # looks — and the gate ships exactly the tasks the evaluator kept
+                # rejecting (adverse selection), so losing the reason is worst
+                # precisely where it matters most.
+                UNVERIFIED_REASON="$EVAL_REASON"
+                UNVERIFIED_FEEDBACK=$(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo "$EVAL_REASON")
                 break
             fi
 
@@ -2071,6 +2129,26 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
             # Saying "skipped" here was the review's finding #4 — a softer
             # rerun of the Day-160 "verified OK after three FAILs" mislabel.
             echo "    Task $TASK_NUM: accepted UNVERIFIED (budget exhausted; build+test passed, evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved)"
+            # Carry the unresolved objection out of the session (see above).
+            if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
+                refresh_gh_token
+                UNVERIFIED_BODY="**Day $DAY, Task $TASK_NUM** shipped with the evaluator's objections UNRESOLVED — the session budget ended the fix loop, and the harness accepted the task on its green build+test (fail-open by design).
+
+**Task:** $task_title
+
+**Evaluator's last verdict (FAIL, attempt ${EVAL_ATTEMPT}):**
+${UNVERIFIED_FEEDBACK:-${UNVERIFIED_REASON:-no reason captured}}
+
+**Committed anyway:** \\`git diff ${PRE_TASK_SHA}..HEAD\\`
+
+**For the next session:** decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly."
+                if ! UNVERIFIED_ERR=$(gh issue create --repo "$REPO" \
+                    --title "Accepted UNVERIFIED: ${task_title:0:180}" \
+                    --body "$UNVERIFIED_BODY" \
+                    --label "agent-revert" 2>&1 >/dev/null); then
+                    echo "    WARNING: could not file unverified-accept note: $(echo "$UNVERIFIED_ERR" | head -1)"
+                fi
+            fi
         elif [ -n "$BUDGET_UNVERIFIED" ]; then
             echo "    Task $TASK_NUM: accepted UNVERIFIED (budget exhausted; build+test passed, evaluator skipped)"
         else
@@ -2111,6 +2189,10 @@ echo "  Phase C: Issue responses will be handled by agent in Step 7."
 rm -rf session_plan/
 
 echo ""
+if [ -n "${SESSION_FALLBACK_PHASES:-}" ]; then
+    echo "  ⚡ NOTE: phases served by fallback provider '${FALLBACK_PROVIDER:-unknown}', not '${MODEL}': ${SESSION_FALLBACK_PHASES}"
+    echo "     Task outcomes and evaluator verdicts from those phases are NOT ${MODEL} results."
+fi
 echo "→ Session complete. Checking results..."
 
 # ── Step 6: Verify build ──
@@ -2621,6 +2703,8 @@ if [ -d "$SESSION_STAGING" ]; then
         YOYO_OUT_TASKS_ATTEMPTED="${SESSION_TASKS_ATTEMPTED:-0}" \
         YOYO_OUT_TASKS_SUCCEEDED="${SESSION_TASKS_SUCCEEDED:-0}" \
         YOYO_OUT_REVERTED="${SESSION_REVERTED:-false}" \
+        YOYO_OUT_MODEL="${MODEL:-}" \
+        YOYO_OUT_FALLBACK_PHASES="${SESSION_FALLBACK_PHASES:-}" \
         YOYO_OUT_APPLIED_FILE=".yoyo/applied_pattern_keys.txt" \
         YOYO_OUT_PATH="$SESSION_STAGING/outcome.json" \
         python3 - <<'PYEOF'
@@ -2635,6 +2719,13 @@ out = {
     "tasks_attempted": int(os.environ.get("YOYO_OUT_TASKS_ATTEMPTED", "0") or 0),
     "tasks_succeeded": int(os.environ.get("YOYO_OUT_TASKS_SUCCEEDED", "0") or 0),
     "reverted": os.environ.get("YOYO_OUT_REVERTED", "false") == "true",
+    # Provider identity: which model was ASKED for, and which phases were
+    # actually served by the fallback instead. Without these, trajectory and
+    # skill-evolve read every outcome as if $MODEL produced it.
+    "model": os.environ.get("YOYO_OUT_MODEL", ""),
+    "fallback_phases": [
+        p for p in os.environ.get("YOYO_OUT_FALLBACK_PHASES", "").split(",") if p
+    ],
 }
 # Issue #501: the "applied, not just recalled" signal. The reflection step writes
 # pattern_keys it genuinely acted on to this file; default to [] when absent.
