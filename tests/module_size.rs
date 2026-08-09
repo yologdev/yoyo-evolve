@@ -38,7 +38,8 @@ const MAX_MODULE_LINES: usize = 2_000;
 /// edited on purpose.
 const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/agent_builder.rs", 2643),
-    ("src/cli.rs", 3717),
+    // Day 162 (#677): +30 lines — resilient skill loading at all 3 sites + regression test.
+    ("src/cli.rs", 3747),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.

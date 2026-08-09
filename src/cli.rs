@@ -135,41 +135,36 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     if let Ok(home) = std::env::var("HOME") {
         let global_dir = std::path::PathBuf::from(home).join(".yoyo/skills");
         if global_dir.is_dir() {
-            match SkillSet::load_dir(&global_dir, "global") {
-                Ok(set) => {
-                    if !set.is_empty() {
-                        sources.push("~/.yoyo/skills/".to_string());
-                    }
-                    count += set.len();
-                    auto_skills.merge(set);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "{YELLOW}warning:{RESET} Failed to load global skills from {}: {e}",
-                        global_dir.display()
-                    );
-                }
+            // Resilient: one malformed SKILL.md is skipped with a warning naming
+            // that skill, instead of dropping every skill in the directory (#677).
+            let (set, errors) = SkillSet::load_dir_resilient(&global_dir, "global");
+            for e in &errors {
+                eprintln!(
+                    "{YELLOW}warning:{RESET} skipping malformed skill in {}: {e}",
+                    global_dir.display()
+                );
             }
+            if !set.is_empty() {
+                sources.push("~/.yoyo/skills/".to_string());
+            }
+            count += set.len();
+            auto_skills.merge(set);
         }
     }
 
     // 2. Project-local: .yoyo/skills/
     let project_dir = std::path::PathBuf::from(".yoyo/skills");
     if project_dir.is_dir() {
-        match SkillSet::load_dir(&project_dir, "project") {
-            Ok(set) => {
-                if !set.is_empty() {
-                    sources.push(".yoyo/skills/".to_string());
-                }
-                count += set.len();
-                auto_skills.merge(set);
-            }
-            Err(e) => {
-                eprintln!(
-                    "{YELLOW}warning:{RESET} Failed to load project skills from .yoyo/skills/: {e}"
-                );
-            }
+        // Resilient: skip the bad file, keep the good ones (#677).
+        let (set, errors) = SkillSet::load_dir_resilient(&project_dir, "project");
+        for e in &errors {
+            eprintln!("{YELLOW}warning:{RESET} skipping malformed skill in .yoyo/skills/: {e}");
         }
+        if !set.is_empty() {
+            sources.push(".yoyo/skills/".to_string());
+        }
+        count += set.len();
+        auto_skills.merge(set);
     }
 
     // Merge auto-discovered into flag skills. Flag skills take precedence because
@@ -1023,13 +1018,13 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     let mut skills = if skill_dirs.is_empty() {
         SkillSet::empty()
     } else {
-        match SkillSet::load(&skill_dirs) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{YELLOW}warning:{RESET} Failed to load skills: {e}");
-                SkillSet::empty()
-            }
+        // Resilient: a malformed SKILL.md in one of the --skills dirs is skipped
+        // with a warning; every other skill across every listed dir still loads (#677).
+        let (set, errors) = SkillSet::load_resilient(&skill_dirs);
+        for e in &errors {
+            eprintln!("{YELLOW}warning:{RESET} skipping malformed skill: {e}");
         }
+        set
     };
 
     // Auto-discover skills from ~/.yoyo/skills/ (user-global) and .yoyo/skills/ (project-local).
@@ -3635,6 +3630,41 @@ command = "server-two"
         flag_skills.merge(project_set);
         assert_eq!(flag_skills.len(), 1);
         assert_eq!(flag_skills.skills()[0].name, "greet");
+    }
+
+    #[test]
+    fn test_malformed_skill_does_not_wipe_out_directory() {
+        // #677: one typo'd SKILL.md used to drop EVERY skill in the directory.
+        // The resilient loader keeps the good ones and reports the bad one.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let good = tmp.path().join("skills/greet");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(
+            good.join("SKILL.md"),
+            "---\nname: greet\ndescription: Say hello\n---\n\n# Greet",
+        )
+        .unwrap();
+        let bad = tmp.path().join("skills/broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("SKILL.md"), "no frontmatter here at all\n").unwrap();
+
+        let (set, errors) = SkillSet::load_dir_resilient(tmp.path().join("skills"), "project");
+        assert_eq!(
+            set.len(),
+            1,
+            "the valid skill must survive its bad neighbour"
+        );
+        assert_eq!(set.skills()[0].name, "greet");
+        assert!(!errors.is_empty(), "the malformed skill must be reported");
+        // The call sites interpolate `{e}` straight into the warning, so this pins
+        // that the user-visible text names the individual bad skill. What stays
+        // unpinned here: that stderr actually carries the line (the eprintln! in
+        // auto_discover_skills / parse_args needs HOME + cwd control to observe).
+        assert!(
+            errors[0].to_string().contains("broken"),
+            "error should name the offending skill, got: {}",
+            errors[0]
+        );
     }
 
     #[test]
