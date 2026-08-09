@@ -1629,11 +1629,23 @@ fn message_claims_repair(message: &str) -> bool {
 /// tokens. The earlier substring version (fixed Day 147) counted "prefix",
 /// "suffix" and "fixture" commits as breakage, inflating this set with files
 /// that never broke.
+///
+/// Only `src/` paths are returned (#708): the risk model scores nothing else,
+/// so a `tests/` or `Cargo.toml` path in an outcome set is a guaranteed miss
+/// that drags recall down with noise.
 fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
     let mut broke = std::collections::HashSet::new();
     for entry in entries {
         if message_claims_repair(&entry.message) {
             for f in &entry.files {
+                // Risk predictions cover source code only — a non-src path is a
+                // guaranteed miss no model could have predicted. Same filter as
+                // the two grading paths in commands_risk_snapshots.rs (kept
+                // inline there and here on purpose: extracting a shared
+                // predicate is new machinery this fix does not need).
+                if !f.starts_with("src/") {
+                    continue;
+                }
                 broke.insert(f.clone());
             }
         }
@@ -3190,6 +3202,27 @@ src/plain rs file.rs
     }
 
     #[test]
+    fn test_classify_broke_files_filters_non_src_paths() {
+        // #708: the risk model scores only `src/**`, so a tests/ or Cargo.toml
+        // path in the broken set is a guaranteed miss that drags recall down.
+        let entries = vec![CommitEntry {
+            message: "abc1234 fix: the module-size gate".to_string(),
+            files: vec![
+                "src/foo.rs".to_string(),
+                "tests/module_size.rs".to_string(),
+                "Cargo.toml".to_string(),
+            ],
+        }];
+        let broke = classify_broke_files(&entries);
+        assert_eq!(
+            broke.len(),
+            1,
+            "only src/ paths should be graded: {broke:?}"
+        );
+        assert!(broke.contains("src/foo.rs"));
+    }
+
+    #[test]
     fn test_classify_broke_files_empty() {
         let entries: Vec<CommitEntry> = Vec::new();
         let broke = classify_broke_files(&entries);
@@ -4618,15 +4651,19 @@ c618ce4c Day 146: bump skill-evolve counter (4)
             "the repair-claiming commit must yield a non-empty broken set"
         );
         assert!(broke.contains("src/commands_risk.rs"));
-        assert!(broke.contains("CLAUDE.md"));
-        assert!(broke.contains(".yoyo/risk_weights.json"));
+        // #708: the same repairing commit touched CLAUDE.md and
+        // .yoyo/risk_weights.json, but the risk model scores only `src/**`, so
+        // grading them was a guaranteed miss. The fixture stays verbatim; the
+        // expectation moved.
+        assert!(!broke.contains("CLAUDE.md"));
+        assert!(!broke.contains(".yoyo/risk_weights.json"));
         // Files from the NON-repair commits must not be swept in.
         assert!(
             !broke.contains(".skill_evolve_counter"),
             "only the repairing commit's files count as breakage"
         );
 
-        // --- 3. Validation with one hit and one surprise -------------------
+        // --- 3. Validation with one hit and one clean prediction -----------
         let predicted: Vec<String> = vec![
             "src/commands_risk.rs".to_string(), // hit
             "src/watch.rs".to_string(),         // clean
@@ -4634,10 +4671,11 @@ c618ce4c Day 146: bump skill-evolve counter (4)
         let result = compute_validation(&predicted, &broke, None, entries.len());
         assert_eq!(result.hits, vec!["src/commands_risk.rs".to_string()]);
         assert_eq!(result.clean, vec!["src/watch.rs".to_string()]);
-        assert_eq!(
-            result.surprises.len(),
-            2,
-            "CLAUDE.md and .yoyo/risk_weights.json broke but weren't predicted"
+        assert!(
+            result.surprises.is_empty(),
+            "the only src/ file that broke was predicted; the two non-src \
+             paths are outside the model's universe, got {:?}",
+            result.surprises
         );
         assert_eq!(result.commit_count, 3);
 
@@ -4667,7 +4705,9 @@ c618ce4c Day 146: bump skill-evolve counter (4)
         assert_eq!(events.len(), 1, "one graded event must round-trip");
         let ev = &events[0];
         assert_eq!(ev.hit_count, 1);
-        assert_eq!(ev.total_changed, 3);
+        // #708: 1 graded file, not 3 — the two non-src paths never enter the
+        // denominator, so recall stops being dragged by guaranteed misses.
+        assert_eq!(ev.total_changed, 1);
         assert!(
             !crate::commands_risk_accuracy::is_green_event(ev),
             "an untagged (severity: None) event is a FAILURE-day event — if this \
@@ -4685,8 +4725,8 @@ c618ce4c Day 146: bump skill-evolve counter (4)
         );
         let recall = stats.failure_hit_rate_pct.unwrap();
         assert!(
-            (recall - 100.0 / 3.0).abs() < 0.01,
-            "recall should be 1 hit / 3 broken files, got {recall}"
+            (recall - 100.0).abs() < 0.01,
+            "recall should be 1 hit / 1 graded (src/) broken file, got {recall}"
         );
         assert_eq!(stats.green_samples, 0);
 
@@ -4707,7 +4747,7 @@ c618ce4c Day 146: bump skill-evolve counter (4)
             "report must render a recall line:\n{report}"
         );
         assert!(
-            report.contains("33%"),
+            report.contains("100"),
             "report must render the real recall number:\n{report}"
         );
     }

@@ -60,7 +60,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
     ("src/commands_project.rs", 3252),
-    ("src/commands_risk.rs", 4714),
+    // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
+    // (the risk model's whole universe), plus its unit test and the updated
+    // end-to-end fixture assertions.
+    ("src/commands_risk.rs", 4754),
     ("src/commands_search.rs", 3534),
     ("src/commands_spawn.rs", 3814),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
