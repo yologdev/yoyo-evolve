@@ -431,8 +431,13 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
                         .unwrap_or_else(|| raw_path.to_string());
                     output.push_str(&filename);
                 }
-                Err(_) => {
-                    // Read failed — leave unchanged
+                Err(e) => {
+                    // Read failed — leave unchanged, but if the file exists
+                    // the user meant it as a file: warn instead of silently
+                    // absorbing the failure (#704).
+                    if path.exists() {
+                        eprintln!("{}", mention_read_warning(raw_path, &e));
+                    }
                     output.push('@');
                     output.push_str(mention);
                 }
@@ -466,8 +471,13 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
                         output.push_str(&filename);
                     }
                 }
-                Err(_) => {
-                    // Read failed — leave unchanged
+                Err(e) => {
+                    // Read failed — leave unchanged, but if the file exists
+                    // the user meant it as a file: warn instead of silently
+                    // absorbing the failure (#704).
+                    if path.exists() {
+                        eprintln!("{}", mention_read_warning(raw_path, &e));
+                    }
                     output.push('@');
                     output.push_str(mention);
                 }
@@ -478,6 +488,14 @@ pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
     }
 
     (output, results)
+}
+
+/// Build the user-visible warning for an @mention that resolved to an existing
+/// file but could not be read. Matches /add's `✗`-style error surface (#704) —
+/// without this, only the literal `@path` string reaches the model while the
+/// user believes the file content did.
+fn mention_read_warning(raw_path: &str, err: &str) -> String {
+    format!("{RED}  ✗ could not read @{raw_path}: {err}{RESET}")
 }
 
 /// Helper: get the byte offset corresponding to a char index.
@@ -1665,6 +1683,53 @@ error[E0308]: second
         let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE");
         assert_eq!(results.len(), 2);
         assert_eq!(text, "compare Cargo.toml and LICENSE");
+    }
+
+    #[test]
+    fn mention_read_warning_names_path_and_error() {
+        // Emission-point discipline: this string is exactly what the user
+        // sees on stderr when an existing @mention can't be read.
+        let warning = mention_read_warning("secrets/locked.txt", "permission denied");
+        assert!(warning.contains("✗"));
+        assert!(warning.contains("could not read @secrets/locked.txt"));
+        assert!(warning.contains("permission denied"));
+    }
+
+    #[test]
+    fn expand_file_mentions_nonexistent_mention_is_freeform_text() {
+        // Free-form mentions like @yuanhao must pass through untouched —
+        // no results, no warning path taken (path doesn't exist).
+        let (text, results) = expand_file_mentions("thanks @yuanhao for the review");
+        assert!(results.is_empty());
+        assert_eq!(text, "thanks @yuanhao for the review");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expand_file_mentions_unreadable_file_warns_and_leaves_text_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("locked.txt");
+        std::fs::write(&file_path, "secret contents").unwrap();
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Environment gate: as root (some CI containers), mode 0o000 files
+        // are still readable and the failure can't be produced — skip.
+        if std::fs::read(&file_path).is_ok() {
+            eprintln!("skipping: environment can read mode-0o000 files (running as root?)");
+            return;
+        }
+
+        let path_str = file_path.to_string_lossy();
+        let input = format!("explain @{path_str}");
+        let (text, results) = expand_file_mentions(&input);
+
+        // The mention text must stay unchanged (only the silence was the bug).
+        assert_eq!(text, input);
+        assert!(results.is_empty());
+
+        // Restore permissions so TempDir cleanup can remove the file.
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]

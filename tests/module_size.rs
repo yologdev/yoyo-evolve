@@ -52,7 +52,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // paths alongside its results (so /add related-file suggestions derive from
     // actual adds, not an input re-parse), plus the regression test pinning that
     // failed adds and URL args never leak into that list.
-    ("src/commands_file.rs", 2742),
+    // Day 162 (#704): +65 lines — @mention read failures on EXISTING files now
+    // warn on stderr (mention_read_warning helper, both Err arms) instead of
+    // silently re-emitting the raw @path; plus tests pinning the warning string,
+    // free-form-mention silence, and the unreadable-file behavior.
+    ("src/commands_file.rs", 2807),
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
     ("src/commands_project.rs", 3252),
