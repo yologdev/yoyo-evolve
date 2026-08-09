@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git diff --stat  ▶ search 'run_prompt_with_changes' in src ✓ (10ms)
+ ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+The function exists and is public — main.rs just lacks the import. Let me check the diff and imports:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/main.rs && grep -n … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 470,520p src/main.rs && g… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 114,117p src/main.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt(" src/main.r… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.6s (4 ✓)
+
+run_prompt is still used elsewhere, so I'll just add the missing import:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (4 → 4 lines)
+    use prompt::{
+        run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
+  -     run_prompt_with_content, PromptOutcome,
+  +     run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+    };
+ ✓ (1m 38s)
+    use prompt::{
+        run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
+  -     run_prompt_with_content, PromptOutcome,
+  +     run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+    };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch src/main.rs && cargo build… ✓ (1m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (55.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 8m 28s (7 ✓)
+
+Fixed. The build error was exactly what the compiler said: run_prompt_with_changes exists in src/prompt.rs (public, already used by dispatch.rs) but the implementation edit in src/main.rs called it without adding it to the use prompt::{...} import list.
+
+The fix — one line in src/main.rs:
+
+```rust
+use prompt::{
+    run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
+    run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+};
+```
+
+No new machinery, per the task's zero-additions rule — the piped-path rewiring itself (passing the existing session_changes tracker into run_prompt_with_changes so run_watch_after_prompt sees real change data) was already in place and untouched. I confirmed run_prompt is still used elsewhere (line 353) so keeping it in the import doesn't trip -D unused-imports.
+
+Verification, all green:
+• cargo build — ok
+• cargo test — 4 test binaries, all pass (4672 + 11 + 12 + others, 0 failed)
+• `cargo clippy --all-targets -- -D warnings` — exit 0
+• cargo fmt -- --check — clean
+
+Total diff remains 2 files nowhere near — just src/main.rs (9 insertions, 2 deletions), within the task's 2-file guardrail.
+
+  watch: no files changed this turn — skipping
+

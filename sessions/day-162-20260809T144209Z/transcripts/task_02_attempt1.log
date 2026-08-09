@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_todo.rs ✓ (3ms)
+  ▶ read src/commands_todo.rs:100..400 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ search 'fn (set_plain_output|is_plain_output)' in src/format/tools.rs  ▶ read src/commands_todo.rs:500..700 ✓ (1ms)
+ ✓ (3ms)
+  ▶ search 'plain_output' in src/format ✓ (3ms)
+  ▶ $ grep -n "plain_output" src/format/tools.rs | head -20; echo ---; grep -n "pub us… ✓ (7ms)
+  ▶ $ grep -n "TodoStatus\|item.status\|format_todo_list\|status_marker" src/tools.rs … ✓ (13ms)
+  ▶ read src/tools.rs:660..740 ✓ (1ms)
+  ▶ edit src/commands_todo.rs (3 → 60 lines)
+  +     #[test]
+  +     #[serial]
+  +     fn test_todo_plain_output_uses_ascii_markers() {
+  +         // is_plain_output is process-global; restore it before leaving.
+  +         set_plain_output(true);
+  +         todo_clear();
+  +         let id = todo_add("plain task");
+  + 
+  +         let done_msg = handle_todo(&format!("/todo done {id}"));
+  +         assert!(
+  +             !done_msg.contains('✓'),
+  +             "done message should be glyph-free in plain mode: {done_msg}"
+  +         );
+  +         let list = handle_todo("/todo");
+  +         assert!(
+  +             list.contains("[x]"),
+  +             "done marker should be [x] in plain mode: {list}"
+  +         );
+  +         assert!(!list.contains('✓'), "list should be glyph-free: {list}");
+  + 
+  ... (40 more lines)
+ ✓ (1m 31s)
+  +     #[test]
+  +     #[serial]
+  +     fn test_todo_plain_output_uses_ascii_markers() {
+  +         // is_plain_output is process-global; restore it before leaving.
+  +         set_plain_output(true);
+  +         todo_clear();
+  +         let id = todo_add("plain task");
+  + 
+  ... (13 more lines)
+  ▶ $ cargo test --quiet test_todo_plain 2>&1 | tail -20 ✓ (167ms)
+  ▶ edit src/commands_todo.rs (9 → 27 lines)
+            match self {
+                TodoStatus::Pending => write!(f, "[ ]"),
+                TodoStatus::InProgress => write!(f, "[~]"),
+  -             TodoStatus::Done => write!(f, "[✓]"),
+  +             // Under --screen-reader, use the same ASCII vocabulary as
+  +             // render_board's done column ([x]) instead of a glyph.
+  +             TodoStatus::Done => {
+  +                 if is_plain_output() {
+  +                     write!(f, "[x]")
+  +                 } else {
+  +                     write!(f, "[✓]")
+  +                 }
+  +             }
+            }
+  +     }
+  + }
+  + 
+  + /// Success-line marker for /todo messages: "✓" normally, "ok" under
+  + /// --screen-reader (`is_plain_output`), where decorative glyphs are noise.
+  + fn success_marker() -> &'static str {
+  ... (6 more lines)
+ ✓ (19.0s)
+            match self {
+                TodoStatus::Pending => write!(f, "[ ]"),
+                TodoStatus::InProgress => write!(f, "[~]"),
+  -             TodoStatus::Done => write!(f, "[✓]"),
+  +             // Under --screen-reader, use the same ASCII vocabulary as
+  +             // render_board's done column ([x]) instead of a glyph.
+  +             TodoStatus::Done => {
+  +                 if is_plain_output() {
+  ... (13 more lines)
+  ▶ edit src/commands_todo.rs (4 → 4 lines)
+        if arg == "clear" {
+            todo_clear();
+  -         return format!("{GREEN}  ✓ Cleared all tasks{RESET}");
+  +         return format!("{GREEN}  {} Cleared all tasks{RESET}", success_marker());
+        }
+ ✓ (1m 34s)
+        if arg == "clear" {
+            todo_clear();
+  -         return format!("{GREEN}  ✓ Cleared all tasks{RESET}");
+  +         return format!("{GREEN}  {} Cleared all tasks{RESET}", success_marker());
+        }
+  ▶ edit src/commands_todo.rs (2 → 2 lines)
+            let id = todo_add(desc);
+  -         return format!("{GREEN}  ✓ Added task #{id}: {desc}{RESET}");
+  +         return format!("{GREEN}  {} Added task #{id}: {desc}{RESET}", success_marker());
+ ✓ (1m 34s)
+            let id = todo_add(desc);
+  -         return format!("{GREEN}  ✓ Added task #{id}: {desc}{RESET}");
+  +         return format!("{GREEN}  {} Added task #{id}: {desc}{RESET}", success_marker());
+  ▶ edit src/commands_todo.rs (12 → 19 lines)
+  -                 Ok(()) => return format!("{GREEN}  ✓ Marked #{id} as done{RESET}"),
+  +                 Ok(()) => {
+  +                     return format!("{GREEN}  {} Marked #{id} as done{RESET}", success_marker())
+  +                 }
+                    Err(e) => return format!("{RED}  {e}{RESET}"),
+                },
+                Err(_) => return format!("{RED}  Invalid ID: {id_str}{RESET}"),
+  ···
+            let id_str = id_str.trim();
+            match id_str.parse::<usize>() {
+                Ok(id) => match todo_update(id, TodoStatus::InProgress) {
+  -                 Ok(()) => return format!("{GREEN}  ✓ Marked #{id} as in-progress{RESET}"),
+  +                 Ok(()) => {
+  +                     return format!(
+  +                         "{GREEN}  {} Marked #{id} as in-progress{RESET}",
+  +                         success_marker()
+  +                     )
+  +                 }
+ ✓ (1m 33s)
+  -                 Ok(()) => return format!("{GREEN}  ✓ Marked #{id} as done{RESET}"),
+  +                 Ok(()) => {
+  +                     return format!("{GREEN}  {} Marked #{id} as done{RESET}", success_marker())
+  +                 }
+                    Err(e) => return format!("{RED}  {e}{RESET}"),
+                },
+                Err(_) => return format!("{RED}  Invalid ID: {id_str}{RESET}"),
+  ···
+  ... (10 more lines)
+  ▶ edit src/commands_todo.rs (3 → 7 lines)
+                    Ok(item) => {
+  -                     return format!("{GREEN}  ✓ Removed #{id}: {}{RESET}", item.description)
+  +                     return format!(
+  +                         "{GREEN}  {} Removed #{id}: {}{RESET}",
+  +                         success_marker(),
+  +                         item.description
+  +                     )
+                    }
+ ✓ (1m 38s)
+                    Ok(item) => {
+  -                     return format!("{GREEN}  ✓ Removed #{id}: {}{RESET}", item.description)
+  +                     return format!(
+  +                         "{GREEN}  {} Removed #{id}: {}{RESET}",
+  +                         success_marker(),
+  +                         item.description
+  +                     )
+                    }
+  15 tools completed in 9m 34s (15 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_todo.rs
+
