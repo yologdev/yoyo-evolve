@@ -1012,7 +1012,12 @@ pub(crate) enum ReadGuardKind {
 /// plan. When neither mode is on (the default), the wrapper is a transparent
 /// pass-through.
 pub(crate) struct ReadModeGuardTool {
-    inner: Box<dyn AgentTool>,
+    /// `Arc` rather than `Box` so the same guard type serves both the main
+    /// agent's `Box<dyn AgentTool>` tool list and the sub-agent tool list in
+    /// `tools.rs`, which is `Arc`-shaped. One type, two entry points — a
+    /// second copy of the classifier would be the duplication shape that
+    /// survives longest.
+    inner: Arc<dyn AgentTool>,
     kind: ReadGuardKind,
 }
 
@@ -1122,6 +1127,16 @@ impl AgentTool for ReadModeGuardTool {
 /// `/plan` is on and `/plan apply` is not executing.
 pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     Box::new(ReadModeGuardTool {
+        inner: Arc::from(tool),
+        kind: ReadGuardKind::Write,
+    })
+}
+
+/// `Arc` flavour of [`with_read_guard`], for the sub-agent tool list in
+/// `tools.rs` (which is `Arc<dyn AgentTool>`-shaped). Same type, same
+/// call-time mode check, same refusal text — only the smart pointer differs.
+pub(crate) fn with_read_guard_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn AgentTool> {
+    Arc::new(ReadModeGuardTool {
         inner: tool,
         kind: ReadGuardKind::Write,
     })
@@ -1133,6 +1148,15 @@ pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
 /// read-only commands pass through.
 pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
     Box::new(ReadModeGuardTool {
+        inner: Arc::from(tool),
+        kind: ReadGuardKind::Bash,
+    })
+}
+
+/// `Arc` flavour of [`with_read_guard_bash`], for the sub-agent tool list in
+/// `tools.rs`. Same classifier, same pass-through for read-only commands.
+pub(crate) fn with_read_guard_bash_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn AgentTool> {
+    Arc::new(ReadModeGuardTool {
         inner: tool,
         kind: ReadGuardKind::Bash,
     })
@@ -3743,6 +3767,128 @@ mod tests {
         assert!(
             result.is_ok(),
             "read-only `git status` must be allowed under plan mode"
+        );
+    }
+
+    // === Arc-flavour mode-guard tests (#709) ===
+    //
+    // The sub-agent tool list in `tools.rs` is `Arc<dyn AgentTool>`-shaped, so
+    // the Box-only constructors could not reach it and children ignored the
+    // mode the parent was in. These pin that the Arc entry points drive the
+    // SAME guard: refuse under either mode, pass through when neither is on.
+    // Mode state is process-global, hence `#[serial]` + Drop resets.
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_arc_blocks_write_tools_under_read_mode() {
+        let _reset = ReadModeReset;
+        crate::commands_config::set_read_mode(true);
+
+        for name in ["write_file", "edit_file", "rename_symbol"] {
+            let tool = with_read_guard_arc(Arc::new(MockTool {
+                tool_name: name,
+                result_text: "wrote".to_string(),
+            }));
+            let err = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .expect_err(&format!("{name} must be refused under read mode via Arc"));
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("read mode is active"),
+                "Arc refusal for {name} should name read mode, got: {msg}"
+            );
+            // The deterministic-refusal stem is what stops prompt_retry from
+            // burning attempts on an answer that will never change.
+            assert!(
+                msg.contains(REFUSAL_STEM_MODE_ACTIVE),
+                "Arc refusal for {name} must carry the mode-active refusal stem, got: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_arc_blocks_under_plan_mode_and_bash_too() {
+        let _reset = PlanModeReset;
+        crate::commands_plan::set_plan_mode(true);
+        crate::commands_plan::set_plan_apply_active(false);
+
+        let tool = with_read_guard_arc(Arc::new(MockTool {
+            tool_name: "write_file",
+            result_text: "wrote".to_string(),
+        }));
+        let err = tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .expect_err("write_file must be refused under plan mode via Arc");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("plan mode is active") && msg.contains(REFUSAL_STEM_MODE_ACTIVE),
+            "Arc refusal should name plan mode and carry the stem, got: {msg}"
+        );
+
+        let bash = with_read_guard_bash_arc(Arc::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+        let err = bash
+            .execute(
+                serde_json::json!({"command": "touch build.log"}),
+                test_tool_context(),
+            )
+            .await
+            .expect_err("write-class bash must be refused under plan mode via Arc");
+        assert!(
+            format!("{err:?}").contains("plan mode is active"),
+            "Arc bash refusal should name plan mode, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_guard_arc_passthrough_when_no_mode_active() {
+        let _read_reset = ReadModeReset;
+        let _plan_reset = PlanModeReset;
+        crate::commands_config::set_read_mode(false);
+        crate::commands_plan::set_plan_mode(false);
+        crate::commands_plan::set_plan_apply_active(false);
+
+        // Write-class tool: the inner tool's real result comes back untouched.
+        let tool = with_read_guard_arc(Arc::new(MockTool {
+            tool_name: "write_file",
+            result_text: "wrote 3 lines".to_string(),
+        }));
+        let result = tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .expect("must pass through when neither mode is on (product default)");
+        assert_eq!(
+            result.content,
+            vec![yoagent::Content::Text {
+                text: "wrote 3 lines".to_string()
+            }],
+            "Arc guard must be byte-identical pass-through with no mode active"
+        );
+
+        // Bash, including a command the guard would refuse under a mode.
+        let bash = with_read_guard_bash_arc(Arc::new(MockTool {
+            tool_name: "bash",
+            result_text: "ran".to_string(),
+        }));
+        let result = bash
+            .execute(
+                serde_json::json!({"command": "touch build.log"}),
+                test_tool_context(),
+            )
+            .await
+            .expect("bash must pass through when neither mode is on");
+        assert_eq!(
+            result.content,
+            vec![yoagent::Content::Text {
+                text: "ran".to_string()
+            }],
+            "Arc bash guard must be byte-identical pass-through with no mode active"
         );
     }
 }

@@ -22,8 +22,9 @@ use crate::safety::analyze_bash_command;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
-    with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap, with_truncation,
-    ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+    with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+    SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
@@ -1151,14 +1152,29 @@ fn build_sub_agent_tool_at_depth(
 ) -> SubAgentTool {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
-    // Directory restrictions ARE inherited to prevent sub-agents from bypassing
-    // path-based security boundaries.
+    //
+    // Two boundaries ARE inherited, because a child must not be a way around a
+    // promise the parent made to the user:
+    //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+    //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
+    //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
+    //      agent uses, checked at call time, transparent when no mode is on
+    //      and during `/plan apply`.
+    //
+    // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
+    // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
+    // command does not pass through `safety.rs` (no destructive-pattern check,
+    // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
+    // enforced; the always-on bash safety layer is not.
     let restrictions = &config.dir_restrictions;
     let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
-        Arc::new(yoagent::tools::bash::BashTool::default()),
+        with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
-        maybe_guard_arc(Arc::new(WriteFileTool::new()), restrictions),
-        maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions),
+        with_read_guard_arc(maybe_guard_arc(
+            Arc::new(WriteFileTool::new()),
+            restrictions,
+        )),
+        with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),
         maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions),
         maybe_guard_arc(Arc::new(SearchTool::default()), restrictions),
         Arc::new(WebSearchTool),

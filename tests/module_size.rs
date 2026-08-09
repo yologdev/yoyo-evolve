@@ -107,8 +107,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/symbols.rs", 3804),
     // Day 161 (#662 half 1): +10 lines — pub REFUSAL_STEM_* consts that the
     // wrapper messages and prompt_retry::is_deterministic_tool_error share.
-    ("src/tool_wrappers.rs", 3748),
-    ("src/tools.rs", 3245),
+    // Day 162 (#709): raised 3748 -> 3894 for the Arc flavour of the mode
+    // guard (two constructors) + three Arc-path enforcement tests. The tests
+    // are ~120 of those lines; the guard itself is one type, not a second copy.
+    ("src/tool_wrappers.rs", 3894),
+    // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
+    // the mode guard, plus the comment stating what is enforced and what is not.
+    ("src/tools.rs", 3264),
     ("src/watch.rs", 3535),
 ];
 
