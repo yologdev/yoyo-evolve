@@ -75,6 +75,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // chunking-independence and carry-safety regression tests.
     ("src/format/markdown.rs", 3160),
     ("src/format/mod.rs", 2455),
+    // Day 162 (#665): +27 lines — the test-output filter is now gated on tool
+    // provenance, so read_file results stop being eaten. Signature recorded
+    // retroactively during Day 162 reflection: the raise itself shipped
+    // unattributed in commit 6e446f09.
     ("src/format/output.rs", 2635),
     ("src/help.rs", 2672),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
