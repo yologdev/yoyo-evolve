@@ -46,7 +46,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // failed --3way (which writes conflict markers on merge conflict), stops
     // before running -C1/--recount against the dirty state, and reports the
     // conflicted files honestly instead of "all strategies failed".
-    ("src/commands_file.rs", 2697),
+    // Day 162 fmt: +7 lines — `cargo fmt` reflowed the #699 code after the
+    // ceiling was recorded at pre-fmt size. No new code; formatter wrapping only.
+    ("src/commands_file.rs", 2704),
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
     ("src/commands_project.rs", 3252),
