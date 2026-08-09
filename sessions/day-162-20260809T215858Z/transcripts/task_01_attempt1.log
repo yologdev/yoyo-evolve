@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code in question.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,440p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '775,805p' src/commands_s… ✓ (6ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_project_index_lo… ✓ (4ms)
+  ▶ $ cd /tmp && cat > w.rs <<'EOF' (10 lines) ✓ (85ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 25s (4 ✓)
+
+Confirmed: Rust's {:<width$} pads by chars, so the byte-based max_path_len over-widens the column rather than skewing rows. Now the failing tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (4 → 64 lines)
+            let output = format_project_index(&entries);
+            // Should contain the truncation marker
+            assert!(output.contains('…'));
+  +     }
+  + 
+  +     /// #707: `/index` reads paths straight from `git ls-files`, so a single
+  +     /// non-ASCII path over 50 bytes used to panic the whole command — the tail
+  +     /// slice landed mid-character. The ASCII test above walks right over it.
+  +     #[test]
+  +     fn format_project_index_multibyte_path_does_not_panic() {
+  +         let long_path = format!("{}{}", "a".repeat(5), "é".repeat(25));
+  +         assert!(long_path.len() > 50);
+  +         // The fixture only bites if the old slice point is INSIDE a character.
+  +         assert!(
+  +             !long_path.is_char_boundary(long_path.len() - 49),
+  +             "fixture drifted back to an ASCII-safe boundary"
+  +         );
+  + 
+  +         let entries = vec![IndexEntry {
+  +             path: long_path.clone(),
+  ... (44 more lines)
+ ✓ (1m 33s)
+            let output = format_project_index(&entries);
+            // Should contain the truncation marker
+            assert!(output.contains('…'));
+  +     }
+  + 
+  +     /// #707: `/index` reads paths straight from `git ls-files`, so a single
+  +     /// non-ASCII path over 50 bytes used to panic the whole command — the tail
+  +     /// slice landed mid-character. The ASCII test above walks right over it.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_project_index … ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 46s (2 ✓)
+
+Both fail as predicted (the first with the real byte-index panic). Now the fix:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_project_index_… ✓ (140ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (7 → 9 lines)
+  -     // Find max path length for alignment (capped at 50)
+  +     // Find max path length for alignment (capped at 50). Measured in chars,
+  +     // not bytes: `{:<width$}` pads by chars, so a byte count over-widens the
+  +     // column for any non-ASCII path (#707).
+        let max_path_len = entries
+            .iter()
+  -         .map(|e| e.path.len())
+  +         .map(|e| e.path.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(50);
+ ✓ (1m 35s)
+  -     // Find max path length for alignment (capped at 50)
+  +     // Find max path length for alignment (capped at 50). Measured in chars,
+  +     // not bytes: `{:<width$}` pads by chars, so a byte count over-widens the
+  +     // column for any non-ASCII path (#707).
+        let max_path_len = entries
+            .iter()
+  -         .map(|e| e.path.len())
+  +         .map(|e| e.path.chars().count())
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (5 → 11 lines)
+            let path_display = if entry.path.len() > 50 {
+  -             format!("…{}", &entry.path[entry.path.len() - 49..])
+  +             // Keep the tail, but never slice mid-character: walk the start
+  +             // offset forward to the next UTF-8 boundary (#707).
+  +             let mut start = entry.path.len() - 49;
+  +             while start < entry.path.len() && !entry.path.is_char_boundary(start) {
+  +                 start += 1;
+  +             }
+  +             format!("…{}", &entry.path[start..])
+            } else {
+                entry.path.clone()
+            };
+ ✓ (1m 36s)
+            let path_display = if entry.path.len() > 50 {
+  -             format!("…{}", &entry.path[entry.path.len() - 49..])
+  +             // Keep the tail, but never slice mid-character: walk the start
+  +             // offset forward to the next UTF-8 boundary (#707).
+  +             let mut start = entry.path.len() - 49;
+  +             while start < entry.path.len() && !entry.path.is_char_boundary(start) {
+  +                 start += 1;
+  +             }
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_project_index … ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (57.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (192ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 4m 42s (6 ✓)
+
+The size gate fired — that's it working as designed. Raising it with attribution (Day 157/161 rule):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search" tests/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '58,74p' tests/module_siz… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 6 lines)
+  -     ("src/commands_search.rs", 3534),
+  +     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
+  +     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
+  +     // column in chars; 62 of the 68 lines are the two regression tests, one of
+  +     // which asserts the fixture is genuinely boundary-violating so it can't
+  +     // drift back to ASCII-safe like the old test did.
+  +     ("src/commands_search.rs", 3602),
+ ✓ (56.8s)
+  -     ("src/commands_search.rs", 3534),
+  +     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
+  +     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
+  +     // column in chars; 62 of the 68 lines are the two regression tests, one of
+  +     // which asserts the fixture is genuinely boundary-violating so it can't
+  +     // drift back to ASCII-safe like the old test did.
+  +     ("src/commands_search.rs", 3602),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (57.9s)
+  4 tools completed in 2m 12s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
