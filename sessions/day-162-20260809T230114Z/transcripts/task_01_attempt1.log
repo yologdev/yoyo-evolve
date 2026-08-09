@@ -1,0 +1,277 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ReadModeGuardTool\|with…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1180p' src/tools.rs ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1125,1170p' src/tools.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ReadModeGuardTool\|with… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1145p' src/tool_wrap… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3407,3480p' src/tool_wra… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct MockTool" -A 40 … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_plan_mode\|PlanMode… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 23.0s (8 ✓)
+
+Now the edit to tool_wrappers.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (4 → 9 lines)
+    pub(crate) struct ReadModeGuardTool {
+  -     inner: Box<dyn AgentTool>,
+  +     /// `Arc` rather than `Box` so the same guard type serves both the main
+  +     /// agent's `Box<dyn AgentTool>` tool list and the sub-agent tool list in
+  +     /// `tools.rs`, which is `Arc`-shaped. One type, two entry points — a
+  +     /// second copy of the classifier would be the duplication shape that
+  +     /// survives longest.
+  +     inner: Arc<dyn AgentTool>,
+        kind: ReadGuardKind,
+    }
+ ✓ (11.6s)
+    pub(crate) struct ReadModeGuardTool {
+  -     inner: Box<dyn AgentTool>,
+  +     /// `Arc` rather than `Box` so the same guard type serves both the main
+  +     /// agent's `Box<dyn AgentTool>` tool list and the sub-agent tool list in
+  +     /// `tools.rs`, which is `Arc`-shaped. One type, two entry points — a
+  +     /// second copy of the classifier would be the duplication shape that
+  +     /// survives longest.
+  +     inner: Arc<dyn AgentTool>,
+        kind: ReadGuardKind,
+    }
+
+Expected — now the constructors:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 16 lines)
+    pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+  +         inner: Arc::from(tool),
+  +         kind: ReadGuardKind::Write,
+  +     })
+  + }
+  + 
+  + /// `Arc` flavour of [`with_read_guard`], for the sub-agent tool list in
+  + /// `tools.rs` (which is `Arc<dyn AgentTool>`-shaped). Same type, same
+  + /// call-time mode check, same refusal text — only the smart pointer differs.
+  + pub(crate) fn with_read_guard_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn AgentTool> {
+  +     Arc::new(ReadModeGuardTool {
+            inner: tool,
+            kind: ReadGuardKind::Write,
+        })
+ ✓ (11.6s)
+    pub(crate) fn with_read_guard(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+  +         inner: Arc::from(tool),
+  +         kind: ReadGuardKind::Write,
+  +     })
+  + }
+  + 
+  + /// `Arc` flavour of [`with_read_guard`], for the sub-agent tool list in
+  ... (7 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 15 lines)
+    pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+  +         inner: Arc::from(tool),
+  +         kind: ReadGuardKind::Bash,
+  +     })
+  + }
+  + 
+  + /// `Arc` flavour of [`with_read_guard_bash`], for the sub-agent tool list in
+  + /// `tools.rs`. Same classifier, same pass-through for read-only commands.
+  + pub(crate) fn with_read_guard_bash_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn AgentTool> {
+  +     Arc::new(ReadModeGuardTool {
+            inner: tool,
+            kind: ReadGuardKind::Bash,
+        })
+ ✓ (18.8s)
+    pub(crate) fn with_read_guard_bash(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(ReadModeGuardTool {
+  +         inner: Arc::from(tool),
+  +         kind: ReadGuardKind::Bash,
+  +     })
+  + }
+  + 
+  + /// `Arc` flavour of [`with_read_guard_bash`], for the sub-agent tool list in
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 39.9s (2 ✓)
+
+Now the call site in tools.rs (definition + consumer in the same step):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (14 → 32 lines)
+        // Sub-agent gets standard yoagent tools — no permission guards needed
+        // since the parent already authorized the delegation.
+  -     // Directory restrictions ARE inherited to prevent sub-agents from bypassing
+  -     // path-based security boundaries.
+  +     //
+  +     // Two boundaries ARE inherited, because a child must not be a way around a
+  +     // promise the parent made to the user:
+  +     //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+  +     //   2. `/read` and `/plan` mode (`with_read_guard_arc` /
+  +     //      `with_read_guard_bash_arc`) — the same `ReadModeGuardTool` the main
+  +     //      agent uses, checked at call time, transparent when no mode is on
+  +     //      and during `/plan apply`.
+  +     //
+  +     // Known remaining gap (#709): the child's bash is yoagent's raw `BashTool`,
+  +     // not yoyo's `StreamingBashTool`, so when NO mode is active a child's bash
+  +     // command does not pass through `safety.rs` (no destructive-pattern check,
+  +     // no `detect_write_command`, no `detect_git_redirection_escape`). Modes are
+  +     // enforced; the always-on bash safety layer is not.
+        let restrictions = &config.dir_restrictions;
+        let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
+  ... (16 more lines)
+ ✓ (11.5s)
+        // Sub-agent gets standard yoagent tools — no permission guards needed
+        // since the parent already authorized the delegation.
+  -     // Directory restrictions ARE inherited to prevent sub-agents from bypassing
+  -     // path-based security boundaries.
+  +     //
+  +     // Two boundaries ARE inherited, because a child must not be a way around a
+  +     // promise the parent made to the user:
+  +     //   1. Directory restrictions (`maybe_guard_arc`) — path-based security.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,30p' src/tools.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 3 lines)
+  -     with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap, with_truncation,
+  -     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+  +     with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  +     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  +     SESSION_TOOL_CALL_CAP,
+ ✓ (1m 39s)
+  -     with_read_guard, with_read_guard_bash, with_recovery_hints, with_session_cap, with_truncation,
+  -     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+  +     with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  +     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  +     SESSION_TOOL_CALL_CAP,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (58.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 -A 25… ✓ (58.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 10s (5 ✓)
+
+Now the tests. Let me look at the plan-mode test block for style:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3625,3700p' src/tool_wra… ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4683 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_client_headers_anthropic ......
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3700,3775p' src/tool_wra… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 128 lines)
+            assert!(
+                result.is_ok(),
+                "read-only `git status` must be allowed under plan mode"
+  +         );
+  +     }
+  + 
+  +     // === Arc-flavour mode-guard tests (#709) ===
+  +     //
+  +     // The sub-agent tool list in `tools.rs` is `Arc<dyn AgentTool>`-shaped, so
+  +     // the Box-only constructors could not reach it and children ignored the
+  +     // mode the parent was in. These pin that the Arc entry points drive the
+  +     // SAME guard: refuse under either mode, pass through when neither is on.
+  +     // Mode state is process-global, hence `#[serial]` + Drop resets.
+  + 
+  +     #[tokio::test]
+  +     #[serial]
+  +     async fn test_read_guard_arc_blocks_write_tools_under_read_mode() {
+  +         let _reset = ReadModeReset;
+  +         crate::commands_config::set_read_mode(true);
+  + 
+  ... (108 more lines)
+ ✓ (1m 34s)
+            assert!(
+                result.is_ok(),
+                "read-only `git status` must be allowed under plan mode"
+  +         );
+  +     }
+  + 
+  +     // === Arc-flavour mode-guard tests (#709) ===
+  +     //
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib read_guard_arc … ✓ (138ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test read_guard_arc 2>&1 |… ✓ (142ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 2 lines)
+                .await
+  -             .expect_err("destructive bash must be refused under plan mode via Arc");
+  +             .expect_err("write-class bash must be refused under plan mode via Arc");
+ ✓ (1m 34s)
+                .await
+  -             .expect_err("destructive bash must be refused under plan mode via Arc");
+  +             .expect_err("write-class bash must be refused under plan mode via Arc");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'rm -rf ./build' src/too… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (21.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test read_guard_arc 2>&1 |… ✓ (146ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 4m 28s (8 ✓, 1 ✗)
+
+All three pass. Now the module-size ceilings:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers.rs\|tools… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs src/t… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 7 lines)
+  -     ("src/tool_wrappers.rs", 3748),
+  -     ("src/tools.rs", 3245),
+  +     // Day 162 (#709): raised 3748 -> 3894 for the Arc flavour of the mode
+  +     // guard (two constructors) + three Arc-path enforcement tests. The tests
+  +     // are ~120 of those lines; the guard itself is one type, not a second copy.
+  +     ("src/tool_wrappers.rs", 3894),
+  +     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
+  +     // the mode guard, plus the comment stating what is enforced and what is not.
+  +     ("src/tools.rs", 3264),
+ ✓ (1m 17s)
+  -     ("src/tool_wrappers.rs", 3748),
+  -     ("src/tools.rs", 3245),
+  +     // Day 162 (#709): raised 3748 -> 3894 for the Arc flavour of the mode
+  +     // guard (two constructors) + three Arc-path enforcement tests. The tests
+  +     // are ~120 of those lines; the guard itself is one type, not a second copy.
+  +     ("src/tool_wrappers.rs", 3894),
+  +     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
+  +     // the mode guard, plus the comment stating what is enforced and what is not.
+  +     ("src/tools.rs", 3264),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.7s)
+  4 tools completed in 1m 49s (4 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+

@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll write the plan now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 ISSUES_TODAY.md 2>/dev/… ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 709 2>/dev/null | … ✓ (15ms)
+ ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 677 --comments 2>/… ✓ (667ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 659 --comments 2>/… ✓ (649ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (103 lines) ✓ (58.0s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (75 lines) ✓ (58.6s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (73 lines) ✓ (57.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 5m 47s (10 ✓)
+
+Plan written. session_plan/ is gitignored (as documented), so the commit is a no-op — the task files are on disk for the implementation phase.
+
+Two slots:
+
+**task_01 — Fix #709: enforce `/read` and `/plan` mode on sub-agent tools** (product, `src/tool_wrappers.rs` + `src/tools.rs` + CLAUDE.md)
+A broken safety promise, and the highest-value thing on the board. build_sub_agent_tool_at_depth gives children directory restrictions only — no mode guard — because with_read_guard* are Box<dyn AgentTool>-only and the sub-agent path is Arc. A child dispatched under /read can write freely. Fix: make ReadModeGuardTool hold an Arc, add *_arc constructors (existing Box entry points unchanged, zero call-site churn), apply them to the child's write-class tools and bash. Scope boundary stated explicitly: child bash still skips safety.rs outside modes — that half stays out, #709 stays open with an honest comment. Tests first, #[serial] (mode state is global), clippy run explicitly.
+
+task_02 — Close the loop on #659 (evolve, no src/ changes)
+@Mikhael-Danilov's pointer found a gap none of my self-assessments found. My own reply left "I haven't read the habr write-up" dangling and @yuanhao asked me to finish it: read it, decide what else is worth borrowing (with "nothing, because X" as a valid answer), reply with what I took and declined, close. Any real borrow gets its own scoped issue, not an implementation this session. Explicit anti-fabrication guard: if the fetch fails, say so — don't summarize something I couldn't read.
+
+Deferred with reasons (issue_responses.md): #710 (real and small, but two independent changes in one task is the shape that half-lands), #706, #702. Closing: #677 (verified in code: yoagent = "0.16", tool_output_max_lines: 200, resilient skill load swept 3 sites — unblocks #683) and #692 (fix is real and tested; the issue was just never closed).
+
+One thing I recorded and deliberately did not plan: yoyo risk accuracy now says my anticipatory column is at 0% failure-day recall over 8 graded events, and the narrow-vs-broad split (25.0% vs 24.6%) falsifies my standing excuse that broad breakages are unpredictable. Both are real findings. Fixing the meter right after it tells me something is my favorite way of not using it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
