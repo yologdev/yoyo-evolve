@@ -1,0 +1,236 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the helper and its callers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1600,1680p src/commands_r… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "classify_broke_files" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk.rs" tests… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "classify_broke_files" … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "classify_broke_files" … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2960,3010p src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3040,3200p src/commands_r… ✓ (5ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 20.1s (8 ✓)
+
+Existing fixtures all use src/ paths. Now the filter:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 13 lines)
+            if message_claims_repair(&entry.message) {
+                for f in &entry.files {
+  +                 // Risk predictions cover source code only — a non-src path is a
+  +                 // guaranteed miss no model could have predicted. Same filter as
+  +                 // the two grading paths in commands_risk_snapshots.rs (kept
+  +                 // inline there and here on purpose: extracting a shared
+  +                 // predicate is new machinery this fix does not need).
+  +                 if !f.starts_with("src/") {
+  +                     continue;
+  +                 }
+                    broke.insert(f.clone());
+                }
+            }
+ ✓ (1m 35s)
+            if message_claims_repair(&entry.message) {
+                for f in &entry.files {
+  +                 // Risk predictions cover source code only — a non-src path is a
+  +                 // guaranteed miss no model could have predicted. Same filter as
+  +                 // the two grading paths in commands_risk_snapshots.rs (kept
+  +                 // inline there and here on purpose: extracting a shared
+  +                 // predicate is new machinery this fix does not need).
+  +                 if !f.starts_with("src/") {
+  ... (5 more lines)
+
+Now the doc comment on the helper and the one test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1618,1634p src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 6 lines)
+    /// that never broke.
+  + ///
+  + /// Only `src/` paths are returned (#708): the risk model scores nothing else,
+  + /// so a `tests/` or `Cargo.toml` path in an outcome set is a guaranteed miss
+  + /// that drags recall down with noise.
+    fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+ ✓ (1m 34s)
+    /// that never broke.
+  + ///
+  + /// Only `src/` paths are returned (#708): the risk model scores nothing else,
+  + /// so a `tests/` or `Cargo.toml` path in an outcome set is a guaranteed miss
+  + /// that drags recall down with noise.
+    fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 2 lines) ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo test --… ✓ (145ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | tail -40 ✓ (111ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -vE "^tes… ✓ (53.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4595,4700p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4560,4600p src/commands_r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 4m 47s (8 ✓)
+
+The verbatim fixture must stay verbatim (Day 147 lesson) — so I update its assertions to the new, correct behavior:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (23 → 28 lines)
+            assert!(broke.contains("src/commands_risk.rs"));
+  -         assert!(broke.contains("CLAUDE.md"));
+  -         assert!(broke.contains(".yoyo/risk_weights.json"));
+  +         // #708: the same repairing commit touched CLAUDE.md and
+  +         // .yoyo/risk_weights.json, but the risk model scores only `src/**`, so
+  +         // grading them was a guaranteed miss. The fixture stays verbatim; the
+  +         // expectation moved.
+  +         assert!(!broke.contains("CLAUDE.md"));
+  +         assert!(!broke.contains(".yoyo/risk_weights.json"));
+            // Files from the NON-repair commits must not be swept in.
+            assert!(
+                !broke.contains(".skill_evolve_counter"),
+                "only the repairing commit's files count as breakage"
+            );
+    
+  -         // --- 3. Validation with one hit and one surprise -------------------
+  +         // --- 3. Validation with one hit and one clean prediction -----------
+            let predicted: Vec<String> = vec![
+                "src/commands_risk.rs".to_string(), // hit
+                "src/watch.rs".to_string(),         // clean
+  ... (15 more lines)
+ ✓ (1m 35s)
+            assert!(broke.contains("src/commands_risk.rs"));
+  -         assert!(broke.contains("CLAUDE.md"));
+  -         assert!(broke.contains(".yoyo/risk_weights.json"));
+  +         // #708: the same repairing commit touched CLAUDE.md and
+  +         // .yoyo/risk_weights.json, but the risk model scores only `src/**`, so
+  +         // grading them was a guaranteed miss. The fixture stays verbatim; the
+  +         // expectation moved.
+  +         assert!(!broke.contains("CLAUDE.md"));
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4646,4700p src/commands_r… ✓ (4ms)
+  2 tools completed in 1m 37s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4679 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4659,4712p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.8s (2 ✓)
+
+Now the required new unit test, inserted before test_classify_broke_files_empty:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 19 lines)
+  +     #[test]
+  +     fn test_classify_broke_files_filters_non_src_paths() {
+  +         // #708: the risk model scores only `src/**`, so a tests/ or Cargo.toml
+  +         // path in the broken set is a guaranteed miss that drags recall down.
+  +         let entries = vec![CommitEntry {
+  +             message: "abc1234 fix: the module-size gate".to_string(),
+  +             files: vec![
+  +                 "src/foo.rs".to_string(),
+  +                 "tests/module_size.rs".to_string(),
+  +                 "Cargo.toml".to_string(),
+  +             ],
+  +         }];
+  +         let broke = classify_broke_files(&entries);
+  +         assert_eq!(broke.len(), 1, "only src/ paths should be graded: {broke:?}");
+  +         assert!(broke.contains("src/foo.rs"));
+  +     }
+  + 
+        #[test]
+        fn test_classify_broke_files_empty() {
+ ✓ (1m 35s)
+  +     #[test]
+  +     fn test_classify_broke_files_filters_non_src_paths() {
+  +         // #708: the risk model scores only `src/**`, so a tests/ or Cargo.toml
+  +         // path in the broken set is a guaranteed miss that drags recall down.
+  +         let entries = vec![CommitEntry {
+  +             message: "abc1234 fix: the module-size gate".to_string(),
+  +             files: vec![
+  +                 "src/foo.rs".to_string(),
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (1m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4740,4762p src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (1m 40s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs && se… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 4 lines)
+  -     ("src/commands_risk.rs", 4714),
+  +     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
+  +     // (the risk model's whole universe), plus its unit test and the updated
+  +     // end-to-end fixture assertions.
+  +     ("src/commands_risk.rs", 4754),
+ ✓ (58.6s)
+  -     ("src/commands_risk.rs", 4714),
+  +     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
+  +     // (the risk model's whole universe), plus its unit test and the updated
+  +     // end-to-end fixture assertions.
+  +     ("src/commands_risk.rs", 4754),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (59.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 7m 16s (7 ✓)
+
+All green. Sanity check the CLI still renders, then docs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk accurac… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (32 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 28.1s (3 ✓)
+
+Done. 🐙
+
+What landed:
+
+• `src/commands_risk.rs` — classify_broke_files now drops any path not starting with src/ before returning. Three inline lines inside the existing loop, plus a doc-comment line. No new fn, const, type, or variant — the Day 153 lesson held.
+• Verified with grep first: exactly four production callers (835, 1970, 1997, 2400) and all of them grade. So the fix went in the helper, not at one site.
+• One new unit test — `test_classify_broke_files_filters_non_src_paths: a fix-commit touching src/foo.rs + tests/module_size.rs + Cargo.toml yields only src/foo.rs`.
+• The Day-147 end-to-end test went red — that was the verification working. Its fixture is a verbatim git-log capture, so I didn't edit the fixture; I moved the expectations (CLAUDE.md and .yoyo/risk_weights.json now excluded, denominator 3→1, recall 33%→100% on that synthetic day).
+• `tests/module_size.rs` — 4714 → 4754, wc -l run before the final edit, with day + reason above the entry.
+• CLAUDE.md — one sentence on the shared prediction universe.
+
+Checks: cargo fmt, cargo clippy --all-targets -- -D warnings (clean), cargo test (4679 + 89 + 12 pass, 0 failed). ./target/debug/yoyo risk accuracy still renders.
+
+**What it doesn't do, stated plainly:** the live numbers are unchanged — recall still reads 24%. Events already on disk keep their recorded values; this only fixes future grading. I left .yoyo/risk_validations.jsonl alone.
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+
