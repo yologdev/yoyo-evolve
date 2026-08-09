@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "line_similarity\|edit_distance\|SIMILARITY" src/smart_edit.rs | head -3…  ▶ $ grep -n "675" src/smart_edit.rs | head ✓ (3ms)
+ ✓ (7ms)
+  ▶ read src/smart_edit.rs:30..85  ▶ $ grep -n "90\|90_000\|90000\|repeat(" src/smart_edit.rs | head -20 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/smart_edit.rs:755..815  ▶ read src/smart_edit.rs:1150..1210 ✓ (1ms)
+ ✓ (2ms)
+  ▶ edit src/smart_edit.rs (2 → 7 lines)
+    /// reported. Below this threshold the match is considered noise.
+    const FUZZY_MIN_SIMILARITY: f64 = 0.6;
+  + 
+  + /// Max chars of each line fed into the O(a×b) `edit_distance`. Uncapped, two
+  + /// ~90k-char lines (minified JS, generated tables) cost billions of cell
+  + /// updates — minutes of wall clock per comparison (#691).
+  + const SIMILARITY_MAX_CHARS: usize = 1000;
+ ✓ (19.2s)
+    /// reported. Below this threshold the match is considered noise.
+    const FUZZY_MIN_SIMILARITY: f64 = 0.6;
+  + 
+  + /// Max chars of each line fed into the O(a×b) `edit_distance`. Uncapped, two
+  + /// ~90k-char lines (minified JS, generated tables) cost billions of cell
+  + /// updates — minutes of wall clock per comparison (#691).
+  + const SIMILARITY_MAX_CHARS: usize = 1000;
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 37.4s (7 ✓)
+
+Expected mid-edit failure — now wiring the consumer:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (6 → 22 lines)
+        if a_trimmed.is_empty() && b_trimmed.is_empty() {
+            return 1.0;
+        }
+  +     // Cap both inputs before the O(a×b) distance computation (#691). Trade-off,
+  +     // stated honestly: two long lines sharing a 1000-char prefix now score as
+  +     // similar even if they diverge later — acceptable for a fuzzy "did you mean
+  +     // this line?" hint, where minutes-long exact scoring would be far worse.
+  +     // char_indices().nth() yields a char-boundary-safe byte index (never
+  +     // byte-slice blindly — #250); no allocation.
+  +     let a_trimmed = a_trimmed
+  +         .char_indices()
+  +         .nth(SIMILARITY_MAX_CHARS)
+  +         .map(|(i, _)| &a_trimmed[..i])
+  +         .unwrap_or(a_trimmed);
+  +     let b_trimmed = b_trimmed
+  +         .char_indices()
+  +         .nth(SIMILARITY_MAX_CHARS)
+  +         .map(|(i, _)| &b_trimmed[..i])
+  +         .unwrap_or(b_trimmed);
+ ✓ (1m 37s)
+        if a_trimmed.is_empty() && b_trimmed.is_empty() {
+            return 1.0;
+        }
+  +     // Cap both inputs before the O(a×b) distance computation (#691). Trade-off,
+  +     // stated honestly: two long lines sharing a 1000-char prefix now score as
+  +     // similar even if they diverge later — acceptable for a fuzzy "did you mean
+  +     // this line?" hint, where minutes-long exact scoring would be far worse.
+  +     // char_indices().nth() yields a char-boundary-safe byte index (never
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the unit test — pinning short-line behavior and multi-byte boundary safety:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (4 → 3 lines)
+        #[test]
+        fn test_line_similarity_completely_different() {
+            let sim = line_similarity("fn hello() {}", "use std::io;");
+  - PLACEHOLDER_CHECK
+ ✗ (3ms)
+    │ old_text not found in src/smart_edit.rs.
+  ▶ read src/smart_edit.rs:1570..1585 ✓ (0ms)
+  ▶ edit src/smart_edit.rs (8 → 29 lines)
+            assert!(
+                sim < 0.5,
+                "Completely different should have low similarity: {sim}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_line_similarity_cap_short_lines_unchanged_and_multibyte_boundary_safe() {
+  +         // Short lines (under SIMILARITY_MAX_CHARS) must score exactly as before
+  +         // the #691 cap: "cat" vs "bat" = 1 edit over 3 chars = 2/3 similarity.
+  +         let sim = line_similarity("cat", "bat");
+  +         assert!(
+  +             (sim - (2.0 / 3.0)).abs() < f64::EPSILON,
+  +             "short-line similarity must be unchanged by the cap: {sim}"
+  +         );
+  + 
+  +         // Multi-byte chars sitting at/near the 1000-char cap boundary must not
+  +         // panic (char_indices gives a char-boundary-safe byte index, #250).
+  +         let a = format!("{}{}", "a".repeat(SIMILARITY_MAX_CHARS - 1), "✓✓✓✓✓");
+  +         let b = format!("{}{}", "a".repeat(SIMILARITY_MAX_CHARS - 1), "✗✓✓✓✓");
+  ... (6 more lines)
+ ✓ (1m 37s)
+            assert!(
+                sim < 0.5,
+                "Completely different should have low similarity: {sim}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_line_similarity_cap_short_lines_unchanged_and_multibyte_boundary_safe() {
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -3 ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ time cargo test test_snippet_line_is_char_capped test_smart_edit_pathological_li… ✓ (12ms)
+  ▶ $ time cargo test smart_edit 2>&1 | tail -8 ✓ (746ms)
+  ▶ $ time cargo test --bin yoyo smart_edit 2>&1 | grep -E "test_snippet_line_is_char_… ✓ (752ms)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -2 && cargo fmt -- --check… ✓ (1.2s)
+  ▶ $ time cargo test 2>&1 | grep -E "^test result|failed" | sort | uniq -c | sort -rn… ✓ (56.2s)
+  9 tools completed in 3m 4s (8 ✓, 1 ✗)
+
+  watch: no files changed this turn — skipping
+
