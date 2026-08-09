@@ -11,12 +11,17 @@
 //! [`truncate_tool_error`] existed the error path propagated through
 //! `TruncatingTool` with `?`, untouched by the cap the user set.
 
-use crate::format::truncate_tool_output;
+use crate::format::{truncate_tool_output, truncate_tool_output_gated};
 
 /// Truncate the text content of a ToolResult if it exceeds the given char limit.
+///
+/// `allow_test_filter` is the #665 provenance gate: only bash-produced results
+/// should have runs of passing-test-shaped lines collapsed. File reads and
+/// searches that merely QUOTE such lines must keep them verbatim.
 pub(crate) fn truncate_result(
     mut result: yoagent::types::ToolResult,
     max_chars: usize,
+    allow_test_filter: bool,
 ) -> yoagent::types::ToolResult {
     use yoagent::Content;
     result.content = result
@@ -24,7 +29,7 @@ pub(crate) fn truncate_result(
         .into_iter()
         .map(|c| match c {
             Content::Text { text } => Content::Text {
-                text: truncate_tool_output(&text, max_chars),
+                text: truncate_tool_output_gated(&text, max_chars, allow_test_filter),
             },
             other => other,
         })
@@ -144,7 +149,7 @@ mod tests {
             ],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 1_000);
+        let truncated = truncate_result(result, 1_000, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text } => assert!(text.len() < 100_000),
             other => panic!("expected Text, got {other:?}"),

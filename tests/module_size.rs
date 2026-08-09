@@ -58,7 +58,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/format/cost.rs", 2095),
     ("src/format/markdown.rs", 2932),
     ("src/format/mod.rs", 2455),
-    ("src/format/output.rs", 2608),
+    ("src/format/output.rs", 2635),
     ("src/help.rs", 2672),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
@@ -74,7 +74,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/symbols.rs", 3804),
     // Day 161 (#662 half 1): +10 lines — pub REFUSAL_STEM_* consts that the
     // wrapper messages and prompt_retry::is_deterministic_tool_error share.
-    ("src/tool_wrappers.rs", 3675),
+    ("src/tool_wrappers.rs", 3748),
     ("src/tools.rs", 3245),
     ("src/watch.rs", 3535),
 ];

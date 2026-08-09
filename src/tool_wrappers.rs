@@ -203,7 +203,10 @@ impl AgentTool for TruncatingTool {
             .execute(params, ctx)
             .await
             .map_err(|e| truncate_tool_error(e, self.max_chars))?;
-        Ok(truncate_result(result, self.max_chars))
+        // #665: only bash output can legitimately contain test-runner output;
+        // read_file/search results that quote test-shaped lines are content.
+        let allow_test_filter = matches!(self.inner.name(), "bash");
+        Ok(truncate_result(result, self.max_chars, allow_test_filter))
     }
 }
 
@@ -1539,7 +1542,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 100);
+        let truncated = truncate_result(result, 100, true);
         let text = match &truncated.content[0] {
             Content::Text { text } => text.clone(),
             _ => panic!("Expected text content"),
@@ -1561,7 +1564,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, TOOL_OUTPUT_MAX_CHARS);
+        let truncated = truncate_result(result, TOOL_OUTPUT_MAX_CHARS, true);
         let text = match &truncated.content[0] {
             Content::Text { text } => text.clone(),
             _ => panic!("Expected text content"),
@@ -2074,7 +2077,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 1000);
+        let truncated = truncate_result(result, 1000, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text } => {
                 assert_eq!(text, "short output");
@@ -2098,7 +2101,7 @@ mod tests {
             details: serde_json::Value::Null,
         };
         // Use max_chars smaller than text to force truncation
-        let truncated = truncate_result(result, 2000);
+        let truncated = truncate_result(result, 2000, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text } => {
                 assert!(
@@ -2126,7 +2129,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 10); // Very small limit
+        let truncated = truncate_result(result, 10, true); // Very small limit
         match &truncated.content[0] {
             yoagent::Content::Image { data, mime_type } => {
                 assert_eq!(data, "base64data");
@@ -2142,7 +2145,7 @@ mod tests {
             content: vec![],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 100);
+        let truncated = truncate_result(result, 100, true);
         assert!(truncated.content.is_empty());
     }
 
@@ -2183,7 +2186,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 10);
+        let truncated = truncate_result(result, 10, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text: t } => {
                 assert_eq!(t, text, "Text at exact limit should pass through unchanged");
@@ -2202,7 +2205,7 @@ mod tests {
             details: serde_json::Value::Null,
         };
         // This should not panic even with a limit that falls mid-character
-        let truncated = truncate_result(result, 100);
+        let truncated = truncate_result(result, 100, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text: t } => {
                 // Should be valid UTF-8 (Rust strings guarantee this)
@@ -2220,7 +2223,7 @@ mod tests {
             content: vec![yoagent::Content::Text { text }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 50);
+        let truncated = truncate_result(result, 50, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text: t } => {
                 assert!(t.is_char_boundary(t.len()), "Output must be valid UTF-8");
@@ -2237,7 +2240,7 @@ mod tests {
             }],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 100);
+        let truncated = truncate_result(result, 100, true);
         match &truncated.content[0] {
             yoagent::Content::Text { text } => {
                 assert_eq!(text, "", "Empty text should remain empty");
@@ -2263,7 +2266,7 @@ mod tests {
             ],
             details: serde_json::Value::Null,
         };
-        let truncated = truncate_result(result, 500);
+        let truncated = truncate_result(result, 500, true);
         // First block should be unchanged
         match &truncated.content[0] {
             yoagent::Content::Text { text } => {
@@ -2292,10 +2295,80 @@ mod tests {
             }],
             details: details.clone(),
         };
-        let truncated = truncate_result(result, 1000);
+        let truncated = truncate_result(result, 1000, true);
         assert_eq!(
             truncated.details, details,
             "Details field should be preserved through truncation"
+        );
+    }
+
+    // =========================================================================
+    // TruncatingTool — test-output filter is gated on tool provenance (#665)
+    // =========================================================================
+
+    /// A file that merely QUOTES five cargo-style passing-test lines.
+    /// Prose is interleaved so neither the noisy-pattern filter nor the
+    /// repetitive-line collapser touches it — only the test-output filter
+    /// could alter this payload.
+    fn quoted_test_lines_payload() -> String {
+        [
+            "Example output from the README:",
+            "test alpha ... ok",
+            "prose line one.",
+            "test beta ... ok",
+            "prose line two.",
+            "test gamma ... ok",
+            "prose line three.",
+            "test delta ... ok",
+            "prose line four.",
+            "test epsilon ... ok",
+            "closing prose.",
+        ]
+        .join("\n")
+    }
+
+    async fn run_truncating_tool(tool_name: &'static str, payload: String) -> String {
+        let tool = with_truncation(
+            Box::new(MockTool {
+                tool_name,
+                result_text: payload,
+            }),
+            30_000,
+        );
+        let result = tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .expect("mock tool succeeds");
+        match &result.content[0] {
+            yoagent::Content::Text { text } => text.clone(),
+            other => panic!("expected Text content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_file_result_keeps_quoted_test_lines_verbatim() {
+        // #665: a read_file result that quotes passing-test lines is file
+        // CONTENT, not test output — it must survive verbatim.
+        let payload = quoted_test_lines_payload();
+        let text = run_truncating_tool("read_file", payload.clone()).await;
+        assert_eq!(
+            text, payload,
+            "read_file output must not be eaten by the test-output filter"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bash_result_still_filters_test_lines() {
+        // Pins that bash provenance keeps the old compression behavior.
+        let payload = quoted_test_lines_payload();
+        let text = run_truncating_tool("bash", payload).await;
+        assert!(
+            text.contains("passing tests omitted"),
+            "bash output should still compress test-pass runs, got: {text}"
+        );
+        assert!(
+            !text.contains("test alpha ... ok"),
+            "bash pass lines should still be omitted, got: {text}"
         );
     }
 

@@ -40,7 +40,13 @@ const CATEGORY_PREFIX_MAX: usize = 20;
 ///
 /// Called before head/tail truncation so the truncation operates on
 /// already-compressed output.
-pub fn compress_tool_output(output: &str) -> String {
+///
+/// `allow_test_filter` gates the test-framework-output filter on tool
+/// provenance (#665): only command execution (`bash`) can produce real test
+/// runner output, so file-reading tools pass `false` and a README that merely
+/// QUOTES five `test foo ... ok` lines survives verbatim instead of coming
+/// back as `... (N passing tests omitted)`.
+pub fn compress_tool_output(output: &str, allow_test_filter: bool) -> String {
     if output.is_empty() {
         return String::new();
     }
@@ -48,8 +54,14 @@ pub fn compress_tool_output(output: &str) -> String {
     // Phase 1: strip ANSI escape codes
     let stripped = strip_ansi_codes(output);
 
-    // Phase 2: filter test framework output (more specific, runs first)
-    let filtered = filter_test_output(&stripped);
+    // Phase 2: filter test framework output (more specific, runs first).
+    // Skipped for non-bash provenance — quoted test-shaped lines in file
+    // content are content, not test output (#665).
+    let filtered = if allow_test_filter {
+        filter_test_output(&stripped)
+    } else {
+        stripped
+    };
 
     // Phase 3: filter noisy CLI patterns (cargo, npm, pip, progress bars, etc.)
     let denoised = filter_noisy_patterns(&filtered);
@@ -568,9 +580,24 @@ fn classify_test_line(line: &str) -> TestLineKind {
 /// and the end (summary lines, final status).
 ///
 /// Output under the threshold is returned unchanged.
+///
+/// Thin wrapper preserving the pre-#665 signature/behavior (test-output
+/// filtering enabled) for callers without tool provenance — notably
+/// `truncate_tool_error`, where error text has no reliable provenance story.
 pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
+    truncate_tool_output_gated(output, max_chars, true)
+}
+
+/// Provenance-aware variant of [`truncate_tool_output`] (#665):
+/// `allow_test_filter` is threaded down to [`compress_tool_output`] so only
+/// bash results get the passing-test-line filter applied.
+pub fn truncate_tool_output_gated(
+    output: &str,
+    max_chars: usize,
+    allow_test_filter: bool,
+) -> String {
     // Phase 1: compress (strip ANSI + collapse repetitive lines)
-    let compressed = compress_tool_output(output);
+    let compressed = compress_tool_output(output, allow_test_filter);
 
     // Under threshold — return compressed output
     if compressed.len() <= max_chars {
@@ -1391,7 +1418,7 @@ mod tests {
         lines.push(String::from("   Compiling my_project v0.1.0"));
         lines.push(String::from("error[E0308]: mismatched types"));
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         assert!(
             result.contains("... (14 more)"),
             "compress_tool_output should include noisy filter: {result}"
@@ -1407,7 +1434,7 @@ mod tests {
     #[test]
     fn test_compress_strips_ansi_codes() {
         let input = "\x1b[31merror\x1b[0m: something \x1b[1;33mwent\x1b[0m wrong";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         assert_eq!(result, "error: something went wrong");
         assert!(!result.contains("\x1b"));
     }
@@ -1416,7 +1443,7 @@ mod tests {
     fn test_compress_strips_various_ansi_sequences() {
         // SGR, cursor movement, erase
         let input = "\x1b[32mgreen\x1b[0m \x1b[2Kclear \x1b[1Aup \x1b[38;5;196mcolor256\x1b[0m";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         assert!(!result.contains("\x1b"), "still has ANSI: {result}");
         assert!(result.contains("green"));
         assert!(result.contains("color256"));
@@ -1429,7 +1456,7 @@ mod tests {
             lines.push(format!("   Compiling foo-{i} v1.0.{i}"));
         }
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         let result_lines: Vec<&str> = result.lines().collect();
         // Should have first line, collapse marker, last line = 3 lines
         assert_eq!(result_lines.len(), 3, "got: {result}");
@@ -1454,7 +1481,7 @@ mod tests {
     #[test]
     fn test_compress_preserves_non_repetitive_output() {
         let input = "line one\nline two\nline three\nsomething different";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         assert_eq!(result, input);
     }
 
@@ -1462,7 +1489,7 @@ mod tests {
     fn test_compress_short_output_unchanged() {
         // Only 3 similar Compiling lines — filter_noisy_patterns collapses at 3+
         let input = "   Compiling a v1.0\n   Compiling b v1.0\n   Compiling c v1.0";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         // Should collapse: first + "... (1 more)" + last
         assert!(
             result.contains("Compiling a"),
@@ -1487,7 +1514,7 @@ mod tests {
             lines.push(format!("  Downloading dep-{i} v2.0.0"));
         }
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         // Both repetitive blocks collapsed by filter_noisy_patterns
         assert!(result.contains("3 more"), "compiling block: {result}");
         assert!(result.contains("4 more"), "downloading block: {result}");
@@ -1509,7 +1536,7 @@ mod tests {
     fn test_compress_exact_threshold_four_lines() {
         // Exactly 4 Compiling lines — filter_noisy_patterns collapses at 3+
         let input = "   Compiling a v1\n   Compiling b v1\n   Compiling c v1\n   Compiling d v1";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         let result_lines: Vec<&str> = result.lines().collect();
         assert_eq!(result_lines.len(), 3, "got: {result}");
         assert!(
@@ -1521,7 +1548,7 @@ mod tests {
 
     #[test]
     fn test_compress_empty_input() {
-        assert_eq!(compress_tool_output(""), "");
+        assert_eq!(compress_tool_output("", true), "");
     }
 
     #[test]
@@ -1531,7 +1558,7 @@ mod tests {
             lines.push(format!("Installing package-{i}==1.0.{i}"));
         }
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         let result_lines: Vec<&str> = result.lines().collect();
         assert_eq!(result_lines.len(), 3, "got: {result}");
         assert!(result_lines[1].contains("6 more similar"));
@@ -1565,7 +1592,7 @@ mod tests {
     fn test_compress_multibyte_content() {
         // End-to-end: compress_tool_output should handle multi-byte chars
         let input = "\x1b[32m✓\x1b[0m テスト完了";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         assert_eq!(result, "✓ テスト完了");
     }
 
@@ -1862,7 +1889,7 @@ mod tests {
         lines.push(String::new());
         lines.push("\x1b[32mtest result: ok. 10 passed; 0 failed; 0 ignored\x1b[0m".to_string());
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         // Should have stripped ANSI AND filtered test output
         assert!(!result.contains("\x1b"), "should strip ANSI, got: {result}");
         assert!(
@@ -1980,14 +2007,14 @@ mod tests {
 
     #[test]
     fn test_compress_empty_returns_empty() {
-        assert_eq!(compress_tool_output(""), "");
+        assert_eq!(compress_tool_output("", true), "");
     }
 
     #[test]
     fn test_compress_short_input_unchanged_content() {
         // Short input with no ANSI, no repetition — should pass through
         let input = "hello\nworld\nfoo";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         assert_eq!(result, input);
     }
 
@@ -1995,7 +2022,7 @@ mod tests {
     fn test_compress_repeated_blank_lines_collapsed() {
         // 5 blank lines should be collapsed to at most 2
         let input = "start\n\n\n\n\n\nend";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         // filter_noisy_patterns collapses 3+ blanks to 2
         let blank_count = result.lines().filter(|l| l.trim().is_empty()).count();
         assert!(
@@ -2018,7 +2045,7 @@ mod tests {
             "warning: unused variable",
         ];
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         assert!(
             result.contains("more similar lines"),
             "Expected collapse marker in:\n{result}"
@@ -2031,7 +2058,7 @@ mod tests {
     fn test_compress_very_long_lines_in_output() {
         // A single very long line should still work without panic
         let long_line = "x".repeat(100_000);
-        let result = compress_tool_output(&long_line);
+        let result = compress_tool_output(&long_line, true);
         // Should not panic and should contain the content
         assert!(!result.is_empty());
     }
@@ -2052,7 +2079,7 @@ mod tests {
         }
         lines.push("unique footer".to_string());
         let input = lines.join("\n");
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         // Unique lines preserved
         assert!(result.contains("unique header"));
         assert!(result.contains("unique middle"));
@@ -2072,7 +2099,7 @@ mod tests {
                       \x1b[31mwarning: z\x1b[0m\n\
                       \x1b[31mwarning: w\x1b[0m\n\
                       \x1b[31mwarning: v\x1b[0m";
-        let result = compress_tool_output(input);
+        let result = compress_tool_output(input, true);
         // ANSI should be gone
         assert!(!result.contains("\x1b["));
         // 5 lines with same category → collapse
@@ -2243,7 +2270,7 @@ mod tests {
         }
         let input = lines.join("\n");
         // Must not panic on char boundary issues
-        let result = compress_tool_output(&input);
+        let result = compress_tool_output(&input, true);
         assert!(!result.is_empty());
     }
 
