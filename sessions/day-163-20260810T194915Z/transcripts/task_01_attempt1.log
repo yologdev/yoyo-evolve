@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the escape hatch — verify the numbers before deleting anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls target/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Emerging Risks" script… ✓ (7ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Clean tree, binary exists. Now the escape hatch — check measured emerging recall before touching anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (158ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Escape hatch checked: emerging recall = 0% over 10 graded failure days (reactive 24%). The pre-registered rule fires. Proceeding with delete.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_emerging_risks\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/commands_risk… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) fn\|^fn\|^c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,10p;160,215p' src/comm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '655,680p' src/commands_r… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,300p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy" src/commands_… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1171,1200p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BOLD\|DIM\|RESET\|YELLO… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 43.9s (9 ✓)
+
+Now making the edits. Starting with the render deletion in commands_risk.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 4 lines)
+  - pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + // The `format_emerging_risks` renderer was deleted Day 163 (#724) — see that
+  + // module's docs for the decision and the numbers that forced it. Detection is
+  + // retained: it still feeds the snapshot/grading path.
+  + pub(crate) use crate::commands_risk_emerging::detect_emerging_risks;
+ ✓ (10.9s)
+  - pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + // The `format_emerging_risks` renderer was deleted Day 163 (#724) — see that
+  + // module's docs for the decision and the numbers that forced it. Detection is
+  + // retained: it still feeds the snapshot/grading path.
+  + pub(crate) use crate::commands_risk_emerging::detect_emerging_risks;
+
+Expected — now removing the call site:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (12 → 12 lines)
+        let report = format_risk_report(&risks, show_all);
+        print!("{report}");
+    
+  -     // Emerging-risk detection: anticipatory signal for files about to become fragile
+  -     let emerging = detect_emerging_risks(&risks);
+  -     let emerging_report = format_emerging_risks(&emerging);
+  -     if !emerging_report.is_empty() {
+  -         print!("{emerging_report}");
+  -     }
+  +     // The `⚡ Emerging Risks` block used to print here. Deleted Day 163 (#724):
+  +     // 0% recall over 10 graded failure days against a ~39% pooled achievable
+  +     // ceiling, while 35% of snapshots recorded no forecast at all and the
+  +     // non-empty ones overlapped the reactive column by a mean 63%. Detection
+  +     // and grading continue (see `commands_risk_emerging`) — only the claim is
+  +     // gone. The evidence lives in `/risk accuracy`.
+    }
+ ✓ (16.8s)
+        let report = format_risk_report(&risks, show_all);
+        print!("{report}");
+    
+  -     // Emerging-risk detection: anticipatory signal for files about to become fragile
+  -     let emerging = detect_emerging_risks(&risks);
+  -     let emerging_report = format_emerging_risks(&emerging);
+  -     if !emerging_report.is_empty() {
+  -         print!("{emerging_report}");
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the predicted dead-code chain. Now removing the formatters and their tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (20ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now the tests that exist only to pin those two functions:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (20ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused imports: `BOLD`, `DIM`, `RESET`, and `YELLOW`[0m
+ [1m[94m--> [0msrc/commands_risk_emerging.rs:9:21
+  [1m[94m|[0m
+[1m[94m9[0m [1m[94m|[0m use crate::format::{BOLD, DIM, RESET, YELLOW};
+  [1m[94m|[0m                     [1m[91m^^^^[0m  [1m[91m^^^[0m  [1m[91m^^^^^[0m  [1m[91m^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+  [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m[1m: function `emerging_track_record_note` is never used[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:225:15
+    [1m[94m|[0m
+[1m[94m225[0m [1m[94m|[0m pub(crate) fn emerging_track_record_note() -> Option<String> {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: struct `EmergingCeiling` is never constructed[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:250:19
+    [1m[94m|[0m
+[1m[94m250[0m [1m[94m|[0m pub(crate) struct EmergingCeiling {
+    [1m[94m|[0m                   [1m[91m^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: struct `TimedValidationEvent` is never constructed[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:264:8
+    [1m[94m|[0m
+[1m[94m264[0m [1m[94m|[0m struct TimedValidationEvent {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `parse_timed_validation_events` is never used[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:276:4
+    [1m[94m|[0m
+[1m[94m276[0m [1m[94m|[0m fn parse_timed_validation_events(content: &str) -> Vec<TimedValidationEvent> {
+    [1m[94m|[0m    [1m[91m^^^^^...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Remaining mechanical fixes: unused imports, dead test helper, and re-homing the note (option a).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (37 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 30.8s (3 ✓)
+
+Clippy green. Now tests and the actual behavior check:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate caught me — my own trap from this session's lessons. The right move is shrinking my prose, not raising the ceiling (the full rationale already lives in the emerging module's docs):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat src/commands_ris… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 1s (2 ✓)
+
+Need 6 lines back. Trimming my prose (the full rationale lives in the emerging module docs) and correcting a comment my change made false:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (9.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One line. Compressing the render-site tombstone to a single line:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (9.7s)
+
+Exactly at the ceiling without raising it. Full check plus real behavior verification:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ec… ✓ (685ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 39s (2 ✓)
+
+/risk is clean; /risk accuracy carries the evidence including the 39% ceiling. Now docs and the follow-up issue:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 163 (#720)" CLAUDE.… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

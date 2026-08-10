@@ -1,0 +1,149 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact call site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 930,985p src/commands_pla…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Clean tree. Writing the test first (it should fail to compile until the helper exists).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "2000\|GRANDFATHER\|comm… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 34 lines)
+  +     #[test]
+  +     fn plan_footer_tells_the_truth_about_both_branches() {
+  +         // (captured, must_contain, must_not_be_described_as_a_fresh_plan)
+  +         let captured = plan_footer(true);
+  +         assert!(
+  +             captured.contains("/plan apply to execute it"),
+  +             "captured branch must keep the original invitation byte-for-byte: {captured}"
+  +         );
+  +         assert!(
+  +             captured.contains("Review the plan above"),
+  +             "captured branch wording changed unexpectedly: {captured}"
+  +         );
+  + 
+  +         let uncaptured = plan_footer(false);
+  +         assert!(
+  +             !uncaptured.contains("Review the plan above"),
+  +             "an empty turn must not invite the user to review a plan that isn't there: {uncaptured}"
+  +         );
+  +         assert!(
+  +             uncaptured.to_lowercase().contains("no plan"),
+  ... (14 more lines)
+ ✓ (11.6s)
+  +     #[test]
+  +     fn plan_footer_tells_the_truth_about_both_branches() {
+  +         // (captured, must_contain, must_not_be_described_as_a_fresh_plan)
+  +         let captured = plan_footer(true);
+  +         assert!(
+  +             captured.contains("/plan apply to execute it"),
+  +             "captured branch must keep the original invitation byte-for-byte: {captured}"
+  +         );
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 26.4s (3 ✓)
+
+RED as intended. Now the helper + its call site in the same edit.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (15 → 14 lines)
+        // Capture the plan text from the last assistant message for later retrieval
+  -     if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+  +     let plan_text = crate::commands_web::extract_last_assistant_text(agent.messages());
+  +     if let Some(plan_text) = plan_text.clone() {
+            // If the first pass is broad (names files but has no per-file/per-step detail)
+            // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
+            if !deep && plan_is_shallow(&plan_text) {
+  ···
+            set_last_plan(plan_text);
+        }
+    
+  -     println!(
+  -         "\n{DIM}  💡 Review the plan above. Use /plan apply to execute it, or refine it.{RESET}\n"
+  -     );
+  +     println!("\n{DIM}  {}{RESET}\n", plan_footer(plan_text.is_some()));
+ ✓ (11.6s)
+        // Capture the plan text from the last assistant message for later retrieval
+  -     if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+  +     let plan_text = crate::commands_web::extract_last_assistant_text(agent.messages());
+  +     if let Some(plan_text) = plan_text.clone() {
+            // If the first pass is broad (names files but has no per-file/per-step detail)
+            // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
+            if !deep && plan_is_shallow(&plan_text) {
+  ···
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 3 lines)
+        let plan_text = crate::commands_web::extract_last_assistant_text(agent.messages());
+  -     if let Some(plan_text) = plan_text.clone() {
+  +     let captured = plan_text.is_some();
+  +     if let Some(plan_text) = plan_text {
+ ✓ (11.4s)
+        let plan_text = crate::commands_web::extract_last_assistant_text(agent.messages());
+  -     if let Some(plan_text) = plan_text.clone() {
+  +     let captured = plan_text.is_some();
+  +     if let Some(plan_text) = plan_text {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (1 → 1 lines)
+  -     println!("\n{DIM}  {}{RESET}\n", plan_footer(plan_text.is_some()));
+  +     println!("\n{DIM}  {}{RESET}\n", plan_footer(captured));
+ ✓ (11.5s)
+  -     println!("\n{DIM}  {}{RESET}\n", plan_footer(plan_text.is_some()));
+  +     println!("\n{DIM}  {}{RESET}\n", plan_footer(captured));
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 43.3s (3 ✓)
+
+Now the helper itself, placed just above handle_plan.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub async fn handle_pla… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 798,812p src/commands_pla… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (1 → 20 lines)
+  + /// The line printed after a planning turn.
+  + ///
+  + /// Absence gets its own name (#692). `extract_last_assistant_text` returns `None`
+  + /// when the newest turn produced no assistant text at all — it ended on tool calls,
+  + /// came back empty, or was refused. The old code printed "Review the plan above.
+  + /// Use /plan apply to execute it" unconditionally, while the *previously* captured
+  + /// plan silently stayed in `set_last_plan` — so a user who followed the instruction
+  + /// applied a plan for a different task. We keep the stored plan (the bug is the
+  + /// silence, not the retention) and say out loud which plan `/plan apply` would run.
+  + fn plan_footer(captured: bool) -> String {
+  +     if captured {
+  +         "💡 Review the plan above. Use /plan apply to execute it, or refine it.".to_string()
+  +     } else {
+  +         "⚠️  This turn produced no plan text — nothing new was captured. \
+  +          /plan apply would run the previous plan, not this task. Re-run /plan to try again."
+  +             .to_string()
+  +     }
+  + }
+  + 
+    /// Handle the `/plan` command: toggle plan mode, create a structured plan,
+ ✓ (1m 31s)
+  + /// The line printed after a planning turn.
+  + ///
+  + /// Absence gets its own name (#692). `extract_last_assistant_text` returns `None`
+  + /// when the newest turn produced no assistant text at all — it ended on tool calls,
+  + /// came back empty, or was refused. The old code printed "Review the plan above.
+  + /// Use /plan apply to execute it" unconditionally, while the *previously* captured
+  + /// plan silently stayed in `set_last_plan` — so a user who followed the instruction
+  + /// applied a plan for a different task. We keep the stored plan (the bug is the
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (53.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (52.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_plan.rs && se… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1020,1050p src/help_data.… ✓ (3ms)
+  7 tools completed in 3m 39s (7 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
