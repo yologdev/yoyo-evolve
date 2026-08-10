@@ -1,0 +1,345 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual ledger data before assuming anything about key names.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi… ✓ (5ms)
+ ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_experiment_grades… ✓ (15ms)
+ ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_experiment_grades… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,580p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1220,1400p' src/commands… ✓ (5ms)
+ ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,700p' scripts/extrac… ✓ (5ms)
+ ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,760p' scripts/extrac… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,110p' src/commands_ri… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '44,58p' src/commands_ris… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:44..74 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:73..83 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 1m 53s (15 ✓)
+
+Now let me write the new parser. First the types and weights:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 17 lines)
+    pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
+  + 
+  + /// Negative weight applied when an experiment round *named* a file but
+  + /// produced no grade of any kind — no summary `graded`, no per-hypothesis
+  + /// grade. The round happened; it just taught nothing measurable.
+  + ///
+  + /// Half of [`W_RECENTLY_STUDIED`], and the number is a judgment call, not a
+  + /// measurement: a visit is weaker evidence that I learned something than a
+  + /// graded round (nothing was scored, so nothing was falsifiable), but it is
+  + /// strictly more than never having looked — I have read the file, its
+  + /// neighbours, and formed whatever unrecorded impression a session leaves.
+  + /// Ranking a visited file *above* a graded one but *below* a never-studied
+  + /// one is the ordering this encodes; if grading discipline improves and these
+  + /// rounds stop happening, the const stops mattering on its own.
+  + pub(crate) const W_VISITED_UNGRADED: f64 = -0.5;
+    
+    /// Two epistemic scores within this distance count as tied and fall through
+ ✓ (17.0s)
+    pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
+  + 
+  + /// Negative weight applied when an experiment round *named* a file but
+  + /// produced no grade of any kind — no summary `graded`, no per-hypothesis
+  + /// grade. The round happened; it just taught nothing measurable.
+  + ///
+  + /// Half of [`W_RECENTLY_STUDIED`], and the number is a judgment call, not a
+  + /// measurement: a visit is weaker evidence that I learned something than a
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (39 → 98 lines)
+  - /// One graded experiment: `(path, grade, day)`.
+  - pub(crate) type ExperimentGrade = (String, String, u32);
+  + /// What an experiment round left behind about one file. Two *stated* values
+  + /// plus a third that is the absence of any entry at all (never studied) —
+  + /// #711: "visited" and "graded" used to be one fact, so a round whose summary
+  + /// `graded` field was null looked exactly like a round that never happened,
+  + /// and the ranking sent the planner back to files it had already spent a
+  + /// session on.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub(crate) enum StudyState {
+  +     /// The round has grade evidence: either a non-empty summary `graded`
+  +     /// field, or ≥1 `hypothesis_grades` record carrying its own grade. The
+  +     /// payload is the grade summary — verbatim when the summary field held
+  +     /// one, derived from the per-hypothesis records when it did not.
+  +     Graded(String),
+  +     /// A round named this file but recorded no grade anywhere. The expedition
+  +     /// happened; it produced nothing falsifiable.
+  +     VisitedUngraded,
+  + }
+    
+  ... (89 more lines)
+ ✓ (11.3s)
+  - /// One graded experiment: `(path, grade, day)`.
+  - pub(crate) type ExperimentGrade = (String, String, u32);
+  + /// What an experiment round left behind about one file. Two *stated* values
+  + /// plus a third that is the absence of any entry at all (never studied) —
+  + /// #711: "visited" and "graded" used to be one fact, so a round whose summary
+  + /// `graded` field was null looked exactly like a round that never happened,
+  + /// and the ranking sent the planner back to files it had already spent a
+  + /// session on.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 54.3s (2 ✓)
+
+Now the consumer — the merge and reason rendering:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:555..583 ✓ (1ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find type `ExperimentGrade` in this scope[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:504:20
+    [1m[94m|[0m
+[1m[94m100[0m [1m[94m|[0m pub(crate) struct ExperimentVisit {
+    [1m[94m|[0m [1m[94m---------------------------------[0m [1m[94msimilarly named struct `ExperimentVisit` defined here[0m
+[1m[94m...[0m
+[1m[94m504[0m [1m[94m|[0m     experiments: &[ExperimentGrade],
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: a struct with a similar name exists
+    [1m[94m|[0m
+[1m[94m504[0m [91m- [0m    experiments: &[[91mExperimentGrade[0m],
+[1m[94m504[0m [92m+ [0m    experiments: &[[92mExperimentVisit[0m],
+    [1m[94m|[0m
+
+[1m[91merror[E0425][0m[1m: cannot find type `ExperimentGrade` in this scope[0m
+    [1m[94m--> [0msrc/commands_risk_epistemic.rs:1302:50
+     [1m[94m|[0m
+[1m[94m 100[0m [1m[94m|[0m pub(crate) struct ExperimentVisit {
+     [1m[94m|[0m [1m[94m---------------------------------[0m [1m[94msimilarly named struct `ExperimentVisit` defined here[0m
+[1m[94m...[0m
+[1m[94m1302[0m [1m[94m|[0m     fn exp(path: &str, grade: &str, day: u32) -> ExperimentGrade {
+     [1m[94m|[0m                                                  [1m[91m^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+[1m[96mhelp[0m: a struct with a similar name exists
+     [1m[94m|[0m
+[1m[94m1302[0m [91m- [0m    fn exp(path: &str, grade: &str, day: u32) -> [91mExperimentGrade[0m {
+[1m[94m1302[0m [92m+ [0m    fn exp(path: &str, grade: &str, day: u32) -> [92mExperimentVisit[0m {
+     [1m[94m|[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `parse_experiment_grades` in this scope[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:846:23
+    [1m[94m|[0m
+[1m[94m147[0m [1m[94m|[0m pub(crate) fn parse_ex...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The refactor is mid-flight — I need to finish the consumer and tests. Let me continue:
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:498..508  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:570..590 ✓ (0ms)
+ ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 2 lines)
+  -     experiments: &[ExperimentGrade],
+  +     experiments: &[ExperimentVisit],
+    ) -> Vec<EpistemicEntry> {
+ ✓ (11.2s)
+  -     experiments: &[ExperimentGrade],
+  +     experiments: &[ExperimentVisit],
+    ) -> Vec<EpistemicEntry> {
+  3 tools completed in 17.3s (3 ✓)
+
+Now the merge logic — Graded must beat VisitedUngraded regardless of day:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (14 → 31 lines)
+        let last_index = snapshots.len() - 1;
+  -     // Latest graded experiment per file. This is study history, NOT grading
+  -     // history: it says "I read this file on purpose and graded a guess about
+  -     // it", never "the risk model was measured on it". Kept in its own map and
+  -     // rendered as its own reason so the two can never be conflated.
+  -     let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
+  -     for (path, grade, day) in experiments {
+  -         let slot = studied
+  -             .entry(path.as_str())
+  -             .or_insert((grade.as_str(), *day));
+  -         if *day >= slot.1 {
+  -             *slot = (grade.as_str(), *day);
+  +     // Latest experiment visit per file. This is study history, NOT grading
+  +     // history: it says "I read this file on purpose", never "the risk model
+  +     // was measured on it". Kept in its own map and rendered as its own reason
+  +     // so the two can never be conflated.
+  +     //
+  +     // Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+  +     // whatever the days say — a grade once earned is not erased by a later
+  +     // expedition that recorded nothing. Within the same state, the latest day
+  ... (22 more lines)
+ ✓ (11.2s)
+        let last_index = snapshots.len() - 1;
+  -     // Latest graded experiment per file. This is study history, NOT grading
+  -     // history: it says "I read this file on purpose and graded a guess about
+  -     // it", never "the risk model was measured on it". Kept in its own map and
+  -     // rendered as its own reason so the two can never be conflated.
+  -     let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
+  -     for (path, grade, day) in experiments {
+  -         let slot = studied
+  ... (13 more lines)
+
+Now the reason rendering:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:635..649 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (7 → 18 lines)
+            // Study discount. Deliberately additive to the reason list, never a
+            // replacement: if the validation ledger still says "never graded",
+            // that line stays. Both facts are true at once and both get said.
+  -         if let Some((grade, day)) = studied.get(path.as_str()) {
+  -             score += W_RECENTLY_STUDIED;
+  -             reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+  +         //
+  +         // The two study states render as two *distinct* reasons (#711) — a
+  +         // visit that produced no grade must never wear the word "graded".
+  +         if let Some((state, day)) = studied.get(path.as_str()) {
+  +             match state {
+  +                 StudyState::Graded(grade) => {
+  +                     score += W_RECENTLY_STUDIED;
+  +                     reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+  +                 }
+  +                 StudyState::VisitedUngraded => {
+  +                     score += W_VISITED_UNGRADED;
+  +                     reasons.push(format!("visited by ungraded experiment (day {day})"));
+  +                 }
+  +             }
+  ... (1 more lines)
+ ✓ (11.2s)
+            // Study discount. Deliberately additive to the reason list, never a
+            // replacement: if the validation ledger still says "never graded",
+            // that line stays. Both facts are true at once and both get said.
+  -         if let Some((grade, day)) = studied.get(path.as_str()) {
+  -             score += W_RECENTLY_STUDIED;
+  -             reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+  +         //
+  +         // The two study states render as two *distinct* reasons (#711) — a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (24ms)
+  3 tools completed in 21.6s (3 ✓)
+
+Now the tests. Let me read the affected block and rewrite it:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:1322..1382 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (51 → 121 lines)
+  -     fn exp(path: &str, grade: &str, day: u32) -> ExperimentGrade {
+  -         (path.to_string(), grade.to_string(), day)
+  +     fn exp(path: &str, grade: &str, day: u32) -> ExperimentVisit {
+  +         ExperimentVisit {
+  +             path: path.to_string(),
+  +             day,
+  +             state: StudyState::Graded(grade.to_string()),
+  +         }
+  +     }
+  + 
+  +     fn visit(path: &str, day: u32) -> ExperimentVisit {
+  +         ExperimentVisit {
+  +             path: path.to_string(),
+  +             day,
+  +             state: StudyState::VisitedUngraded,
+  +         }
+        }
+    
+        #[test]
+  -     fn test_parse_experiment_grades_keeps_only_graded_results() {
+  ... (113 more lines)
+ ✓ (11.1s)
+  -     fn exp(path: &str, grade: &str, day: u32) -> ExperimentGrade {
+  -         (path.to_string(), grade.to_string(), day)
+  +     fn exp(path: &str, grade: &str, day: u32) -> ExperimentVisit {
+  +         ExperimentVisit {
+  +             path: path.to_string(),
+  +             day,
+  +             state: StudyState::Graded(grade.to_string()),
+  +         }
+  ... (13 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:1490..1520 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (17 → 112 lines)
+  +     /// Was `test_ungraded_experiment_changes_nothing`, and that name was the
+  +     /// bug (#711): treating an ungraded round as no round at all is exactly
+  +     /// what made the ranking send the planner back to files it had already
+  +     /// visited. The round is now its own third value.
+        #[test]
+  -     fn test_ungraded_experiment_changes_nothing() {
+  +     fn test_ungraded_experiment_is_a_visit_not_a_nonevent() {
+            let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &["src/c.rs"])];
+            let baseline = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+  -         // A ledger of pure abstentions parses to nothing...
+  +         let a_before = baseline
+  +             .iter()
+  +             .find(|e| e.path == "src/a.rs")
+  +             .expect("never-graded file ranks");
+  + 
+            let ledger = r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#;
+  -         let experiments = parse_experiment_grades(ledger);
+  -         assert!(experiments.is_empty());
+  -         // ...and therefore the ranking is identical, not shifted toward zero.
+  +         let experiments = parse_experiment_visits(ledger);
+  ... (98 more lines)
+ ✓ (11.0s)
+  +     /// Was `test_ungraded_experiment_changes_nothing`, and that name was the
+  +     /// bug (#711): treating an ungraded round as no round at all is exactly
+  +     /// what made the ranking send the planner back to files it had already
+  +     /// visited. The round is now its own third value.
+        #[test]
+  -     fn test_ungraded_experiment_changes_nothing() {
+  +     fn test_ungraded_experiment_is_a_visit_not_a_nonevent() {
+            let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &["src/c.rs"])];
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/parse_experiment_grade… ✓ (1.1s)
+  5 tools completed in 1m 18s (5 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_graded_and_visit… ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My assertion had a substring trap — "ungraded experiment" contains "graded experiment":
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 4 lines)
+  -         assert!(!b.contains("graded experiment"), "visited ≠ graded: {b}");
+  +         assert!(
+  +             !b.starts_with("studied by graded"),
+  +             "visited ≠ studied-and-graded: {b}"
+  +         );
+ ✓ (1m 29s)
+  -         assert!(!b.contains("graded experiment"), "visited ≠ graded: {b}");
+  +         assert!(
+  +             !b.starts_with("studied by graded"),
+  +             "visited ≠ studied-and-graded: {b}"
+  +         );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (50.9s)
+  3 tools completed in 2m 28s (3 ✓)
+
+Rust side green. Now the consumer guard in extract_trajectory.py:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '695,706p' scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (19ms)
+  2 tools completed in 10.4s (2 ✓)
+
+Now add self-test cases:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "studied entry still res… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (140ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_self_tests()" scrip… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (43ms)
+  4 tools completed in 17.9s (4 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+  💾 Auto-remembered: Watch fix: 'cargo clippy --all-targets -- -D warnings && car…
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+

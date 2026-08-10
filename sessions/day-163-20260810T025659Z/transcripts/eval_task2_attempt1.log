@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_deterministic_tool_e… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_deterministic_refusa… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_recovery_hints\|wi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git show H… ✓ (7ms)
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (51.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 27s (6 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+The core change is sound — RecoveryHintTool is the outermost wrapper (`src/tools.rs:1024+), so guard refusals do reach it, and is_deterministic_refusal delegates to prompt_retry::is_deterministic_tool_error, which checks all three REFUSAL_STEM_* consts. The Failed arm was correctly folded into the shared other` branch without changing its output.
+
+But the commit touches only src/tool_wrappers.rs:
+• No tests at all. The task required helper-level cases (three stems true, ordinary error false, empty false) and wrapper-level tests on both sides (refusal → verbatim message + counter unmoved; ordinary error → hint + bump). Nothing pins the new path; existing tests all exercise the non-refusal side.
+• CLAUDE.md not updated, despite an explicit Docs requirement.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to update the CLAUDE.md bullet. Let me look at the current text and the actual code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_experiment_grades…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/commands_ris… ✓ (6ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "studied by graded exper… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,660p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,600p' src/commands_r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 23.6s (6 ✓)
+
+Now I have the facts. Updating the CLAUDE.md bullet:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_experiment_visits… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "parse_experiment_grade… ✓ (51.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (48.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (50.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (35 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 6s (6 ✓)
+
+Done — the missing docs step is complete.
+
+What I changed (CLAUDE.md, the commands_risk_epistemic.rs bullet, docs-only):
+
+• Removed the now-false claim pure parse_experiment_grades, graded-only: "graded": null … contribute nothing (I confirmed parse_experiment_grades no longer exists anywhere in src/, scripts/, or CLAUDE.md).
+• Replaced it with the three states as actually implemented in src/commands_risk_epistemic.rs:
+  1. `StudyState::Graded(summary) — non-empty summary graded, **or** (when null) ≥1 hypothesis_grades[].graded, summary derived as N hypotheses graded; W_RECENTLY_STUDIED = -1.0`
+  2. StudyState::VisitedUngraded — line names the file, no grade evidence; W_VISITED_UNGRADED = -0.5, smaller magnitude by documented judgment
+  3. absent — genuinely never studied, never collapsed into (2)
+• Added the merge rule (graded outranks visited-ungraded regardless of day; latest day wins within a state — read from the code, not assumed), the two distinct reason strings, the retained defensive-parsing contract, the no-back-fill rule, and the `extract_trajectory.py consumer guard (EPISTEMIC_VISITED_RE/VISITED_COMPACT_PREFIX`).
+• Both weight values were read from the source consts; the ledger cardinalities in the text (20 experiment_result lines, 9 null/empty summary graded, 8 of those with real hypothesis_grades, 1 fully ungraded) came from a command I ran against dreams/experiments.jsonl just now — they differ from the task's planning-time numbers (7/6/1) because the ledger has grown since.
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings (clean), cargo build, cargo test (4689 passed, 0 failed), python3 scripts/extract_trajectory.py --test → ALL PASSED. Committed as de5f7070; working tree clean.
+
+  watch: no files changed this turn — skipping
+

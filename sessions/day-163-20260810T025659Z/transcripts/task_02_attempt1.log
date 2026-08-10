@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of src/tool_wrappers.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/tool_wrappers.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "t… ✓ (8ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 655,840p src/tool_wrapper…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1809,1900p src/tool_wrapp… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=773 && NR<=824 {printf … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "REFUSAL_STEM" src/ | g… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 375,400p src/prompt_retry… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,300p tests/module_siz… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,230p tests/module_siz… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 0s (10 ✓)
+
+Now the edit. First the predicate next to the stems:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 11 lines)
+    /// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
+    pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+  + 
+  + /// True when an error message is one of yoyo's deliberate refusals rather than
+  + /// a tool failure. Substring match (not prefix) — wrappers may prepend context.
+  + ///
+  + /// Thin alias over [`crate::prompt_retry::is_deterministic_tool_error`] so the
+  + /// three stems above keep exactly one predicate reading them (#710).
+  + fn is_deterministic_refusal(err: &str) -> bool {
+  +     crate::prompt_retry::is_deterministic_tool_error(err)
+  + }
+ ✓ (16.4s)
+    /// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
+    pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+  + 
+  + /// True when an error message is one of yoyo's deliberate refusals rather than
+  + /// a tool failure. Substring match (not prefix) — wrappers may prepend context.
+  + ///
+  + /// Thin alias over [`crate::prompt_retry::is_deterministic_tool_error`] so the
+  + /// three stems above keep exactly one predicate reading them (#710).
+  ... (3 more lines)
+
+Expected — now the consumer, in the same pass (deduplicating the two error branches while I'm there):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (21 → 11 lines)
+  -             Err(yoagent::types::ToolError::Failed(msg)) => {
+  -                 let attempt = self.tracker.record_failure(&tool_name, &target);
+  -                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+  -                 // Prepend a file-specific hint when the same target fails 2+ times
+  -                 let file_prefix = if attempt >= 2 && target != "_" {
+  -                     format!(
+  -                         "You've failed to {verb} '{target}' {attempt} times. ",
+  -                         verb = tool_name.replace('_', " "),
+  -                     )
+  -                 } else {
+  -                     String::new()
+  -                 };
+  -                 Err(yoagent::types::ToolError::Failed(format!(
+  -                     "{msg}\n\n💡 Recovery hint: {file_prefix}{hint}"
+  -                 )))
+  -             }
+                Err(other) => {
+  -                 // Non-Failed errors (NotFound, InvalidArgs, Cancelled) also get
+  -                 // recovery hints — the counter is already being incremented, so
+  -                 // the agent should see the same escalating advice.
+  ... (10 more lines)
+ ✓ (1m 25s)
+  -             Err(yoagent::types::ToolError::Failed(msg)) => {
+  -                 let attempt = self.tracker.record_failure(&tool_name, &target);
+  -                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+  -                 // Prepend a file-specific hint when the same target fails 2+ times
+  -                 let file_prefix = if attempt >= 2 && target != "_" {
+  -                     format!(
+  -                         "You've failed to {verb} '{target}' {attempt} times. ",
+  -                         verb = tool_name.replace('_', " "),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=770 && NR<=812 {printf … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 5 lines)
+                    match other {
+  +                     yoagent::types::ToolError::Failed(msg) => Err(
+  +                         yoagent::types::ToolError::Failed(format!("{msg}{suffix}")),
+  +                     ),
+                        yoagent::types::ToolError::NotFound(msg) => Err(
+ ✓ (16.4s)
+                    match other {
+  +                     yoagent::types::ToolError::Failed(msg) => Err(
+  +                         yoagent::types::ToolError::Failed(format!("{msg}{suffix}")),
+  +                     ),
+                        yoagent::types::ToolError::NotFound(msg) => Err(
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=814 && NR<=822 {printf … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (4 → 2 lines)
+                        )),
+  -                     // Exhaustive: ToolError::Failed is already handled above
+  -                     e => Err(e),
+                    }
+ ✓ (1m 28s)
+                        )),
+  -                     // Exhaustive: ToolError::Failed is already handled above
+  -                     e => Err(e),
+                    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && wc… ✓ (143ms)
+  6 tools completed in 3m 35s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

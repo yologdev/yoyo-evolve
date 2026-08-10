@@ -1,0 +1,99 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the implementation first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_STEM\|is_determ… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/tool_wrappers.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/tool_wrappe… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,830p src/tool_wrapper… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers" tests/mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "struct .*Tool" src/too… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p tests/module_size.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1795,1870p src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_recovery_hints\|To… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1877,1912p src/tool_wrapp… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum ToolError" -A 20 … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,535p /home/runner/.ca… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 47.0s (13 ✓)
+
+Now adding the tests next to the existing RecoveryHintTool tests.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 87 lines)
+  +     #[test]
+  +     fn test_is_deterministic_refusal_discriminates() {
+  +         // One case per stem — a deliberate refusal.
+  +         for msg in [
+  +             "read mode is active — write_file is refused",
+  +             "web_search session cap reached (200 calls) this session",
+  +             "User denied bash on '/etc/passwd'",
+  +         ] {
+  +             assert!(is_deterministic_refusal(msg), "should be a refusal: {msg}");
+  +         }
+  +         // Ordinary tool failures — and the empty string — are not refusals.
+  +         for msg in [
+  +             "",
+  +             "No such file or directory (os error 2)",
+  +             "Command failed with exit code 1",
+  +         ] {
+  +             assert!(
+  +                 !is_deterministic_refusal(msg),
+  +                 "should not be a refusal: {msg}"
+  +             );
+  ... (67 more lines)
+ ✓ (1m 40s)
+  +     #[test]
+  +     fn test_is_deterministic_refusal_discriminates() {
+  +         // One case per stem — a deliberate refusal.
+  +         for msg in [
+  +             "read mode is active — write_file is refused",
+  +             "web_search session cap reached (200 calls) this session",
+  +             "User denied bash on '/etc/passwd'",
+  +         ] {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/tool_wrap… ✓ (953ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_is_deterministic_r… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 3s (4 ✓)
+
+Let me compress the two wrapper tests into one both-sides discriminator test to keep the diff small.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (977ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (8.5s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 5 lines)
+  -     ("src/tool_wrappers.rs", 3894),
+  +     // Day 163 (#710): raised 3894 -> 3964. The production change is a 4-line
+  +     // short-circuit in RecoveryHintTool; the ~70 lines are tests the task
+  +     // required — the helper's per-stem cases plus the both-sides wrapper
+  +     // discriminator (verbatim message + counter unmoved vs hint + bump).
+  +     ("src/tool_wrappers.rs", 3964),
+ ✓ (1m 38s)
+  -     ("src/tool_wrappers.rs", 3894),
+  +     // Day 163 (#710): raised 3894 -> 3964. The production change is a 4-line
+  +     // short-circuit in RecoveryHintTool; the ~70 lines are tests the task
+  +     // required — the helper's per-stem cases plus the both-sides wrapper
+  +     // discriminator (verbatim message + counter unmoved vs hint + bump).
+  +     ("src/tool_wrappers.rs", 3964),
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 58s (3 ✓)
+
+Now the CLAUDE.md docs update:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RecoveryHintTool, ToolF… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 4s)
+  3 tools completed in 1m 12s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
