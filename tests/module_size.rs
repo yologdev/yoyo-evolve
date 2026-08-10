@@ -74,7 +74,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // column in chars; 62 of the 68 lines are the two regression tests, one of
     // which asserts the fixture is genuinely boundary-violating so it can't
     // drift back to ASCII-safe like the old test did.
-    ("src/commands_search.rs", 3602),
+    // Day 163 (#706): +118 lines — parse_grep_args gained a `--` end-of-flags
+    // terminator and honest loser-branches (a value-taking flag with no usable
+    // value is now a literal pattern token instead of being silently swallowed),
+    // plus the fixture tests covering both the new paths and the untouched ones.
+    ("src/commands_search.rs", 3720),
     ("src/commands_spawn.rs", 3814),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests

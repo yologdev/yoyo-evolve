@@ -212,7 +212,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /grep -A N <pattern>      Show N lines after each match\n\
              \x20 /grep --include \"*.rs\" <pattern>  Only search files matching glob\n\
              \x20 /grep --exclude \"*.md\" <pattern>  Skip files matching glob\n\
-             \x20 /grep -c <pattern>        Show match counts per file\n\n\
+             \x20 /grep -c <pattern>        Show match counts per file\n\
+             \x20 /grep -- <pattern>        Stop flag parsing — search for a literal flag name\n\n\
              Fast, direct file content search — no AI, no token cost, instant results.\n\
              Uses git grep in git repos (respects .gitignore), falls back to grep.\n\
              Case-insensitive by default. Limited to 50 results.\n\n\

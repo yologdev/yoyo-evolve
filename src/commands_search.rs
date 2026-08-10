@@ -1073,10 +1073,22 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
     let mut exclude: Option<String> = None;
     let mut remaining_parts: Vec<String> = Vec::new();
 
+    // Everything after a bare `--` is pattern/path, never a flag (#706).
+    let mut end_of_flags = false;
+
     let mut i = 0;
     while i < tokens.len() {
         let token = &tokens[i];
+        if end_of_flags {
+            remaining_parts.push(token.clone());
+            i += 1;
+            continue;
+        }
         match token.as_str() {
+            "--" => {
+                // The terminator itself is consumed — it must not become the pattern.
+                end_of_flags = true;
+            }
             "-s" | "--case" => {
                 case_sensitive = true;
             }
@@ -1085,34 +1097,44 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
                     context_before = Some(n);
                     context_after = Some(n);
                     i += 1; // consume the number
+                } else {
+                    // No valid number follows: this is not a context flag. Treat the
+                    // token as a literal pattern rather than silently dropping it —
+                    // swallowing it used to run a search the user never asked for.
+                    remaining_parts.push(token.clone());
                 }
-                // If no valid number follows, flag is silently ignored
             }
             "-B" | "--before" => {
                 if let Some(n) = tokens.get(i + 1).and_then(|v| v.parse::<u32>().ok()) {
                     context_before = Some(n);
                     i += 1;
+                } else {
+                    remaining_parts.push(token.clone());
                 }
             }
             "-A" | "--after" => {
                 if let Some(n) = tokens.get(i + 1).and_then(|v| v.parse::<u32>().ok()) {
                     context_after = Some(n);
                     i += 1;
+                } else {
+                    remaining_parts.push(token.clone());
                 }
             }
             "--include" => {
                 if let Some(glob) = tokens.get(i + 1) {
                     include = Some(glob.clone());
                     i += 1; // consume the glob pattern
+                } else {
+                    remaining_parts.push(token.clone());
                 }
-                // If no value follows, flag is silently ignored
             }
             "--exclude" => {
                 if let Some(glob) = tokens.get(i + 1) {
                     exclude = Some(glob.clone());
                     i += 1; // consume the glob pattern
+                } else {
+                    remaining_parts.push(token.clone());
                 }
-                // If no value follows, flag is silently ignored
             }
             "-c" | "--count" => {
                 count_only = true;
@@ -2558,6 +2580,96 @@ mod tests {
         assert_eq!(args.path, ".");
     }
 
+    // --- #706: flag names must be searchable ---
+    //
+    // Two paths get a token that looks like a flag back to the user:
+    //   1. `--` ends flag parsing; everything after it is pattern/path.
+    //   2. A value-taking flag whose value is missing/unparseable is treated as a
+    //      pattern token instead of being silently swallowed (which used to hand
+    //      the user results for a search they never asked for).
+    //
+    // The "normal path untouched" cases below matter as much as the new ones:
+    // this is a discriminator change, and discriminators get tested only on the
+    // side that fires (Day 122/124).
+    #[test]
+    fn parse_grep_args_end_of_flags_terminator() {
+        // `--` itself is consumed, never becomes the pattern.
+        let args = parse_grep_args("/grep -- -C src/").unwrap();
+        assert_eq!(args.pattern, "-C");
+        assert_eq!(args.path, "src/");
+        assert_eq!(args.context_lines, None);
+    }
+
+    #[test]
+    fn parse_grep_args_end_of_flags_long_flag() {
+        let args = parse_grep_args("/grep -- --count foo").unwrap();
+        assert_eq!(args.pattern, "--count");
+        assert_eq!(args.path, "foo");
+        assert!(!args.count_only);
+    }
+
+    #[test]
+    fn parse_grep_args_value_flag_without_value_becomes_pattern() {
+        // The #706 repro: user quoted the pattern expecting a literal search.
+        // `src/` is not a number, so `-C` is not a context flag here.
+        let args = parse_grep_args(r#"/grep "-C" src/"#).unwrap();
+        assert_eq!(args.pattern, "-C");
+        assert_eq!(args.path, "src/");
+        assert_eq!(args.context_lines, None);
+    }
+
+    #[test]
+    fn parse_grep_args_value_flag_at_end_becomes_pattern() {
+        for input in ["/grep -C", "/grep -B", "/grep -A", "/grep --include"] {
+            let args = parse_grep_args(input)
+                .unwrap_or_else(|| panic!("{input} should parse as a literal pattern"));
+            assert_eq!(args.pattern, input.trim_start_matches("/grep ").trim());
+            assert_eq!(args.context_lines, None);
+            assert_eq!(args.include, None);
+        }
+    }
+
+    #[test]
+    fn parse_grep_args_include_without_value_becomes_pattern() {
+        let args = parse_grep_args("/grep --exclude").unwrap();
+        assert_eq!(args.pattern, "--exclude");
+        assert_eq!(args.exclude, None);
+    }
+
+    // --- normal paths must be untouched ---
+
+    #[test]
+    fn parse_grep_args_context_normal_path_untouched() {
+        let args = parse_grep_args("/grep -C 3 foo src/").unwrap();
+        assert_eq!(args.pattern, "foo");
+        assert_eq!(args.path, "src/");
+        assert_eq!(args.context_lines, Some((3, 3)));
+    }
+
+    #[test]
+    fn parse_grep_args_include_normal_path_untouched() {
+        let args = parse_grep_args("/grep --include *.rs foo").unwrap();
+        assert_eq!(args.pattern, "foo");
+        assert_eq!(args.include.as_deref(), Some("*.rs"));
+    }
+
+    #[test]
+    fn parse_grep_args_boolean_flags_normal_path_untouched() {
+        let args = parse_grep_args("/grep -s foo").unwrap();
+        assert_eq!(args.pattern, "foo");
+        assert!(args.case_sensitive);
+
+        let args = parse_grep_args("/grep -c foo").unwrap();
+        assert_eq!(args.pattern, "foo");
+        assert!(args.count_only);
+    }
+
+    #[test]
+    fn parse_grep_args_unknown_dash_token_still_pattern() {
+        let args = parse_grep_args("/grep -foo").unwrap();
+        assert_eq!(args.pattern, "-foo");
+    }
+
     #[test]
     fn format_grep_results_empty() {
         let formatted = format_grep_results(&[], "pattern", false);
@@ -2696,9 +2808,12 @@ mod tests {
 
     #[test]
     fn parse_grep_args_context_without_number_ignored() {
-        // -C without a number should be silently ignored, not consume pattern
+        // Day 163 (#706): -C without a number is no longer silently dropped.
+        // Dropping it handed the user a search for "TODO" when they asked for "-C",
+        // so the flag token becomes the pattern and TODO becomes the path.
         let args = parse_grep_args("/grep -C TODO").unwrap();
-        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.pattern, "-C");
+        assert_eq!(args.path, "TODO");
         assert_eq!(args.context_lines, None);
     }
 
@@ -2732,10 +2847,11 @@ mod tests {
 
     #[test]
     fn parse_grep_args_include_without_value_ignored() {
-        // --include at end with no value: --include is consumed but has no next token,
-        // so include stays None. The word after --include would be consumed as pattern.
-        // With just "/grep --include" there's no pattern left → returns None.
-        assert!(parse_grep_args("/grep --include").is_none());
+        // Day 163 (#706): --include with no value is no longer discarded (which used
+        // to leave zero pattern tokens → None). It is now a literal pattern.
+        let args = parse_grep_args("/grep --include").unwrap();
+        assert_eq!(args.pattern, "--include");
+        assert_eq!(args.include, None);
     }
 
     #[test]
@@ -2905,8 +3021,10 @@ src/b.rs:20:match two";
 
     #[test]
     fn parse_grep_args_exclude_without_value_ignored() {
-        // --exclude at end with no value → no pattern left → returns None
-        assert!(parse_grep_args("/grep --exclude").is_none());
+        // Day 163 (#706): --exclude with no value is a literal pattern, not a no-op.
+        let args = parse_grep_args("/grep --exclude").unwrap();
+        assert_eq!(args.pattern, "--exclude");
+        assert_eq!(args.exclude, None);
     }
 
     #[test]
