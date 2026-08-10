@@ -801,9 +801,9 @@ impl AgentTool for RecoveryHintTool {
                 };
                 let suffix = format!("\n\n💡 Recovery hint: {file_prefix}{hint}");
                 match other {
-                    yoagent::types::ToolError::Failed(msg) => Err(
-                        yoagent::types::ToolError::Failed(format!("{msg}{suffix}")),
-                    ),
+                    yoagent::types::ToolError::Failed(msg) => {
+                        Err(yoagent::types::ToolError::Failed(format!("{msg}{suffix}")))
+                    }
                     yoagent::types::ToolError::NotFound(msg) => Err(
                         yoagent::types::ToolError::NotFound(format!("{msg}{suffix}")),
                     ),
@@ -1873,6 +1873,76 @@ mod tests {
 
         // Counter should be reset after success
         assert_eq!(tracker.get("bash", "_"), 0);
+    }
+
+    #[test]
+    fn test_is_deterministic_refusal_discriminates() {
+        // One case per stem — a deliberate refusal.
+        for msg in [
+            "read mode is active — write_file is refused",
+            "web_search session cap reached (200 calls) this session",
+            "User denied bash on '/etc/passwd'",
+        ] {
+            assert!(is_deterministic_refusal(msg), "should be a refusal: {msg}");
+        }
+        // Ordinary tool failures — and the empty string — are not refusals.
+        for msg in [
+            "",
+            "No such file or directory (os error 2)",
+            "Command failed with exit code 1",
+        ] {
+            assert!(
+                !is_deterministic_refusal(msg),
+                "should not be a refusal: {msg}"
+            );
+        }
+    }
+
+    /// Both sides of the discriminator in one place (Day 122/124 — testing only
+    /// the side that fires is vacuous green): a deterministic refusal passes
+    /// through `RecoveryHintTool` verbatim — no hint appended (no coaching around
+    /// the guard) and no failure-counter bump — while an ordinary error still
+    /// gets its hint and still bumps the counter. #710.
+    #[tokio::test]
+    async fn test_recovery_hint_tool_short_circuits_only_refusals() {
+        let refusal = format!("read mode{}write_file is refused", REFUSAL_STEM_MODE_ACTIVE);
+        for (fail_msg, expect_hint, expect_count) in [
+            (refusal.clone(), false, 0),
+            (
+                "No such file or directory (os error 2)".to_string(),
+                true,
+                1,
+            ),
+        ] {
+            let tracker = ToolFailureTracker::new();
+            let tool = with_recovery_hints(
+                Box::new(ConfigurableMockTool {
+                    tool_name: "write_file",
+                    fail_msg: Some(fail_msg.clone()),
+                }),
+                &tracker,
+            );
+            let err = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .expect_err("should still be an error");
+            let yoagent::types::ToolError::Failed(msg) = err else {
+                panic!("expected Failed for {fail_msg}");
+            };
+            if expect_hint {
+                assert!(
+                    msg.starts_with(&fail_msg) && msg.contains("💡 Recovery hint:"),
+                    "ordinary error keeps its hint: {msg}"
+                );
+            } else {
+                assert_eq!(msg, fail_msg, "refusal must come back byte-for-byte");
+            }
+            assert_eq!(
+                tracker.get("write_file", "_"),
+                expect_count,
+                "failure counter for {fail_msg}"
+            );
+        }
     }
 
     #[tokio::test]

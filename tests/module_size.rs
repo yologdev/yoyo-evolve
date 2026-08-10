@@ -110,7 +110,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#709): raised 3748 -> 3894 for the Arc flavour of the mode
     // guard (two constructors) + three Arc-path enforcement tests. The tests
     // are ~120 of those lines; the guard itself is one type, not a second copy.
-    ("src/tool_wrappers.rs", 3894),
+    // Day 163 (#710): raised 3894 -> 3964. The production change is a 4-line
+    // short-circuit in RecoveryHintTool; the ~70 lines are tests the task
+    // required — the helper's per-stem cases plus the both-sides wrapper
+    // discriminator (verbatim message + counter unmoved vs hint + bump).
+    ("src/tool_wrappers.rs", 3964),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     ("src/tools.rs", 3264),
