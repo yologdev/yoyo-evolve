@@ -124,9 +124,15 @@ fn graded_hypothesis_count(val: &serde_json::Value) -> usize {
 /// Grade evidence is read from **both** places a round can record it:
 /// - a non-empty summary `graded` string (the original source), or
 /// - ≥1 `hypothesis_grades` record with its own grade — the per-hypothesis
-///   records are the source of truth when the summary was left null (7 of the
-///   20 result lines on Day 163; 6 of those 7 carried real per-hypothesis
-///   grades, so the round *was* graded and only the summary field was empty).
+///   records are the source of truth when the summary was left null. Measured
+///   on Day 163 against `dreams/experiments.jsonl` (a snapshot of a growing
+///   ledger, not an invariant — re-count before quoting it): 21
+///   `experiment_result` lines, 9 with a null/empty summary `graded`, 8 of
+///   those 9 carrying real per-hypothesis grades, so the round *was* graded
+///   and only the summary field was empty; 1 genuinely ungraded. The same
+///   9/8/1 split held at 20 result lines earlier the same day (#718 — the
+///   figures first written here, "7 of 20, 6 of those 7", were wrong against
+///   the very commit that introduced them).
 ///
 /// Defensive, like every other JSONL reader here:
 /// - a line with no grade evidence anywhere is [`StudyState::VisitedUngraded`],
