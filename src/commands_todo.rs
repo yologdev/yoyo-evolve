@@ -20,9 +20,7 @@ fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T
 /// in `commands.rs`, so those two surfaces can't drift from the code again (#702:
 /// completion advertised a `list` verb that didn't exist, while `board` — the only
 /// disk-backed verb — was advertised nowhere).
-pub(crate) const TODO_VERBS: &[&str] = &[
-    "list", "add", "done", "wip", "remove", "clear", "board",
-];
+pub(crate) const TODO_VERBS: &[&str] = &["list", "add", "done", "wip", "remove", "clear", "board"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TodoStatus {
