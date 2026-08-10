@@ -68,7 +68,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // (a lone `Fix #710` delivery commit no longer grades as a failure day),
     // which is mostly doc comment + a fixture-table test + a second verbatim
     // git-log capture for the corroborated red-branch proof.
-    ("src/commands_risk.rs", 5035),
+    // Day 163 (#717): +131 lines — uncorroborated-repair third value
+    // (has_uncorroborated_repair_evidence + its green-branch call site) plus the
+    // three fixture tests pinning flagged / green / corroborated windows.
+    ("src/commands_risk.rs", 5166),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of

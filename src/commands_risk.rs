@@ -1716,6 +1716,43 @@ fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<St
     broke
 }
 
+/// True when the window LOOKS like a repair window but corroboration dropped
+/// every candidate: at least one non-revert commit claims a repair and names a
+/// `src/` file, yet `classify_broke_files` returned nothing.
+///
+/// This is the **third value** — "repair claimed, uncorroborated" — that keeps a
+/// real failure day from being recorded as an affirmative green one (#717).
+///
+/// Why it is needed: tier 1 (a revert commit) is structurally dead in this repo,
+/// because `scripts/evolve.sh` reverts with `git reset --hard "$PRE_TASK_SHA"`
+/// and `git checkout -- .` — never a revert commit. So tier 2 decides
+/// everything, and the canonical real breakage (bad commit in session N, one
+/// `Fix #NNN` commit in session N+1) is exactly the shape tier 2 drops: in
+/// session N+1's window the repair is the only touch of that file, so
+/// corroboration fails and the file is silently skipped. An empty `broke_files`
+/// then falls through to the GREEN branch and books a genuine failure day as
+/// crying-wolf evidence. An ungraded window is honest; a green one is a
+/// fabricated observation.
+///
+/// Reuses the same predicates and `src/` filter as `classify_broke_files`, so
+/// the two can't drift apart.
+fn has_uncorroborated_repair_evidence(entries: &[CommitEntry]) -> bool {
+    // Only meaningful when the corroborated classifier found nothing: if it did
+    // find breakage, the window is graded as a failure day and never reaches
+    // the green branch this helper guards.
+    if !classify_broke_files(entries).is_empty() {
+        return false;
+    }
+    entries.iter().any(|entry| {
+        // A revert is tier-1 evidence on its own — if one is present and
+        // classify_broke_files still came back empty, it named no `src/` file,
+        // which is not the uncorroborated-repair shape.
+        !message_claims_revert(&entry.message)
+            && message_claims_repair(&entry.message)
+            && entry.files.iter().any(|f| f.starts_with("src/"))
+    })
+}
+
 /// Result of comparing predictions against actual breakage.
 struct ValidationResult {
     /// Files from the top-10 predictions that actually broke.
@@ -2536,6 +2573,16 @@ fn handle_risk_validate() {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
     } else {
+        // Third value (#717): the window claims a repair of a `src/` file but
+        // corroboration dropped it, so we don't KNOW whether anything broke.
+        // Record nothing — an ungraded window is honest, a green one would be a
+        // fabricated observation booked as crying-wolf evidence.
+        if has_uncorroborated_repair_evidence(&entries) {
+            eprintln!(
+                "  {DIM}⚠ suspected failure day (repair-claiming commits present, corroboration failed) — not graded{RESET}"
+            );
+            return;
+        }
         // GREEN outcome: commits happened since the snapshot but nothing
         // broke. Grade it anyway — predicted-risky files that were touched
         // without breaking are false-positive evidence, and a meter that only
@@ -3461,6 +3508,90 @@ src/plain rs file.rs
         assert!(!message_claims_revert("abc1234 Add tests"));
         // Substring near-miss must not fire (same discipline as REPAIR_TOKENS).
         assert!(!message_claims_revert("abc1234 add a reverter helper"));
+    }
+
+    fn entry(message: &str, files: &[&str]) -> CommitEntry {
+        CommitEntry {
+            message: message.to_string(),
+            files: files.iter().map(|f| f.to_string()).collect(),
+        }
+    }
+
+    /// The fixture the corroboration table was missing: the repair lands in a
+    /// LATER window than the break, so it is the only touch of that file and
+    /// tier 2 drops it. Without the third value this window is booked green.
+    #[test]
+    fn test_uncorroborated_repair_window_is_flagged() {
+        let entries = vec![
+            entry(
+                "aaa1111 Day 164: Fix #710 — guard the empty case",
+                &["src/commands_risk.rs"],
+            ),
+            entry(
+                "bbb2222 Day 164: docs — journal entry",
+                &["journals/JOURNAL.md"],
+            ),
+        ];
+        // classify_broke_files drops it (single touch, non-revert)...
+        assert!(classify_broke_files(&entries).is_empty());
+        // ...so the window must be reported as suspected-failure, not green.
+        assert!(has_uncorroborated_repair_evidence(&entries));
+    }
+
+    /// The regression that matters most: a genuinely green window must NOT be
+    /// swallowed by the new branch, or the false-positive half of the meter
+    /// dies silently.
+    #[test]
+    fn test_genuinely_green_window_is_not_flagged() {
+        let entries = vec![
+            entry(
+                "aaa1111 Day 164: Add /risk epistemic ranking",
+                &["src/commands_risk_epistemic.rs"],
+            ),
+            entry(
+                "bbb2222 Day 164: bump skill-evolve counter",
+                &[".skill_evolve_counter"],
+            ),
+            entry("ccc3333 Day 164 (01:12): journal", &["journals/JOURNAL.md"]),
+        ];
+        assert!(!has_uncorroborated_repair_evidence(&entries));
+        // A repair-claiming commit that names no src/ file is also not the
+        // uncorroborated-repair shape.
+        let docs_only = vec![entry(
+            "ddd4444 fix: typo in the docs",
+            &["docs/src/usage/commands.md"],
+        )];
+        assert!(classify_broke_files(&docs_only).is_empty());
+        assert!(!has_uncorroborated_repair_evidence(&docs_only));
+        // And an empty window says nothing at all.
+        assert!(!has_uncorroborated_repair_evidence(&[]));
+    }
+
+    /// A corroborated repair is already returned as breakage by
+    /// classify_broke_files, so the third value must stay quiet — the window is
+    /// graded as a failure day through the normal path.
+    #[test]
+    fn test_corroborated_repair_is_not_the_third_value() {
+        let entries = vec![
+            entry(
+                "aaa1111 Day 164: Fix #710 — guard the empty case",
+                &["src/commands_risk.rs"],
+            ),
+            entry(
+                "bbb2222 Day 164: follow-up tweak",
+                &["src/commands_risk.rs"],
+            ),
+        ];
+        assert!(classify_broke_files(&entries).contains("src/commands_risk.rs"));
+        assert!(!has_uncorroborated_repair_evidence(&entries));
+
+        // Same for a revert naming a src/ file: tier 1 grades it directly.
+        let reverted = vec![entry(
+            "ccc3333 Revert \"Day 163: risky change\"",
+            &["src/commands_risk.rs"],
+        )];
+        assert!(!classify_broke_files(&reverted).is_empty());
+        assert!(!has_uncorroborated_repair_evidence(&reverted));
     }
 
     #[test]
