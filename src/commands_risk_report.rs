@@ -6,7 +6,10 @@
 use crate::commands_risk::{
     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
 };
-use crate::commands_risk_snapshots::{load_validation_history_from, RISK_VALIDATION_PATH};
+use crate::commands_risk_snapshots::{
+    load_validation_history_from, parse_all_snapshots, parse_validation_events, snapshot_before,
+    ParsedSnapshot, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+};
 use crate::format::*;
 
 /// Given a list of file paths (e.g. from error output), return those with
@@ -216,12 +219,162 @@ fn recall_coverage_note_from(path: &std::path::Path) -> Option<String> {
 ///      "not yet graded on a failure day" (ungraded ≠ wrong)
 ///   3. graded on ≥1 failure day → the measured number, next to the reactive
 ///      column's number over the same days
+///
+/// Day 163 (#720 step 2) adds the *denominator's* honest upper bound beside the
+/// numerator: see `emerging_achievable_ceiling`.
 pub(crate) fn emerging_track_record_note() -> Option<String> {
-    emerging_track_record_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+    emerging_track_record_note_from(
+        std::path::Path::new(RISK_VALIDATION_PATH),
+        std::path::Path::new(RISK_SNAPSHOT_PATH),
+    )
 }
 
-/// Inner implementation with configurable path (for testing).
-fn emerging_track_record_note_from(path: &std::path::Path) -> Option<String> {
+/// Best recall the emerging column *could* have scored on the graded
+/// failure-day events, given how many files it actually named at grading time.
+///
+/// Why this exists (#720 step 2, Day 163 lesson "a zero I can blame on the
+/// instrument is a zero I never have to accept"): the column reads 0% and every
+/// repair since Day 138 went to the grading apparatus. If the recorded emerging
+/// lists were structurally too small to cover the outcomes, the zero would be
+/// the instrument's fault; if they weren't, the zero is the *forecast's*. This
+/// function computes which, so the reader never has to take my word for it.
+///
+/// Pooled — `sum(min(list_len, outcome_len)) / sum(outcome_len)` — not an
+/// average of per-event percentages, so it is commensurable with
+/// `failure_hit_rate_pct` (Day 149: averaging per-event percentages silently
+/// reweights tiny events upward).
+///
+/// Absence gets its own name (Day 144): an event with no timestamp, no
+/// preceding snapshot, or an empty outcome set is *excluded* and counted, never
+/// folded in as a 0. Zero surviving events → `None`, never `Some(0.0)`.
+pub(crate) struct EmergingCeiling {
+    /// Pooled best-possible recall percentage over the paired events.
+    pub(crate) pct: f64,
+    /// How many graded failure-day events were successfully paired and scored.
+    pub(crate) events: usize,
+    /// How many were dropped as un-pairable (see the struct docs).
+    pub(crate) excluded: usize,
+}
+
+/// A validation event paired with the `ts` its JSONL line recorded.
+///
+/// `ValidationEvent` itself carries no timestamp, and the ceiling computation
+/// needs one to find the snapshot the event graded against — so the timestamp
+/// rides alongside rather than being re-parsed into a second event type.
+struct TimedValidationEvent {
+    /// `None` on lines with no `ts` field (legacy) — un-pairable, so excluded.
+    ts: Option<String>,
+    event: ValidationEvent,
+}
+
+/// Re-read validation JSONL keeping each line's `ts` next to its parsed event.
+///
+/// Deliberately reuses `parse_validation_events` one line at a time rather than
+/// re-implementing the event parser here: the two must never disagree about
+/// which lines are valid, and a duplicated parser is exactly the shape that
+/// drifts (the only thing added is the timestamp the shared struct omits).
+fn parse_timed_validation_events(content: &str) -> Vec<TimedValidationEvent> {
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(event) = parse_validation_events(trimmed).into_iter().next() else {
+            continue;
+        };
+        let ts = serde_json::from_str::<serde_json::Value>(trimmed)
+            .ok()
+            .and_then(|v| v.get("ts").and_then(|t| t.as_str()).map(String::from));
+        out.push(TimedValidationEvent { ts, event });
+    }
+    out
+}
+
+/// Compute the pooled achievable ceiling (see `EmergingCeiling`).
+fn emerging_achievable_ceiling(
+    events: &[TimedValidationEvent],
+    snapshots: &[ParsedSnapshot],
+) -> Option<EmergingCeiling> {
+    let mut best_hits = 0usize;
+    let mut total_changed = 0usize;
+    let mut scored = 0usize;
+    let mut excluded = 0usize;
+
+    for timed in events {
+        // Same failure-day filter the track record uses. Do not re-derive the
+        // green predicate — call the one the accuracy module owns.
+        if crate::commands_risk_accuracy::is_green_event(&timed.event) {
+            continue;
+        }
+        if timed.event.emerging_accuracy_pct.is_none() {
+            continue;
+        }
+        let outcome = timed.event.total_changed;
+        // Strict `<` is deliberate: at least one recorded event carries a `ts`
+        // byte-identical to a snapshot's, and `yoyo risk validate` grades
+        // against the *prior* snapshot before writing the new one — `<=` would
+        // grade an outcome against a snapshot written after it.
+        let list_len = timed
+            .ts
+            .as_deref()
+            .and_then(|ts| snapshot_before(snapshots, ts))
+            .map(|s| s.emerging.len());
+        match (list_len, outcome) {
+            (Some(len), out) if out > 0 => {
+                best_hits += len.min(out);
+                total_changed += out;
+                scored += 1;
+            }
+            // No timestamp, no preceding snapshot, or nothing changed: this
+            // event teaches the ceiling nothing. Named, not silently zeroed.
+            _ => excluded += 1,
+        }
+    }
+
+    if scored == 0 || total_changed == 0 {
+        return None;
+    }
+    Some(EmergingCeiling {
+        pct: (best_hits as f64 / total_changed as f64) * 100.0,
+        events: scored,
+        excluded,
+    })
+}
+
+/// Render the ceiling as a clause appended to the measured track record.
+///
+/// Branches on direction: if the recorded lists left headroom above the
+/// measured recall, the miss is the forecast's; if they didn't, say that
+/// instead. The sentence must be true in both directions (the point of the
+/// exercise is disconfirmation, not a better-sounding zero).
+fn ceiling_clause(ceiling: &EmergingCeiling, actual_pct: f64) -> String {
+    let pct = ceiling.pct;
+    let verdict = if pct > actual_pct {
+        "the list named enough files to have hit — the miss is the forecast, not the list size"
+    } else {
+        "the recorded list sizes leave no headroom above the measured recall — list size, not the forecast, bounds this column"
+    };
+    let excluded_clause = if ceiling.excluded > 0 {
+        let plural = if ceiling.excluded == 1 { "" } else { "s" };
+        format!(
+            " ({n} event{plural} excluded — no snapshot recorded before them; ceiling over {m})",
+            n = ceiling.excluded,
+            m = ceiling.events
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        " — achievable ceiling on those events: {pct:.0}%, {verdict}{excluded_clause} (pairing approximate: events do not record which snapshot they graded)"
+    )
+}
+
+/// Inner implementation with configurable paths (for testing).
+fn emerging_track_record_note_from(
+    path: &std::path::Path,
+    snapshot_path: &std::path::Path,
+) -> Option<String> {
     let events = load_validation_history_from(path);
     let stats = compute_accuracy_stats(&events);
 
@@ -257,8 +410,20 @@ fn emerging_track_record_note_from(path: &std::path::Path) -> Option<String> {
         Some(r) => format!(" (reactive column: {r:.0}%)"),
         None => String::new(),
     };
+    // The achievable ceiling: how well this column *could* have done given the
+    // list sizes it actually recorded. `None` (un-pairable / no snapshots) adds
+    // nothing — the three original states stay byte-identical without it.
+    let snapshots = std::fs::read_to_string(snapshot_path)
+        .map(|c| parse_all_snapshots(&c))
+        .unwrap_or_default();
+    let timed = std::fs::read_to_string(path)
+        .map(|c| parse_timed_validation_events(&c))
+        .unwrap_or_default();
+    let ceiling_clause = emerging_achievable_ceiling(&timed, &snapshots)
+        .map(|c| ceiling_clause(&c, pct))
+        .unwrap_or_default();
     Some(format!(
-        "track record: {pct:.0}% recall over {samples} graded failure day{plural}{reactive_clause}{ungraded_clause}"
+        "track record: {pct:.0}% recall over {samples} graded failure day{plural}{reactive_clause}{ungraded_clause}{ceiling_clause}"
     ))
 }
 
@@ -278,17 +443,24 @@ mod tests {
         )
     }
 
+    /// A snapshot path that doesn't exist. With no snapshots the ceiling is
+    /// un-computable (`None`), so the note falls back to step 1's exact
+    /// wording — which is what the three original state tests pin.
+    fn no_snapshots(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("no_snapshots.jsonl")
+    }
+
     #[test]
     fn test_emerging_track_record_note_missing_ledger_is_silent() {
         // State 1: nothing measured → say nothing. Never print "0%" for a
         // thing that was never graded.
         let dir = tempfile::tempdir().expect("create temp dir");
         let path = dir.path().join("nonexistent.jsonl");
-        assert!(emerging_track_record_note_from(&path).is_none());
+        assert!(emerging_track_record_note_from(&path, &no_snapshots(dir.path())).is_none());
 
         let empty = dir.path().join("empty.jsonl");
         std::fs::write(&empty, "").expect("write");
-        assert!(emerging_track_record_note_from(&empty).is_none());
+        assert!(emerging_track_record_note_from(&empty, &no_snapshots(dir.path())).is_none());
     }
 
     #[test]
@@ -303,7 +475,8 @@ mod tests {
         ];
         std::fs::write(&path, lines.join("\n") + "\n").expect("write");
 
-        let note = emerging_track_record_note_from(&path).expect("note expected");
+        let note = emerging_track_record_note_from(&path, &no_snapshots(dir.path()))
+            .expect("note expected");
         assert!(
             note.contains("not yet graded on a failure day"),
             "expected ungraded wording, got: {note}"
@@ -332,7 +505,8 @@ mod tests {
         ];
         std::fs::write(&path, lines.join("\n") + "\n").expect("write");
 
-        let note = emerging_track_record_note_from(&path).expect("note expected");
+        let note = emerging_track_record_note_from(&path, &no_snapshots(dir.path()))
+            .expect("note expected");
         assert!(
             note.contains("0% recall"),
             "expected the measured percentage, got: {note}"
@@ -348,6 +522,251 @@ mod tests {
         assert!(
             note.contains("1 failure-day event carried no emerging forecast"),
             "expected the ungraded tail (singular), got: {note}"
+        );
+        // No snapshots on disk → the ceiling is un-computable, and the note is
+        // byte-identical to step 1's output (no stray clause).
+        assert!(
+            !note.contains("achievable ceiling"),
+            "unmeasurable ceiling must add nothing: {note}"
+        );
+    }
+
+    // ---- #720 step 2: achievable ceiling ------------------------------------
+
+    /// One validation JSONL line with an explicit timestamp and outcome set.
+    fn event_line(
+        ts: &str,
+        severity: Option<&str>,
+        paths: &[&str],
+        emerging: Option<f64>,
+    ) -> String {
+        let sev = match severity {
+            Some(s) => format!(r#","severity":"{s}""#),
+            None => String::new(),
+        };
+        let em = match emerging {
+            Some(e) => format!(r#","emerging_accuracy_pct":{e}"#),
+            None => String::new(),
+        };
+        let surprises: Vec<String> = paths.iter().map(|p| format!("\"{p}\"")).collect();
+        format!(
+            r#"{{"ts":"{ts}","day":163,"trigger":"cli","hits":[],"surprises":[{s}],"predicted_count":10,"accuracy_pct":0.0{em}{sev}}}"#,
+            s = surprises.join(",")
+        )
+    }
+
+    /// One snapshot JSONL line whose emerging list has `n` entries. Shaped
+    /// like the real ledger: both columns are arrays of objects with a `path`
+    /// key, and `top_10` must be non-empty or `parse_all_snapshots` drops the
+    /// line entirely.
+    fn snapshot_line(ts: &str, n: usize) -> String {
+        let emerging: Vec<String> = (0..n).map(|i| format!(r#"{{"path":"src/e{i}.rs"}}"#)).collect();
+        format!(
+            r#"{{"day":163,"git_hash":"abc{n}","ts":"{ts}","top_10":[{{"path":"src/hot.rs"}}],"emerging":[{e}]}}"#,
+            e = emerging.join(",")
+        )
+    }
+
+    fn ceiling_of(snapshot_jsonl: &str, validation_jsonl: &str) -> Option<EmergingCeiling> {
+        let snapshots = parse_all_snapshots(snapshot_jsonl);
+        let events = parse_timed_validation_events(validation_jsonl);
+        emerging_achievable_ceiling(&events, &snapshots)
+    }
+
+    #[test]
+    fn test_ceiling_is_pooled_not_averaged() {
+        // Snapshot A names 2 emerging files, snapshot B names 5.
+        // Event 1 (after A): outcome 4 files → best possible 2.
+        // Event 2 (after B): outcome 2 files → best possible 2.
+        // Pooled = (2 + 2) / (4 + 2) = 66.7%, NOT the mean of 50% and 100%.
+        let snaps = [
+            snapshot_line("2026-08-01T00:00:00Z", 2),
+            snapshot_line("2026-08-03T00:00:00Z", 5),
+        ]
+        .join("\n");
+        let events = [
+            event_line(
+                "2026-08-02T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"],
+                Some(0.0),
+            ),
+            event_line(
+                "2026-08-04T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs", "src/b.rs"],
+                Some(0.0),
+            ),
+        ]
+        .join("\n");
+
+        let c = ceiling_of(&snaps, &events).expect("ceiling expected");
+        assert_eq!(c.events, 2);
+        assert_eq!(c.excluded, 0);
+        assert!(
+            (c.pct - 66.666).abs() < 0.1,
+            "pooled ceiling should be 4/6 = 66.7%, got {}",
+            c.pct
+        );
+    }
+
+    #[test]
+    fn test_event_with_no_preceding_snapshot_is_excluded_not_zeroed() {
+        // The only snapshot is written AFTER the event → un-pairable. It must
+        // be counted as excluded, never folded in as a 0 (Day 144: absence
+        // gets its own name).
+        let snaps = snapshot_line("2026-08-05T00:00:00Z", 5);
+        let events = [
+            event_line(
+                "2026-08-01T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs", "src/b.rs"],
+                Some(0.0),
+            ),
+            event_line(
+                "2026-08-06T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs", "src/b.rs"],
+                Some(0.0),
+            ),
+        ]
+        .join("\n");
+
+        let c = ceiling_of(&snaps, &events).expect("ceiling expected");
+        assert_eq!(c.events, 1, "only the later event is pairable");
+        assert_eq!(c.excluded, 1, "the earlier event must be named, not zeroed");
+        assert!(
+            (c.pct - 100.0).abs() < 0.1,
+            "the excluded event must not drag the pooled number down: {}",
+            c.pct
+        );
+    }
+
+    #[test]
+    fn test_equal_timestamp_pairs_with_the_earlier_snapshot() {
+        // Pins the strict `<`: an event whose ts equals a snapshot's grades
+        // against the snapshot BEFORE it, because `yoyo risk validate` grades
+        // the prior snapshot before writing the new one.
+        let snaps = [
+            snapshot_line("2026-08-01T00:00:00Z", 1),
+            snapshot_line("2026-08-02T00:00:00Z", 9),
+        ]
+        .join("\n");
+        let events = event_line(
+            "2026-08-02T00:00:00Z",
+            Some("watch_failure"),
+            &["src/a.rs", "src/b.rs", "src/c.rs"],
+            Some(0.0),
+        );
+
+        let c = ceiling_of(&snaps, &events).expect("ceiling expected");
+        assert_eq!(c.events, 1);
+        assert!(
+            (c.pct - (1.0 / 3.0 * 100.0)).abs() < 0.1,
+            "must use the earlier (1-file) list, got {}",
+            c.pct
+        );
+    }
+
+    #[test]
+    fn test_green_and_ungraded_events_do_not_contribute() {
+        let snaps = snapshot_line("2026-08-01T00:00:00Z", 5);
+        let events = [
+            // green day → other polarity, excluded from a recall ceiling
+            event_line(
+                "2026-08-02T00:00:00Z",
+                Some("watch_success"),
+                &["src/a.rs", "src/b.rs"],
+                Some(0.0),
+            ),
+            // failure day but no emerging forecast → ungraded, not scored
+            event_line(
+                "2026-08-03T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs"],
+                None,
+            ),
+        ]
+        .join("\n");
+
+        assert!(
+            ceiling_of(&snaps, &events).is_none(),
+            "no graded failure-day events → None, never Some(0.0)"
+        );
+    }
+
+    #[test]
+    fn test_ceiling_clause_renders_next_to_the_measured_number() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let vpath = dir.path().join("validations.jsonl");
+        let spath = dir.path().join("snapshots.jsonl");
+        std::fs::write(&spath, snapshot_line("2026-08-01T00:00:00Z", 5) + "\n").expect("write");
+        std::fs::write(
+            &vpath,
+            event_line(
+                "2026-08-02T00:00:00Z",
+                Some("watch_failure"),
+                &["src/a.rs", "src/b.rs"],
+                Some(0.0),
+            ) + "\n",
+        )
+        .expect("write");
+
+        let note = emerging_track_record_note_from(&vpath, &spath).expect("note expected");
+        assert!(
+            note.contains("0% recall"),
+            "measured number must survive: {note}"
+        );
+        assert!(
+            note.contains("achievable ceiling on those events: 100%"),
+            "ceiling must be stated: {note}"
+        );
+        assert!(
+            note.contains("the miss is the forecast, not the list size"),
+            "headroom verdict expected when ceiling > actual: {note}"
+        );
+        assert!(
+            note.contains("pairing approximate"),
+            "the approximation must be disclosed: {note}"
+        );
+    }
+
+    #[test]
+    fn test_ceiling_clause_does_not_claim_headroom_when_there_is_none() {
+        // Ceiling == actual: the sentence must NOT say the column could have
+        // hit. (Constructed: a 1-file emerging list, a 1-file outcome, and a
+        // recorded 100% emerging accuracy.)
+        let c = EmergingCeiling {
+            pct: 20.0,
+            events: 3,
+            excluded: 0,
+        };
+        let clause = ceiling_clause(&c, 20.0);
+        assert!(
+            !clause.contains("could"),
+            "must not claim headroom that isn't there: {clause}"
+        );
+        assert!(
+            clause.contains("no headroom"),
+            "expected the no-headroom wording: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_ceiling_clause_reports_exclusions() {
+        let c = EmergingCeiling {
+            pct: 40.0,
+            events: 4,
+            excluded: 2,
+        };
+        let clause = ceiling_clause(&c, 0.0);
+        assert!(
+            clause.contains("2 events excluded"),
+            "exclusions must be disclosed: {clause}"
+        );
+        assert!(
+            clause.contains("ceiling over 4"),
+            "the paired count must be stated: {clause}"
         );
     }
 
