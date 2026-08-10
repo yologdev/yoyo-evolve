@@ -1917,6 +1917,20 @@ Write your verdict to session_plan/eval_task_${TASK_NUM}.md with exactly this fo
 
 Verdict: PASS (or FAIL)
 Reason: [1-2 sentences explaining why]
+Checked: intent_alignment: PASS|FAIL: [specific, one line — what you actually looked at]
+Checked: forgotten_touchpoints: PASS|FAIL: [every new definition has its consumer in THIS diff; every new enum variant has its match arms; every renamed thing has its call sites]
+Checked: doc_sync: PASS|FAIL: [behavior change reflected in CLAUDE.md / README / docs, or N/A because no behavior changed]
+Checked: product_surface: PASS|FAIL: [evolve-kind task touching config defaults, CLI flags, wizard or startup behavior must be opt-in — see #448; or N/A]
+
+All four Checked lines are REQUIRED, even when the answer is trivial. A dimension
+you never mention is not a pass — it is a dimension you did not look at, and the
+whole point of the list is that silence cannot masquerade as a clean bill. Write
+what you actually verified, not a restatement of the item name. A FAIL on any
+Checked line means the overall Verdict is FAIL.
+
+forgotten_touchpoints is first among equals: three reverts (#618, #653, #658) were
+all a definition added without its consumer — locally plausible, globally broken,
+and the build caught them only after the fact.
 
 Be strict but fair. FAIL only if:
 - The implementation doesn't match the task description
@@ -1943,6 +1957,37 @@ EVALEOF
         EVAL_VERDICT=""
         if [ -f "session_plan/eval_task_${TASK_NUM}.md" ]; then
             EVAL_VERDICT=$(grep -i '^Verdict:' "session_plan/eval_task_${TASK_NUM}.md" | head -1 || true)
+            # Scope-review coverage contract (#712, borrowed from ouroboros):
+            # the evaluator must answer a NAMED checklist, so a dimension it
+            # never considered is distinguishable from one it checked and
+            # cleared. Additive to Verdict:/Reason: — those greps are unchanged,
+            # so a malformed checklist degrades to exactly today's behavior.
+            # Deliberately NOT fail-closed (ouroboros's choice): a flaky output
+            # format turning a green task into a revert is worse than the
+            # disease. Degrade + log; tighten only if the format proves stable.
+            EVAL_MISSING=""
+            for _item in intent_alignment forgotten_touchpoints doc_sync product_surface; do
+                grep -qiE "^Checked:[[:space:]]*${_item}:[[:space:]]*(PASS|FAIL|N/A)" \
+                    "session_plan/eval_task_${TASK_NUM}.md" \
+                    || EVAL_MISSING="${EVAL_MISSING:+$EVAL_MISSING,}$_item"
+            done
+            if [ -n "$EVAL_MISSING" ]; then
+                echo "    Evaluator: checklist incomplete (missing/malformed: $EVAL_MISSING) — falling back to the freeform verdict."
+                echo "eval_checklist_incomplete task=$TASK_NUM attempt=$EVAL_ATTEMPT missing=$EVAL_MISSING" \
+                    >> "$SESSION_STAGING/eval_checklist.log" 2>/dev/null || true
+            else
+                # A FAIL on any line item is a FAIL overall, even if the
+                # summary Verdict line says PASS (the checklist is the finding;
+                # the summary is a restatement that can drift).
+                if grep -qiE "^Checked:[[:space:]]*[a-z_]+:[[:space:]]*FAIL" \
+                    "session_plan/eval_task_${TASK_NUM}.md"; then
+                    if ! echo "$EVAL_VERDICT" | grep -qi "FAIL"; then
+                        echo "    Evaluator: checklist has a FAIL line but the summary said PASS — treating as FAIL."
+                        EVAL_VERDICT="Verdict: FAIL"
+                    fi
+                fi
+                echo "    Evaluator: checklist complete (4/4 dimensions answered)."
+            fi
         fi
 
         if echo "$EVAL_VERDICT" | grep -qi "FAIL"; then

@@ -101,6 +101,16 @@ if require "innocence regex extracted from evolve.sh" "$RE"; then
     check "innocence regex parses FAILED names" "$NAMES" "a::b::c_test d::e "
 fi
 
+# ── scope-review checklist: prompt items == parser items (#712) ──────────
+# Two hand-maintained lists of the same four names in one file; if the prompt
+# gains an item the parser doesn't require, the evaluator can skip it silently
+# — the exact failure the contract exists to prevent.
+PROMPT_ITEMS=$(grep -oE '^Checked: [a-z_]+:' "$SCRIPT" | sed 's/^Checked: //; s/:$//' | sort -u | tr '\n' ' ')
+PARSER_ITEMS=$(grep -A1 'for _item in' "$SCRIPT" | grep -oE 'intent_alignment[a-z_ ]*' | head -1 | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+require "checklist items found in prompt" "$PROMPT_ITEMS" \
+    && require "checklist items found in parser" "$PARSER_ITEMS" \
+    && check "eval checklist: prompt items == parser items" "$PROMPT_ITEMS" "$PARSER_ITEMS"
+
 # ── cross-file coupling: evolve.sh gates vs evolve.yml budgets ───────────
 # The `2700` bug (an attempt budget below the task gate, so that attempt could
 # never run a task) was exactly this class and nothing covered it.
