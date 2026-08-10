@@ -647,9 +647,15 @@ EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event
 # Study history (dreams/experiments.jsonl), NOT validation grading — kept as its
 # own compaction so the planner can see the expedition it already sent.
 EPISTEMIC_STUDIED_RE = re.compile(r"studied by graded experiment \(day (\d+), ([^)]+)\)")
-# Prefix of the compacted study reason — used to hoist it ahead of the other
-# reasons so the per-entry clamp can never be the thing that hides it.
+# Sibling shape (#711): a round that named the file but recorded no grade. Kept
+# as its OWN pattern, not folded into the one above — "I walked past this file"
+# and "I graded a guess about it" are different facts, and an uncompacted new
+# reason would silently eat the block's byte budget.
+EPISTEMIC_VISITED_RE = re.compile(r"visited by ungraded experiment \(day (\d+)\)")
+# Prefixes of the compacted study reasons — used to hoist them ahead of the
+# other reasons so the per-entry clamp can never be the thing that hides them.
 STUDIED_COMPACT_PREFIX = "studied d"
+VISITED_COMPACT_PREFIX = "visited d"
 # Header of the never-forecast section — a hard stop for entry parsing.
 EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
 
@@ -668,6 +674,10 @@ def compact_epistemic_reason(reason: str) -> str:
         # validation grading, and the planner must be able to tell the two
         # apart at a glance (never rewrite it as "graded").
         return f"studied d{m.group(1)} ({m.group(2)[:12]})"
+    m = EPISTEMIC_VISITED_RE.search(reason)
+    if m:
+        # Never say "graded" here: the round produced nothing scored.
+        return f"visited d{m.group(1)} (no grade)"
     return reason[:60]
 
 
@@ -702,7 +712,12 @@ def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]
             # most likely to change the planner's choice — losing it to the
             # clamp would defeat the whole read-back (Day 151). Stable sort, so
             # everything else keeps report order.
-            reasons = sorted(reasons, key=lambda r: not r.startswith(STUDIED_COMPACT_PREFIX))
+            reasons = sorted(
+                reasons,
+                key=lambda r: not r.startswith(
+                    (STUDIED_COMPACT_PREFIX, VISITED_COMPACT_PREFIX)
+                ),
+            )
             line += " — " + "; ".join(reasons)
         if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
             line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
@@ -1108,6 +1123,40 @@ def run_self_tests() -> int:
     assert_true(
         "studied entry still respects the per-entry clamp",
         len(parsed_studied[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
+    )
+
+    # 19b3. Visited-but-ungraded reason (#711, Day 163). Its own compaction and
+    # its own words: a round that recorded no grade must never read as one that
+    # did, and an uncompacted new reason shape would eat the byte budget.
+    assert_eq(
+        "visited-ungraded reason compacts",
+        compact_epistemic_reason("visited by ungraded experiment (day 159)"),
+        "visited d159 (no grade)",
+    )
+    assert_true(
+        "visited compaction never claims a grade",
+        "studied" not in compact_epistemic_reason("visited by ungraded experiment (day 159)"),
+    )
+    canned_visited = (
+        "\n\x1b[1m\x1b[36m🔍 Epistemic view\x1b[0m\n\n"
+        "   1. src/commands_todo.rs                    2.5\n"
+        "  • predicted 12×, never graded\n"
+        "  • last seen 6 snapshots ago, no graded event since\n"
+        "  • visited by ungraded experiment (day 159)\n"
+        "\n  high score = the model is blindest here\n"
+    )
+    parsed_visited = parse_epistemic_output(canned_visited)
+    assert_true(
+        "visited reason survives the per-entry clamp (hoisted to the front)",
+        parsed_visited[0].startswith("- src/commands_todo.rs (2.5) — visited d159 (no grade)"),
+    )
+    assert_true(
+        "visited entry still reports the ungraded validation ledger",
+        "never graded" in parsed_visited[0],
+    )
+    assert_true(
+        "visited entry still respects the per-entry clamp",
+        len(parsed_visited[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
     )
 
     # 19c. Empty states / garbage yield [] (the fail-soft path)

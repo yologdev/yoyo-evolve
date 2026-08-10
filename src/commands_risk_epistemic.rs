@@ -55,6 +55,20 @@ pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
 /// could read.
 pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
 
+/// Negative weight applied when an experiment round *named* a file but
+/// produced no grade of any kind — no summary `graded`, no per-hypothesis
+/// grade. The round happened; it just taught nothing measurable.
+///
+/// Half of [`W_RECENTLY_STUDIED`], and the number is a judgment call, not a
+/// measurement: a visit is weaker evidence that I learned something than a
+/// graded round (nothing was scored, so nothing was falsifiable), but it is
+/// strictly more than never having looked — I have read the file, its
+/// neighbours, and formed whatever unrecorded impression a session leaves.
+/// Ranking a visited file *above* a graded one but *below* a never-studied
+/// one is the ordering this encodes; if grading discipline improves and these
+/// rounds stop happening, the const stops mattering on its own.
+pub(crate) const W_VISITED_UNGRADED: f64 = -0.5;
+
 /// Two epistemic scores within this distance count as tied and fall through
 /// to the tie-break: current risk score (higher first), then path.
 pub(crate) const SCORE_EPSILON: f64 = 1e-6;
@@ -63,18 +77,70 @@ pub(crate) const SCORE_EPSILON: f64 = 1e-6;
 /// dream/evolve loop. Read-only from here.
 pub(crate) const EXPERIMENT_LEDGER_PATH: &str = "dreams/experiments.jsonl";
 
-/// One graded experiment: `(path, grade, day)`.
-pub(crate) type ExperimentGrade = (String, String, u32);
+/// What an experiment round left behind about one file. Two *stated* values
+/// plus a third that is the absence of any entry at all (never studied) —
+/// #711: "visited" and "graded" used to be one fact, so a round whose summary
+/// `graded` field was null looked exactly like a round that never happened,
+/// and the ranking sent the planner back to files it had already spent a
+/// session on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StudyState {
+    /// The round has grade evidence: either a non-empty summary `graded`
+    /// field, or ≥1 `hypothesis_grades` record carrying its own grade. The
+    /// payload is the grade summary — verbatim when the summary field held
+    /// one, derived from the per-hypothesis records when it did not.
+    Graded(String),
+    /// A round named this file but recorded no grade anywhere. The expedition
+    /// happened; it produced nothing falsifiable.
+    VisitedUngraded,
+}
 
-/// Parse the experiment ledger, keeping only **graded** experiments.
+/// One experiment-ledger visit to a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExperimentVisit {
+    pub(crate) path: String,
+    pub(crate) day: u32,
+    pub(crate) state: StudyState,
+}
+
+/// Count the per-hypothesis records that carry a grade of their own.
+///
+/// A `hypothesis_grades` entry whose own `graded` field is null/absent is not
+/// grade evidence — it is a hypothesis that was *listed*, not scored. Same
+/// discipline as the summary field: absence is never counted as a zero.
+fn graded_hypothesis_count(val: &serde_json::Value) -> usize {
+    match val["hypothesis_grades"].as_array() {
+        Some(items) => items
+            .iter()
+            .filter(|h| h["graded"].as_str().is_some_and(|g| !g.trim().is_empty()))
+            .count(),
+        None => 0,
+    }
+}
+
+/// Parse the experiment ledger into per-line visits, each carrying its own
+/// [`StudyState`].
+///
+/// Grade evidence is read from **both** places a round can record it:
+/// - a non-empty summary `graded` string (the original source), or
+/// - ≥1 `hypothesis_grades` record with its own grade — the per-hypothesis
+///   records are the source of truth when the summary was left null (7 of the
+///   20 result lines on Day 163; 6 of those 7 carried real per-hypothesis
+///   grades, so the round *was* graded and only the summary field was empty).
 ///
 /// Defensive, like every other JSONL reader here:
-/// - a line whose `graded` field is `null` or missing is an *ungraded guess* —
-///   an explicit third value. It contributes nothing: not evidence, not a zero.
+/// - a line with no grade evidence anywhere is [`StudyState::VisitedUngraded`],
+///   not a skip: the round happened, it just taught nothing measurable.
+/// - a line with no usable `target` is skipped — there is nothing to attribute
+///   it to.
 /// - malformed / non-JSON lines are skipped, never fatal.
 /// - an absent file yields an empty vec at the call site — "I have run no
 ///   experiments" is an honest state, not a defect.
-pub(crate) fn parse_experiment_grades(contents: &str) -> Vec<ExperimentGrade> {
+///
+/// Both `experiment` (the guess) and `experiment_result` (the grading) lines
+/// count as visits; the merge in [`compute_epistemic_ranking`] decides which
+/// state wins for a file that has several.
+pub(crate) fn parse_experiment_visits(contents: &str) -> Vec<ExperimentVisit> {
     let mut out = Vec::new();
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -85,20 +151,23 @@ pub(crate) fn parse_experiment_grades(contents: &str) -> Vec<ExperimentGrade> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if val["type"].as_str() != Some("experiment_result") {
-            continue;
-        }
-        // `graded: null` / absent → ungraded. Skip without absorbing.
-        let grade = match val["graded"].as_str() {
-            Some(g) if !g.trim().is_empty() => g.trim().to_string(),
+        match val["type"].as_str() {
+            Some("experiment") | Some("experiment_result") => {}
             _ => continue,
-        };
+        }
         let path = match val["target"].as_str() {
             Some(p) if !p.trim().is_empty() => p.trim().to_string(),
             _ => continue,
         };
         let day = val["day"].as_u64().unwrap_or(0) as u32;
-        out.push((path, grade, day));
+        let state = match val["graded"].as_str() {
+            Some(g) if !g.trim().is_empty() => StudyState::Graded(g.trim().to_string()),
+            _ => match graded_hypothesis_count(&val) {
+                0 => StudyState::VisitedUngraded,
+                n => StudyState::Graded(format!("{n} hypotheses graded")),
+            },
+        };
+        out.push(ExperimentVisit { path, day, state });
     }
     out
 }
@@ -201,7 +270,7 @@ impl ExperimentFamilies {
 /// A graded result with no usable per-hypothesis records counts toward
 /// `experiments_without_hypotheses` instead of vanishing. Ungraded
 /// (`"graded": null`) hypotheses and malformed lines contribute nothing —
-/// same discipline as [`parse_experiment_grades`].
+/// same discipline as [`parse_experiment_visits`].
 pub(crate) fn tally_hypothesis_families(ledger_text: &str) -> ExperimentFamilies {
     use std::collections::HashMap;
 
@@ -428,7 +497,7 @@ pub(crate) fn compute_epistemic_ranking(
     snapshots: &[ParsedSnapshot],
     events: &[GradedEvent],
     risk_scores: &[(String, f64)],
-    experiments: &[ExperimentGrade],
+    experiments: &[ExperimentVisit],
 ) -> Vec<EpistemicEntry> {
     use std::collections::{HashMap, HashSet};
 
@@ -495,17 +564,34 @@ pub(crate) fn compute_epistemic_ranking(
     }
 
     let last_index = snapshots.len() - 1;
-    // Latest graded experiment per file. This is study history, NOT grading
-    // history: it says "I read this file on purpose and graded a guess about
-    // it", never "the risk model was measured on it". Kept in its own map and
-    // rendered as its own reason so the two can never be conflated.
-    let mut studied: HashMap<&str, (&str, u32)> = HashMap::new();
-    for (path, grade, day) in experiments {
-        let slot = studied
-            .entry(path.as_str())
-            .or_insert((grade.as_str(), *day));
-        if *day >= slot.1 {
-            *slot = (grade.as_str(), *day);
+    // Latest experiment visit per file. This is study history, NOT grading
+    // history: it says "I read this file on purpose", never "the risk model
+    // was measured on it". Kept in its own map and rendered as its own reason
+    // so the two can never be conflated.
+    //
+    // Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+    // whatever the days say — a grade once earned is not erased by a later
+    // expedition that recorded nothing. Within the same state, the latest day
+    // wins.
+    let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+    for visit in experiments {
+        let candidate = (&visit.state, visit.day);
+        match studied.get(visit.path.as_str()) {
+            None => {
+                studied.insert(visit.path.as_str(), candidate);
+            }
+            Some((state, day)) => {
+                let held_is_graded = matches!(state, StudyState::Graded(_));
+                let new_is_graded = matches!(visit.state, StudyState::Graded(_));
+                let replace = match (held_is_graded, new_is_graded) {
+                    (false, true) => true,
+                    (true, false) => false,
+                    _ => visit.day >= *day,
+                };
+                if replace {
+                    studied.insert(visit.path.as_str(), candidate);
+                }
+            }
         }
     }
 
@@ -548,9 +634,20 @@ pub(crate) fn compute_epistemic_ranking(
         // Study discount. Deliberately additive to the reason list, never a
         // replacement: if the validation ledger still says "never graded",
         // that line stays. Both facts are true at once and both get said.
-        if let Some((grade, day)) = studied.get(path.as_str()) {
-            score += W_RECENTLY_STUDIED;
-            reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+        //
+        // The two study states render as two *distinct* reasons (#711) — a
+        // visit that produced no grade must never wear the word "graded".
+        if let Some((state, day)) = studied.get(path.as_str()) {
+            match state {
+                StudyState::Graded(grade) => {
+                    score += W_RECENTLY_STUDIED;
+                    reasons.push(format!("studied by graded experiment (day {day}, {grade})"));
+                }
+                StudyState::VisitedUngraded => {
+                    score += W_VISITED_UNGRADED;
+                    reasons.push(format!("visited by ungraded experiment (day {day})"));
+                }
+            }
         }
 
         if score > 0.0 {
@@ -770,7 +867,7 @@ pub(crate) fn handle_risk_epistemic() {
     // Study history — absent ledger is an honest empty, not an error.
     let experiment_content =
         std::fs::read_to_string(std::path::Path::new(EXPERIMENT_LEDGER_PATH)).unwrap_or_default();
-    let experiments = parse_experiment_grades(&experiment_content);
+    let experiments = parse_experiment_visits(&experiment_content);
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
@@ -1226,12 +1323,24 @@ mod tests {
     // see the expeditions it sent, so it kept pointing the planner at files
     // already studied. These pin the handle.
 
-    fn exp(path: &str, grade: &str, day: u32) -> ExperimentGrade {
-        (path.to_string(), grade.to_string(), day)
+    fn exp(path: &str, grade: &str, day: u32) -> ExperimentVisit {
+        ExperimentVisit {
+            path: path.to_string(),
+            day,
+            state: StudyState::Graded(grade.to_string()),
+        }
+    }
+
+    fn visit(path: &str, day: u32) -> ExperimentVisit {
+        ExperimentVisit {
+            path: path.to_string(),
+            day,
+            state: StudyState::VisitedUngraded,
+        }
     }
 
     #[test]
-    fn test_parse_experiment_grades_keeps_only_graded_results() {
+    fn test_parse_experiment_visits_keeps_summary_grades() {
         let ledger = concat!(
             r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#,
             "\n",
@@ -1240,42 +1349,100 @@ mod tests {
             r#"{"type":"experiment_result","day":151,"target":"src/b.rs","graded":"partial"}"#,
             "\n",
         );
-        let got = parse_experiment_grades(ledger);
+        let got = parse_experiment_visits(ledger);
         assert_eq!(
             got,
             vec![
+                // The guess line is a visit with no grade of its own...
+                visit("src/a.rs", 150),
+                // ...and the result line carries the grade.
                 exp("src/a.rs", "miss", 150),
                 exp("src/b.rs", "partial", 151)
             ],
-            "only graded experiment_result lines count"
+            "a non-null summary grade is still read verbatim"
+        );
+    }
+
+    /// #711 (a): 6 of the 7 null-summary result lines in the real ledger carry
+    /// real per-hypothesis grades. The round WAS graded; only the summary field
+    /// is empty. Read the per-hypothesis records as the source of truth.
+    #[test]
+    fn test_null_summary_with_hypothesis_grades_is_graded() {
+        let ledger = concat!(
+            r#"{"type":"experiment_result","day":154,"target":"src/prompt.rs","graded":null,"#,
+            r#""hypothesis_grades":[{"id":"h1","graded":"hit"},{"id":"h2","graded":"MISS"},"#,
+            r#"{"id":"h3","graded":null}]}"#,
+            "\n",
+        );
+        let got = parse_experiment_visits(ledger);
+        assert_eq!(
+            got,
+            vec![ExperimentVisit {
+                path: "src/prompt.rs".to_string(),
+                day: 154,
+                // Only the two records carrying a grade of their own count.
+                state: StudyState::Graded("2 hypotheses graded".to_string()),
+            }],
+            "null summary + per-hypothesis grades = graded, derived from the records"
+        );
+    }
+
+    /// #711 (b): a round with no grade anywhere is VISITED, not absent. It
+    /// used to vanish entirely, which is the one reading that makes the
+    /// ranking send the planner back to a file it already spent a session on.
+    #[test]
+    fn test_fully_ungraded_round_is_visited_not_absent() {
+        let ledger = concat!(
+            r#"{"type":"experiment","day":159,"target":"src/commands_todo.rs","graded":null}"#,
+            "\n",
+            // Result line with a note where the grades should be — a note is
+            // not a grade.
+            r#"{"type":"experiment_result","day":159,"target":"src/commands_todo.rs","#,
+            r#""graded":null,"hypothesis_grades_note":"never got round to it"}"#,
+            "\n",
+            // An empty grade array is not grade evidence either.
+            r#"{"type":"experiment_result","day":160,"target":"src/c.rs","graded":null,"#,
+            r#""hypothesis_grades":[]}"#,
+            "\n",
+        );
+        let got = parse_experiment_visits(ledger);
+        assert_eq!(
+            got,
+            vec![
+                visit("src/commands_todo.rs", 159),
+                visit("src/commands_todo.rs", 159),
+                visit("src/c.rs", 160),
+            ],
+            "ungraded rounds are recorded as visits, never dropped"
         );
     }
 
     #[test]
-    fn test_parse_experiment_grades_skips_malformed_and_ungraded() {
+    fn test_parse_experiment_visits_skips_malformed_and_targetless() {
         let ledger = concat!(
             "not json at all\n",
             "\n",
-            r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#,
-            "\n",
-            // experiment_result with a null grade — still an abstention.
-            r#"{"type":"experiment_result","day":150,"target":"src/b.rs","graded":null}"#,
-            "\n",
             // graded but no target — nothing to attribute it to.
             r#"{"type":"experiment_result","day":150,"graded":"hit"}"#,
+            "\n",
+            // empty target is the same as no target.
+            r#"{"type":"experiment_result","day":150,"target":"  ","graded":"hit"}"#,
+            "\n",
+            // an unrelated ledger line type contributes nothing.
+            r#"{"type":"note","day":150,"target":"src/a.rs","graded":"hit"}"#,
             "\n",
             r#"{"broken":"#,
             "\n",
         );
         assert!(
-            parse_experiment_grades(ledger).is_empty(),
-            "ungraded / malformed lines contribute nothing and never panic"
+            parse_experiment_visits(ledger).is_empty(),
+            "malformed / unattributable lines contribute nothing and never panic"
         );
     }
 
     #[test]
     fn test_missing_ledger_is_empty_not_a_defect() {
-        assert!(parse_experiment_grades("").is_empty());
+        assert!(parse_experiment_visits("").is_empty());
     }
 
     #[test]
@@ -1321,22 +1488,120 @@ mod tests {
         );
     }
 
+    /// Was `test_ungraded_experiment_changes_nothing`, and that name was the
+    /// bug (#711): treating an ungraded round as no round at all is exactly
+    /// what made the ranking send the planner back to files it had already
+    /// visited. The round is now its own third value.
     #[test]
-    fn test_ungraded_experiment_changes_nothing() {
+    fn test_ungraded_experiment_is_a_visit_not_a_nonevent() {
         let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &["src/c.rs"])];
         let baseline = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        // A ledger of pure abstentions parses to nothing...
+        let a_before = baseline
+            .iter()
+            .find(|e| e.path == "src/a.rs")
+            .expect("never-graded file ranks");
+
         let ledger = r#"{"type":"experiment","day":150,"target":"src/a.rs","graded":null}"#;
-        let experiments = parse_experiment_grades(ledger);
-        assert!(experiments.is_empty());
-        // ...and therefore the ranking is identical, not shifted toward zero.
+        let experiments = parse_experiment_visits(ledger);
+        assert_eq!(experiments, vec![visit("src/a.rs", 150)]);
+
         let after = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+        let a_after = after
+            .iter()
+            .find(|e| e.path == "src/a.rs")
+            .expect("still ranked, just less blind");
+        assert!(
+            (a_after.score - (a_before.score + W_VISITED_UNGRADED)).abs() < SCORE_EPSILON,
+            "discount is exactly W_VISITED_UNGRADED: {} vs baseline {}",
+            a_after.score,
+            a_before.score
+        );
+        assert!(
+            a_after
+                .reasons
+                .iter()
+                .any(|r| r == "visited by ungraded experiment (day 150)"),
+            "the visit gets its own reason: {:?}",
+            a_after.reasons
+        );
+        // Honesty: a visit is not a grading. It must never wear the word.
+        assert!(
+            !a_after
+                .reasons
+                .iter()
+                .any(|r| r.starts_with("studied by graded experiment")),
+            "an ungraded visit never claims to have been graded: {:?}",
+            a_after.reasons
+        );
+        assert!(
+            a_after.reasons.iter().any(|r| r.contains("never graded")),
+            "the validation ledger is still ungraded and still says so: {:?}",
+            a_after.reasons
+        );
+        // Untouched files are unaffected — the visit is attributed, not global.
         let fmt = |v: &[EpistemicEntry]| {
             v.iter()
+                .filter(|e| e.path != "src/a.rs")
                 .map(|e| format!("{}|{:.6}|{:?}", e.path, e.score, e.reasons))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(fmt(&baseline), fmt(&after), "abstention is not evidence");
+        assert_eq!(fmt(&baseline), fmt(&after));
+    }
+
+    /// The two study states are separate facts and must read as separate
+    /// sentences — a reader (and the trajectory extractor) has to be able to
+    /// tell "I graded a guess here" from "I merely walked past".
+    #[test]
+    fn test_graded_and_visited_reasons_are_distinct() {
+        let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
+        let experiments = vec![exp("src/a.rs", "miss", 150), visit("src/b.rs", 151)];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+        let reason_of = |p: &str| {
+            ranking
+                .iter()
+                .find(|e| e.path == p)
+                .unwrap_or_else(|| panic!("{p} ranks"))
+                .reasons
+                .iter()
+                .find(|r| r.contains("experiment"))
+                .cloned()
+                .unwrap_or_else(|| panic!("{p} has a study reason"))
+        };
+        let a = reason_of("src/a.rs");
+        let b = reason_of("src/b.rs");
+        assert_eq!(a, "studied by graded experiment (day 150, miss)");
+        assert_eq!(b, "visited by ungraded experiment (day 151)");
+        assert_ne!(a, b);
+        assert!(
+            !b.starts_with("studied by graded"),
+            "visited ≠ studied-and-graded: {b}"
+        );
+    }
+
+    /// A grade once earned is not erased by a later expedition that recorded
+    /// nothing — whatever order the ledger lines arrive in.
+    #[test]
+    fn test_graded_round_outranks_a_later_ungraded_visit() {
+        let snapshots = vec![snap(100, &["src/a.rs"], &[])];
+        for experiments in [
+            vec![exp("src/a.rs", "hit", 150), visit("src/a.rs", 162)],
+            vec![visit("src/a.rs", 162), exp("src/a.rs", "hit", 150)],
+        ] {
+            let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &experiments);
+            let a = ranking.iter().find(|e| e.path == "src/a.rs").unwrap();
+            assert!(
+                a.reasons
+                    .iter()
+                    .any(|r| r == "studied by graded experiment (day 150, hit)"),
+                "graded state survives a later bare visit: {:?}",
+                a.reasons
+            );
+            assert!(
+                !a.reasons.iter().any(|r| r.starts_with("visited by")),
+                "one study reason, not two: {:?}",
+                a.reasons
+            );
+        }
     }
 
     #[test]
@@ -1356,7 +1621,7 @@ mod tests {
             &ExperimentFamilies::default(),
         );
         // The default path (no ledger on disk) must be provably unchanged.
-        let parsed_empty = parse_experiment_grades("");
+        let parsed_empty = parse_experiment_visits("");
         let with_missing_file =
             compute_epistemic_ranking(&snapshots, &events, &risk, &parsed_empty);
         let report2 = format_epistemic_report(
