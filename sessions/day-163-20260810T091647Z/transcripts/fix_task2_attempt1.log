@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files\|f… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1420,1445p src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2440,2580p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn message_claims_repai…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1643,1680p src/commands_r… ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1643..1683 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1698..1726 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 31.6s (8 ✓)
+
+Now I'll add the helper. Tests first, then the helper and wiring.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 40 lines)
+        broke
+  + }
+  + 
+  + /// True when the window *looks like* a failure day but corroboration threw the
+  + /// evidence away — i.e. some commit carries a fix-family message naming ≥1
+  + /// `src/` file, yet `classify_broke_files` came back empty.
+  + ///
+  + /// This is the third value the Day 163 meter was missing (#717). The two-tier
+  + /// rule above demands that a fix-family commit's `src/` file also appear in
+  + /// another commit *in the same window*, and a window is one session — so the
+  + /// canonical real breakage (bad commit in session N, single repair commit in
+  + /// session N+1) produces an empty `broke_files`. With only two values —
+  + /// "something broke" and "nothing broke" — control fell through to the green
+  + /// branch and a genuine failure day was written as a `watch_success` event:
+  + /// booked as *crying-wolf* evidence, with `failure_hit_rate_pct` gaining no
+  + /// sample. That is the Day-144 lesson (absence needs its own explicit name)
+  + /// re-committed while fixing an instance of it.
+  + ///
+  + /// Naming it lets the caller decline to grade instead of guessing green. It is
+  + /// deliberately a `bool`, not a new enum: the caller's question is exactly
+  ... (20 more lines)
+ ✓ (19.8s)
+        broke
+  + }
+  + 
+  + /// True when the window *looks like* a failure day but corroboration threw the
+  + /// evidence away — i.e. some commit carries a fix-family message naming ≥1
+  + /// `src/` file, yet `classify_broke_files` came back empty.
+  + ///
+  + /// This is the third value the Day 163 meter was missing (#717). The two-tier
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2551..2581 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2580..2594 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 11 lines)
+  +     } else if has_uncorroborated_fix_evidence(&entries) {
+  +         // THIRD VALUE (#717): the window looks like a failure day — a
+  +         // fix-family commit names a `src/` file — but tier-2 corroboration
+  +         // discarded it, so `broke_files` is empty. Falling through to the
+  +         // green branch here would book a genuine failure day as crying-wolf
+  +         // evidence and leave recall unsampled. Decline to grade: write
+  +         // nothing, say so out loud.
+  +         eprintln!(
+  +             "  {DIM}suspected failure day (fix commits present, corroboration failed) — not graded{RESET}"
+  +         );
+        } else {
+ ✗ (1ms)
+    │ old_text matches 29 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs. Include more surrounding context to make the match unique.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 14 lines)
+  +     } else if has_uncorroborated_fix_evidence(&entries) {
+  +         // THIRD VALUE (#717): the window looks like a failure day — a
+  +         // fix-family commit names a `src/` file — but tier-2 corroboration
+  +         // discarded it, so `broke_files` came back empty. Falling through to
+  +         // the green branch below would book a genuine failure day as
+  +         // crying-wolf evidence in `green_flagged_change_rate_pct` while
+  +         // `failure_hit_rate_pct` gained no sample. Decline to grade: write
+  +         // nothing, and say so out loud rather than staying silent.
+  +         eprintln!(
+  +             "  {DIM}suspected failure day (fix commits present, corroboration failed) — not graded{RESET}"
+  +         );
+        } else {
+            // GREEN outcome: commits happened since the snapshot but nothing
+            // broke. Grade it anyway — predicted-risky files that were touched
+ ✓ (1m 41s)
+  +     } else if has_uncorroborated_fix_evidence(&entries) {
+  +         // THIRD VALUE (#717): the window looks like a failure day — a
+  +         // fix-family commit names a `src/` file — but tier-2 corroboration
+  +         // discarded it, so `broke_files` came back empty. Falling through to
+  +         // the green branch below would book a genuine failure day as
+  +         // crying-wolf evidence in `green_flagged_change_rate_pct` while
+  +         // `failure_hit_rate_pct` gained no sample. Decline to grade: write
+  +         // nothing, and say so out loud rather than staying silent.
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (57.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk.rs" tests… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 3m 25s (6 ✓, 1 ✗)
+
+Now the tests. Let me look at the existing corroboration fixture test for style.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_classify_broke_fil… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3471..3491 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn record_green_validat… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.7s (3 ✓)
+
+Now I'll add the tests.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 2 lines)
+        #[test]
+        fn test_classify_broke_files_repeat_path_inside_one_commit_is_one_touch() {
+  -         // Corroboration means "another COMMIT touched it". A path listed twice
+ ✓ (1m 40s)
+        #[test]
+        fn test_classify_broke_files_repeat_path_inside_one_commit_is_one_touch() {
+  -         // Corroboration means "another COMMIT touched it". A path listed twice
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 165 lines)
+  +     #[test]
+  +     fn test_uncorroborated_fix_evidence_fixture_table() {
+  +         // #717: the third value. `classify_broke_files` returning empty means
+  +         // two different things — "nothing broke" and "something looks broken
+  +         // but corroboration threw it away" — and only the first may be booked
+  +         // as a green day.
+  +         // (case name, window, expected)
+  +         let cases: Vec<(&str, Vec<CommitEntry>, bool)> = vec![
+  +             (
+  +                 "canonical real breakage: lone repair commit for a src/ file",
+  +                 vec![CommitEntry {
+  +                     message: "abc1234 fix: watch loop drops the last error".to_string(),
+  +                     files: vec!["src/watch.rs".to_string()],
+  +                 }],
+  +                 true,
+  +             ),
+  +             (
+  +                 "genuinely green window: no fix-family message anywhere",
+  +                 vec![
+  +                     CommitEntry {
+  ... (145 more lines)
+ ✓ (1m 40s)
+  +     #[test]
+  +     fn test_uncorroborated_fix_evidence_fixture_table() {
+  +         // #717: the third value. `classify_broke_files` returning empty means
+  +         // two different things — "nothing broke" and "something looks broken
+  +         // but corroboration threw it away" — and only the first may be booked
+  +         // as a green day.
+  +         // (case name, window, expected)
+  +         let cases: Vec<(&str, Vec<CommitEntry>, bool)> = vec![
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (56.6s)
+  3 tools completed in 4m 44s (3 ✓)
+
