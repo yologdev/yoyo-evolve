@@ -1288,10 +1288,6 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
     // Only files in the top 25% of risk scores get annotated.
     let risk_map = build_risk_annotation_map();
 
-    // Build an emerging-risk map for files trending toward fragility.
-    // At most 2 annotations to avoid noisy prompts.
-    let emerging_map = build_emerging_risk_map(2);
-
     let mut parts = Vec::new();
     parts.push(
         "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
@@ -1315,12 +1311,6 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
             parts.push(format!("--- {path} --- (\u{26a0} risk: {score:.2})"));
         } else {
             parts.push(format!("--- {path} ---"));
-        }
-        // Annotate emerging-risk files with anticipatory warning
-        if let Some(&momentum) = emerging_map.get(path.as_str()) {
-            parts.push(format!(
-                "\u{26a1} Emerging risk: {path} — changing {momentum:.1}× faster than usual. Extra care advised."
-            ));
         }
         parts.push(content.clone());
     }
@@ -1346,23 +1336,6 @@ fn build_risk_annotation_map() -> std::collections::HashMap<String, f64> {
         .into_iter()
         .take(cutoff_index)
         .map(|r| (r.path, r.score))
-        .collect()
-}
-
-/// Build a map of path → momentum for files with accelerating risk.
-///
-/// Used by `format_auto_context` to annotate emerging-risk file headers.
-/// Returns at most `max` entries to avoid noisy prompts.
-fn build_emerging_risk_map(max: usize) -> std::collections::HashMap<String, f64> {
-    let risks = crate::commands_risk::compute_file_risk_scores();
-    if risks.is_empty() {
-        return std::collections::HashMap::new();
-    }
-    let emerging = crate::commands_risk::detect_emerging_risks(&risks);
-    emerging
-        .into_iter()
-        .take(max)
-        .map(|e| (e.path, e.momentum))
         .collect()
 }
 
@@ -3149,38 +3122,6 @@ mod tests {
             result
         );
         assert!(result.contains("--- src/nonexistent_file_that_has_no_risk.rs ---"));
-    }
-
-    #[test]
-    fn test_format_auto_context_emerging_risk_annotation() {
-        // Use detect_emerging_risks on the live repo to find any emerging-risk files.
-        // If one exists, verify that format_auto_context includes the ⚡ annotation.
-        let risks = crate::commands_risk::compute_file_risk_scores();
-        let emerging = crate::commands_risk::detect_emerging_risks(&risks);
-        if emerging.is_empty() {
-            // No emerging risks in the current repo — just verify no crash
-            let files = vec![("src/main.rs".to_string(), "fn main() {}".to_string())];
-            let result = format_auto_context(&files, "test prompt").unwrap();
-            assert!(
-                !result.contains("\u{26a1} Emerging risk:"),
-                "should not have emerging risk annotation when none detected"
-            );
-            return;
-        }
-        // Use the first emerging-risk file
-        let emerging_path = &emerging[0].path;
-        let files = vec![(emerging_path.clone(), "fn example() {}".to_string())];
-        let result = format_auto_context(&files, "test prompt").unwrap();
-        assert!(
-            result.contains("\u{26a1} Emerging risk:"),
-            "emerging-risk file '{}' should have ⚡ annotation in auto-context, got:\n{}",
-            emerging_path,
-            result
-        );
-        assert!(
-            result.contains("faster than usual"),
-            "annotation should mention change rate acceleration"
-        );
     }
 
     #[test]

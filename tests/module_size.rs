@@ -62,7 +62,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/commands_file.rs", 2807),
     ("src/commands_git.rs", 3172),
     ("src/commands_info.rs", 3036),
-    ("src/commands_project.rs", 3252),
+    // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
+    // (map, annotation, helper, and the test pinning them); see #724.
+    ("src/commands_project.rs", 3193),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
@@ -143,7 +145,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // reporting in execute), so rename_symbol stops writing across --deny'd
     // directories. The rename logic itself lives in src/commands_rename.rs.
     ("src/tools.rs", 3290),
-    ("src/watch.rs", 3535),
+    // Day 163 (#726): -58 lines — emerging-risk annotation removed from
+    // build_watch_fix_prompt, with its own test; see #724.
+    ("src/watch.rs", 3477),
 ];
 
 /// A way the size gate can be violated. Three distinct values on purpose —

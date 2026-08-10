@@ -8,7 +8,6 @@
 use crate::commands_file::extract_file_paths_from_output;
 use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
 use crate::commands_project::detect_project_type;
-use crate::commands_risk::{compute_file_risk_scores, detect_emerging_risks};
 use crate::commands_risk::{format_risk_context, risk_context_for_files};
 use crate::format::*;
 use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_note};
@@ -1098,36 +1097,15 @@ pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
         String::new()
     };
 
-    // Add emerging-risk annotations for error files whose change rate is
-    // accelerating — the anticipatory signal from the allostatic dream.
-    let emerging_section = if !error_files.is_empty() {
-        let risks = compute_file_risk_scores();
-        let emerging = detect_emerging_risks(&risks);
-        let mut notes = Vec::new();
-        for e in &emerging {
-            if error_files.iter().any(|f| f == &e.path) {
-                notes.push(format!(
-                    "Note: {} is an emerging risk — its change rate is accelerating \
-                     ({:.1}× usual). Test more carefully.",
-                    e.path, e.momentum
-                ));
-            }
-        }
-        if notes.is_empty() {
-            String::new()
-        } else {
-            format!("\n{}", notes.join("\n"))
-        }
-    } else {
-        String::new()
-    };
-
+    // Day 163 (#726): the emerging-risk annotation that used to live here is gone.
+    // The forecast it injected measured 0% recall over 10 graded failure days against
+    // a ~39% pooled achievable ceiling (#724), so it steered fix agents on nothing.
     if error_files.is_empty() {
         base
     } else {
         let file_list = error_files.join(", ");
         format!(
-            "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files.{risk_section}{emerging_section}"
+            "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files.{risk_section}"
         )
     }
 }
@@ -1884,42 +1862,6 @@ mod tests {
         assert!(
             prompt.contains(&"x".repeat(5000)),
             "first 5000 chars should appear"
-        );
-    }
-
-    #[test]
-    fn test_build_watch_fix_prompt_emerging_risk() {
-        // Build a prompt with a real source file path in the error output.
-        // If that file happens to be an emerging risk, the annotation should appear.
-        let risks = crate::commands_risk::compute_file_risk_scores();
-        let emerging = crate::commands_risk::detect_emerging_risks(&risks);
-        if emerging.is_empty() {
-            // No emerging risks — verify no crash and no spurious annotation
-            let prompt = build_watch_fix_prompt(
-                "cargo test",
-                "error[E0308]: mismatched types\n  --> src/main.rs:5:10",
-            );
-            assert!(
-                !prompt.contains("emerging risk"),
-                "should not mention emerging risk when none detected"
-            );
-            return;
-        }
-        // Build error output referencing the emerging-risk file
-        let path = &emerging[0].path;
-        let error_output = format!(
-            "error[E0308]: mismatched types\n  --> {path}:10:5\n  |\n10 |     foo()\n  |     ^^^^ expected u32"
-        );
-        let prompt = build_watch_fix_prompt("cargo test", &error_output);
-        assert!(
-            prompt.contains("emerging risk"),
-            "prompt should mention emerging risk for '{}', got:\n{}",
-            path,
-            prompt
-        );
-        assert!(
-            prompt.contains("change rate is accelerating"),
-            "should explain the acceleration"
         );
     }
 
