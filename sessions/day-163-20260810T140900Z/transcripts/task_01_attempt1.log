@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by exploring the neighbours of src/help_data.rs — without opening the target — to build falsifiable file-specific guesses.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '53,140p' src/commands.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" -A 20… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' src/commands.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help.rs src/help_data.… ✓ (6ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1265,1290p' src/git.rs; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "risk" --include=*.rs s… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1112,1132p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "STASH_SUBCOMMANDS\|chec… ✓ (6ms)
+ ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 17s (10 ✓)
+
+Enough neighbour evidence. Writing the pre-read guess now — before touching the target.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (35ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+Guess committed (b44fa507). Now Step 2 — opening the target for the first time.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"risk"' -A 30 src/help_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"spawn"' -A 32 src/help… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+Three misses so far — the file is more current than the tables I read. But /goal verify appears in help and is not in GOAL_SUBCOMMANDS. Checking whether it's routed:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "verify" src/commands_go…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (6ms)
+ ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.4s (2 ✓)
+
+/goal verify **is* routed (`commands_goal.rs:219`) — so help is right and the completion table* is the stale copy. Inverse of my prediction. Now the systematic phantom hunt for h4:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '676,700p' src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"manifest' src/commands… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 35.7s (3 ✓)
+
+Confirmed: /spawn manifest[s] is routed (657-661) but absent from the help entry. Before filing, let me enumerate the class rather than one instance (Day 160 lesson):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== fork ==="; grep -n "fn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== goal handler verbs ===… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.3s (2 ✓)
+
+Two confirmed defects, both instances of the class the /git test guards for exactly one command. Filing one issue that names the class and the enumeration:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (36 lines) ✓ (1.6s)
+
+  watch: no files changed this turn — skipping
+

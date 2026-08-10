@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to fix the CLAUDE.md doc. Let me look at the current text.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '98,106p' CLAUDE.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "relative paths and bare… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_dir_restrictions"… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn spawn_dir_restri… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but non-git absolute-path writes can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  + `StreamingBashTool::with_cwd`, and the worker's **file** tools are confined separately by `dir_restrictions: spawn_dir_restrictions(&agent_config.dir_restrictions, worktree.as_ref())` at both call sites (`handle_spawn` and `handle_spawn_bg`) — the two halves are enforced by different mechanisms and must not be described as one. `bash` follows the worktree by **cwd** (a relative path resolves inside it); `read_file`/`write_file`/`edit_file`/`list_files`/`search` take no cwd, so they still resolve relative paths against the *process* cwd — they are not redirected into the worktree, they are made to **refuse** anything outside it (`maybe_guard`/`maybe_guard_arc` in `tools::build_tools` consult `dir_restrictions`). Before Day 163 (#716) the file tools carried no restrictions at all, so `write_file("src/foo.rs")` inside a spawn worktree silently wrote the **main repo** while `bash` writing the same relative path wrote the worktree. `spawn_dir_restrictions` is pure: `None` (no worktree) → parent's restrictions unchanged, no isolation available and none invented; `Some(wt)` → parent's `allow` plus the worktree root (deduped) with parent's `deny` cloned verbatim, so the common unrestricted-parent case becomes a one-entry allow list = the worktree root, and a human's existing `--allow` list is widened rather than replaced. Enforced default confinement, NOT a sandbox: bare `git` and relative paths under `bash` operate in the worktree, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard covers the file tools only, never `bash`; no worktree → `bash_cwd: None` and parent restrictions passed through, process cwd as before)
+ ✓ (56.9s)
+  - `StreamingBashTool::with_cwd` — enforced default confinement, NOT a sandbox: relative paths and bare `git` operate in the worktree by default, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but non-git absolute-path writes can still escape; no worktree → `bash_cwd: None`, process cwd as before)
+  + `StreamingBashTool::with_cwd`, and the worker's **file** tools are confined separately by `dir_restrictions: spawn_dir_restrictions(&agent_config.dir_restrictions, worktree.as_ref())` at both call sites (`handle_spawn` and `handle_spawn_bg`) — the two halves are enforced by different mechanisms and must not be described as one. `bash` follows the worktree by **cwd** (a relative path resolves inside it); `read_file`/`write_file`/`edit_file`/`list_files`/`search` take no cwd, so they still resolve relative paths against the *process* cwd — they are not redirected into the worktree, they are made to **refuse** anything outside it (`maybe_guard`/`maybe_guard_arc` in `tools::build_tools` consult `dir_restrictions`). Before Day 163 (#716) the file tools carried no restrictions at all, so `write_file("src/foo.rs")` inside a spawn worktree silently wrote the **main repo** while `bash` writing the same relative path wrote the worktree. `spawn_dir_restrictions` is pure: `None` (no worktree) → parent's restrictions unchanged, no isolation available and none invented; `Some(wt)` → parent's `allow` plus the worktree root (deduped) with parent's `deny` cloned verbatim, so the common unrestricted-parent case becomes a one-entry allow list = the worktree root, and a human's existing `--allow` list is widened rather than replaced. Enforced default confinement, NOT a sandbox: bare `git` and relative paths under `bash` operate in the worktree, and the git redirection escape class is blocked at the tool layer (`safety::detect_git_redirection_escape`, consulted by `StreamingBashTool` only when a cwd is pinned — refuses `git -C <path-outside-root>`, `--git-dir`/`--work-tree` pointing outside the root, and `GIT_DIR=`/`GIT_WORK_TREE=` env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass), but `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard covers the file tools only, never `bash`; no worktree → `bash_cwd: None` and parent restrictions passed through, process cwd as before)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn check_path" -A 40 sr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "maybe_guard" src/tools.… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 40s (8 ✓)
+
+Verified. Now run the full gate.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (56.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (56.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (8 lines) ✓ (16ms)
+  6 tools completed in 3m 22s (6 ✓)
+
+Fixed the one thing the evaluator flagged.
+
+What changed: only CLAUDE.md's commands_spawn.rs bullet (the code half was already correct and left untouched).
+
+The old sentence — "enforced default confinement, NOT a sandbox: relative paths and bare git operate in the worktree by default" — described one mechanism doing two jobs. It's now split into the two mechanisms that actually exist, with claims I traced rather than assumed:
+
+• bash follows the worktree by cwd (bash_cwd → `StreamingBashTool::with_cwd`) — a relative path really does resolve inside it.
+• The file tools (read_file/write_file/edit_file/list_files/search) take no cwd, so they still resolve relative paths against the process cwd. `dir_restrictions doesn't redirect them — it makes them **refuse** anything outside the worktree. I checked config.rs::check_path (resolves the path, then requires it be under an allow entry) to confirm the refusal wording is what actually happens, and tools.rs:1003/1015/1061/1091/1101 to confirm all five go through maybe_guard with dir_restrictions`, i.e. the change isn't inert.
+• The pre-Day-163 defect is stated explicitly (write_file("src/foo.rs") hit the main repo while bash hit the worktree), plus spawn_dir_restrictions' None-passthrough / Some-widen-and-dedup semantics.
+• The non-sandbox caveat is now scoped honestly: the guard covers the file tools **only, never bash**, so bash with a non-git absolute path can still write outside; the git-redirection class stays blocked by safety::detect_git_redirection_escape.
+
+Verified: `cargo fmt, cargo clippy --all-targets -- -D warnings (clean), cargo build, cargo test — 4721 passed, 0 failed. wc -l src/commands_spawn.rs = 3913, matching the tests/module_size.rs entry. Committed as b542e4a1`; working tree clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

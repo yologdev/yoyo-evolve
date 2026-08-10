@@ -1,0 +1,115 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to ground the change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,840p src/commands_spa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_bash_cwd" -A 20 s… ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub struct DirectoryRes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "maybe_guard\|dir_restri… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 918,940p src/tools.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_spawn_bash_cwd_map… ✓ (8ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 580,600p src/agent_builde… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1610,1625p src/commands_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "DirectoryRestrictions"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1616 && NR<=1624 {print… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 37.4s (10 ✓)
+
+Now the tests first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (4 → 59 lines)
+        #[test]
+        fn test_spawn_bash_cwd_none_without_worktree() {
+            assert_eq!(spawn_bash_cwd(None), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_dir_restrictions_without_worktree_passes_parent_through() {
+  +         // No worktree => no confinement, byte-identical to the pre-#716 behaviour.
+  +         // An empty parent must stay empty: inventing an allow list when isolation
+  +         // is unavailable would confine the worker to nothing at all.
+  +         let parent = crate::cli::DirectoryRestrictions::default();
+  +         let out = spawn_dir_restrictions(&parent, None);
+  +         assert!(out.is_empty());
+  + 
+  +         let parent = crate::cli::DirectoryRestrictions {
+  +             allow: vec!["/home/me/proj".to_string()],
+  +             deny: vec!["/home/me/proj/secrets".to_string()],
+  +         };
+  +         let out = spawn_dir_restrictions(&parent, None);
+  +         assert_eq!(out.allow, vec!["/home/me/proj".to_string()]);
+  ... (39 more lines)
+ ✓ (13.5s)
+        #[test]
+        fn test_spawn_bash_cwd_none_without_worktree() {
+            assert_eq!(spawn_bash_cwd(None), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_dir_restrictions_without_worktree_passes_parent_through() {
+  +         // No worktree => no confinement, byte-identical to the pre-#716 behaviour.
+  ... (13 more lines)
+
+Good — failing as expected. Now the helper.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 43 lines)
+    pub fn spawn_bash_cwd(worktree: Option<&WorktreeInfo>) -> Option<String> {
+        worktree.map(|w| w.path.display().to_string())
+  + }
+  + 
+  + /// Directory restrictions for a spawn worker's *file* tools.
+  + ///
+  + /// `bash_cwd` only pins `bash`; `read_file`/`write_file`/`edit_file`/`list_files`/
+  + /// `search` take no cwd, so before #716 the same relative path `src/foo.rs` meant
+  + /// the worktree under `bash` and the **main repo** under `write_file` — a worker's
+  + /// ordinary edits landed outside its isolation.
+  + ///
+  + /// Semantics this relies on (`DirectoryRestrictions::check_path`): an empty
+  + /// restriction set permits everything, and a non-empty `allow` permits *only*
+  + /// those dirs, with `deny` overriding `allow`. So:
+  + ///
+  + /// - `None` (no worktree) → the parent's restrictions unchanged. Same fallback as
+  + ///   `spawn_bash_cwd`: no isolation available, no confinement invented.
+  + /// - `Some(wt)` → parent's `allow` **plus** the worktree root (deduped), parent's
+  + ///   `deny` cloned verbatim. For the common unrestricted parent that yields a
+  + ///   one-entry allow list = the worktree root, which is exactly the confinement
+  ... (23 more lines)
+ ✓ (21.0s)
+    pub fn spawn_bash_cwd(worktree: Option<&WorktreeInfo>) -> Option<String> {
+        worktree.map(|w| w.path.display().to_string())
+  + }
+  + 
+  + /// Directory restrictions for a spawn worker's *file* tools.
+  + ///
+  + /// `bash_cwd` only pins `bash`; `read_file`/`write_file`/`edit_file`/`list_files`/
+  + /// `search` take no cwd, so before #716 the same relative path `src/foo.rs` meant
+  ... (13 more lines)
+
+Now both call sites in the same diff.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 85,95p tests/module_size.… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 5 lines)
+  -     ("src/commands_spawn.rs", 3814),
+  +     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
+  +     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
+  +     // three regression tests covering no-worktree passthrough, the confined
+  +     // common case, and widening a human-set allow list while preserving deny.
+  +     ("src/commands_spawn.rs", 3913),
+ ✓ (1m 42s)
+  -     ("src/commands_spawn.rs", 3814),
+  +     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
+  +     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
+  +     // three regression tests covering no-worktree passthrough, the confined
+  +     // common case, and widening a human-set allow list while preserving deny.
+  +     ("src/commands_spawn.rs", 3913),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (57.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.3s)
+  6 tools completed in 4m 9s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

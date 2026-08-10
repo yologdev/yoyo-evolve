@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the key claims: the helper wiring, whether dir_restrictions actually bites in build_tools, the module size gate, and CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs && g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (8ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head; e… ✓ (8ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (56.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 27s (4 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+The code is right — I verified:
+• spawn_dir_restrictions exists with the specified semantics and is wired at both call sites (handle_spawn and handle_spawn_bg), beside bash_cwd.
+• The fix is not inert: `src/tools.rs:1003/1015/1061/1091/1101 wrap write_file/edit_file/read_file/list_files/search in maybe_guard(..., dir_restrictions)`.
+• Module size gate updated to 3913, which matches actual wc -l (3913), with an attributing comment.
+• Three regression tests cover passthrough, confinement, and widen-with-deny-preserved.
+
+The blocker is doc_sync: `git diff HEAD~1 --name-only` shows only `src/commands_spawn.rs` and `tests/module_size.rs`. CLAUDE.md line 102 still carries the exact over-promise the task named ("relative paths and bare git operate in the worktree by default") — which the task listed in Files: and in its definition of done. Working tree is clean, so it wasn't merely uncommitted. One paragraph edit to that bullet would flip this to PASS.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
