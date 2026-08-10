@@ -201,9 +201,155 @@ fn recall_coverage_note_from(path: &std::path::Path) -> Option<String> {
     crate::commands_risk_accuracy::recall_coverage_note(&stats)
 }
 
+/// Honest one-line track record for the anticipatory (emerging/momentum)
+/// column, rendered directly under the `⚡ Emerging Risks` header so the
+/// forecast can't be read as carrying the same standing as the reactive list
+/// beside it (#720 — a capability is real only where something *consumes* it;
+/// this column's only evidence was its own advertisement).
+///
+/// This is DISCLOSURE, not repair: nothing here touches the momentum formula
+/// or the grading window. Three explicit states, absence never collapsed into
+/// a neighbour (Day 144):
+///   1. no validation events at all → `None` (nothing measured, say nothing —
+///      never print `0%` for an unmeasured thing)
+///   2. events exist but the column was never graded on a failure day →
+///      "not yet graded on a failure day" (ungraded ≠ wrong)
+///   3. graded on ≥1 failure day → the measured number, next to the reactive
+///      column's number over the same days
+pub(crate) fn emerging_track_record_note() -> Option<String> {
+    emerging_track_record_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+}
+
+/// Inner implementation with configurable path (for testing).
+fn emerging_track_record_note_from(path: &std::path::Path) -> Option<String> {
+    let events = load_validation_history_from(path);
+    let stats = compute_accuracy_stats(&events);
+
+    // State 1: nothing measured at all.
+    if stats.total_validations == 0 {
+        return None;
+    }
+
+    let ungraded = stats.emerging_failure_ungraded;
+    let ungraded_clause = if ungraded > 0 {
+        let plural = if ungraded == 1 { "" } else { "s" };
+        format!(" — {ungraded} failure-day event{plural} carried no emerging forecast")
+    } else {
+        String::new()
+    };
+
+    // State 2: events exist, but this column has never been graded against a
+    // failure day. Ungraded is not the same as wrong — say so plainly.
+    if stats.emerging_failure_samples == 0 {
+        return Some(format!(
+            "track record: not yet graded on a failure day{ungraded_clause}"
+        ));
+    }
+
+    // State 3: measured. State the number and the sample size; put the
+    // reactive column beside it so the reader can compare on the same days.
+    // When the reactive side has no failure-day recall, omit the clause
+    // rather than printing a `0%` nobody measured.
+    let pct = stats.emerging_failure_avg_pct.unwrap_or(0.0);
+    let samples = stats.emerging_failure_samples;
+    let plural = if samples == 1 { "" } else { "s" };
+    let reactive_clause = match stats.failure_hit_rate_pct {
+        Some(r) => format!(" (reactive column: {r:.0}%)"),
+        None => String::new(),
+    };
+    Some(format!(
+        "track record: {pct:.0}% recall over {samples} graded failure day{plural}{reactive_clause}{ungraded_clause}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failure-day event (no `watch_success` severity) with an emerging grade.
+    fn failure_line(day: u32, hits: &str, surprises: &str, emerging: Option<f64>) -> String {
+        let emerging_field = match emerging {
+            Some(e) => format!(r#","emerging_accuracy_pct":{e}"#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"ts":"2026-01-0{d}T12:00:00Z","day":{day},"trigger":"watch_failure","severity":"watch_failure","hits":[{hits}],"surprises":[{surprises}],"predicted_count":10,"accuracy_pct":50.0{emerging_field}}}"#,
+            d = (day % 9) + 1
+        )
+    }
+
+    #[test]
+    fn test_emerging_track_record_note_missing_ledger_is_silent() {
+        // State 1: nothing measured → say nothing. Never print "0%" for a
+        // thing that was never graded.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nonexistent.jsonl");
+        assert!(emerging_track_record_note_from(&path).is_none());
+
+        let empty = dir.path().join("empty.jsonl");
+        std::fs::write(&empty, "").expect("write");
+        assert!(emerging_track_record_note_from(&empty).is_none());
+    }
+
+    #[test]
+    fn test_emerging_track_record_note_ungraded_is_not_wrong() {
+        // State 2: failure-day events exist but none carried an emerging
+        // forecast → say "not yet graded", never a percentage.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let lines = [
+            failure_line(90, r#""src/a.rs""#, r#""src/b.rs""#, None),
+            failure_line(91, r#""src/a.rs""#, r#""src/c.rs""#, None),
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let note = emerging_track_record_note_from(&path).expect("note expected");
+        assert!(
+            note.contains("not yet graded on a failure day"),
+            "expected ungraded wording, got: {note}"
+        );
+        assert!(
+            !note.contains('%'),
+            "ungraded state must not print a percentage: {note}"
+        );
+        assert!(
+            note.contains("2 failure-day events carried no emerging forecast"),
+            "expected the ungraded count, got: {note}"
+        );
+    }
+
+    #[test]
+    fn test_emerging_track_record_note_reports_measured_number() {
+        // State 3: graded on failure days → the percentage AND the sample
+        // count both appear, with the reactive column beside it.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let lines = [
+            failure_line(90, r#""src/a.rs""#, r#""src/b.rs""#, Some(0.0)),
+            failure_line(91, r#""src/a.rs""#, r#""src/c.rs""#, Some(0.0)),
+            // One failure-day event with no emerging forecast at all.
+            failure_line(92, r#""src/a.rs""#, r#""src/d.rs""#, None),
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let note = emerging_track_record_note_from(&path).expect("note expected");
+        assert!(
+            note.contains("0% recall"),
+            "expected the measured percentage, got: {note}"
+        );
+        assert!(
+            note.contains("2 graded failure days"),
+            "expected the sample count, got: {note}"
+        );
+        assert!(
+            note.contains("reactive column:"),
+            "expected the reactive comparison, got: {note}"
+        );
+        assert!(
+            note.contains("1 failure-day event carried no emerging forecast"),
+            "expected the ungraded tail (singular), got: {note}"
+        );
+    }
 
     #[test]
     fn test_format_risk_report_empty() {

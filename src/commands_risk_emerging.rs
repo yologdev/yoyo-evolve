@@ -162,14 +162,36 @@ pub(crate) fn detect_emerging_risks(risks: &[FileRisk]) -> Vec<EmergingRisk> {
 /// Format emerging-risk files into a report section.
 /// Returns an empty string if there are no emerging risks.
 pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
+    format_emerging_risks_with(
+        emerging,
+        crate::commands_risk_report::emerging_track_record_note().as_deref(),
+    )
+}
+
+/// Pure rendering half — takes the track-record note as a parameter so tests
+/// drive it instead of reading the real validation ledger.
+///
+/// The note (when `Some`) is printed immediately under the header, above the
+/// rows: this column has been graded 0% on failure days as of Day 163, and it
+/// was sitting directly beneath the reactive list with identical billing
+/// (#720). When `None` the output is byte-identical to the pre-disclosure
+/// format — the no-data path must not change.
+pub(crate) fn format_emerging_risks_with(
+    emerging: &[EmergingRisk],
+    track_record: Option<&str>,
+) -> String {
     if emerging.is_empty() {
         return String::new();
     }
 
     let mut out = String::new();
     out.push_str(&format!(
-        "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n\n"
+        "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n"
     ));
+    if let Some(note) = track_record {
+        out.push_str(&format!("  {DIM}{note}{RESET}\n"));
+    }
+    out.push('\n');
 
     for er in emerging.iter().take(10) {
         let path_display = &er.path;
@@ -192,6 +214,55 @@ pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_row() -> EmergingRisk {
+        EmergingRisk {
+            path: "src/foo.rs".into(),
+            momentum: 3.2,
+            current_rank: 11,
+            signals: vec!["▲churn".to_string()],
+        }
+    }
+
+    #[test]
+    fn test_format_emerging_empty_stays_empty_even_with_note() {
+        // The early return is unchanged: no rows → no header, no note.
+        assert!(format_emerging_risks_with(&[], Some("track record: 0% recall")).is_empty());
+        assert!(format_emerging_risks_with(&[], None).is_empty());
+    }
+
+    #[test]
+    fn test_format_emerging_note_appears_above_first_row() {
+        let rows = vec![sample_row()];
+        let out = format_emerging_risks_with(&rows, Some("track record: 0% recall over 9 days"));
+        assert!(
+            out.contains("track record: 0% recall over 9 days"),
+            "note must be rendered, got: {out}"
+        );
+        let note_at = out.find("track record").expect("note present");
+        let row_at = out.find("src/foo.rs").expect("row present");
+        assert!(
+            note_at < row_at,
+            "note must sit above the first row: {out:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_emerging_without_note_is_unchanged() {
+        // Pin the no-data path byte-for-byte against the pre-disclosure shape:
+        // header line, blank line, then rows. Disclosure must not cost anything
+        // when there is nothing measured to disclose.
+        let rows = vec![sample_row()];
+        let out = format_emerging_risks_with(&rows, None);
+        let expected_header = format!(
+            "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n\n"
+        );
+        assert!(
+            out.starts_with(&expected_header),
+            "expected legacy header+blank line, got: {out:?}"
+        );
+        assert!(!out.contains("track record"));
+    }
 
     #[test]
     fn test_momentum_saturates_when_all_changes_recent() {
