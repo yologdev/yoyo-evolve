@@ -658,6 +658,14 @@ STUDIED_COMPACT_PREFIX = "studied d"
 VISITED_COMPACT_PREFIX = "visited d"
 # Header of the never-forecast section — a hard stop for entry parsing.
 EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
+# A row inside that section: "  ◦ src/commands_skill.rs (risk 0.3)". Anchored on
+# the ◦ glyph AND the "(risk " suffix so the "... (+N more)" tail and the two
+# explanatory prose lines below it can never be mistaken for paths.
+EPISTEMIC_NEVER_FORECAST_ROW_RE = re.compile(r"^\s*◦\s+(\S+)\s+\(risk\s")
+# How many never-forecast paths reach the planner. They are unranked (a list
+# where everything is equally unknown ranks nothing), so this is a byte budget,
+# not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+EPISTEMIC_NEVER_FORECAST_SHOWN = 2
 
 
 def compact_epistemic_reason(reason: str) -> str:
@@ -681,21 +689,39 @@ def compact_epistemic_reason(reason: str) -> str:
     return reason[:60]
 
 
-def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]:
-    """Parse `yoyo risk epistemic` report output into compact bullet lines.
+def parse_epistemic_output(
+    text: str, top_n: int = EPISTEMIC_TOP_N
+) -> tuple[list[str], list[str]]:
+    """Parse `yoyo risk epistemic` report output.
+
+    Returns `(ranked_lines, never_forecast_paths)`. The two halves are
+    deliberately separate values: the first is a *ranking*, the second is a set
+    of files no prediction column has ever named, which nothing ranks. Merging
+    them would dress the dark half up as the bottom of the lit one.
 
     Pure (no subprocess) so the self-tests can exercise it on canned output.
-    Returns [] when nothing parseable is found (empty states, garbage).
+    Returns ([], []) when nothing parseable is found (empty states, garbage);
+    the second half is [] for reports with no never-forecast section at all.
     """
     entries: list[tuple[str, str, list[str]]] = []
+    never_forecast: list[str] = []
+    in_never_forecast = False
     for raw in strip_ansi(text).splitlines():
         # The "never forecast" section sits below the ranked entries and is a
         # different kind of claim (files with NO prediction at all). Stop
-        # parsing there so its rows can never be absorbed as ranked entries or
-        # appended as reasons to the last one. Explicit guard, not a reliance
-        # on the section's ◦ glyph differing from the • reason bullet.
+        # collecting ranked entries there so its rows can never be absorbed as
+        # ranked entries or appended as reasons to the last one. Explicit
+        # guard, not a reliance on the section's ◦ glyph differing from the •
+        # reason bullet. Scanning continues past it (Day 163) only to harvest
+        # the section's own rows — the ranked half is finished at this line.
         if EPISTEMIC_NEVER_FORECAST_RE.search(raw):
-            break
+            in_never_forecast = True
+            continue
+        if in_never_forecast:
+            m = EPISTEMIC_NEVER_FORECAST_ROW_RE.match(raw)
+            if m:
+                never_forecast.append(m.group(1))
+            continue
         m = EPISTEMIC_ENTRY_RE.match(raw)
         if m:
             entries.append((m.group(1), m.group(2), []))
@@ -722,7 +748,7 @@ def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]
         if len(line) > EPISTEMIC_ENTRY_MAX_CHARS:
             line = line[: EPISTEMIC_ENTRY_MAX_CHARS - 1] + "…"
         out.append(line)
-    return out
+    return out, never_forecast
 
 
 def find_yoyo_binary() -> str | None:
@@ -733,35 +759,55 @@ def find_yoyo_binary() -> str | None:
     return None
 
 
-def collect_epistemic_blind_spots() -> list[str]:
-    """Run `yoyo risk epistemic` and compact its top entries. Fail-soft:
-    every skip path warn()s (fail-soft without a freshness signal is
-    fail-silent — Day 139) and returns []."""
+def collect_epistemic_blind_spots() -> tuple[list[str], list[str]]:
+    """Run `yoyo risk epistemic` and compact its output into
+    `(ranked_lines, never_forecast_paths)`. Fail-soft: every skip path warn()s
+    (fail-soft without a freshness signal is fail-silent — Day 139) and returns
+    ([], []).
+
+    An empty ranked list is NOT a skip when never-forecast paths exist: the
+    dark half is the half the ranking structurally cannot see, so dropping it
+    for want of a ranking would reproduce the exact bug this reads back."""
     binary = find_yoyo_binary()
     if binary is None:
         warn("epistemic section skipped: yoyo binary not found in target/{debug,release}")
-        return []
+        return [], []
     rc, stdout, _stderr = run_cmd([binary, "risk", "epistemic"], timeout=15)
     if rc != 0:
         warn(f"epistemic section skipped: `{binary} risk epistemic` rc={rc}")
-        return []
-    entries = parse_epistemic_output(stdout)
-    if not entries:
+        return [], []
+    entries, never_forecast = parse_epistemic_output(stdout)
+    if not entries and not never_forecast:
         warn("epistemic section skipped: no parseable entries in report output")
-        return []
-    return entries
+        return [], []
+    return entries, never_forecast
 
 
-def render_epistemic(entries: list[str]) -> str:
-    """≤8 lines incl. header. Empty entries → honest one-line fallback so the
-    planner sees the section exists but is starving, not silence."""
+def render_epistemic(entries: list[str], never_forecast: list[str] | None = None) -> str:
+    """≤10 lines incl. header. Empty entries AND empty never-forecast → honest
+    one-line fallback so the planner sees the section exists but is starving,
+    not silence.
+
+    `never_forecast` is rendered as ONE clearly-unranked line, because the
+    ranked half is generated from files a prediction column already named —
+    i.e. by the same attention this section exists to correct. With no
+    never-forecast paths the output is byte-identical to the pre-Day-163
+    wording (pinned by a self-test)."""
     header = "## Epistemic blind spots (files graded outcomes have taught the model least about)"
-    if not entries:
+    if not entries and not never_forecast:
         return header + "\n(no epistemic data yet)"
     lines = [header] + entries[:EPISTEMIC_TOP_N]
-    lines.append(
-        "(planner hint: prefer pointing the self-driven slot at one of these — guess first, grade after)"
-    )
+    if never_forecast:
+        shown = ", ".join(never_forecast[:EPISTEMIC_NEVER_FORECAST_SHOWN])
+        lines.append(f"- never forecast (0 predictions ever, unranked): {shown}")
+        lines.append(
+            "(planner hint: point the self-driven slot at one of these — the never-forecast "
+            "files are the darkest, the ranking cannot see them — guess first, grade after)"
+        )
+    else:
+        lines.append(
+            "(planner hint: prefer pointing the self-driven slot at one of these — guess first, grade after)"
+        )
     return "\n".join(lines)
 
 
@@ -863,9 +909,9 @@ def main() -> int:
     # line) so the planner sees the epistemic view even when it's starving.
     # Skipped only when there is no trajectory data at all AND no epistemic
     # data — preserving the honest global "(no trajectory data yet)" state.
-    epistemic_entries = collect_epistemic_blind_spots()
-    if sections or epistemic_entries:
-        sections.append(render_epistemic(epistemic_entries))
+    epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
+    if sections or epistemic_entries or epistemic_never:
+        sections.append(render_epistemic(epistemic_entries, epistemic_never))
 
     if not sections:
         body = "(no trajectory data yet — audit-log is empty and no recent task commits found)"
