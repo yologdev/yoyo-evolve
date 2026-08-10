@@ -12,6 +12,7 @@ use yoagent::provider::{
     AnthropicProvider, ApiProtocol, BedrockProvider, GoogleProvider, ModelConfig, OpenAiCompat,
     OpenAiCompatProvider,
 };
+use yoagent::tools::SharedStateTool;
 use yoagent::*;
 
 use crate::cli;
@@ -627,13 +628,16 @@ impl AgentConfig {
             // allowed/disallowed filters above, same as the old with_sub_agent
             // wiring — which just pushed the tool into this same list). Wrapped
             // with a session-wide call cap as a runaway-loop circuit breaker.
-            // The SharedState handle is kept for future use (e.g. pre-populating
-            // context before dispatching sub-agents like analyze-trajectory).
-            let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+            // The parent also gets `shared_state` here (#715): the documented RLM
+            // step is store-then-reference, so the parent needs a handle on the same
+            // store its sub-agents read. Paired with `sub_agent` deliberately — a
+            // store with nobody on the other end is not worth a tool slot.
+            let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
             tools.push(with_session_cap(
                 Box::new(sub_agent_tool),
                 SESSION_TOOL_CALL_CAP,
             ));
+            tools.push(Box::new(SharedStateTool::new(shared_state)));
 
             agent = agent.with_tools(tools);
         }

@@ -221,7 +221,7 @@ yoyo has shared-state recursive sub-agent dispatch — the [Recursive Language M
 - You're already inside a sub-agent and depth=3 is reached — stop, return what you have, do not dispatch further.
 
 **Established pattern in yoyo:**
-1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op.
+1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op. The parent gets `shared_state` exactly when it gets `sub_agent` — both are pushed together in `agent_builder.rs` and are absent together under `--no-tools` (#715; before Day 163 only sub-agents had the tool, so this step silently did nothing at the top level).
 2. Parent calls the `sub_agent` tool with a *focused question* and a *reference* to the shared-state key — never the artifact itself in the prompt.
 3. Sub-agent reads via `shared_state.get`, returns a JSON-shaped summary (see `analyze-trajectory`'s "Dispatch a sub-agent" section for the schema).
 4. Parent recurses on `deeper_question` if confidence is low. Hard depth cap = 3 (counts each sub_agent dispatch toward the budget).
