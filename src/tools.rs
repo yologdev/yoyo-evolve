@@ -463,7 +463,21 @@ impl AgentTool for StreamingBashTool {
 /// An agent-invocable tool for renaming symbols across a project.
 /// Wraps `commands_project::rename_in_project` so the LLM can do cross-file
 /// renames in a single tool call instead of multiple edit_file invocations.
-pub(crate) struct RenameSymbolTool;
+#[derive(Default)]
+pub(crate) struct RenameSymbolTool {
+    /// Directory restrictions the rename must honor (#714). Default = empty =
+    /// unrestricted, which is what the test sites and product default use.
+    restrictions: cli::DirectoryRestrictions,
+}
+
+impl RenameSymbolTool {
+    /// Build a rename tool bound to the session's directory restrictions.
+    pub(crate) fn new(restrictions: &cli::DirectoryRestrictions) -> Self {
+        Self {
+            restrictions: restrictions.clone(),
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl AgentTool for RenameSymbolTool {
@@ -519,9 +533,14 @@ impl AgentTool for RenameSymbolTool {
 
         let scope = params["path"].as_str();
 
-        match commands_project::rename_in_project(old_name, new_name, scope) {
+        match commands_project::rename_in_project_restricted(
+            old_name,
+            new_name,
+            scope,
+            &self.restrictions,
+        ) {
             Ok(result) => {
-                let summary = format!(
+                let mut summary = format!(
                     "Renamed '{}' → '{}': {} replacement{} across {} file{}.\n\nFiles changed:\n{}\n\n{}",
                     old_name,
                     new_name,
@@ -532,6 +551,11 @@ impl AgentTool for RenameSymbolTool {
                     result.files_changed.iter().map(|f| format!("  - {f}")).collect::<Vec<_>>().join("\n"),
                     result.preview,
                 );
+                // Denied files are skipped, never silently dropped (#714).
+                if let Some(note) = commands_project::format_denied_note(&result.skipped_denied) {
+                    summary.push_str("\n\n");
+                    summary.push_str(&note);
+                }
                 Ok(TR {
                     content: vec![Content::Text { text: summary }],
                     details: serde_json::json!({}),
@@ -998,9 +1022,13 @@ pub fn build_tools(
 
     // Build rename_symbol tool with optional confirmation (it writes files)
     let rename_tool: Box<dyn AgentTool> = if auto_approve || auto_edit {
-        Box::new(RenameSymbolTool)
+        Box::new(RenameSymbolTool::new(dir_restrictions))
     } else {
-        maybe_confirm(Box::new(RenameSymbolTool), &always_approved, permissions)
+        maybe_confirm(
+            Box::new(RenameSymbolTool::new(dir_restrictions)),
+            &always_approved,
+            permissions,
+        )
     };
 
     // Shared failure tracker for recovery hints — counts per-tool failures
@@ -2021,19 +2049,19 @@ mod tests {
 
     #[test]
     fn test_rename_symbol_tool_name() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         assert_eq!(tool.name(), "rename_symbol");
     }
 
     #[test]
     fn test_rename_symbol_tool_label() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         assert_eq!(tool.label(), "Rename");
     }
 
     #[test]
     fn test_rename_symbol_tool_schema() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let schema = tool.parameters_schema();
         // Must have old_name, new_name, and path properties
         let props = schema["properties"].as_object().unwrap();
@@ -2061,6 +2089,7 @@ mod tests {
             files_changed: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
             total_replacements: 5,
             preview: "preview text".to_string(),
+            skipped_denied: Vec::new(),
         };
         assert_eq!(result.files_changed.len(), 2);
         assert_eq!(result.total_replacements, 5);
@@ -2461,7 +2490,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rename_symbol_tool_missing_old_name() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let ctx = test_tool_context(None);
         let result = tool
             .execute(serde_json::json!({"new_name": "foo"}), ctx)
@@ -2476,7 +2505,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rename_symbol_tool_missing_new_name() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let ctx = test_tool_context(None);
         let result = tool
             .execute(serde_json::json!({"old_name": "foo"}), ctx)
@@ -2491,7 +2520,7 @@ mod tests {
 
     #[test]
     fn test_rename_symbol_tool_schema_required_fields() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let schema = tool.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         let required_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
@@ -2828,7 +2857,7 @@ mod tests {
 
     #[test]
     fn test_rename_symbol_tool_description_content() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let desc = tool.description();
         assert!(
             desc.contains("word-boundary"),
@@ -2842,7 +2871,7 @@ mod tests {
 
     #[test]
     fn test_rename_symbol_tool_schema_path_is_optional() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let schema = tool.parameters_schema();
         let required = schema["required"].as_array().unwrap();
         let req_strs: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
@@ -2852,7 +2881,7 @@ mod tests {
 
     #[test]
     fn test_rename_symbol_tool_schema_property_types() {
-        let tool = RenameSymbolTool;
+        let tool = RenameSymbolTool::default();
         let schema = tool.parameters_schema();
         let props = schema["properties"].as_object().unwrap();
         // All three properties should be string type

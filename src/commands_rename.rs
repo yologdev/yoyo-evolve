@@ -1,6 +1,7 @@
 //! Rename symbol across project files — word-boundary-aware find-and-replace.
 
 use crate::commands_search::is_binary_extension;
+use crate::config::DirectoryRestrictions;
 use crate::format::*;
 use crate::git::run_git;
 
@@ -50,16 +51,91 @@ pub struct RenameResult {
     pub files_changed: Vec<String>,
     pub total_replacements: usize,
     pub preview: String,
+    /// Files that matched but were NOT rewritten because the active
+    /// `DirectoryRestrictions` deny them. Never silently dropped — callers
+    /// are expected to report these (see `format_denied_note`).
+    pub skipped_denied: Vec<String>,
+}
+
+/// How many denied paths to name in the skip note before summarising the rest.
+const MAX_DENIED_PATHS_SHOWN: usize = 5;
+
+/// Split candidate files into `(allowed, denied)` under `restrictions`.
+///
+/// Empty restrictions allow everything (the common product default), so the
+/// unrestricted path costs one `is_empty()` check and no path resolution.
+pub fn partition_denied_files(
+    files: &[String],
+    restrictions: &DirectoryRestrictions,
+) -> (Vec<String>, Vec<String>) {
+    if restrictions.is_empty() {
+        return (files.to_vec(), Vec::new());
+    }
+    let mut allowed = Vec::new();
+    let mut denied = Vec::new();
+    for f in files {
+        if restrictions.check_path(f).is_ok() {
+            allowed.push(f.clone());
+        } else {
+            denied.push(f.clone());
+        }
+    }
+    (allowed, denied)
+}
+
+/// One honest line naming the files a rename refused to touch.
+/// Returns `None` when nothing was skipped, so callers append nothing.
+pub fn format_denied_note(denied: &[String]) -> Option<String> {
+    if denied.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = denied
+        .iter()
+        .take(MAX_DENIED_PATHS_SHOWN)
+        .map(|p| truncate_with_ellipsis(p, 120))
+        .collect();
+    let more = denied.len().saturating_sub(shown.len());
+    let more_msg = if more > 0 {
+        format!(" (+{more} more)")
+    } else {
+        String::new()
+    };
+    let file_word = crate::format::pluralize(denied.len(), "file", "files");
+    Some(format!(
+        "skipped {} {file_word} denied by permission config: {}{more_msg}",
+        denied.len(),
+        shown.join(", ")
+    ))
 }
 
 /// Perform a word-boundary-aware rename across git-tracked files.
 ///
 /// If `scope` is `Some(path)`, only files under that path are considered.
 /// Returns a `RenameResult` with details of what changed, or an error message.
-pub fn rename_in_project(
+///
+/// Every file about to be rewritten is first
+/// checked against `restrictions` (issue #714). Denied files are skipped and
+/// reported in `RenameResult::skipped_denied` — never written, never silently
+/// dropped. If every candidate is denied this returns `Err` rather than a
+/// cheerful "renamed 0 occurrences".
+pub fn rename_in_project_restricted(
     old_name: &str,
     new_name: &str,
     scope: Option<&str>,
+    restrictions: &DirectoryRestrictions,
+) -> Result<RenameResult, String> {
+    rename_in_files(&list_git_files(), old_name, new_name, scope, restrictions)
+}
+
+/// The rename core over an explicit candidate file list — the testable half of
+/// `rename_in_project_restricted` (tests pass tempdir paths instead of the
+/// repo's `git ls-files` output).
+pub fn rename_in_files(
+    files: &[String],
+    old_name: &str,
+    new_name: &str,
+    scope: Option<&str>,
+    restrictions: &DirectoryRestrictions,
 ) -> Result<RenameResult, String> {
     if old_name.is_empty() {
         return Err("old_name must not be empty".to_string());
@@ -71,7 +147,7 @@ pub fn rename_in_project(
         return Err("old_name and new_name are identical — nothing to do".to_string());
     }
 
-    let mut matches = find_rename_matches(old_name);
+    let mut matches = find_rename_matches_in(files, old_name);
 
     // Filter by scope if provided
     if let Some(scope_path) = scope {
@@ -87,33 +163,50 @@ pub fn rename_in_project(
         ));
     }
 
+    // Collect unique files that would be changed, then drop the denied ones
+    // BEFORE any write happens. Partitioning the *matching* files (not every
+    // candidate) keeps the skip report to files a write would really have hit.
+    let mut candidates: Vec<String> = matches.iter().map(|m| m.file.clone()).collect();
+    candidates.sort();
+    candidates.dedup();
+    let (files_changed, skipped_denied) = partition_denied_files(&candidates, restrictions);
+
+    if files_changed.is_empty() {
+        let note = format_denied_note(&skipped_denied).unwrap_or_default();
+        return Err(format!(
+            "Refusing to rename '{old_name}': every matching file is denied by the \
+             permission config — nothing was modified. {note}"
+        ));
+    }
+
+    matches.retain(|m| files_changed.binary_search(&m.file).is_ok());
+
     let preview = format_rename_preview(&matches, old_name, new_name);
-
-    // Collect unique files that will be changed
-    let mut files_changed: Vec<String> = matches.iter().map(|m| m.file.clone()).collect();
-    files_changed.sort();
-    files_changed.dedup();
-
     let total_replacements = apply_rename(&matches, old_name, new_name);
 
     Ok(RenameResult {
         files_changed,
         total_replacements,
         preview,
+        skipped_denied,
     })
 }
 
 /// Find all word-boundary matches of `old_name` across files tracked by git.
 /// Skips binary files. Returns matches sorted by file then line number.
 pub fn find_rename_matches(old_name: &str) -> Vec<RenameMatch> {
+    find_rename_matches_in(&list_git_files(), old_name)
+}
+
+/// Same as `find_rename_matches`, over an explicit candidate file list.
+pub fn find_rename_matches_in(files: &[String], old_name: &str) -> Vec<RenameMatch> {
     if old_name.is_empty() {
         return Vec::new();
     }
 
-    let files = list_git_files();
     let mut matches = Vec::new();
 
-    for file_path in &files {
+    for file_path in files {
         if is_binary_extension(file_path) {
             continue;
         }
@@ -665,21 +758,24 @@ mod tests {
 
     #[test]
     fn test_rename_in_project_empty_old_name() {
-        let result = rename_in_project("", "Bar", None);
+        let result =
+            rename_in_project_restricted("", "Bar", None, &DirectoryRestrictions::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("old_name must not be empty"));
     }
 
     #[test]
     fn test_rename_in_project_empty_new_name() {
-        let result = rename_in_project("Foo", "", None);
+        let result =
+            rename_in_project_restricted("Foo", "", None, &DirectoryRestrictions::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("new_name must not be empty"));
     }
 
     #[test]
     fn test_rename_in_project_same_name() {
-        let result = rename_in_project("Foo", "Foo", None);
+        let result =
+            rename_in_project_restricted("Foo", "Foo", None, &DirectoryRestrictions::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("identical"));
     }
@@ -690,6 +786,7 @@ mod tests {
             files_changed: vec!["a.rs".to_string()],
             total_replacements: 3,
             preview: "preview".to_string(),
+            skipped_denied: Vec::new(),
         };
         assert_eq!(r.files_changed, vec!["a.rs"]);
         assert_eq!(r.total_replacements, 3);
@@ -699,7 +796,12 @@ mod tests {
     #[test]
     fn test_rename_in_project_scoped_no_match() {
         // Scope to a nonexistent directory — should find no matches
-        let result = rename_in_project("RenameMatch", "RM", Some("nonexistent_dir_xyz/"));
+        let result = rename_in_project_restricted(
+            "RenameMatch",
+            "RM",
+            Some("nonexistent_dir_xyz/"),
+            &DirectoryRestrictions::default(),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No word-boundary matches"));
     }
@@ -769,5 +871,140 @@ mod tests {
         assert!(is_word_start(text, 0));
         // Position at text.len() is always word end
         assert!(is_word_end(text, text.len()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Directory restrictions (#714) — rename must never write a denied file,
+    // and must never silently drop one either.
+    // -----------------------------------------------------------------------
+
+    /// Build a two-file fixture: `allowed/a.rs` and `denied/b.rs`, both
+    /// containing `foo`. Returns (tempdir, allowed_path, denied_path, deny_dir).
+    fn denied_fixture() -> (TempDir, String, String, String) {
+        let dir = TempDir::new().unwrap();
+        let allowed_dir = dir.path().join("allowed");
+        let denied_dir = dir.path().join("denied");
+        fs::create_dir_all(&allowed_dir).unwrap();
+        fs::create_dir_all(&denied_dir).unwrap();
+
+        let a = allowed_dir.join("a.rs");
+        let b = denied_dir.join("b.rs");
+        fs::write(&a, "let foo = 1;\n").unwrap();
+        fs::write(&b, "let foo = 2;\n").unwrap();
+
+        (
+            dir,
+            a.to_str().unwrap().to_string(),
+            b.to_str().unwrap().to_string(),
+            denied_dir.to_str().unwrap().to_string(),
+        )
+    }
+
+    #[test]
+    fn rename_skips_denied_file_and_reports_it() {
+        let (_dir, allowed, denied, deny_dir) = denied_fixture();
+        let restrictions = DirectoryRestrictions {
+            allow: Vec::new(),
+            deny: vec![deny_dir],
+        };
+
+        let result = rename_in_files(
+            &[allowed.clone(), denied.clone()],
+            "foo",
+            "bar",
+            None,
+            &restrictions,
+        )
+        .expect("allowed file should still be renamed");
+
+        // The allowed file IS modified.
+        assert_eq!(fs::read_to_string(&allowed).unwrap(), "let bar = 1;\n");
+        // The denied file is NOT modified.
+        assert_eq!(fs::read_to_string(&denied).unwrap(), "let foo = 2;\n");
+
+        assert_eq!(result.files_changed, vec![allowed.clone()]);
+        assert_eq!(result.skipped_denied, vec![denied.clone()]);
+        assert_eq!(result.total_replacements, 1);
+
+        // The skip is reported, not silent.
+        let note = format_denied_note(&result.skipped_denied).expect("a skip note");
+        assert!(note.contains("denied by permission config"), "got: {note}");
+        assert!(note.contains(&denied), "note should name the file: {note}");
+    }
+
+    #[test]
+    fn rename_with_every_candidate_denied_is_a_refusal() {
+        let (_dir, _allowed, denied, deny_dir) = denied_fixture();
+        let restrictions = DirectoryRestrictions {
+            allow: Vec::new(),
+            deny: vec![deny_dir],
+        };
+
+        // Only the denied file is a candidate.
+        let err = rename_in_files(
+            std::slice::from_ref(&denied),
+            "foo",
+            "bar",
+            None,
+            &restrictions,
+        )
+        .expect_err("all-denied must refuse, not report a cheerful 0-file rename");
+
+        assert!(err.contains("Refusing to rename"), "got: {err}");
+        assert!(err.contains("denied by permission config"), "got: {err}");
+        // No write happened.
+        assert_eq!(fs::read_to_string(&denied).unwrap(), "let foo = 2;\n");
+    }
+
+    #[test]
+    fn allow_list_denies_files_outside_it() {
+        let (_dir, allowed, denied, _deny_dir) = denied_fixture();
+        // Allow only the `allowed/` directory — `denied/b.rs` is outside it.
+        let allow_dir = std::path::Path::new(&allowed)
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let restrictions = DirectoryRestrictions {
+            allow: vec![allow_dir],
+            deny: Vec::new(),
+        };
+
+        let result = rename_in_files(
+            &[allowed.clone(), denied.clone()],
+            "foo",
+            "bar",
+            None,
+            &restrictions,
+        )
+        .unwrap();
+
+        assert_eq!(result.files_changed, vec![allowed]);
+        assert_eq!(result.skipped_denied, vec![denied.clone()]);
+        assert_eq!(fs::read_to_string(&denied).unwrap(), "let foo = 2;\n");
+    }
+
+    #[test]
+    fn empty_restrictions_allow_everything() {
+        let files = vec!["a.rs".to_string(), "b.rs".to_string()];
+        let (allowed, denied) = partition_denied_files(&files, &DirectoryRestrictions::default());
+        assert_eq!(allowed, files);
+        assert!(denied.is_empty());
+    }
+
+    #[test]
+    fn format_denied_note_is_none_when_nothing_skipped() {
+        assert!(format_denied_note(&[]).is_none());
+    }
+
+    #[test]
+    fn format_denied_note_truncates_long_lists() {
+        let paths: Vec<String> = (0..8).map(|i| format!("denied/f{i}.rs")).collect();
+        let note = format_denied_note(&paths).unwrap();
+        assert!(note.contains("skipped 8 files"), "got: {note}");
+        assert!(note.contains("denied/f0.rs"), "got: {note}");
+        assert!(note.contains("(+3 more)"), "got: {note}");
+        assert!(!note.contains("denied/f7.rs"), "got: {note}");
     }
 }

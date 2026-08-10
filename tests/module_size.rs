@@ -125,7 +125,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/tool_wrappers.rs", 3964),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
-    ("src/tools.rs", 3264),
+    // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the
+    // session's DirectoryRestrictions (struct + constructor + denied-file
+    // reporting in execute), so rename_symbol stops writing across --deny'd
+    // directories. The rename logic itself lives in src/commands_rename.rs.
+    ("src/tools.rs", 3290),
     ("src/watch.rs", 3535),
 ];
 
