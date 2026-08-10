@@ -1127,7 +1127,7 @@ def run_self_tests() -> int:
     assert_eq(
         "entry with reasons compacts and joins",
         parsed[0],
-        "- src/commands_search.rs (5.0) — predicted 28×, never graded; columns disagree 3/3",
+        "- src/commands_search.rs (5.0) — predicted 28×, never graded; stale (7 snapshots)",
     )
     assert_eq("entry without reasons is bare", parsed[2], "- src/a.rs (3.0)")
 
@@ -1268,20 +1268,26 @@ def run_self_tests() -> int:
 
     # 19g. The dark half (Day 163): the never-forecast paths are now RETURNED,
     # not just stopped at. The fixture below is verbatim `yoyo risk epistemic`
-    # output captured on Day 163 — a hand-typed fixture pins my belief about
-    # the input, not the input (Day 147).
+    # output — a hand-typed fixture pins my belief about the input, not the
+    # input (Day 147). Recaptured on Day 163 after #726's sibling removed the
+    # reactive/emerging disagreement signal: every ranked entry it used to
+    # produce is gone, so the old capture no longer described any reachable
+    # output. What ranks now is never-graded / stale / study history.
     canned_real = (
         "\n"
         "🔍 Epistemic view — where graded outcomes have taught the model least\n"
         "\n"
-        "   1. src/commands_risk.rs                     2.9\n"
-        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.90)\n"
-        "   2. src/commands_risk_report.rs              2.4\n"
-        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.40)\n"
-        "   3. src/help_data.rs                         1.8\n"
-        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.80)\n"
-        "   4. src/commands.rs                          1.8\n"
-        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 1.80)\n"
+        "   1. src/commands_fork.rs                     1.5\n"
+        "      • predicted 14×, never graded\n"
+        "      • last seen 60 snapshots ago, no graded event since\n"
+        "      • studied by graded experiment (day 150, miss)\n"
+        "   2. src/commands_config.rs                   1.5\n"
+        "      • predicted 17×, never graded\n"
+        "      • last seen 58 snapshots ago, no graded event since\n"
+        "   3. src/commands_risk_epistemic.rs           0.5\n"
+        "      • last seen 6 snapshots ago, no graded event since\n"
+        "   4. src/commands_plan.rs                     0.5\n"
+        "      • last seen 85 snapshots ago, no graded event since\n"
         "\n"
         "  note: tied scores are ordered by current risk score (higher first), then path\n"
         "\n"
@@ -1312,9 +1318,12 @@ def run_self_tests() -> int:
     assert_eq(
         "ranked entries unchanged by the presence of the never-forecast section",
         " | ".join(real_entries),
-        "- src/commands_risk.rs (2.9) — columns disagree 3/3 | "
-        "- src/commands_risk_report.rs (2.4) — columns disagree 3/3 | "
-        "- src/help_data.rs (1.8) — columns disagree 3/3",
+        # Entry 1 carries three reasons and overruns EPISTEMIC_ENTRY_MAX_CHARS,
+        # so it is clamped mid-reason — study history is hoisted first exactly
+        # so the clamp can never be the thing that hides it.
+        "- src/commands_fork.rs (1.5) — studied d150 (miss); predicted 14×, never graded; stale (6… | "
+        "- src/commands_config.rs (1.5) — predicted 17×, never graded; stale (58 snapshots) | "
+        "- src/commands_risk_epistemic.rs (0.5) — stale (6 snapshots)",
     )
     assert_true(
         "the `... (+N more)` tail is not mistaken for a path",
@@ -1553,7 +1562,7 @@ src/commands_config.rs
         f"- 3x: error[E030{i}]: mismatched types in src/commands_bar.rs" for i in range(5)
     )
     provider_sec = "## Provider/API health\n10 sessions, 2 provider error hit(s) in audit.jsonl."
-    epistemic_first = "- src/commands.rs (5.0) — predicted 23×, never graded; columns disagree 3/3"
+    epistemic_first = "- src/commands.rs (5.0) — predicted 23×, never graded; stale (7 snapshots)"
     epistemic_sec = render_epistemic(
         [
             epistemic_first,
