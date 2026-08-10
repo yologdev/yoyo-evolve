@@ -1113,7 +1113,7 @@ def run_self_tests() -> int:
         "\n\x1b[1m\x1b[36m🔍 Epistemic view — where graded outcomes have taught the model least\x1b[0m\n\n"
         "   1. src/commands_search.rs                   5.0\n"
         "      • predicted 28×, never graded\n"
-        "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+        "      • last seen 7 snapshots ago, no graded event since\n"
         "   2. src/commands_spawn.rs                    5.0\n"
         "      • predicted 13×, never graded\n"
         "   3. src/a.rs   3.0\n"
