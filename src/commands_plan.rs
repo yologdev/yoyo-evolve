@@ -795,6 +795,25 @@ fn handle_plan_step(step_arg: &str) -> PlanResult {
     PlanResult::Handled
 }
 
+/// The line printed after a planning turn.
+///
+/// Absence gets its own name (#692). `extract_last_assistant_text` returns `None`
+/// when the newest turn produced no assistant text at all — it ended on tool calls,
+/// came back empty, or was refused. The old code printed "Review the plan above.
+/// Use /plan apply to execute it" unconditionally, while the *previously* captured
+/// plan silently stayed in `set_last_plan` — so a user who followed the instruction
+/// applied a plan for a different task. We keep the stored plan (the bug is the
+/// silence, not the retention) and say out loud which plan `/plan apply` would run.
+fn plan_footer(captured: bool) -> String {
+    if captured {
+        "💡 Review the plan above. Use /plan apply to execute it, or refine it.".to_string()
+    } else {
+        "⚠️  This turn produced no plan text — nothing new was captured. \
+         /plan apply would run the previous plan, not this task. Re-run /plan to try again."
+            .to_string()
+    }
+}
+
 /// Handle the `/plan` command: toggle plan mode, create a structured plan,
 /// or manage stored plans.
 ///
@@ -956,7 +975,9 @@ pub async fn handle_plan(
     auto_compact_if_needed(agent);
 
     // Capture the plan text from the last assistant message for later retrieval
-    if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+    let plan_text = crate::commands_web::extract_last_assistant_text(agent.messages());
+    let captured = plan_text.is_some();
+    if let Some(plan_text) = plan_text {
         // If the first pass is broad (names files but has no per-file/per-step detail)
         // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
         if !deep && plan_is_shallow(&plan_text) {
@@ -967,9 +988,7 @@ pub async fn handle_plan(
         set_last_plan(plan_text);
     }
 
-    println!(
-        "\n{DIM}  💡 Review the plan above. Use /plan apply to execute it, or refine it.{RESET}\n"
-    );
+    println!("\n{DIM}  {}{RESET}\n", plan_footer(captured));
 
     PlanResult::PlanGenerated(plan_prompt)
 }
@@ -978,6 +997,38 @@ pub async fn handle_plan(
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn plan_footer_tells_the_truth_about_both_branches() {
+        // (captured, must_contain, must_not_be_described_as_a_fresh_plan)
+        let captured = plan_footer(true);
+        assert!(
+            captured.contains("/plan apply to execute it"),
+            "captured branch must keep the original invitation byte-for-byte: {captured}"
+        );
+        assert!(
+            captured.contains("Review the plan above"),
+            "captured branch wording changed unexpectedly: {captured}"
+        );
+
+        let uncaptured = plan_footer(false);
+        assert!(
+            !uncaptured.contains("Review the plan above"),
+            "an empty turn must not invite the user to review a plan that isn't there: {uncaptured}"
+        );
+        assert!(
+            uncaptured.to_lowercase().contains("no plan"),
+            "uncaptured branch must say no plan text was captured: {uncaptured}"
+        );
+        assert!(
+            uncaptured.to_lowercase().contains("previous"),
+            "uncaptured branch must warn that /plan apply would run the PREVIOUS plan: {uncaptured}"
+        );
+        assert!(
+            uncaptured.contains("/plan apply"),
+            "uncaptured branch must name the command whose meaning it is correcting: {uncaptured}"
+        );
+    }
 
     #[test]
     fn build_apply_prompt_contains_verify_cmd() {
