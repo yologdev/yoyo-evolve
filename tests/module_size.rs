@@ -64,7 +64,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
-    ("src/commands_risk.rs", 4754),
+    // Day 163: +280 lines — classify_broke_files gained two-tier corroboration
+    // (a lone `Fix #710` delivery commit no longer grades as a failure day),
+    // which is mostly doc comment + a fixture-table test + a second verbatim
+    // git-log capture for the corroborated red-branch proof.
+    ("src/commands_risk.rs", 5035),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of

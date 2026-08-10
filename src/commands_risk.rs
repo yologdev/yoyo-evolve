@@ -1622,8 +1622,25 @@ fn message_claims_repair(message: &str) -> bool {
         })
 }
 
-/// Classify commits and return the set of files that "broke" —
-/// i.e., appeared in revert or fix commits.
+/// True when a commit message claims to UNDO something — the unambiguous half
+/// of `message_claims_repair`.
+///
+/// Same tokenizer shape as `message_claims_repair` (so git's own
+/// `Revert "..."` subject tokenizes correctly); these four tokens are a subset
+/// of `REPAIR_TOKENS`, kept inline rather than as a second const so the two
+/// lists cannot drift apart silently.
+fn message_claims_revert(message: &str) -> bool {
+    message
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| {
+            matches!(
+                tok.to_ascii_lowercase().as_str(),
+                "revert" | "reverts" | "reverted" | "reverting"
+            )
+        })
+}
+
+/// Classify commits and return the set of files that "broke".
 ///
 /// Classification is delegated to `message_claims_repair`, which matches whole
 /// tokens. The earlier substring version (fixed Day 147) counted "prefix",
@@ -1633,21 +1650,67 @@ fn message_claims_repair(message: &str) -> bool {
 /// Only `src/` paths are returned (#708): the risk model scores nothing else,
 /// so a `tests/` or `Cargo.toml` path in an outcome set is a guaranteed miss
 /// that drags recall down with noise.
+///
+/// **Two-tier corroboration (Day 163).** A lone message token is no longer
+/// enough to call a file broken, because my own delivered task commits are
+/// literally titled `Day 163 (01:56): Fix #710 — ...`: an ordinary green
+/// feature-delivery session was being graded as a failure day, and every
+/// `src/` file it touched entered the meter as breakage. The intake filter for
+/// the meter's headline recall number was my own commit-message convention
+/// (Day-148 lesson, verbatim). So:
+///
+/// - **Tier 1 — revert.** `message_claims_revert` is breakage evidence on its
+///   own. An undo says a thing was wrong; nothing else needs to agree.
+/// - **Tier 2 — fix-family, needs corroboration.** A `fix`/`hotfix`/`bugfix`
+///   commit counts a `src/` file only if that file also appears in at least one
+///   OTHER entry in the window. A genuine in-window repair follows the commit
+///   that broke the thing, so the file is touched twice; a delivered
+///   `Fix #710` task commit is the only touch of its files in the window.
+///
+/// Honest limits: corroboration reduces the false-failure rate, it does not
+/// zero it — a task that lands as `Fix #710` plus an eval-fix commit touching
+/// the same file still corroborates itself. And this changes grading from here
+/// forward only: `.yoyo/risk_validations.jsonl` is never rewritten (re-grading
+/// history would be forgery), so `/risk accuracy` still blends the 24 already
+/// polluted untagged events with future honest ones — that number is
+/// recovering, not clean. Separating them needs ledger versioning, a separate
+/// task.
 fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+    // How many DISTINCT entries in the window touch each path. Counting per
+    // entry (not per listed path) keeps the predicate exactly "appears in at
+    // least one OTHER commit".
+    let mut touches: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for entry in entries {
+        let mut seen: Vec<&str> = Vec::new();
+        for f in &entry.files {
+            if seen.contains(&f.as_str()) {
+                continue;
+            }
+            seen.push(f.as_str());
+            *touches.entry(f.as_str()).or_insert(0) += 1;
+        }
+    }
+
     let mut broke = std::collections::HashSet::new();
     for entry in entries {
-        if message_claims_repair(&entry.message) {
-            for f in &entry.files {
-                // Risk predictions cover source code only — a non-src path is a
-                // guaranteed miss no model could have predicted. Same filter as
-                // the two grading paths in commands_risk_snapshots.rs (kept
-                // inline there and here on purpose: extracting a shared
-                // predicate is new machinery this fix does not need).
-                if !f.starts_with("src/") {
-                    continue;
-                }
-                broke.insert(f.clone());
+        let is_revert = message_claims_revert(&entry.message);
+        if !is_revert && !message_claims_repair(&entry.message) {
+            continue;
+        }
+        for f in &entry.files {
+            // Risk predictions cover source code only — a non-src path is a
+            // guaranteed miss no model could have predicted. Same filter as
+            // the two grading paths in commands_risk_snapshots.rs (kept
+            // inline there and here on purpose: extracting a shared
+            // predicate is new machinery this fix does not need).
+            if !f.starts_with("src/") {
+                continue;
             }
+            // Tier 2: a fix-family claim needs a second touch to be believed.
+            if !is_revert && touches.get(f.as_str()).copied().unwrap_or(0) < 2 {
+                continue;
+            }
+            broke.insert(f.clone());
         }
     }
     broke
@@ -3061,7 +3124,16 @@ src/plain rs file.rs
         // The bug this closes: an undecoded `"src/caf\303\251.rs"` can never
         // equal the filesystem-walked path a snapshot stores, so the file was
         // silently dropped from grading instead of counting as a hit.
-        let entries = parse_git_log_name_only(VERBATIM_QUOTED_PATH_LOG);
+        // Day 163: the verbatim capture is a LONE fix commit, which the
+        // corroboration rule now (correctly) declines to grade as breakage —
+        // so the window gets a second, synthetic touch of the same path. The
+        // path under test still comes from the real parser: that is what this
+        // test is about.
+        let mut entries = parse_git_log_name_only(VERBATIM_QUOTED_PATH_LOG);
+        entries.push(CommitEntry {
+            message: "0000aaa add the unicode path handling".to_string(),
+            files: vec!["src/café.rs".to_string()],
+        });
         let broke = classify_broke_files(&entries);
         assert!(
             broke.contains("src/café.rs"),
@@ -3116,7 +3188,14 @@ src/plain rs file.rs
 
     #[test]
     fn test_classify_broke_files_fix() {
+        // Day 163: each fix here is corroborated by the commit that introduced
+        // the thing it repairs (the file is touched twice in the window), which
+        // is what a genuine in-window repair looks like.
         let entries = vec![
+            CommitEntry {
+                message: "0000aaa Add the parser".to_string(),
+                files: vec!["src/parser.rs".to_string(), "src/docs.rs".to_string()],
+            },
             CommitEntry {
                 message: "abc1234 fix: handle empty input".to_string(),
                 files: vec!["src/parser.rs".to_string()],
@@ -3185,6 +3264,14 @@ src/plain rs file.rs
                 files: vec!["src/prefix.rs".to_string()],
             },
             CommitEntry {
+                message: "0000aaa add the loop".to_string(),
+                files: vec![
+                    "src/loop.rs".to_string(),
+                    "src/fixtures.rs".to_string(),
+                    "src/prefix.rs".to_string(),
+                ],
+            },
+            CommitEntry {
                 message: "ghi9012 fix: off-by-one in the loop".to_string(),
                 files: vec!["src/loop.rs".to_string()],
             },
@@ -3205,14 +3292,24 @@ src/plain rs file.rs
     fn test_classify_broke_files_filters_non_src_paths() {
         // #708: the risk model scores only `src/**`, so a tests/ or Cargo.toml
         // path in the broken set is a guaranteed miss that drags recall down.
-        let entries = vec![CommitEntry {
-            message: "abc1234 fix: the module-size gate".to_string(),
-            files: vec![
-                "src/foo.rs".to_string(),
-                "tests/module_size.rs".to_string(),
-                "Cargo.toml".to_string(),
-            ],
-        }];
+        let entries = vec![
+            CommitEntry {
+                message: "0000aaa Day 162: raise the module-size gate".to_string(),
+                files: vec![
+                    "src/foo.rs".to_string(),
+                    "tests/module_size.rs".to_string(),
+                    "Cargo.toml".to_string(),
+                ],
+            },
+            CommitEntry {
+                message: "abc1234 fix: the module-size gate".to_string(),
+                files: vec![
+                    "src/foo.rs".to_string(),
+                    "tests/module_size.rs".to_string(),
+                    "Cargo.toml".to_string(),
+                ],
+            },
+        ];
         let broke = classify_broke_files(&entries);
         assert_eq!(
             broke.len(),
@@ -3227,6 +3324,143 @@ src/plain rs file.rs
         let entries: Vec<CommitEntry> = Vec::new();
         let broke = classify_broke_files(&entries);
         assert!(broke.is_empty());
+    }
+
+    /// Day 163 — the two-tier corroboration rule, as a fixture table.
+    ///
+    /// The bug: my own delivered task commits are titled `Day 163 (01:56):
+    /// Fix #710 — ...`, so a fully-green feature-delivery session graded as a
+    /// failure day and every `src/` file it touched entered the meter as
+    /// breakage. Each row names the window, the path under test, and whether
+    /// that path should be counted as broken.
+    #[test]
+    fn test_classify_broke_files_corroboration_fixture_table() {
+        // (case name, window, path under test, expected in broke set)
+        let cases: Vec<(&str, Vec<CommitEntry>, &str, bool)> = vec![
+            (
+                "lone delivered fix commit is delivery, not breakage",
+                vec![CommitEntry {
+                    message: "973fa9a Day 163 (01:56): Fix #710 — RecoveryHintTool stops \
+                              coaching around deliberate guard refusals (Task 2)"
+                        .to_string(),
+                    files: vec!["src/tools.rs".to_string()],
+                }],
+                "src/tools.rs",
+                false,
+            ),
+            (
+                "fix corroborated by another touch in the window is a real repair",
+                vec![
+                    CommitEntry {
+                        message: "973fa9a Day 163 (01:56): Fix #710 — RecoveryHintTool stops \
+                                  coaching around deliberate guard refusals (Task 2)"
+                            .to_string(),
+                        files: vec!["src/tools.rs".to_string()],
+                    },
+                    CommitEntry {
+                        message: "abc1234 Day 163: add the streaming bash cwd pin".to_string(),
+                        files: vec!["src/tools.rs".to_string()],
+                    },
+                ],
+                "src/tools.rs",
+                true,
+            ),
+            (
+                "a revert needs no corroboration (tier 1)",
+                vec![CommitEntry {
+                    message: "abc1234 Revert \"Day 162: something\"".to_string(),
+                    files: vec!["src/watch.rs".to_string()],
+                }],
+                "src/watch.rs",
+                true,
+            ),
+            (
+                "no repair token contributes nothing, however often re-touched",
+                vec![
+                    CommitEntry {
+                        message: "abc1234 Add a watch phase".to_string(),
+                        files: vec!["src/watch.rs".to_string()],
+                    },
+                    CommitEntry {
+                        message: "def5678 Polish the watch phase".to_string(),
+                        files: vec!["src/watch.rs".to_string()],
+                    },
+                ],
+                "src/watch.rs",
+                false,
+            ),
+            (
+                "#708: a tests/ path is never returned, corroborated or not",
+                vec![
+                    CommitEntry {
+                        message: "abc1234 Revert \"Day 162: something\"".to_string(),
+                        files: vec!["tests/module_size.rs".to_string()],
+                    },
+                    CommitEntry {
+                        message: "def5678 fix: the module-size gate".to_string(),
+                        files: vec!["tests/module_size.rs".to_string()],
+                    },
+                ],
+                "tests/module_size.rs",
+                false,
+            ),
+            (
+                "#708: Cargo.toml is never returned, corroborated or not",
+                vec![
+                    CommitEntry {
+                        message: "abc1234 Revert \"Day 162: bump\"".to_string(),
+                        files: vec!["Cargo.toml".to_string()],
+                    },
+                    CommitEntry {
+                        message: "def5678 fix: pin the dependency".to_string(),
+                        files: vec!["Cargo.toml".to_string()],
+                    },
+                ],
+                "Cargo.toml",
+                false,
+            ),
+        ];
+
+        for (name, entries, path, expected) in cases {
+            let broke = classify_broke_files(&entries);
+            assert_eq!(
+                broke.contains(path),
+                expected,
+                "{name}: expected {path} in-broke-set == {expected}, got {broke:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_broke_files_repeat_path_inside_one_commit_is_one_touch() {
+        // Corroboration means "another COMMIT touched it". A path listed twice
+        // inside a single entry must not corroborate itself into breakage.
+        let entries = vec![CommitEntry {
+            message: "abc1234 Day 163: Fix #710 — something".to_string(),
+            files: vec!["src/tools.rs".to_string(), "src/tools.rs".to_string()],
+        }];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.is_empty(),
+            "one commit is one touch, however many times it lists the path: {broke:?}"
+        );
+    }
+
+    #[test]
+    fn test_message_claims_revert_is_the_unambiguous_subset() {
+        assert!(message_claims_revert("abc1234 Revert \"add feature\""));
+        assert!(message_claims_revert("abc1234 reverted the risky change"));
+        assert!(message_claims_revert("abc1234 reverts the merge"));
+        assert!(message_claims_revert("abc1234 reverting to Day 161"));
+        // Fix-family tokens are repairs but NOT reverts — that is the whole
+        // point of the split: they are the tier that needs corroboration.
+        assert!(!message_claims_revert("abc1234 fix: handle empty input"));
+        assert!(!message_claims_revert(
+            "abc1234 Day 163: Fix #710 — a thing"
+        ));
+        assert!(!message_claims_revert("abc1234 Add tests"));
+        // Substring near-miss must not fire (same discipline as REPAIR_TOKENS).
+        assert!(!message_claims_revert("abc1234 add a reverter helper"));
     }
 
     #[test]
@@ -4619,7 +4853,46 @@ c618ce4c Day 146: bump skill-evolve counter (4)
 .yoyo/risk_validations.jsonl
 ";
 
-    /// END-TO-END REACHABILITY PROOF for the failure-day (red) grading branch.
+    /// Verbatim capture — NOT hand-written. Produced by:
+    ///
+    /// ```text
+    /// git log --oneline --name-only -3 973fa9af
+    /// ```
+    ///
+    /// run in this repo on Day 163 and pasted unedited. It is a CORROBORATED
+    /// repair window: `src/tool_wrappers.rs` is touched by the fix commit AND
+    /// by one other entry, which is what an in-window repair looks like and
+    /// what the Day-163 two-tier rule requires before calling a file broken.
+    const VERBATIM_GIT_LOG_CORROBORATED_3: &str = "\
+973fa9af Day 163 (01:56): Fix #710 — RecoveryHintTool stops coaching around deliberate guard refusals (no counter bump, no work-around hint) (Task 2, eval-fix 1)
+CLAUDE.md
+src/tool_wrappers.rs
+tests/module_size.rs
+53957ef4 Day 163 (01:56): Fix #710 — RecoveryHintTool stops coaching around deliberate guard refusals (no counter bump, no work-around hint) (Task 2)
+src/tool_wrappers.rs
+de5f7070 docs: CLAUDE.md describes the three-state study reader (#711)
+CLAUDE.md
+";
+
+    /// Day 163 — the bug, asserted against REAL captured output.
+    ///
+    /// `VERBATIM_GIT_LOG_3` is an ordinary green session that DELIVERED a fix:
+    /// one `Fix ...` commit, its `src/` file touched nowhere else in the
+    /// window. It used to grade as a failure day and put `src/commands_risk.rs`
+    /// into the meter as breakage. Corroboration says: delivery, not repair.
+    #[test]
+    fn test_lone_delivered_fix_commit_is_not_breakage() {
+        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_3);
+        assert_eq!(entries.len(), 3, "parser sanity on the verbatim capture");
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.is_empty(),
+            "a lone delivered `Fix ...` commit is feature delivery — grading \
+             its files as breakage is the Day-163 polluted-denominator bug, \
+             got {broke:?}"
+        );
+    }
+
     ///
     /// Day 147 made this branch *reachable* by fixing the git-log parser, but
     /// nothing had ever driven it, so `/risk accuracy`'s "recall ungraded —
@@ -4635,14 +4908,19 @@ c618ce4c Day 146: bump skill-evolve counter (4)
     #[test]
     fn test_failure_day_red_branch_fires_end_to_end() {
         // --- 1. Real parser on verbatim input ------------------------------
-        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_3);
+        // Day 163: the fixture moved from `VERBATIM_GIT_LOG_3` (a LONE
+        // delivered fix, which the corroboration rule correctly no longer
+        // grades as breakage — see the test above) to a corroborated repair
+        // window. Both are verbatim captures; the red branch is proven with
+        // the shape that is actually breakage evidence.
+        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_CORROBORATED_3);
         assert_eq!(
             entries.len(),
             3,
             "commit boundaries must be detected by header shape — a collapsed \
              count is the exact Day-147 bug that made this branch dead"
         );
-        assert_eq!(entries[1].files, vec![".skill_evolve_counter".to_string()]);
+        assert_eq!(entries[1].files, vec!["src/tool_wrappers.rs".to_string()]);
 
         // --- 2. The gate the red branch depends on -------------------------
         let broke = classify_broke_files(&entries);
@@ -4650,26 +4928,29 @@ c618ce4c Day 146: bump skill-evolve counter (4)
             !broke.is_empty(),
             "the repair-claiming commit must yield a non-empty broken set"
         );
-        assert!(broke.contains("src/commands_risk.rs"));
+        assert!(broke.contains("src/tool_wrappers.rs"));
         // #708: the same repairing commit touched CLAUDE.md and
-        // .yoyo/risk_weights.json, but the risk model scores only `src/**`, so
+        // tests/module_size.rs, but the risk model scores only `src/**`, so
         // grading them was a guaranteed miss. The fixture stays verbatim; the
         // expectation moved.
         assert!(!broke.contains("CLAUDE.md"));
-        assert!(!broke.contains(".yoyo/risk_weights.json"));
-        // Files from the NON-repair commits must not be swept in.
-        assert!(
-            !broke.contains(".skill_evolve_counter"),
-            "only the repairing commit's files count as breakage"
+        assert!(!broke.contains("tests/module_size.rs"));
+        // Files from the NON-repair commit must not be swept in — CLAUDE.md is
+        // touched twice here, so this also pins that corroboration alone is
+        // never sufficient.
+        assert_eq!(
+            broke.len(),
+            1,
+            "only the corroborated src/ path counts as breakage, got {broke:?}"
         );
 
         // --- 3. Validation with one hit and one clean prediction -----------
         let predicted: Vec<String> = vec![
-            "src/commands_risk.rs".to_string(), // hit
+            "src/tool_wrappers.rs".to_string(), // hit
             "src/watch.rs".to_string(),         // clean
         ];
         let result = compute_validation(&predicted, &broke, None, entries.len());
-        assert_eq!(result.hits, vec!["src/commands_risk.rs".to_string()]);
+        assert_eq!(result.hits, vec!["src/tool_wrappers.rs".to_string()]);
         assert_eq!(result.clean, vec!["src/watch.rs".to_string()]);
         assert!(
             result.surprises.is_empty(),
