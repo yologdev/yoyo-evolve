@@ -1,0 +1,224 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the existing patterns.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_report.r…  ▶ search 'recall_coverage_note|prediction_accuracy_summary|load_valida…' in src ✓ (9ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "recall_coverage_note\|… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_risk_r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,205p src/commands_ris… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 13.1s (5 ✓)
+
+Now the AccuracyStats fields I need:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) struct Accur… ✓ (4ms)
+
+Now the emerging formatter:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_emerging_risk… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,590p src/commands_ris… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 .yoyo/risk_validations.j… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 602,640p src/commands_ris… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 28.5s (4 ✓)
+
+Now I'll write the note builder, tests first:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_report.rs (6 → 152 lines)
+  + /// Honest one-line track record for the anticipatory (emerging/momentum)
+  + /// column, rendered directly under the `⚡ Emerging Risks` header so the
+  + /// forecast can't be read as carrying the same standing as the reactive list
+  + /// beside it (#720 — a capability is real only where something *consumes* it;
+  + /// this column's only evidence was its own advertisement).
+  + ///
+  + /// This is DISCLOSURE, not repair: nothing here touches the momentum formula
+  + /// or the grading window. Three explicit states, absence never collapsed into
+  + /// a neighbour (Day 144):
+  + ///   1. no validation events at all → `None` (nothing measured, say nothing —
+  + ///      never print `0%` for an unmeasured thing)
+  + ///   2. events exist but the column was never graded on a failure day →
+  + ///      "not yet graded on a failure day" (ungraded ≠ wrong)
+  + ///   3. graded on ≥1 failure day → the measured number, next to the reactive
+  + ///      column's number over the same days
+  + pub(crate) fn emerging_track_record_note() -> Option<String> {
+  +     emerging_track_record_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  + }
+  + 
+  + /// Inner implementation with configurable path (for testing).
+  ... (132 more lines)
+ ✓ (20.3s)
+  + /// Honest one-line track record for the anticipatory (emerging/momentum)
+  + /// column, rendered directly under the `⚡ Emerging Risks` header so the
+  + /// forecast can't be read as carrying the same standing as the reactive list
+  + /// beside it (#720 — a capability is real only where something *consumes* it;
+  + /// this column's only evidence was its own advertisement).
+  + ///
+  + /// This is DISCLOSURE, not repair: nothing here touches the momentum formula
+  + /// or the grading window. Three explicit states, absence never collapsed into
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the consumer, in the same edit cycle:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_emerging.rs (9 → 31 lines)
+    pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
+  +     format_emerging_risks_with(
+  +         emerging,
+  +         crate::commands_risk_report::emerging_track_record_note().as_deref(),
+  +     )
+  + }
+  + 
+  + /// Pure rendering half — takes the track-record note as a parameter so tests
+  + /// drive it instead of reading the real validation ledger.
+  + ///
+  + /// The note (when `Some`) is printed immediately under the header, above the
+  + /// rows: this column has been graded 0% on failure days as of Day 163, and it
+  + /// was sitting directly beneath the reactive list with identical billing
+  + /// (#720). When `None` the output is byte-identical to the pre-disclosure
+  + /// format — the no-data path must not change.
+  + pub(crate) fn format_emerging_risks_with(
+  +     emerging: &[EmergingRisk],
+  +     track_record: Option<&str>,
+  + ) -> String {
+        if emerging.is_empty() {
+  ... (12 more lines)
+ ✓ (1m 51s)
+    pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
+  +     format_emerging_risks_with(
+  +         emerging,
+  +         crate::commands_risk_report::emerging_track_record_note().as_deref(),
+  +     )
+  + }
+  + 
+  + /// Pure rendering half — takes the track-record note as a parameter so tests
+  ... (13 more lines)
+
+Now the render tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_emerging.rs (6 → 55 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     fn sample_row() -> EmergingRisk {
+  +         EmergingRisk {
+  +             path: "src/foo.rs".into(),
+  +             momentum: 3.2,
+  +             current_rank: 11,
+  +             recent_changes: 4,
+  +             signals: vec!["▲churn"],
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_emerging_empty_stays_empty_even_with_note() {
+  +         // The early return is unchanged: no rows → no header, no note.
+  +         assert!(format_emerging_risks_with(&[], Some("track record: 0% recall")).is_empty());
+  +         assert!(format_emerging_risks_with(&[], None).is_empty());
+  +     }
+  ... (35 more lines)
+ ✓ (13.8s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     fn sample_row() -> EmergingRisk {
+  +         EmergingRisk {
+  +             path: "src/foo.rs".into(),
+  +             momentum: 3.2,
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) struct Emerg… ✓ (3ms)
+  2 tools completed in 15.8s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0560][0m[1m: struct `commands_risk_emerging::EmergingRisk` has no field named `recent_changes`[0m
+   [1m[94m--> [0msrc/commands_risk_emerging.rs:223:13
+    [1m[94m|[0m
+[1m[94m223[0m [1m[94m|[0m             recent_changes: 4,
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^[0m [1m[91m`commands_risk_emerging::EmergingRisk` does not have this field[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: all struct fields are already assigned
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_risk_emerging.rs:224:27
+    [1m[94m|[0m
+[1m[94m224[0m [1m[94m|[0m             signals: vec!["▲churn"],
+    [1m[94m|[0m                           [1m[91m^^^^^^^^[0m [1m[91mexpected `String`, found `&str`[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: try using a conversion method
+    [1m[94m|[0m
+[1m[94m224[0m [1m[94m| [0m            signals: vec!["▲churn"[92m.to_string()[0m],
+    [1m[94m|[0m                                   [92m++++++++++++[0m
+
+[1mSome errors have detailed explanations: E0308, E0560.[0m
+[1mFor more information about an error, try `rustc --explain E0308`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_risk_emerging.rs (3 → 2 lines)
+                current_rank: 11,
+  -             recent_changes: 4,
+  -             signals: vec!["▲churn"],
+  +             signals: vec!["▲churn".to_string()],
+ ✓ (1m 53s)
+                current_rank: 11,
+  -             recent_changes: 4,
+  -             signals: vec!["▲churn"],
+  +             signals: vec!["▲churn".to_string()],
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 18s (2 ✓)
+
+Clippy green. Now the tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 33s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test emerging_track_record… ✓ (344ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 39s (3 ✓)
+
+All 8 new tests run and pass. Let me see the note against the real ledger and check my file scope:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== lin… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (677ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout -- .yoyo/risk_snaps… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk accurac… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (11 lines) ✓ (22.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 54.0s (5 ✓)
+
+Live note confirmed. Now CLAUDE.md:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk_report… ✓ (5ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - keeping the anticipatory column discriminating rather than a flat block of ties.
+  + keeping the anticipatory column discriminating rather than a flat block of ties. Day 163 (#720): the `⚡ Emerging Risks` block now carries its own **measured failure-day track record**, read from the validation ledger by `emerging_track_record_note` in `commands_risk_report.rs` and rendered immediately under the header by the pure `format_emerging_risks_with(rows, track_record)` (the public `format_emerging_risks` keeps its signature and supplies the note, so `commands_risk.rs` is untouched). Three explicit states: no validation events → silent (never print `0%` for something unmeasured), events but no failure-day emerging grade → "not yet graded on a failure day" (ungraded ≠ wrong), graded → the number beside the reactive column's number over the same days. **Observed Day 163: 0% recall over 10 graded failure days against the reactive column's 24%, with 19 failure-day events carrying no emerging forecast** — that is a dated observation of the current ledger, not a permanent property; the note re-reads the ledger every render. This is disclosure only — the momentum formula, the grading window and `emerging_grade_of` are untouched (issue #720 steps 2 and 3 remain open).
+ ✓ (1m 49s)
+  - keeping the anticipatory column discriminating rather than a flat block of ties.
+  + keeping the anticipatory column discriminating rather than a flat block of ties. Day 163 (#720): the `⚡ Emerging Risks` block now carries its own **measured failure-day track record**, read from the validation ledger by `emerging_track_record_note` in `commands_risk_report.rs` and rendered immediately under the header by the pure `format_emerging_risks_with(rows, track_record)` (the public `format_emerging_risks` keeps its signature and supplies the note, so `commands_risk.rs` is untouched). Three explicit states: no validation events → silent (never print `0%` for something unmeasured), events but no failure-day emerging grade → "not yet graded on a failure day" (ungraded ≠ wrong), graded → the number beside the reactive column's number over the same days. **Observed Day 163: 0% recall over 10 graded failure days against the reactive column's 24%, with 19 failure-day events carrying no emerging forecast** — that is a dated observation of the current ledger, not a permanent property; the note re-reads the ledger every render. This is disclosure only — the momentum formula, the grading window and `emerging_grade_of` are untouched (issue #720 steps 2 and 3 remain open).
+  2 tools completed in 1m 56s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_risk_report.rs, src/commands_risk_emerging.rs
+
