@@ -815,11 +815,13 @@ pub async fn handle_spawn(
     };
 
     // Build a fresh agent with context-enriched system prompt.
-    // Pin the worker's bash cwd to the worktree when one exists (enforced
-    // default confinement, not a sandbox — absolute paths can still escape).
+    // Pin the worker's bash cwd AND its file tools' allowed dirs to the worktree
+    // when one exists (enforced default confinement, not a sandbox — bash with an
+    // absolute path can still escape).
     let mut sub_config = crate::AgentConfig {
         system_prompt: effective_prompt,
         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+        dir_restrictions: spawn_dir_restrictions(&agent_config.dir_restrictions, worktree.as_ref()),
         ..clone_agent_config(agent_config)
     };
 
@@ -963,11 +965,13 @@ fn handle_spawn_bg(
         context_prompt
     };
 
-    // Pin the worker's bash cwd to the worktree when one exists (enforced
-    // default confinement, not a sandbox — absolute paths can still escape).
+    // Pin the worker's bash cwd AND its file tools' allowed dirs to the worktree
+    // when one exists (enforced default confinement, not a sandbox — bash with an
+    // absolute path can still escape).
     let mut sub_config = crate::AgentConfig {
         system_prompt: effective_prompt,
         bash_cwd: spawn_bash_cwd(worktree.as_ref()),
+        dir_restrictions: spawn_dir_restrictions(&agent_config.dir_restrictions, worktree.as_ref()),
         ..clone_agent_config(agent_config)
     };
 
@@ -1620,6 +1624,46 @@ pub struct WorktreeInfo {
 /// bare `git` operate in the worktree, but absolute paths can still escape.
 pub fn spawn_bash_cwd(worktree: Option<&WorktreeInfo>) -> Option<String> {
     worktree.map(|w| w.path.display().to_string())
+}
+
+/// Directory restrictions for a spawn worker's *file* tools.
+///
+/// `bash_cwd` only pins `bash`; `read_file`/`write_file`/`edit_file`/`list_files`/
+/// `search` take no cwd, so before #716 the same relative path `src/foo.rs` meant
+/// the worktree under `bash` and the **main repo** under `write_file` — a worker's
+/// ordinary edits landed outside its isolation.
+///
+/// Semantics this relies on (`DirectoryRestrictions::check_path`): an empty
+/// restriction set permits everything, and a non-empty `allow` permits *only*
+/// those dirs, with `deny` overriding `allow`. So:
+///
+/// - `None` (no worktree) → the parent's restrictions unchanged. Same fallback as
+///   `spawn_bash_cwd`: no isolation available, no confinement invented.
+/// - `Some(wt)` → parent's `allow` **plus** the worktree root (deduped), parent's
+///   `deny` cloned verbatim. For the common unrestricted parent that yields a
+///   one-entry allow list = the worktree root, which is exactly the confinement
+///   intended. When a human already set `--allow` dirs we widen rather than
+///   replace — silently dropping their list would be a different bug.
+///
+/// Still enforced-default confinement, NOT a sandbox: `bash` with an absolute
+/// path can escape (the git-redirection class stays blocked by
+/// `safety::detect_git_redirection_escape`).
+pub fn spawn_dir_restrictions(
+    parent: &crate::cli::DirectoryRestrictions,
+    worktree: Option<&WorktreeInfo>,
+) -> crate::cli::DirectoryRestrictions {
+    let Some(wt) = worktree else {
+        return parent.clone();
+    };
+    let wt_path = wt.path.display().to_string();
+    let mut allow = parent.allow.clone();
+    if !allow.iter().any(|a| a == &wt_path) {
+        allow.push(wt_path);
+    }
+    crate::cli::DirectoryRestrictions {
+        allow,
+        deny: parent.deny.clone(),
+    }
 }
 
 /// Run a git command in a specific directory.
@@ -3779,6 +3823,61 @@ mod tests {
     #[test]
     fn test_spawn_bash_cwd_none_without_worktree() {
         assert_eq!(spawn_bash_cwd(None), None);
+    }
+
+    #[test]
+    fn test_spawn_dir_restrictions_without_worktree_passes_parent_through() {
+        // No worktree => no confinement, byte-identical to the pre-#716 behaviour.
+        // An empty parent must stay empty: inventing an allow list when isolation
+        // is unavailable would confine the worker to nothing at all.
+        let parent = crate::cli::DirectoryRestrictions::default();
+        let out = spawn_dir_restrictions(&parent, None);
+        assert!(out.is_empty());
+
+        let parent = crate::cli::DirectoryRestrictions {
+            allow: vec!["/home/me/proj".to_string()],
+            deny: vec!["/home/me/proj/secrets".to_string()],
+        };
+        let out = spawn_dir_restrictions(&parent, None);
+        assert_eq!(out.allow, vec!["/home/me/proj".to_string()]);
+        assert_eq!(out.deny, vec!["/home/me/proj/secrets".to_string()]);
+    }
+
+    #[test]
+    fn test_spawn_dir_restrictions_confines_to_worktree() {
+        // Common case: parent unrestricted. The result is a one-entry allow list
+        // = the worktree root, so the worker's file tools refuse writes to the
+        // main repo instead of silently landing them there (#716).
+        let parent = crate::cli::DirectoryRestrictions::default();
+        let wt = fake_worktree("/tmp/yoyo-spawn-42");
+        let out = spawn_dir_restrictions(&parent, Some(&wt));
+        assert_eq!(out.allow, vec!["/tmp/yoyo-spawn-42".to_string()]);
+        assert!(out.deny.is_empty());
+    }
+
+    #[test]
+    fn test_spawn_dir_restrictions_widens_parent_and_preserves_deny() {
+        // A human-set allow list is widened, never replaced — and deny survives
+        // into the child verbatim, since deny overrides allow.
+        let parent = crate::cli::DirectoryRestrictions {
+            allow: vec!["/home/me/proj".to_string(), "/tmp/scratch".to_string()],
+            deny: vec!["/home/me/proj/.env".to_string()],
+        };
+        let wt = fake_worktree("/tmp/yoyo-spawn-7");
+        let out = spawn_dir_restrictions(&parent, Some(&wt));
+        assert_eq!(
+            out.allow,
+            vec![
+                "/home/me/proj".to_string(),
+                "/tmp/scratch".to_string(),
+                "/tmp/yoyo-spawn-7".to_string(),
+            ]
+        );
+        assert_eq!(out.deny, vec!["/home/me/proj/.env".to_string()]);
+
+        // Already-present worktree path is not duplicated.
+        let out2 = spawn_dir_restrictions(&out, Some(&wt));
+        assert_eq!(out2.allow, out.allow);
     }
 
     #[test]
