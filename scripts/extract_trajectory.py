@@ -1077,7 +1077,7 @@ def run_self_tests() -> int:
         "   6. src/d.rs   2.0\n"
         "\n  high score = the model is blindest here\n"
     )
-    parsed = parse_epistemic_output(canned)
+    parsed, _ = parse_epistemic_output(canned)
     assert_true("top_n cap: 6 entries -> 3 lines", len(parsed) == 3)
     assert_eq(
         "entry with reasons compacts and joins",
@@ -1109,7 +1109,7 @@ def run_self_tests() -> int:
         "  • studied by graded experiment (day 150, miss)\n"
         "\n  high score = the model is blindest here\n"
     )
-    parsed_studied = parse_epistemic_output(canned_studied)
+    parsed_studied, _ = parse_epistemic_output(canned_studied)
     assert_eq(
         "studied reason survives the per-entry clamp (hoisted to the front)",
         parsed_studied[0],
@@ -1145,7 +1145,7 @@ def run_self_tests() -> int:
         "  • visited by ungraded experiment (day 159)\n"
         "\n  high score = the model is blindest here\n"
     )
-    parsed_visited = parse_epistemic_output(canned_visited)
+    parsed_visited, _ = parse_epistemic_output(canned_visited)
     assert_true(
         "visited reason survives the per-entry clamp (hoisted to the front)",
         parsed_visited[0].startswith("- src/commands_todo.rs (2.5) — visited d159 (no grade)"),
@@ -1162,9 +1162,12 @@ def run_self_tests() -> int:
     # 19c. Empty states / garbage yield [] (the fail-soft path)
     assert_true(
         "empty-state report yields no entries",
-        parse_epistemic_output("  no snapshots yet — run `yoyo risk snapshot` first\n") == [],
+        parse_epistemic_output("  no snapshots yet — run `yoyo risk snapshot` first\n")
+        == ([], []),
     )
-    assert_true("garbage yields no entries", parse_epistemic_output("total junk\n42\n") == [])
+    assert_true(
+        "garbage yields no entries", parse_epistemic_output("total junk\n42\n") == ([], [])
+    )
 
     # 19d. Fallback rendering carries the honest starvation line
     assert_true(
@@ -1180,7 +1183,7 @@ def run_self_tests() -> int:
 
     # 19e. Per-entry clamp: an absurdly long path still yields a <=90-char line
     long_path = "src/" + "x" * 120 + ".rs"
-    clamped = parse_epistemic_output(f"   1. {long_path}   5.0\n")
+    clamped, _ = parse_epistemic_output(f"   1. {long_path}   5.0\n")
     assert_true(
         "oversized entry clamped to 90 chars",
         len(clamped) == 1 and len(clamped[0]) <= EPISTEMIC_ENTRY_MAX_CHARS,
@@ -1203,7 +1206,7 @@ def run_self_tests() -> int:
         "    the ranking above cannot see these — it is built from files I once guessed about.\n"
         "    Files with no recent churn have no risk score and are invisible to both views.\n"
     )
-    parsed_never = parse_epistemic_output(canned_never)
+    parsed_never, _ = parse_epistemic_output(canned_never)
     assert_eq(
         "never-forecast section yields only the ranked entries",
         " | ".join(parsed_never),
@@ -1216,6 +1219,94 @@ def run_self_tests() -> int:
     assert_true(
         "never-forecast caveat not appended as a reason",
         not any("cannot see these" in line for line in parsed_never),
+    )
+
+    # 19g. The dark half (Day 163): the never-forecast paths are now RETURNED,
+    # not just stopped at. The fixture below is verbatim `yoyo risk epistemic`
+    # output captured on Day 163 — a hand-typed fixture pins my belief about
+    # the input, not the input (Day 147).
+    canned_real = (
+        "\n"
+        "🔍 Epistemic view — where graded outcomes have taught the model least\n"
+        "\n"
+        "   1. src/commands_risk.rs                     2.9\n"
+        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.90)\n"
+        "   2. src/commands_risk_report.rs              2.4\n"
+        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.40)\n"
+        "   3. src/help_data.rs                         1.8\n"
+        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 2.80)\n"
+        "   4. src/commands.rs                          1.8\n"
+        "      • reactive/emerging disagree in 3 of last 3 snapshots (magnitude 1.80)\n"
+        "\n"
+        "  note: tied scores are ordered by current risk score (higher first), then path\n"
+        "\n"
+        "  high score = the model is blindest here; an outcome touching these files teaches the most\n"
+        "\n"
+        "  ⚠ never forecast — 27 scored files have never appeared in any prediction\n"
+        "  ◦ src/commands_skill.rs (risk 0.3)\n"
+        "  ◦ src/commands_move.rs (risk 0.3)\n"
+        "  ◦ src/commands_lint.rs (risk 0.3)\n"
+        "  ◦ src/commands_git_review.rs (risk 0.3)\n"
+        "  ◦ src/commands_map.rs (risk 0.3)\n"
+        "    ... (+22 more)\n"
+        "    the ranking above cannot see these — it is built from files I once guessed about.\n"
+        "    Files with no recent churn have no risk score and are invisible to both views.\n"
+    )
+    real_entries, real_never = parse_epistemic_output(canned_real)
+    assert_eq(
+        "never-forecast paths parsed out of real report output",
+        real_never,
+        [
+            "src/commands_skill.rs",
+            "src/commands_move.rs",
+            "src/commands_lint.rs",
+            "src/commands_git_review.rs",
+            "src/commands_map.rs",
+        ],
+    )
+    assert_eq(
+        "ranked entries unchanged by the presence of the never-forecast section",
+        " | ".join(real_entries),
+        "- src/commands_risk.rs (2.9) — columns disagree 3/3 | "
+        "- src/commands_risk_report.rs (2.4) — columns disagree 3/3 | "
+        "- src/help_data.rs (1.8) — columns disagree 3/3",
+    )
+    assert_true(
+        "the `... (+N more)` tail is not mistaken for a path",
+        not any("more" in p for p in real_never),
+    )
+
+    # 19h. Rendering the dark half: passing an empty list must be byte-identical
+    # to not passing one at all (no silent wording drift for the common case).
+    assert_eq(
+        "render_epistemic(entries, []) is byte-identical to render_epistemic(entries)",
+        render_epistemic(real_entries, []),
+        render_epistemic(real_entries),
+    )
+    rendered_never = render_epistemic(real_entries, real_never)
+    assert_true(
+        "rendered block names a never-forecast file",
+        "src/commands_skill.rs" in rendered_never,
+    )
+    assert_true(
+        "never-forecast line is labelled as unranked",
+        "unranked" in rendered_never and "never forecast" in rendered_never,
+    )
+    assert_true("planner hint survives the dark half", "planner hint" in rendered_never)
+    assert_true(
+        "epistemic section stays within 10 lines incl. header",
+        len(rendered_never.splitlines()) <= 10,
+    )
+    assert_true(
+        "at most 2 never-forecast paths are rendered",
+        "src/commands_lint.rs" not in rendered_never,
+    )
+    # 19i. Dark half alone: zero ranked entries but a live never-forecast list
+    # must still render (this is exactly the starving-meter case).
+    only_never = render_epistemic([], ["src/commands_skill.rs"])
+    assert_true(
+        "never-forecast-only report still renders a section",
+        "src/commands_skill.rs" in only_never and "planner hint" in only_never,
     )
 
 
