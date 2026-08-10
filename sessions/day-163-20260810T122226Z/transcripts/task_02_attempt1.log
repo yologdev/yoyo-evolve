@@ -1,0 +1,85 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the exact wiring site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs && gr… ✓ (7ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 615,650p src/agent_builde…  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-*/ 2>/dev/null; grep -rn "SharedStateTool"… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.2 && grep -rn "SharedStateTool\|pub use …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/agent_builder.r… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.2 && grep -n "pub use\|pub mod" src/lib.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 624,640p src/agent_builde… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:624..638 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (7 → 10 lines)
+  -             // The SharedState handle is kept for future use (e.g. pre-populating
+  -             // context before dispatching sub-agents like analyze-trajectory).
+  -             let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  +             // The parent also gets `shared_state` here (#715): the documented RLM
+  +             // step is store-then-reference, so the parent needs a handle on the same
+  +             // store its sub-agents read. Paired with `sub_agent` deliberately — a
+  +             // store with nobody on the other end is not worth a tool slot.
+  +             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
+                tools.push(with_session_cap(
+                    Box::new(sub_agent_tool),
+                    SESSION_TOOL_CALL_CAP,
+                ));
+  +             tools.push(Box::new(SharedStateTool::new(shared_state)));
+ ✓ (12.3s)
+  -             // The SharedState handle is kept for future use (e.g. pre-populating
+  -             // context before dispatching sub-agents like analyze-trajectory).
+  -             let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  +             // The parent also gets `shared_state` here (#715): the documented RLM
+  +             // step is store-then-reference, so the parent needs a handle on the same
+  +             // store its sub-agents read. Paired with `sub_agent` deliberately — a
+  +             // store with nobody on the other end is not worth a tool slot.
+  +             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 37.1s (10 ✓)
+
+Expected — need the import.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 2 lines)
+  + use yoagent::tools::SharedStateTool;
+    use yoagent::*;
+ ✓ (1m 40s)
+  + use yoagent::tools::SharedStateTool;
+    use yoagent::*;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (55.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,50p tests/module_size.… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 3 lines)
+  -     ("src/agent_builder.rs", 2643),
+  +     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
+  +     // store-then-reference step is executable.
+  +     ("src/agent_builder.rs", 2647),
+ ✓ (58.9s)
+  -     ("src/agent_builder.rs", 2643),
+  +     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
+  +     // store-then-reference step is executable.
+  +     ("src/agent_builder.rs", 2647),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "shared_state" src/agen… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 570,600p src/agent_builde… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (57.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 4m 50s (7 ✓)
+
+All green. Now the docs sentence.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Established pattern in … ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - 1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op.
+  + 1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op. The parent gets `shared_state` exactly when it gets `sub_agent` — both are pushed together in `agent_builder.rs` and are absent together under `--no-tools` (#715; before Day 163 only sub-agents had the tool, so this step silently did nothing at the top level).
+ ✓ (55.8s)
+  - 1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op.
+  + 1. Parent fetches the artifact via `bash`, then stores it under `<skill>.<key>` via the `shared_state` tool's `set` op. The parent gets `shared_state` exactly when it gets `sub_agent` — both are pushed together in `agent_builder.rs` and are absent together under `--no-tools` (#715; before Day 163 only sub-agents had the tool, so this step silently did nothing at the top level).
+  2 tools completed in 1m 4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
