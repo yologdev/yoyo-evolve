@@ -560,7 +560,9 @@ mod tests {
     /// key, and `top_10` must be non-empty or `parse_all_snapshots` drops the
     /// line entirely.
     fn snapshot_line(ts: &str, n: usize) -> String {
-        let emerging: Vec<String> = (0..n).map(|i| format!(r#"{{"path":"src/e{i}.rs"}}"#)).collect();
+        let emerging: Vec<String> = (0..n)
+            .map(|i| format!(r#"{{"path":"src/e{i}.rs"}}"#))
+            .collect();
         format!(
             r#"{{"day":163,"git_hash":"abc{n}","ts":"{ts}","top_10":[{{"path":"src/hot.rs"}}],"emerging":[{e}]}}"#,
             e = emerging.join(",")
