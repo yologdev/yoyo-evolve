@@ -1,0 +1,147 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code in the three target files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 285,305p src/commands.rs ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn command_arg_hint" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_todo" -A70 sr… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 197,240p src/commands_tod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hint_from" -B5 -A12 src… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,215p' src/commands_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn derived_hint" -B8 -A… ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs:205..221  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"todo"' src/help_data.r… ✓ (1ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:1240..1270  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn command_help" -A12 s… ✓ (1ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod help_data\|mod comm… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 37.8s (13 ✓)
+
+Now the tests first (they should fail before the fix):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_todo.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_todo 2>&1 | … ✓ (13.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (4 → 14 lines)
+  + /// The verbs `handle_todo` actually implements, in the order a user meets them.
+  + ///
+  + /// Consumed by the usage fallback below and by `/todo`'s tab-completion arg hint
+  + /// in `commands.rs`, so those two surfaces can't drift from the code again (#702:
+  + /// completion advertised a `list` verb that didn't exist, while `board` — the only
+  + /// disk-backed verb — was advertised nowhere).
+  + pub(crate) const TODO_VERBS: &[&str] = &[
+  +     "list", "add", "done", "wip", "remove", "clear", "board",
+  + ];
+  + 
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum TodoStatus {
+        Pending,
+ ✓ (18.7s)
+  + /// The verbs `handle_todo` actually implements, in the order a user meets them.
+  + ///
+  + /// Consumed by the usage fallback below and by `/todo`'s tab-completion arg hint
+  + /// in `commands.rs`, so those two surfaces can't drift from the code again (#702:
+  + /// completion advertised a `list` verb that didn't exist, while `board` — the only
+  + /// disk-backed verb — was advertised nowhere).
+  + pub(crate) const TODO_VERBS: &[&str] = &[
+  +     "list", "add", "done", "wip", "remove", "clear", "board",
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 47.5s (4 ✓)
+
+Now the consumers, in the same edit pass:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (5 → 6 lines)
+  -     if arg.is_empty() {
+  -         // Show all tasks
+  +     if arg.is_empty() || arg == "list" {
+  +         // Show all tasks. `list` is an alias for bare `/todo` — tab-completion has
+  +         // advertised it since before it existed (#702).
+            let items = todo_list();
+            return format_todo_list(&items);
+        }
+ ✓ (18.8s)
+  -     if arg.is_empty() {
+  -         // Show all tasks
+  +     if arg.is_empty() || arg == "list" {
+  +         // Show all tasks. `list` is an alias for bare `/todo` — tab-completion has
+  +         // advertised it since before it existed (#702).
+            let items = todo_list();
+            return format_todo_list(&items);
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_todo.rs (10 → 14 lines)
+  -     // Unknown subcommand — show usage
+  -     "  Usage:\n\
+  -      \x20 /todo                    Show all tasks\n\
+  -      \x20 /todo add <description>  Add a new task\n\
+  -      \x20 /todo done <id>          Mark task as done\n\
+  -      \x20 /todo wip <id>           Mark as in-progress\n\
+  -      \x20 /todo remove <id>        Remove a task\n\
+  -      \x20 /todo clear              Clear all tasks"
+  -         .to_string()
+  +     // Unknown subcommand — show usage. The verb line is derived from TODO_VERBS
+  +     // so it can never advertise a verb this function doesn't implement (#702).
+  +     format!(
+  +         "  Usage: /todo <{}>\n\
+  +          \x20 /todo, /todo list        Show all tasks\n\
+  +          \x20 /todo add <description>  Add a new task\n\
+  +          \x20 /todo done <id>          Mark task as done\n\
+  +          \x20 /todo wip <id>           Mark as in-progress\n\
+  +          \x20 /todo remove <id>        Remove a task\n\
+  +          \x20 /todo clear              Clear all tasks\n\
+  +          \x20 /todo board              Kanban view of session_plan/*.md (see /help todo)",
+  ... (3 more lines)
+ ✓ (1m 47s)
+  -     // Unknown subcommand — show usage
+  -     "  Usage:\n\
+  -      \x20 /todo                    Show all tasks\n\
+  -      \x20 /todo add <description>  Add a new task\n\
+  -      \x20 /todo done <id>          Mark task as done\n\
+  -      \x20 /todo wip <id>           Mark as in-progress\n\
+  -      \x20 /todo remove <id>        Remove a task\n\
+  -      \x20 /todo clear              Clear all tasks"
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 1 lines)
+  -         "todo" => Some("add | done | list | clear"),
+  +         "todo" => hint_from!(crate::commands_todo::TODO_VERBS),
+ ✓ (1m 51s)
+  -         "todo" => Some("add | done | list | clear"),
+  +         "todo" => hint_from!(crate::commands_todo::TODO_VERBS),
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (13 → 15 lines)
+                 "/todo — Track tasks during complex operations\n\n\
+                 Usage:\n\
+                 \x20 /todo                    Show all tasks\n\
+  +              \x20 /todo list               Show all tasks (alias for bare /todo)\n\
+                 \x20 /todo add <description>  Add a new task\n\
+                 \x20 /todo done <id>          Mark task as done\n\
+                 \x20 /todo wip <id>           Mark as in-progress\n\
+  ···
+                 Tasks persist for the duration of the session.\n\n\
+                 The AI agent can also manage tasks via the todo tool during\n\
+                 agentic runs, helping it stay organized on multi-step operations.\n\n\
+  -              Board (Kanban view of session_plan/ tasks):\n\
+  +              Board (Kanban view of session_plan/ tasks — the only /todo verb that\n\
+  +              reads and writes files on disk: session_plan/*.md):\n\
+ ✓ (1m 50s)
+                 "/todo — Track tasks during complex operations\n\n\
+                 Usage:\n\
+                 \x20 /todo                    Show all tasks\n\
+  +              \x20 /todo list               Show all tasks (alias for bare /todo)\n\
+                 \x20 /todo add <description>  Add a new task\n\
+                 \x20 /todo done <id>          Mark task as done\n\
+                 \x20 /todo wip <id>           Mark as in-progress\n\
+  ···
+  ... (6 more lines)
+  4 tools completed in 6m 7s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

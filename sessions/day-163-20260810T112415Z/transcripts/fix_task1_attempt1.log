@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -20 &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "shared_state\|SharedSt… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+The evaluator was right — no source changes exist. Let me look at the relevant sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ | gr… ✓ (9ms)
+ ✓ (81ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^name = "yoagent"' -A2 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' ~/.cargo/registry… ✓ (3ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:624..640  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:28..40 ✓ (1ms)
+ ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 10.7s (6 ✓)
+
+Now the wiring change:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (7 → 18 lines)
+  -             // The SharedState handle is kept for future use (e.g. pre-populating
+  -             // context before dispatching sub-agents like analyze-trajectory).
+  -             let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  +             // The SharedState handle is ALSO exposed to this (parent) agent as a
+  +             // `shared_state` tool, so the documented RLM pattern is executable:
+  +             // store a large artifact once under `<skill>.<key>`, then reference it
+  +             // by key in the sub-agent prompt instead of pasting it inline. Without
+  +             // this push the parent had no handle on the store *as a tool*, and the
+  +             // failure was silent — a missing tool, not an error (#715).
+  +             //
+  +             // Deliberately inside this same `if` branch: a shared store with no
+  +             // sub-agents to share with is pure context cost, so when sub-agents are
+  +             // disabled (lite mode etc.) nothing changes. Deliberately NOT wrapped
+  +             // in `with_session_cap`: that 200-call circuit breaker guards expensive
+  +             // external calls (`web_search`/`sub_agent`); this is a local KV store.
+  +             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
+                tools.push(with_session_cap(
+                    Box::new(sub_agent_tool),
+                    SESSION_TOOL_CALL_CAP,
+                ));
+  ... (1 more lines)
+ ✓ (1m 51s)
+  -             // The SharedState handle is kept for future use (e.g. pre-populating
+  -             // context before dispatching sub-agents like analyze-trajectory).
+  -             let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  +             // The SharedState handle is ALSO exposed to this (parent) agent as a
+  +             // `shared_state` tool, so the documented RLM pattern is executable:
+  +             // store a large artifact once under `<skill>.<key>`, then reference it
+  +             // by key in the sub-agent prompt instead of pasting it inline. Without
+  +             // this push the parent had no handle on the store *as a tool*, and the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (191ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder" tests/mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SharedState\|shared_sta… ✓ (3ms)
+ ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (13 → 10 lines)
+                // The SharedState handle is ALSO exposed to this (parent) agent as a
+                // `shared_state` tool, so the documented RLM pattern is executable:
+  -             // store a large artifact once under `<skill>.<key>`, then reference it
+  -             // by key in the sub-agent prompt instead of pasting it inline. Without
+  -             // this push the parent had no handle on the store *as a tool*, and the
+  -             // failure was silent — a missing tool, not an error (#715).
+  -             //
+  -             // Deliberately inside this same `if` branch: a shared store with no
+  -             // sub-agents to share with is pure context cost, so when sub-agents are
+  -             // disabled (lite mode etc.) nothing changes. Deliberately NOT wrapped
+  -             // in `with_session_cap`: that 200-call circuit breaker guards expensive
+  -             // external calls (`web_search`/`sub_agent`); this is a local KV store.
+  +             // store a big artifact once, then reference it by key in the sub-agent
+  +             // prompt instead of pasting it inline. Without this push the parent had
+  +             // no handle on the store *as a tool* and the failure was silent — a
+  +             // missing tool, not an error (#715). Deliberately inside this same `if`
+  +             // branch (a store with no sub-agents to share with is pure context
+  +             // cost) and deliberately NOT session-capped (that circuit breaker
+  +             // guards expensive external calls; this is a local KV store).
+                let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
+ ✓ (1m 50s)
+                // The SharedState handle is ALSO exposed to this (parent) agent as a
+                // `shared_state` tool, so the documented RLM pattern is executable:
+  -             // store a large artifact once under `<skill>.<key>`, then reference it
+  -             // by key in the sub-agent prompt instead of pasting it inline. Without
+  -             // this push the parent had no handle on the store *as a tool*, and the
+  -             // failure was silent — a missing tool, not an error (#715).
+  -             //
+  -             // Deliberately inside this same `if` branch: a shared store with no
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/t… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub use\|^pub mod" ~/.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2483,2495p' src/agent_bu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (9 → 29 lines)
+        #[test]
+        fn builtin_tool_names_includes_shared_state() {
+  -         // SharedStateTool registers as "shared_state" in sub-agents — MCP servers
+  -         // exposing the same name would cause a collision, so our guard must know it.
+  +         // SharedStateTool registers as "shared_state" for both the parent agent
+  +         // (pushed in build_agent) and sub-agents — MCP servers exposing the same
+  +         // name would cause a collision, so our guard must know it.
+            assert!(
+                BUILTIN_TOOL_NAMES.contains(&"shared_state"),
+                "BUILTIN_TOOL_NAMES must include 'shared_state' to guard against MCP collisions"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn shared_state_tool_is_named_shared_state() {
+  +         // The guard that matters (#715): BUILTIN_TOOL_NAMES, the MCP collision
+  +         // check, and the RLM docs all hardcode the string "shared_state". If
+  +         // yoagent ever renames the tool, every one of those goes stale SILENTLY —
+  +         // a missing/renamed tool is not an error, just an absent capability. So
+  +         // assert the live name, not merely that the type exists.
+  ... (11 more lines)
+ ✓ (1m 50s)
+        #[test]
+        fn builtin_tool_names_includes_shared_state() {
+  -         // SharedStateTool registers as "shared_state" in sub-agents — MCP servers
+  -         // exposing the same name would cause a collision, so our guard must know it.
+  +         // SharedStateTool registers as "shared_state" for both the parent agent
+  +         // (pushed in build_agent) and sub-agents — MCP servers exposing the same
+  +         // name would cause a collision, so our guard must know it.
+            assert!(
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 7m 52s (11 ✓)
+
+Now update the BUILTIN_TOOL_NAMES doc comment and the module-size ceiling:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 4 lines)
+    /// This list must stay in sync with `tools::build_tools` and any tool added
+  - /// via yoagent's `with_sub_agent` (currently `sub_agent`, see
+  - /// `build_sub_agent_tool`).
+  + /// alongside the sub-agent tool in `build_agent` (currently `sub_agent` and
+  + /// `shared_state` — the latter is given to the parent agent AND to sub-agents,
+  + /// see `build_sub_agent_tool`).
