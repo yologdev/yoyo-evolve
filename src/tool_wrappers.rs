@@ -38,6 +38,15 @@ pub const REFUSAL_STEM_SESSION_CAP: &str = " session cap reached (";
 /// `ConfirmTool` directory-restriction denial: "User denied <tool> on '<path>'".
 pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
 
+/// True when an error message is one of yoyo's deliberate refusals rather than
+/// a tool failure. Substring match (not prefix) — wrappers may prepend context.
+///
+/// Thin alias over [`crate::prompt_retry::is_deterministic_tool_error`] so the
+/// three stems above keep exactly one predicate reading them (#710).
+fn is_deterministic_refusal(err: &str) -> bool {
+    crate::prompt_retry::is_deterministic_tool_error(err)
+}
+
 // ---------------------------------------------------------------------------
 // GuardedTool — directory restriction wrapper (Box-based)
 // ---------------------------------------------------------------------------
@@ -770,26 +779,16 @@ impl AgentTool for RecoveryHintTool {
                 self.tracker.record_success(&tool_name, &target);
                 Ok(result)
             }
-            Err(yoagent::types::ToolError::Failed(msg)) => {
-                let attempt = self.tracker.record_failure(&tool_name, &target);
-                let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
-                // Prepend a file-specific hint when the same target fails 2+ times
-                let file_prefix = if attempt >= 2 && target != "_" {
-                    format!(
-                        "You've failed to {verb} '{target}' {attempt} times. ",
-                        verb = tool_name.replace('_', " "),
-                    )
-                } else {
-                    String::new()
-                };
-                Err(yoagent::types::ToolError::Failed(format!(
-                    "{msg}\n\n💡 Recovery hint: {file_prefix}{hint}"
-                )))
-            }
             Err(other) => {
-                // Non-Failed errors (NotFound, InvalidArgs, Cancelled) also get
-                // recovery hints — the counter is already being incremented, so
-                // the agent should see the same escalating advice.
+                // A deterministic refusal (read/plan mode, session cap, denied
+                // path) is the system working as designed, not a flaky tool:
+                // hand it back verbatim — no failure-counter bump, and no hint
+                // coaching the model around yoyo's own guard (#710).
+                if is_deterministic_refusal(&other.to_string()) {
+                    return Err(other);
+                }
+                // Every other error — Failed, NotFound, InvalidArgs, Cancelled —
+                // gets the same escalating advice off the same counter.
                 let attempt = self.tracker.record_failure(&tool_name, &target);
                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
                 let file_prefix = if attempt >= 2 && target != "_" {
@@ -802,6 +801,9 @@ impl AgentTool for RecoveryHintTool {
                 };
                 let suffix = format!("\n\n💡 Recovery hint: {file_prefix}{hint}");
                 match other {
+                    yoagent::types::ToolError::Failed(msg) => Err(
+                        yoagent::types::ToolError::Failed(format!("{msg}{suffix}")),
+                    ),
                     yoagent::types::ToolError::NotFound(msg) => Err(
                         yoagent::types::ToolError::NotFound(format!("{msg}{suffix}")),
                     ),
@@ -812,8 +814,6 @@ impl AgentTool for RecoveryHintTool {
                     yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Failed(
                         format!("Tool call was cancelled.{suffix}"),
                     )),
-                    // Exhaustive: ToolError::Failed is already handled above
-                    e => Err(e),
                 }
             }
         }
