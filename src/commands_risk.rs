@@ -23,14 +23,14 @@ pub(crate) use crate::commands_risk_snapshots::{
 // (`risk_context_for_files_from` / `file_risk_summary_from` are only used
 // inside the report module itself, so they aren't re-exported.)
 pub(crate) use crate::commands_risk_report::{
-    file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
-    recall_coverage_note, risk_context_for_files,
+    emerging_track_record_note, file_risk_summary, format_risk_context, format_risk_report,
+    prediction_accuracy_summary, recall_coverage_note, risk_context_for_files,
 };
 
-// Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
-// Re-exported here so all call sites (commands_project.rs and this module's
-// own report code) remain unchanged.
-pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+// Emerging-risk detection lives in `commands_risk_emerging.rs`; re-exported for
+// commands_project.rs, watch.rs and the snapshot path. Its renderer was deleted
+// Day 163 (#724) — that module's docs hold the decision and its numbers.
+pub(crate) use crate::commands_risk_emerging::detect_emerging_risks;
 
 // Epistemic ranking (rank files by how little graded outcomes have taught the
 // model — the dream's epistemic-appetite milestone, ranking half only) lives
@@ -662,12 +662,7 @@ pub(crate) fn handle_risk(input: &str) {
     let report = format_risk_report(&risks, show_all);
     print!("{report}");
 
-    // Emerging-risk detection: anticipatory signal for files about to become fragile
-    let emerging = detect_emerging_risks(&risks);
-    let emerging_report = format_emerging_risks(&emerging);
-    if !emerging_report.is_empty() {
-        print!("{emerging_report}");
-    }
+    // `⚡ Emerging Risks` printed here until Day 163 (#724) — deleted at 0% recall.
 }
 
 // ── /risk predict ────────────────────────────────────────────────────
@@ -1182,6 +1177,11 @@ fn handle_risk_accuracy() {
         return;
     }
 
+    // Re-homed from the deleted emerging block (#724) — evidence, not a caveat.
+    // Carries the one number the lines above don't: the pooled achievable ceiling.
+    if let Some(note) = emerging_track_record_note() {
+        println!("  {DIM}emerging {note}{RESET}");
+    }
     // Section 2: Per-signal breakdown
     let snapshot_content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
     let validation_content = std::fs::read_to_string(RISK_VALIDATION_PATH).unwrap_or_default();

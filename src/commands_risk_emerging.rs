@@ -4,9 +4,28 @@
 //! flags files whose risk trajectory is *accelerating*: not yet in the top-N
 //! by absolute score, but changing faster recently than their own baseline.
 //! `commands_risk.rs` re-exports everything here so call sites are unchanged.
+//!
+//! **Display deleted Day 163 (#724).** The `⚡ Emerging Risks` block this
+//! module used to render is gone, and with it `format_emerging_risks` /
+//! `format_emerging_risks_with` and the tests that pinned their output. The
+//! number that forced it: **0% recall over 10 graded failure days** against a
+//! **~39% pooled achievable ceiling**, while the reactive column scored 24%
+//! on the same days. Two further measurements over 130 snapshots: the
+//! emerging list was **empty in 46 (35%)** — those are the 19 failure days
+//! recorded as "no emerging forecast" — and where both lists were non-empty,
+//! a mean **63% of emerging entries were already in `top_10`** (27 of 62
+//! overlapped completely). So the column mostly abstained, and where it did
+//! differ it was reactive ranks 6–15 wearing an anticipatory label.
+//!
+//! What is **retained**: `EmergingRisk`, `detect_emerging_risks` and the
+//! momentum helpers, because the snapshot/grading path still records and
+//! grades this column. That is the *meter*, not the *claim* — deleting the
+//! display stops advertising a capability the evidence does not support,
+//! while keeping the only thing that could ever justify a rebuild with
+//! evidence. Past ledger lines are never rewritten; `/risk accuracy` still
+//! reports the emerging recall and false-alarm numbers.
 
 use crate::commands_risk::FileRisk;
-use crate::format::{BOLD, DIM, RESET, YELLOW};
 
 /// A file whose risk trajectory is accelerating — not yet in the top-N by
 /// absolute score, but changing faster recently than its own baseline.
@@ -159,110 +178,9 @@ pub(crate) fn detect_emerging_risks(risks: &[FileRisk]) -> Vec<EmergingRisk> {
     detect_emerging_risks_from(risks, &counts_7, &counts_30, &revert_counts, 1.5, 5)
 }
 
-/// Format emerging-risk files into a report section.
-/// Returns an empty string if there are no emerging risks.
-pub(crate) fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
-    format_emerging_risks_with(
-        emerging,
-        crate::commands_risk_report::emerging_track_record_note().as_deref(),
-    )
-}
-
-/// Pure rendering half — takes the track-record note as a parameter so tests
-/// drive it instead of reading the real validation ledger.
-///
-/// The note (when `Some`) is printed immediately under the header, above the
-/// rows: this column has been graded 0% on failure days as of Day 163, and it
-/// was sitting directly beneath the reactive list with identical billing
-/// (#720). When `None` the output is byte-identical to the pre-disclosure
-/// format — the no-data path must not change.
-pub(crate) fn format_emerging_risks_with(
-    emerging: &[EmergingRisk],
-    track_record: Option<&str>,
-) -> String {
-    if emerging.is_empty() {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n"
-    ));
-    if let Some(note) = track_record {
-        out.push_str(&format!("  {DIM}{note}{RESET}\n"));
-    }
-    out.push('\n');
-
-    for er in emerging.iter().take(10) {
-        let path_display = &er.path;
-        let padded_path = if path_display.len() < 34 {
-            format!("{path_display:<34}")
-        } else {
-            path_display.to_string()
-        };
-        out.push_str(&format!(
-            "  {YELLOW}{:.1}x{RESET}  #{:<4} {padded_path}{DIM}{}{RESET}\n",
-            er.momentum,
-            er.current_rank + 1,
-            er.signals.join(" · "),
-        ));
-    }
-    out.push('\n');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sample_row() -> EmergingRisk {
-        EmergingRisk {
-            path: "src/foo.rs".into(),
-            momentum: 3.2,
-            current_rank: 11,
-            signals: vec!["▲churn".to_string()],
-        }
-    }
-
-    #[test]
-    fn test_format_emerging_empty_stays_empty_even_with_note() {
-        // The early return is unchanged: no rows → no header, no note.
-        assert!(format_emerging_risks_with(&[], Some("track record: 0% recall")).is_empty());
-        assert!(format_emerging_risks_with(&[], None).is_empty());
-    }
-
-    #[test]
-    fn test_format_emerging_note_appears_above_first_row() {
-        let rows = vec![sample_row()];
-        let out = format_emerging_risks_with(&rows, Some("track record: 0% recall over 9 days"));
-        assert!(
-            out.contains("track record: 0% recall over 9 days"),
-            "note must be rendered, got: {out}"
-        );
-        let note_at = out.find("track record").expect("note present");
-        let row_at = out.find("src/foo.rs").expect("row present");
-        assert!(
-            note_at < row_at,
-            "note must sit above the first row: {out:?}"
-        );
-    }
-
-    #[test]
-    fn test_format_emerging_without_note_is_unchanged() {
-        // Pin the no-data path byte-for-byte against the pre-disclosure shape:
-        // header line, blank line, then rows. Disclosure must not cost anything
-        // when there is nothing measured to disclose.
-        let rows = vec![sample_row()];
-        let out = format_emerging_risks_with(&rows, None);
-        let expected_header = format!(
-            "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n\n"
-        );
-        assert!(
-            out.starts_with(&expected_header),
-            "expected legacy header+blank line, got: {out:?}"
-        );
-        assert!(!out.contains("track record"));
-    }
 
     #[test]
     fn test_momentum_saturates_when_all_changes_recent() {
@@ -597,26 +515,5 @@ mod tests {
         assert_eq!(emerging[0].path, "src/faster.rs");
         assert_eq!(emerging[1].path, "src/fast.rs");
         assert!(emerging[0].momentum > emerging[1].momentum);
-    }
-
-    #[test]
-    fn test_format_emerging_risks_empty() {
-        let result = format_emerging_risks(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_format_emerging_risks_shows_content() {
-        let emerging = vec![EmergingRisk {
-            path: "src/hot.rs".into(),
-            momentum: 2.5,
-            current_rank: 7,
-            signals: vec!["4 changes in 7d vs 5 in 30d".into()],
-        }];
-
-        let result = format_emerging_risks(&emerging);
-        assert!(result.contains("Emerging Risks"), "should have header");
-        assert!(result.contains("src/hot.rs"), "should show file path");
-        assert!(result.contains("2.5x"), "should show momentum");
     }
 }
