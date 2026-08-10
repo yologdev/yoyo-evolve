@@ -2,7 +2,7 @@ name: Evolution
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # every 3h (~8/day). Sessions run ~50-60min since the Day 161-162 speed work, so a 3h gap still leaves ~2h idle between them; social stays offset at 2,6,10,14,18,22.
+    - cron: '0 */3 * * *'  # every 3h (~8/day). Sessions run ~50-60min since the Day 161-162 speed work, so a 3h gap still leaves ~2h idle. NOTE: a 4h social cadence cannot avoid a 3h one — they share hours 6 and 18, so social is offset to :20 instead (see social.yml).
   workflow_dispatch:       # manual trigger for testing
 
 concurrency:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   evolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 210  # thinking-model sessions run long; YOYO_SESSION_BUDGET_SECS winds the session down before this hard kill
+    timeout-minutes: 170  # MUST stay under the cron gap (3h): at 210 a long run's successor queued and was then cancelled by the :30 tick, silently dropping a whole slot. YOYO_SESSION_BUDGET_SECS + JOB_DEADLINE_EPOCH wind the session down before this.
 
     steps:
       - name: Set job deadline
@@ -26,7 +26,7 @@ jobs:
         # evolve.sh clamps its budget to this epoch (minus a wrap margin).
         run: |
           echo "JOB_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
-          echo "JOB_DEADLINE_EPOCH=$(( $(date +%s) + 210*60 ))" >> "$GITHUB_ENV"
+          echo "JOB_DEADLINE_EPOCH=$(( $(date +%s) + 170*60 ))" >> "$GITHUB_ENV"  # keep in lockstep with timeout-minutes above
 
       - name: Generate bot token
         id: bot-token

@@ -1,5 +1,6 @@
 #!/bin/bash
-# scripts/evolve.sh — One evolution cycle. Cron fires hourly; 8h gap controls frequency.
+# scripts/evolve.sh — One evolution cycle. The cron schedule lives in
+# .github/workflows/evolve.yml; do not restate it here (it went stale twice).
 # Monthly sponsors get benefit tiers (priority, shoutout, listing) — no run speedup.
 # Sponsors get benefit tiers (shoutout, listing) — runs are cron-scheduled for everyone.
 #
@@ -1852,6 +1853,7 @@ BFIXEOF
     MAX_EVAL_ATTEMPTS=10
     EVAL_LOG=""
     BUDGET_UNVERIFIED=""  # set by the budget gates below; changes the accept wording only
+    EVAL_OVERRIDE_REASON=""  # set when a Checked FAIL overrides a summary PASS
     UNVERIFIED_REASON=""
     UNVERIFIED_FEEDBACK=""
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
@@ -1917,16 +1919,25 @@ Write your verdict to session_plan/eval_task_${TASK_NUM}.md with exactly this fo
 
 Verdict: PASS (or FAIL)
 Reason: [1-2 sentences explaining why]
-Checked: intent_alignment: PASS|FAIL: [specific, one line — what you actually looked at]
-Checked: forgotten_touchpoints: PASS|FAIL: [every new definition has its consumer in THIS diff; every new enum variant has its match arms; every renamed thing has its call sites]
-Checked: doc_sync: PASS|FAIL: [behavior change reflected in CLAUDE.md / README / docs, or N/A because no behavior changed]
-Checked: product_surface: PASS|FAIL: [evolve-kind task touching config defaults, CLI flags, wizard or startup behavior must be opt-in — see #448; or N/A]
+Checked: intent_alignment: <PASS or FAIL>: <what you actually looked at>
+Checked: forgotten_touchpoints: <PASS or FAIL>: <every new definition has its consumer in THIS diff; every new enum variant has its match arms; every renamed thing has its call sites>
+Checked: doc_sync: <PASS or FAIL or N/A>: <behavior change reflected in CLAUDE.md / README / docs; N/A only if no behavior changed>
+Checked: product_surface: <PASS or FAIL or N/A>: <evolve-kind task touching config defaults, CLI flags, wizard or startup behavior must be opt-in — see #448; N/A only if the diff touches no product surface>
 
-All four Checked lines are REQUIRED, even when the answer is trivial. A dimension
-you never mention is not a pass — it is a dimension you did not look at, and the
-whole point of the list is that silence cannot masquerade as a clean bill. Write
-what you actually verified, not a restatement of the item name. A FAIL on any
-Checked line means the overall Verdict is FAIL.
+Format rules the harness actually enforces — read them, they are not decorative:
+- Exactly one verdict word, then a colon, then your reason. \`intent_alignment: PASS: …\`
+  Do NOT copy the angle-bracket placeholders; a line still containing them counts
+  as UNANSWERED.
+- The reason must be at least ten characters and say what you verified, not
+  restate the item name. A verdict with no reason counts as UNANSWERED.
+- N/A is a legal verdict ONLY for doc_sync and product_surface. intent_alignment
+  and forgotten_touchpoints always apply to every task; N/A there means "I did
+  not look", and counts as UNANSWERED.
+- A FAIL on any Checked line forces the overall Verdict to FAIL, even if your
+  summary line says PASS — and it does so whether or not the other lines parsed.
+- If lines are missing or unparseable the harness records that and falls back to
+  your summary verdict. It does not silently accept them: the incompleteness is
+  logged against this session.
 
 forgotten_touchpoints is first among equals: three reverts (#618, #653, #658) were
 all a definition added without its consumer — locally plausible, globally broken,
@@ -1965,33 +1976,82 @@ EVALEOF
             # Deliberately NOT fail-closed (ouroboros's choice): a flaky output
             # format turning a green task into a revert is worse than the
             # disease. Degrade + log; tighten only if the format proves stable.
+            EVAL_F="session_plan/eval_task_${TASK_NUM}.md"
             EVAL_MISSING=""
-            for _item in intent_alignment forgotten_touchpoints doc_sync product_surface; do
-                grep -qiE "^Checked:[[:space:]]*${_item}:[[:space:]]*(PASS|FAIL|N/A)" \
-                    "session_plan/eval_task_${TASK_NUM}.md" \
-                    || EVAL_MISSING="${EVAL_MISSING:+$EVAL_MISSING,}$_item"
+            EVAL_NA=0
+            # Leading indent / list bullet / bold wrappers are tolerated (LLMs
+            # indent inside lists routinely, and "^Checked:" alone scored a
+            # perfectly answered indented checklist as 0/4).
+            _CK_PRE='^[[:space:]]*[*-]?[[:space:]]*\**Checked:\**[[:space:]]*'
+            # N/A is a legal answer only where a task can genuinely not touch
+            # the dimension. On the other two it means "I did not look".
+            for _spec in "intent_alignment:PASS|FAIL" "forgotten_touchpoints:PASS|FAIL" \
+                         "doc_sync:PASS|FAIL|N/A" "product_surface:PASS|FAIL|N/A"; do
+                _item="${_spec%%:*}"; _toks="${_spec#*:}"
+                # The verdict token must be followed by a COLON, and then by a
+                # reason of >=10 chars. Both matter: without the colon the
+                # literal placeholder "PASS|FAIL" matched on its PASS prefix, so
+                # an evaluator echoing the unfilled template scored 4/4 while
+                # examining nothing — the exact failure this contract exists to
+                # prevent, reintroduced by the contract itself (review finding).
+                if grep -qiE "${_CK_PRE}${_item}:[[:space:]]*(${_toks}):[[:space:]]*[^[:space:]].{9,}" "$EVAL_F"; then
+                    grep -qiE "${_CK_PRE}${_item}:[[:space:]]*N/A:" "$EVAL_F" \
+                        && EVAL_NA=$((EVAL_NA + 1))
+                else
+                    EVAL_MISSING="${EVAL_MISSING:+$EVAL_MISSING,}$_item"
+                fi
             done
+
+            # The FAIL override runs UNCONDITIONALLY, outside the completeness
+            # branch: a stated FAIL is affirmative evidence, and nesting it meant
+            # one malformed line on an unrelated item discarded a well-formed
+            # forgotten_touchpoints FAIL (review finding). Omitting a line must
+            # not be a way to neutralise a finding you wrote.
+            if grep -qiE "${_CK_PRE}[a-z_]+:[[:space:]]*FAIL:" "$EVAL_F"; then
+                if ! echo "$EVAL_VERDICT" | grep -qi "FAIL"; then
+                    if [ -n "$EVAL_VERDICT" ]; then
+                        echo "    Evaluator: a Checked line reported FAIL but the summary said PASS — treating as FAIL."
+                    else
+                        echo "    Evaluator: a Checked line reported FAIL and no summary verdict was written — treating as FAIL."
+                    fi
+                    EVAL_VERDICT="Verdict: FAIL"
+                    # Rewrite the artifact too: four consumers read the FILE
+                    # (eval-fix prompt, unverified receipt, revert receipt,
+                    # Reason: grep), and leaving "Verdict: PASS" in it while
+                    # acting on FAIL hands the fix agent a document that
+                    # contradicts its own instructions (review finding).
+                    if grep -qiE '^[Vv]erdict:' "$EVAL_F"; then
+                        sed -i.bak '0,/^[Vv]erdict:.*/s//Verdict: FAIL (harness override: a Checked line reported FAIL)/' \
+                            "$EVAL_F" 2>/dev/null && rm -f "${EVAL_F}.bak"
+                    else
+                        printf 'Verdict: FAIL (harness override: a Checked line reported FAIL)\n' >> "$EVAL_F"
+                    fi
+                    # And source the reason from the finding, not from the
+                    # summary's PASS-flavoured sentence.
+                    EVAL_OVERRIDE_REASON=$(grep -iE "${_CK_PRE}[a-z_]+:[[:space:]]*FAIL:" "$EVAL_F" \
+                        | head -2 | tr '\n' ' ' | cut -c1-300)
+                fi
+            fi
+            # Log complete AND incomplete: a file that only ever records
+            # failures has no denominator, so "never degraded" and "degraded
+            # every time" look identical — and the stated tightening criterion
+            # ("tighten only if the format proves stable") had no data to read.
+            echo "eval_checklist task=$TASK_NUM attempt=$EVAL_ATTEMPT status=${EVAL_MISSING:+incomplete}${EVAL_MISSING:-complete} missing=${EVAL_MISSING:-none} na=$EVAL_NA" \
+                >> "$SESSION_STAGING/eval_checklist.log" \
+                || echo "    WARNING: could not record checklist status to $SESSION_STAGING/eval_checklist.log" >&2
             if [ -n "$EVAL_MISSING" ]; then
                 echo "    Evaluator: checklist incomplete (missing/malformed: $EVAL_MISSING) — falling back to the freeform verdict."
-                echo "eval_checklist_incomplete task=$TASK_NUM attempt=$EVAL_ATTEMPT missing=$EVAL_MISSING" \
-                    >> "$SESSION_STAGING/eval_checklist.log" 2>/dev/null || true
             else
-                # A FAIL on any line item is a FAIL overall, even if the
-                # summary Verdict line says PASS (the checklist is the finding;
-                # the summary is a restatement that can drift).
-                if grep -qiE "^Checked:[[:space:]]*[a-z_]+:[[:space:]]*FAIL" \
-                    "session_plan/eval_task_${TASK_NUM}.md"; then
-                    if ! echo "$EVAL_VERDICT" | grep -qi "FAIL"; then
-                        echo "    Evaluator: checklist has a FAIL line but the summary said PASS — treating as FAIL."
-                        EVAL_VERDICT="Verdict: FAIL"
-                    fi
-                fi
-                echo "    Evaluator: checklist complete (4/4 dimensions answered)."
+                echo "    Evaluator: checklist complete (4/4 answered${EVAL_NA:+, $EVAL_NA N/A})."
             fi
         fi
 
         if echo "$EVAL_VERDICT" | grep -qi "FAIL"; then
             EVAL_REASON=$(grep -i '^Reason:' "session_plan/eval_task_${TASK_NUM}.md" | head -1 | sed 's/^Reason:[[:space:]]*//' || true)
+            # On an override the summary's Reason: argues for PASS; the finding
+            # is the failing Checked line (review finding: revert receipts read
+            # "rejected ... the implementation is correct").
+            [ -n "${EVAL_OVERRIDE_REASON:-}" ] && EVAL_REASON="$EVAL_OVERRIDE_REASON"
             echo "    Evaluator: FAIL — $EVAL_REASON"
 
             # Budget gate: a fix attempt costs up to 600s plus a 600s re-eval.

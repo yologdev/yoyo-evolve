@@ -106,10 +106,118 @@ fi
 # gains an item the parser doesn't require, the evaluator can skip it silently
 # — the exact failure the contract exists to prevent.
 PROMPT_ITEMS=$(grep -oE '^Checked: [a-z_]+:' "$SCRIPT" | sed 's/^Checked: //; s/:$//' | sort -u | tr '\n' ' ')
-PARSER_ITEMS=$(grep -A1 'for _item in' "$SCRIPT" | grep -oE 'intent_alignment[a-z_ ]*' | head -1 | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+# Anchor on the loop's own syntax, not on a member name: hardcoding
+# `intent_alignment` made a rename of THAT item report "pattern no longer
+# matches" instead of the real drift, and hid any item placed before it.
+PARSER_ITEMS=$(grep -oE '"[a-z_]+:(PASS\|FAIL(\|N/A)?)"' "$SCRIPT" \
+    | sed 's/^"//; s/:.*$//' | sort -u | tr '\n' ' ')
 require "checklist items found in prompt" "$PROMPT_ITEMS" \
     && require "checklist items found in parser" "$PARSER_ITEMS" \
     && check "eval checklist: prompt items == parser items" "$PROMPT_ITEMS" "$PARSER_ITEMS"
+
+# ── eval checklist BEHAVIOR: drive evolve.sh's own regexes over fixtures ──
+# The drift guard pins that the two NAME lists agree; it said nothing about what
+# the parser DOES. Behaviour testing found four defects at once: the unfilled
+# template scored 4/4, all-N/A scored 4/4, indented lines scored 0/4, and an
+# incomplete list discarded a stated FAIL.
+CK_PRE=$(grep -oE "_CK_PRE='[^']+'" "$SCRIPT" | head -1 | sed "s/^_CK_PRE='//; s/'$//")
+CK_SPECS=$(grep -oE '"[a-z_]+:(PASS\|FAIL(\|N/A)?)"' "$SCRIPT" | tr -d '"' | tr '\n' ' ')
+# Lift the WHOLE match expression out of evolve.sh — reconstructing it here made
+# the fixtures a tautology (a mutant that weakened evolve.sh's regex survived,
+# because the test kept using its own retyped copy).
+CK_PAT=$(grep -oE 'grep -qiE "\$\{_CK_PRE\}\$\{_item\}[^"]*"' "$SCRIPT" | head -1 \
+    | sed 's/^grep -qiE "//; s/"$//')
+CK_FAILPAT=$(grep -oE 'grep -qiE "\$\{_CK_PRE\}\[a-z_\]\+[^"]*"' "$SCRIPT" | head -1 \
+    | sed 's/^grep -qiE "//; s/"$//')
+if require "checklist line prefix extracted" "$CK_PRE" \
+    && require "checklist item specs extracted" "$CK_SPECS" \
+    && require "checklist match pattern extracted" "$CK_PAT" \
+    && require "checklist FAIL pattern extracted" "$CK_FAILPAT"; then
+    CKF=$(mktemp)
+    # Expand evolve.sh's own pattern by binding its three variables.
+    ck_miss() { local M="" S I T RE
+        for S in $CK_SPECS; do I="${S%%:*}"; T="${S#*:}"
+            RE=${CK_PAT//'${_CK_PRE}'/$CK_PRE}; RE=${RE//'${_item}'/$I}; RE=${RE//'${_toks}'/$T}
+            grep -qiE "$RE" "$CKF" || M="${M:+$M,}$I"; done; printf '%s' "${M:-none}"; }
+    ck_ovr() { local RE=${CK_FAILPAT//'${_CK_PRE}'/$CK_PRE}
+        grep -qiE "$RE" "$CKF" && echo FAIL || echo none; }
+    ck_fix() { printf '%s\n' "$@" > "$CKF"; }
+
+    ck_fix "Verdict: PASS" "Checked: intent_alignment: PASS: diff wires the helper in" \
+        "Checked: forgotten_touchpoints: PASS: new fn called at repl.rs:812" \
+        "Checked: doc_sync: N/A: no behavior change at all" \
+        "Checked: product_surface: N/A: evolve-kind, no user surface"
+    check "eval checklist: fully answered → nothing missing" "$(ck_miss)" "none"
+    check "eval checklist: clean run does not trip the override" "$(ck_ovr)" "none"
+
+    ck_fix "Verdict: PASS" "Checked: intent_alignment: PASS|FAIL: [specific, one line]" \
+        "Checked: forgotten_touchpoints: PASS|FAIL: [...]" \
+        "Checked: doc_sync: PASS|FAIL: [...]" "Checked: product_surface: PASS|FAIL: [...]"
+    check "eval checklist: unfilled template counts as UNANSWERED" \
+        "$(ck_miss)" "intent_alignment,forgotten_touchpoints,doc_sync,product_surface"
+
+    ck_fix "Verdict: PASS" "Checked: intent_alignment: N/A: nothing to say here" \
+        "Checked: forgotten_touchpoints: N/A: nothing to say here" \
+        "Checked: doc_sync: N/A: no behavior change here" \
+        "Checked: product_surface: N/A: no product surface here"
+    check "eval checklist: N/A is rejected where it cannot apply" \
+        "$(ck_miss)" "intent_alignment,forgotten_touchpoints"
+
+    ck_fix "Verdict: PASS" "  Checked: intent_alignment: PASS: matches the stated task" \
+        "  Checked: forgotten_touchpoints: PASS: helper has two callers" \
+        "  Checked: doc_sync: PASS: CLAUDE.md updated in commit" \
+        "  Checked: product_surface: N/A: no product surface here"
+    check "eval checklist: indented lines still count" "$(ck_miss)" "none"
+
+    ck_fix "Verdict: PASS" "Checked: intent_alignment: PASS: matches the stated task" \
+        "Checked: forgotten_touchpoints: FAIL: new const has no reader in diff" \
+        "**Checked: doc_sync: N/A: no behavior change here**" \
+        "Checked: product_surface: N/A: no product surface here"
+    check "eval checklist: FAIL survives a bolded sibling line" "$(ck_ovr)" "FAIL"
+
+    ck_fix "Verdict: PASS" "Reason: the test would FAIL without this" \
+        "Checked: intent_alignment: PASS: matches the stated task" \
+        "Checked: forgotten_touchpoints: PASS: docs mention the FAIL path" \
+        "Checked: doc_sync: PASS: CLAUDE.md updated in commit" \
+        "Checked: product_surface: N/A: no product surface here"
+    check "eval checklist: the word FAIL in prose does not trip the override" "$(ck_ovr)" "none"
+
+    ck_fix "Verdict: PASS" "Checked: intent_alignment: PASS" "Checked: forgotten_touchpoints: PASS" \
+        "Checked: doc_sync: PASS" "Checked: product_surface: PASS"
+    check "eval checklist: a verdict with no reason is UNANSWERED" \
+        "$(ck_miss)" "intent_alignment,forgotten_touchpoints,doc_sync,product_surface"
+    rm -f "$CKF"
+fi
+
+# The FAIL override must NOT be nested under the completeness branch: an omitted
+# line would otherwise neutralise a FAIL the evaluator actually wrote.
+OVR_LN=$(grep -n '\[a-z_\]+:\[\[:space:\]\]\*FAIL:' "$SCRIPT" | head -1 | cut -d: -f1)
+LOOP_LN=$(grep -n 'for _spec in' "$SCRIPT" | head -1 | cut -d: -f1)
+if require "override line located" "$OVR_LN" && require "item loop located" "$LOOP_LN"; then
+    A=$(sed -n "${OVR_LN}p" "$SCRIPT" | sed 's/[^ ].*//' | wc -c)
+    B=$(sed -n "${LOOP_LN}p" "$SCRIPT" | sed 's/[^ ].*//' | wc -c)
+    [ "$A" -le "$B" ] && ok "FAIL override is unconditional (not nested under completeness)" \
+        || bad "FAIL override nesting" "indented deeper than the item loop — an incomplete checklist would discard a stated FAIL"
+fi
+
+# ── cron cadence: evolve.yml owns it; docs and the job ceiling must agree ──
+# (WF/TMIN are re-derived here rather than reused: this block precedes the
+# budget section that also defines them, and an unbound var under `set -u`
+# aborted the check silently-ish.)
+WF="$(cd "$(dirname "$0")/.." && pwd)/.github/workflows/evolve.yml"
+TMIN=$(grep -oE 'timeout-minutes: [0-9]+' "$WF" | grep -oE '[0-9]+' | head -1)
+DOC="$(cd "$(dirname "$0")/.." && pwd)/CLAUDE.md"
+CRON_H=$(grep -oE "cron: '0 \*/[0-9]+ \* \* \*'" "$WF" | grep -oE '[0-9]+' | tail -1)
+if require "evolve cron hour-step extracted" "$CRON_H"; then
+    check "CLAUDE.md states the real gap"      "$(grep -cE "flat ${CRON_H}h gap" "$DOC")" "1"
+    check "CLAUDE.md states the real runs/day" "$(grep -cE "~$(( 24 / CRON_H ))/day" "$DOC")" "1"
+    [ "$TMIN" -le "$(( CRON_H * 60 ))" ] \
+        && ok "job ceiling ${TMIN}m fits inside the ${CRON_H}h cron gap" \
+        || bad "job ceiling vs cron gap" "timeout-minutes=$TMIN exceeds the $(( CRON_H * 60 ))m gap — the next run queues and is then cancelled"
+fi
+grep -qE '^# scripts/evolve\.sh .*(hourly|[0-9]+h gap)' "$SCRIPT" \
+    && bad "evolve.sh header cadence" "header restates a cadence evolve.yml owns" \
+    || ok "evolve.sh header does not restate the cron cadence"
 
 # ── cross-file coupling: evolve.sh gates vs evolve.yml budgets ───────────
 # The `2700` bug (an attempt budget below the task gate, so that attempt could
