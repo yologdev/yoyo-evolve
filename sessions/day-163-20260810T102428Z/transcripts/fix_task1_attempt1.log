@@ -1,0 +1,157 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement the missing Step 2 and Step 3. Let me first look at the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo ---…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs && se… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1440p;1655,1730p' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2490,2575p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" src/commands_risk.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2530,2548p' src/commands… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2538..2552 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 13.5s (7 ✓)
+
+Now let me add the helper next to classify_broke_files.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 41 lines)
+        broke
+  + }
+  + 
+  + /// True when the window LOOKS like a repair window but corroboration dropped
+  + /// every candidate: at least one non-revert commit claims a repair and names a
+  + /// `src/` file, yet `classify_broke_files` returned nothing.
+  + ///
+  + /// This is the **third value** — "repair claimed, uncorroborated" — that keeps a
+  + /// real failure day from being recorded as an affirmative green one (#717).
+  + ///
+  + /// Why it is needed: tier 1 (a revert commit) is structurally dead in this repo,
+  + /// because `scripts/evolve.sh` reverts with `git reset --hard "$PRE_TASK_SHA"`
+  + /// and `git checkout -- .` — never a revert commit. So tier 2 decides
+  + /// everything, and the canonical real breakage (bad commit in session N, one
+  + /// `Fix #NNN` commit in session N+1) is exactly the shape tier 2 drops: in
+  + /// session N+1's window the repair is the only touch of that file, so
+  + /// corroboration fails and the file is silently skipped. An empty `broke_files`
+  + /// then falls through to the GREEN branch and books a genuine failure day as
+  + /// crying-wolf evidence. An ungraded window is honest; a green one is a
+  + /// fabricated observation.
+  ... (21 more lines)
+ ✓ (19.2s)
+        broke
+  + }
+  + 
+  + /// True when the window LOOKS like a repair window but corroboration dropped
+  + /// every candidate: at least one non-revert commit claims a repair and names a
+  + /// `src/` file, yet `classify_broke_files` returned nothing.
+  + ///
+  + /// This is the **third value** — "repair claimed, uncorroborated" — that keeps a
+  ... (13 more lines)
+
+Expected — now the call site.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 12 lines)
+        } else {
+  +         // Third value (#717): the window claims a repair of a `src/` file but
+  +         // corroboration dropped it, so we don't KNOW whether anything broke.
+  +         // Record nothing — an ungraded window is honest, a green one would be a
+  +         // fabricated observation booked as crying-wolf evidence.
+  +         if has_uncorroborated_repair_evidence(&entries) {
+  +             eprintln!(
+  +                 "  {DIM}⚠ suspected failure day (repair-claiming commits present, corroboration failed) — not graded{RESET}"
+  +             );
+  +             return;
+  +         }
+            // GREEN outcome: commits happened since the snapshot but nothing
+ ✓ (1m 38s)
+        } else {
+  +         // Third value (#717): the window claims a repair of a `src/` file but
+  +         // corroboration dropped it, so we don't KNOW whether anything broke.
+  +         // Record nothing — an ungraded window is honest, a green one would be a
+  +         // fabricated observation booked as crying-wolf evidence.
+  +         if has_uncorroborated_repair_evidence(&entries) {
+  +             eprintln!(
+  +                 "  {DIM}⚠ suspected failure day (repair-claiming commits present, corroboration failed) — not graded{RESET}"
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (55.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 38s (2 ✓)
+
+Good — only the module-size gate (Step 3, expected). Now the tests for the helper.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_message_claims_… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3498..3512 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 66 lines)
+            // Substring near-miss must not fire (same discipline as REPAIR_TOKENS).
+            assert!(!message_claims_revert("abc1234 add a reverter helper"));
+  +     }
+  + 
+  +     fn entry(message: &str, files: &[&str]) -> CommitEntry {
+  +         CommitEntry {
+  +             message: message.to_string(),
+  +             files: files.iter().map(|f| f.to_string()).collect(),
+  +         }
+  +     }
+  + 
+  +     /// The fixture the corroboration table was missing: the repair lands in a
+  +     /// LATER window than the break, so it is the only touch of that file and
+  +     /// tier 2 drops it. Without the third value this window is booked green.
+  +     #[test]
+  +     fn test_uncorroborated_repair_window_is_flagged() {
+  +         let entries = vec![
+  +             entry("aaa1111 Day 164: Fix #710 — guard the empty case", &["src/commands_risk.rs"]),
+  +             entry("bbb2222 Day 164: docs — journal entry", &["journals/JOURNAL.md"]),
+  +         ];
+  ... (46 more lines)
+ ✓ (1m 40s)
+            // Substring near-miss must not fire (same discipline as REPAIR_TOKENS).
+            assert!(!message_claims_revert("abc1234 add a reverter helper"));
+  +     }
+  + 
+  +     fn entry(message: &str, files: &[&str]) -> CommitEntry {
+  +         CommitEntry {
+  +             message: message.to_string(),
+  +             files: files.iter().map(|f| f.to_string()).collect(),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test 2>&1 | g… ✓ (1m 33s)
+  4 tools completed in 3m 35s (4 ✓)
+
+All new tests pass. Now Step 3: the module-size gate and CLAUDE.md.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs && se… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 5 lines)
+        // git-log capture for the corroborated red-branch proof.
+  -     ("src/commands_risk.rs", 5035),
+  +     // Day 163 (#717): +131 lines — uncorroborated-repair third value
+  +     // (has_uncorroborated_repair_evidence + its green-branch call site) plus the
+  +     // three fixture tests pinning flagged / green / corroborated windows.
+  +     ("src/commands_risk.rs", 5166),
+ ✓ (56.1s)
+        // git-log capture for the corroborated red-branch proof.
+  -     ("src/commands_risk.rs", 5035),
+  +     // Day 163 (#717): +131 lines — uncorroborated-repair third value
+  +     // (has_uncorroborated_repair_evidence + its green-branch call site) plus the
+  +     // three fixture tests pinning flagged / green / corroborated windows.
+  +     ("src/commands_risk.rs", 5166),
+  2 tools completed in 1m 2s (2 ✓)
+
+Now the CLAUDE.md sentence:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "was yoyo's commit-messa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commit-message conventi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (58.2s)
+  3 tools completed in 1m 8s (3 ✓)
+
+All green. Verify the CLI report still renders:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ./… ✓ (196ms)
+
+Report renders. Now commit:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (42 lines) ✓ (22ms)
+
