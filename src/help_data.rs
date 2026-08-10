@@ -1494,8 +1494,16 @@ mod tests {
             ("lint", "/lint", crate::commands_lint::LINT_SUBCOMMANDS),
             ("plan", "/plan", crate::commands_plan::PLAN_SUBCOMMANDS),
             ("pr", "/pr", crate::commands::PR_SUBCOMMANDS),
-            ("refactor", "/refactor", crate::commands::REFACTOR_SUBCOMMANDS),
-            ("revisit", "/revisit", crate::commands_revisit::REVISIT_SUBCOMMANDS),
+            (
+                "refactor",
+                "/refactor",
+                crate::commands::REFACTOR_SUBCOMMANDS,
+            ),
+            (
+                "revisit",
+                "/revisit",
+                crate::commands_revisit::REVISIT_SUBCOMMANDS,
+            ),
             ("risk", "/risk", crate::commands_risk::RISK_SUBCOMMANDS),
             ("skill", "/skill", crate::commands_skill::SKILL_SUBCOMMANDS),
             ("spawn", "/spawn", crate::commands_spawn::SPAWN_SUBCOMMANDS),
