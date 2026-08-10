@@ -5,10 +5,14 @@
 //! ranking half only: a file is high-epistemic-value (the model is blind
 //! about it) when it has been *predicted* (reactive `top_10` or anticipatory
 //! `emerging`) but never *graded* (never appeared in any validation event's
-//! outcome, neither as hit nor surprise), when the two prediction columns
-//! disagree about it (an outcome touching it would settle which model is
-//! right), or — at lower weight — when it went stale (last seen many
-//! snapshots ago with no graded event since).
+//! outcome, neither as hit nor surprise), or — at lower weight — when it went
+//! stale (last seen many snapshots ago with no graded event since). Study
+//! history from the experiment ledger discounts both.
+//!
+//! A third signal used to live here: "the reactive and anticipatory columns
+//! disagree about this file". It was removed on Day 163 (#726) as the last
+//! live consumer of the `emerging` column deleted in #724 — see that module's
+//! ledger for the measurement.
 //!
 //! Steering the self-driven planner slot at this ranking is a named
 //! follow-up, not part of this module.
@@ -20,25 +24,9 @@ use crate::format::{BOLD, CYAN, DIM, RESET, YELLOW};
 /// the model has made claims about this file that no outcome ever tested.
 pub(crate) const W_NEVER_GRADED: f64 = 2.0;
 
-/// Maximum weight per recent snapshot where the reactive (`top_10`) and
-/// anticipatory (`emerging`) columns disagree about a file — an outcome
-/// touching it would settle which model is right.
-///
-/// Scaling (Day 144): a flat per-snapshot count made large multi-way ties
-/// (every disagreeing file scored identically), so each disagreeing snapshot
-/// now contributes `W_DISAGREE × magnitude` where magnitude ∈ (0, 1] is how
-/// strongly the claiming column ranks the file: top of its list = 1.0 (a
-/// full-throated claim the other column ignores — full weight), position
-/// `i` of `n` = `(n − i) / n` (proportional). `W_DISAGREE` remains the
-/// per-snapshot maximum.
-pub(crate) const W_DISAGREE: f64 = 1.0;
-
 /// Lower weight for staleness: last seen ≥ [`STALE_SNAPSHOT_GAP`] snapshots
 /// ago with no graded event since.
 pub(crate) const W_STALE: f64 = 0.5;
-
-/// How many of the most recent snapshots are checked for column disagreement.
-pub(crate) const DISAGREE_WINDOW: usize = 3;
 
 /// A file last seen this many snapshots ago (or more) counts as stale.
 pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
@@ -547,28 +535,6 @@ pub(crate) fn compute_epistemic_ranking(
         }
     }
 
-    // Column disagreement over the most recent DISAGREE_WINDOW snapshots:
-    // file appears in exactly one of (predicted, emerging). Each disagreeing
-    // snapshot contributes a magnitude in (0, 1] — how strongly the claiming
-    // column ranks the file (see W_DISAGREE docs) — so stronger unresolved
-    // claims outrank weaker ones instead of tying flat.
-    let window_start = snapshots.len().saturating_sub(DISAGREE_WINDOW);
-    let mut disagree_count: HashMap<&str, usize> = HashMap::new();
-    let mut disagree_magnitude: HashMap<&str, f64> = HashMap::new();
-    for snap in &snapshots[window_start..] {
-        let predicted: HashSet<&str> = snap.predicted.iter().map(String::as_str).collect();
-        let emerging: HashSet<&str> = snap.emerging.iter().map(String::as_str).collect();
-        for p in predicted.symmetric_difference(&emerging) {
-            let claiming = if predicted.contains(p) {
-                &snap.predicted
-            } else {
-                &snap.emerging
-            };
-            *disagree_count.entry(p).or_insert(0) += 1;
-            *disagree_magnitude.entry(p).or_insert(0.0) += rank_magnitude(claiming, p);
-        }
-    }
-
     let last_index = snapshots.len() - 1;
     // Latest experiment visit per file. This is study history, NOT grading
     // history: it says "I read this file on purpose", never "the risk model
@@ -612,20 +578,6 @@ pub(crate) fn compute_epistemic_ranking(
         if graded_day.is_none() {
             score += W_NEVER_GRADED;
             reasons.push(format!("predicted {appearances}×, never graded"));
-        }
-
-        if let Some(&d) = disagree_count.get(path.as_str()) {
-            if d > 0 {
-                let magnitude = disagree_magnitude
-                    .get(path.as_str())
-                    .copied()
-                    .unwrap_or(d as f64);
-                score += W_DISAGREE * magnitude;
-                reasons.push(format!(
-                    "reactive/emerging disagree in {d} of last {} snapshots (magnitude {magnitude:.2})",
-                    snapshots.len().min(DISAGREE_WINDOW)
-                ));
-            }
         }
 
         let snapshots_ago = last_index - s.last_seen_index;
@@ -688,17 +640,6 @@ pub(crate) fn compute_epistemic_ranking(
         }
     });
     entries
-}
-
-/// How strongly a column claims `path`: 1.0 for the top of the list, down to
-/// `1/len` for the last entry, 0.0 if absent. Both columns are ordered
-/// strongest-first (top_10 by risk score, emerging by momentum), so position
-/// is an honest proxy for claim strength.
-fn rank_magnitude(list: &[String], path: &str) -> f64 {
-    match list.iter().position(|p| p == path) {
-        Some(idx) if !list.is_empty() => (list.len() - idx) as f64 / list.len() as f64,
-        _ => 0.0,
-    }
 }
 
 /// Every scored path that appears in **no** snapshot's `predicted` column and
@@ -930,23 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn test_column_disagreement_gets_reason() {
-        // c.rs appears in emerging but not top_10 — columns disagree.
-        let snapshots = vec![snap(100, &["src/a.rs"], &["src/c.rs"])];
-        let events = vec![graded(100, &["src/a.rs", "src/c.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
-        let c = ranking
-            .iter()
-            .find(|e| e.path == "src/c.rs")
-            .expect("disagreement file must appear even when graded");
-        assert!(
-            c.reasons.iter().any(|r| r.contains("disagree")),
-            "reason names the disagreement: {:?}",
-            c.reasons
-        );
-    }
-
-    #[test]
     fn test_graded_agreeing_file_absent() {
         // a.rs in both columns (agree) and graded — nothing left to learn.
         let snapshots = vec![snap(100, &["src/a.rs"], &["src/a.rs"])];
@@ -1007,35 +931,21 @@ mod tests {
     }
 
     #[test]
-    fn test_disagreement_window_only_recent() {
-        // d.rs disagrees only in an old snapshot, outside the window of 3.
-        let snapshots = vec![
-            snap(100, &["src/d.rs"], &[]), // disagree, but old
-            snap(101, &["src/x.rs"], &["src/x.rs"]),
-            snap(102, &["src/x.rs"], &["src/x.rs"]),
-            snap(103, &["src/x.rs"], &["src/x.rs"]),
-        ];
-        let events = vec![graded(104, &["src/d.rs"])];
-        let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
-        let d = ranking.iter().find(|e| e.path == "src/d.rs");
-        assert!(
-            d.is_none(),
-            "old disagreement outside window must not score"
-        );
-    }
-
-    #[test]
     fn test_score_is_sum_of_signals() {
-        // e.rs: never graded (2.0) + disagrees in 1 recent snapshot (1.0)
-        let snapshots = vec![snap(100, &[], &["src/e.rs"])];
+        // e.rs: never graded (2.0) + stale, seen only in the first of 7
+        // snapshots with no graded event since (0.5).
+        let mut snapshots = vec![snap(100, &[], &["src/e.rs"])];
+        for d in 101..107 {
+            snapshots.push(snap(d, &["src/other.rs"], &[]));
+        }
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let e = ranking
             .iter()
             .find(|en| en.path == "src/e.rs")
             .expect("must appear");
         assert!(
-            (e.score - (W_NEVER_GRADED + W_DISAGREE)).abs() < 1e-9,
-            "score {} should be W_NEVER_GRADED + W_DISAGREE",
+            (e.score - (W_NEVER_GRADED + W_STALE)).abs() < 1e-9,
+            "score {} should be W_NEVER_GRADED + W_STALE",
             e.score
         );
     }
@@ -1048,39 +958,6 @@ mod tests {
             format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
-    }
-
-    #[test]
-    fn test_larger_disagreement_magnitude_ranks_higher() {
-        // Both files never graded and both disagree once, but top.rs sits at
-        // the top of the predicted column (magnitude 1.0) while bottom.rs is
-        // last (magnitude 0.5) — the stronger unresolved claim ranks higher.
-        let snapshots = vec![snap(100, &["src/top.rs", "src/bottom.rs"], &[])];
-        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let pos_top = ranking
-            .iter()
-            .position(|e| e.path == "src/top.rs")
-            .expect("top must appear");
-        let pos_bottom = ranking
-            .iter()
-            .position(|e| e.path == "src/bottom.rs")
-            .expect("bottom must appear");
-        assert!(
-            pos_top < pos_bottom,
-            "larger-magnitude disagreement must rank higher"
-        );
-        let top = &ranking[pos_top];
-        let bottom = &ranking[pos_bottom];
-        assert!(
-            (top.score - (W_NEVER_GRADED + W_DISAGREE)).abs() < 1e-9,
-            "top-ranked claim gets full disagree weight, got {}",
-            top.score
-        );
-        assert!(
-            (bottom.score - (W_NEVER_GRADED + W_DISAGREE * 0.5)).abs() < 1e-9,
-            "bottom-ranked claim gets proportional weight, got {}",
-            bottom.score
-        );
     }
 
     #[test]
@@ -1147,8 +1024,18 @@ mod tests {
 
     #[test]
     fn test_report_no_tie_note_when_scores_distinct() {
-        let snapshots = vec![snap(100, &["src/a.rs", "src/b.rs"], &[])];
+        // Distinct scores from the surviving signals: stale.rs is never
+        // graded *and* stale (2.0 + 0.5), other.rs is only never graded.
+        let mut snapshots = vec![snap(100, &["src/stale.rs"], &[])];
+        for d in 101..107 {
+            snapshots.push(snap(d, &["src/other.rs"], &[]));
+        }
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+        assert!(
+            (ranking[0].score - ranking[1].score).abs() > SCORE_EPSILON,
+            "fixture must NOT tie, got {:?}",
+            ranking.iter().map(|e| e.score).collect::<Vec<_>>()
+        );
         let report =
             format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
         assert!(

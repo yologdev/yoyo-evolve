@@ -642,7 +642,9 @@ EPISTEMIC_ENTRY_MAX_CHARS = 90
 EPISTEMIC_ENTRY_RE = re.compile(r"^\s*\d+\.\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$")
 
 # Verbose reasons from the report, compacted to fit the byte budget.
-EPISTEMIC_DISAGREE_RE = re.compile(r"reactive/emerging disagree in (\d+) of last (\d+) snapshots")
+# (Day 163 / #726: the "reactive/emerging disagree" reason is gone — the
+# epistemic ranking's disagreement signal was the last live consumer of the
+# emerging column deleted in #724. Nothing emits that string any more.)
 EPISTEMIC_STALE_RE = re.compile(r"last seen (\d+) snapshots ago, no graded event since")
 # Study history (dreams/experiments.jsonl), NOT validation grading — kept as its
 # own compaction so the planner can see the expedition it already sent.
@@ -670,9 +672,6 @@ EPISTEMIC_NEVER_FORECAST_SHOWN = 2
 
 def compact_epistemic_reason(reason: str) -> str:
     """Shrink a verbose report reason to a few words (2KB total budget)."""
-    m = EPISTEMIC_DISAGREE_RE.search(reason)
-    if m:
-        return f"columns disagree {m.group(1)}/{m.group(2)}"
     m = EPISTEMIC_STALE_RE.search(reason)
     if m:
         return f"stale ({m.group(1)} snapshots)"
