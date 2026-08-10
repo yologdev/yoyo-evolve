@@ -1,0 +1,226 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing consumer and the types I need to reuse.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_report.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub\(([a-z()]*)\)\? \?f… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,700p' src/commands_r… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '574,600p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -2 .yoyo/risk_validations.j… ✓ (7ms)
+ ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:574..594 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DetailedEvent" -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,335p' src/commands_r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_risk… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 41s (10 ✓)
+
+Verified the method reproduces the planned 38.7% on live data. Now the implementation.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs:200..222 ✓ (0ms)
+
+Now the edit: helper + consumer in one change.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (1 → 4 lines)
+  - use crate::commands_risk_snapshots::{load_validation_history_from, RISK_VALIDATION_PATH};
+  + use crate::commands_risk_snapshots::{
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events, snapshot_before,
+  +     ParsedSnapshot, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  + };
+ ✓ (19.8s)
+  - use crate::commands_risk_snapshots::{load_validation_history_from, RISK_VALIDATION_PATH};
+  + use crate::commands_risk_snapshots::{
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events, snapshot_before,
+  +     ParsedSnapshot, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  + };
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (8 → 158 lines)
+  + ///
+  + /// Day 163 (#720 step 2) adds the *denominator's* honest upper bound beside the
+  + /// numerator: see `emerging_achievable_ceiling`.
+    pub(crate) fn emerging_track_record_note() -> Option<String> {
+  -     emerging_track_record_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  +     emerging_track_record_note_from(
+  +         std::path::Path::new(RISK_VALIDATION_PATH),
+  +         std::path::Path::new(RISK_SNAPSHOT_PATH),
+  +     )
+    }
+    
+  - /// Inner implementation with configurable path (for testing).
+  - fn emerging_track_record_note_from(path: &std::path::Path) -> Option<String> {
+  + /// Best recall the emerging column *could* have scored on the graded
+  + /// failure-day events, given how many files it actually named at grading time.
+  + ///
+  + /// Why this exists (#720 step 2, Day 163 lesson "a zero I can blame on the
+  + /// instrument is a zero I never have to accept"): the column reads 0% and every
+  + /// repair since Day 138 went to the grading apparatus. If the recorded emerging
+  + /// lists were structurally too small to cover the outcomes, the zero would be
+  ... (141 more lines)
+ ✓ (12.5s)
+  + ///
+  + /// Day 163 (#720 step 2) adds the *denominator's* honest upper bound beside the
+  + /// numerator: see `emerging_achievable_ceiling`.
+    pub(crate) fn emerging_track_record_note() -> Option<String> {
+  -     emerging_track_record_note_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  +     emerging_track_record_note_from(
+  +         std::path::Path::new(RISK_VALIDATION_PATH),
+  +         std::path::Path::new(RISK_SNAPSHOT_PATH),
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+Now wire the state-3 render (the consumer half).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs:380..420 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (8 → 20 lines)
+            Some(r) => format!(" (reactive column: {r:.0}%)"),
+            None => String::new(),
+        };
+  +     // The achievable ceiling: how well this column *could* have done given the
+  +     // list sizes it actually recorded. `None` (un-pairable / no snapshots) adds
+  +     // nothing — the three original states stay byte-identical without it.
+  +     let snapshots = std::fs::read_to_string(snapshot_path)
+  +         .map(|c| parse_all_snapshots(&c))
+  +         .unwrap_or_default();
+  +     let timed = std::fs::read_to_string(path)
+  +         .map(|c| parse_timed_validation_events(&c))
+  +         .unwrap_or_default();
+  +     let ceiling_clause = emerging_achievable_ceiling(&timed, &snapshots)
+  +         .map(|c| ceiling_clause(&c, pct))
+  +         .unwrap_or_default();
+        Some(format!(
+  -         "track record: {pct:.0}% recall over {samples} graded failure day{plural}{reactive_clause}{ungraded_clause}"
+  +         "track record: {pct:.0}% recall over {samples} graded failure day{plural}{reactive_clause}{ungraded_clause}{ceiling_clause}"
+        ))
+    }
+ ✓ (12.6s)
+            Some(r) => format!(" (reactive column: {r:.0}%)"),
+            None => String::new(),
+        };
+  +     // The achievable ceiling: how well this column *could* have done given the
+  +     // list sizes it actually recorded. `None` (un-pairable / no snapshots) adds
+  +     // nothing — the three original states stay byte-identical without it.
+  +     let snapshots = std::fs::read_to_string(snapshot_path)
+  +         .map(|c| parse_all_snapshots(&c))
+  ... (12 more lines)
+  2 tools completed in 19.4s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:452:17
+    [1m[94m|[0m
+[1m[94m452[0m [1m[94m|[0m         assert!(emerging_track_record_note_from(&path).is_none());
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m-------[0m [1m[94margument #2 of type `&std::path::Path` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_risk_report.rs:374:4
+    [1m[94m|[0m
+[1m[94m374[0m [1m[94m|[0m fn emerging_track_record_note_from(
+    [1m[94m|[0m    [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m375[0m [1m[94m|[0m     path: &std::path::Path,
+[1m[94m376[0m [1m[94m|[0m     snapshot_path: &std::path::Path,
+    [1m[94m|[0m     [1m[94m-------------------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m452[0m [1m[94m| [0m        assert!(emerging_track_record_note_from(&path[92m, /* &std::path::Path */[0m).is_none());
+    [1m[94m|[0m                                                      [92m++++++++++++++++++++++++[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/commands_risk_report.rs:456:17
+    [1m[94m|[0m
+[1m[94m456[0m [1m[94m|[0m         assert!(emerging_track_record_note_from(&empty).is_none());
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m--------[0m [1m[94margument #2 of type `&std::path::Path` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_risk_report.rs:374:4
+    [1m[94m|[0m
+[1m[94m374[0m [1m[94m|[0m fn emerging_track_record_note_from(
+    [1m[94m|[0m    [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m375[0m...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging_track_record_n… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,460p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.4s (3 ✓)
+
+Now the new tests for the ceiling.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,530p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (8 → 245 lines)
+            assert!(
+                note.contains("1 failure-day event carried no emerging forecast"),
+                "expected the ungraded tail (singular), got: {note}"
+  +         );
+  +         // No snapshots on disk → the ceiling is un-computable, and the note is
+  +         // byte-identical to step 1's output (no stray clause).
+  +         assert!(
+  +             !note.contains("achievable ceiling"),
+  +             "unmeasurable ceiling must add nothing: {note}"
+  +         );
+  +     }
+  + 
+  +     // ---- #720 step 2: achievable ceiling ------------------------------------
+  + 
+  +     /// One validation JSONL line with an explicit timestamp and outcome set.
+  +     fn event_line(ts: &str, severity: Option<&str>, paths: &[&str], emerging: Option<f64>) -> String {
+  +         let sev = match severity {
+  +             Some(s) => format!(r#","severity":"{s}""#),
+  +             None => String::new(),
+  +         };
+  ... (223 more lines)
+ ✓ (1m 35s)
+            assert!(
+                note.contains("1 failure-day event carried no emerging forecast"),
+                "expected the ungraded tail (singular), got: {note}"
+  +         );
+  +         // No snapshots on disk → the ceiling is un-computable, and the note is
+  +         // byte-identical to step 1's output (no stray clause).
+  +         assert!(
+  +             !note.contains("achievable ceiling"),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 35s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_report … ✓ (183ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '697,760p' src/commands_r… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (8 → 11 lines)
+  -     /// One snapshot JSONL line whose emerging list has `n` entries.
+  +     /// One snapshot JSONL line whose emerging list has `n` entries. Shaped
+  +     /// like the real ledger: both columns are arrays of objects with a `path`
+  +     /// key, and `top_10` must be non-empty or `parse_all_snapshots` drops the
+  +     /// line entirely.
+        fn snapshot_line(ts: &str, n: usize) -> String {
+  -         let emerging: Vec<String> = (0..n).map(|i| format!("\"src/e{i}.rs\"")).collect();
+  +         let emerging: Vec<String> = (0..n).map(|i| format!(r#"{{"path":"src/e{i}.rs"}}"#)).collect();
+            format!(
+  -             r#"{{"day":163,"git_hash":"abc{n}","ts":"{ts}","top_10":[],"emerging":[{e}]}}"#,
+  +             r#"{{"day":163,"git_hash":"abc{n}","ts":"{ts}","top_10":[{{"path":"src/hot.rs"}}],"emerging":[{e}]}}"#,
+                e = emerging.join(",")
+            )
+        }
+ ✓ (1m 39s)
+  -     /// One snapshot JSONL line whose emerging list has `n` entries.
+  +     /// One snapshot JSONL line whose emerging list has `n` entries. Shaped
+  +     /// like the real ledger: both columns are arrays of objects with a `path`
+  +     /// key, and `top_10` must be non-empty or `parse_all_snapshots` drops the
+  +     /// line entirely.
+        fn snapshot_line(ts: &str, n: usize) -> String {
+  -         let emerging: Vec<String> = (0..n).map(|i| format!("\"src/e{i}.rs\"")).collect();
+  +         let emerging: Vec<String> = (0..n).map(|i| format!(r#"{{"path":"src/e{i}.rs"}}"#)).collect();
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_report … ✓ (195ms)
+  7 tools completed in 5m 46s (7 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+

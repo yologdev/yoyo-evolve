@@ -1,0 +1,257 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the dispatcher arms — the task says read what's actually routed before adding anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"verify"\|=> {' src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'GOAL_SUBCOMMANDS' -r sr… ✓ (8ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,300p src/commands_goa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"goal" =>' -A 40 src/he… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'SPAWN_SUBCOMMANDS' -r s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"spawn" =>' -A 30 src/h… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1470,1510p src/help_data.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_help_data_git_entr… ✓ (3ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 20.3s (8 ✓)
+
+Interesting — there's already a test_spawn_help_mentions_every_subcommand, but it passes on a bare substring ("manifests" appears as a noun in prose). That's a container-check proxy. Let me read the actual dispatcher arms.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"manifest\|"runs"\|"rep… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 645,700p src/commands_spa… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.6s (2 ✓)
+
+Confirmed both drifts. Now writing the tests first. Test 1 goes in src/commands.rs next to GOAL_SUBCOMMANDS:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 205,215p src/commands.rs;… ✓ (10ms)
+  ▶ edit src/commands.rs (5 → 44 lines)
+        #[test]
+        fn test_closest_match_empty_candidates() {
+            assert_eq!(closest_match("anything", &[], 2), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_goal_subcommands_cover_every_documented_verb() {
+  +         // Drift guard (#722): `/goal verify` was routed by handle_goal and
+  +         // documented in /help goal, but missing from GOAL_SUBCOMMANDS — so the
+  +         // inline hint never named it and `/goal ver<Tab>` completed nothing. A
+  +         // working feature invisible to the surfaces users discover it through.
+  +         //
+  +         // Direction that catches THAT drift: every verb the help entry writes
+  +         // as `/goal <verb>` must be in the completion table.
+  +         let entry = crate::help_data::command_help("goal").expect("/goal has a help entry");
+  +         for line in entry.lines() {
+  +             for occurrence in line.split("/goal ").skip(1) {
+  +                 let verb = occurrence.split_whitespace().next().unwrap_or("");
+  +                 // Skip placeholders like `<desc>` — those are arguments, not verbs.
+  +                 if verb.is_empty() || verb.starts_with('<') {
+  ... (24 more lines)
+ ✓ (1m 36s)
+        #[test]
+        fn test_closest_match_empty_candidates() {
+            assert_eq!(closest_match("anything", &[], 2), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_goal_subcommands_cover_every_documented_verb() {
+  +         // Drift guard (#722): `/goal verify` was routed by handle_goal and
+  ... (13 more lines)
+  2 tools completed in 1m 50s (2 ✓)
+
+Now test 2 — strengthening the existing spawn help test from a bare substring match to the usage-line payload:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (8 → 30 lines)
+                assert!(
+                    help.contains(sub),
+                    "/spawn help is missing subcommand `{sub}`"
+  +             );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_help_names_every_verb_in_a_usage_line() {
+  +         // Stronger than the sibling above, which passes on a bare substring
+  +         // match anywhere in the entry. `manifest`/`manifests` were routed by
+  +         // handle_spawn and listed in SPAWN_SUBCOMMANDS, yet appeared in the
+  +         // help only as a NOUN in prose ("--parallel run manifests") — so the
+  +         // substring check was green while the usage block never named them as
+  +         // verbs (#722). Assert the payload (a `/spawn <verb>` usage line), not
+  +         // the container (the word occurring somewhere).
+  +         let help = command_help("spawn").expect("/spawn has a help entry");
+  +         for sub in crate::commands_spawn::SPAWN_SUBCOMMANDS {
+  +             if sub.starts_with('-') {
+  +                 continue; // flags are documented as `/spawn --flag <task>` forms
+  ... (8 more lines)
+ ✓ (1m 36s)
+                assert!(
+                    help.contains(sub),
+                    "/spawn help is missing subcommand `{sub}`"
+  +             );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Both tests are in. Let me confirm they fail for the right reasons before fixing anything:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal_subcommands 2>&1… ✓ (338ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal_subcommands_cove… ✓ (308ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.5s (2 ✓)
+
+The spawn failure is exactly right. The goal test trips on the entry's title line (/goal — Set, view…) — I need to skip non-verb tokens:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (5 → 7 lines)
+                    let verb = occurrence.split_whitespace().next().unwrap_or("");
+  -                 // Skip placeholders like `<desc>` — those are arguments, not verbs.
+  -                 if verb.is_empty() || verb.starts_with('<') {
+  +                 // A verb is a bare lowercase word. Skip placeholders (`<desc>`)
+  +                 // and prose that merely follows the command name (the entry's
+  +                 // own title line reads "/goal — Set, view, or check ...").
+  +                 if verb.is_empty() || !verb.chars().all(|c| c.is_ascii_lowercase()) {
+                        continue;
+                    }
+ ✓ (1m 38s)
+                    let verb = occurrence.split_whitespace().next().unwrap_or("");
+  -                 // Skip placeholders like `<desc>` — those are arguments, not verbs.
+  -                 if verb.is_empty() || verb.starts_with('<') {
+  +                 // A verb is a bare lowercase word. Skip placeholders (`<desc>`)
+  +                 // and prose that merely follows the command name (the entry's
+  +                 // own title line reads "/goal — Set, view, or check ...").
+  +                 if verb.is_empty() || !verb.chars().all(|c| c.is_ascii_lowercase()) {
+                        continue;
+                    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal_subcommands_cove… ✓ (191ms)
+  2 tools completed in 1m 41s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4738 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both tests failed red for exactly the reasons they were written to catch. Now the two mechanical fixes.
+  ▶ edit src/commands.rs (2 → 4 lines)
+  - /// Subcommands for `/goal`.
+  - pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check"];
+  + /// Subcommands for `/goal`. Mirrors the arms `handle_goal` actually routes —
+  + /// `verify` is routed (and documented) but was missing here until #722, so the
+  + /// inline hint and `/goal ver<Tab>` silently under-reported a working feature.
+  + pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check", "verify"];
+ ✓ (1m 39s)
+  - /// Subcommands for `/goal`.
+  - pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check"];
+  + /// Subcommands for `/goal`. Mirrors the arms `handle_goal` actually routes —
+  + /// `verify` is routed (and documented) but was missing here until #722, so the
+  + /// inline hint and `/goal ver<Tab>` silently under-reported a working feature.
+  + pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check", "verify"];
+  ▶ edit src/help_data.rs (2 → 5 lines)
+                 \x20 /spawn worktrees                List active spawn worktrees\n\
+  +              \x20 /spawn manifest                 List recorded fan-out run manifests\n\
+  +              \x20 /spawn manifests                Alias for /spawn manifest\n\
+  +              \x20 /spawn manifest <id>            Show one recorded manifest in detail\n\
+                 \x20 /spawn runs                     List recorded --parallel run manifests\n\
+ ✓ (1m 43s)
+                 \x20 /spawn worktrees                List active spawn worktrees\n\
+  +              \x20 /spawn manifest                 List recorded fan-out run manifests\n\
+  +              \x20 /spawn manifests                Alias for /spawn manifest\n\
+  +              \x20 /spawn manifest <id>            Show one recorded manifest in detail\n\
+                 \x20 /spawn runs                     List recorded --parallel run manifests\n\
+  2 tools completed in 3m 29s (2 ✓)
+
+The auto-check stopped complaining on the second edit. Verifying explicitly — the two target tests, then the full gate including module_size:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal_subcommands 2>&1… ✓ (348ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | grep -E … ✓ (118ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bins 2>&1 | tail -3… ✓ (53.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 1s (3 ✓)
+
+All 4738 pass. Now the explicit gates the task named — module_size, clippy, fmt:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --… (3 lines) ✓ (961ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.4s (2 ✓)
+
+The REPL needs credentials — but both consumers (hint_from!(GOAL_SUBCOMMANDS) and filter_candidates(GOAL_SUBCOMMANDS, …)) read that const directly, so the fix is structural. Committing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (38 lines) ✓ (19ms)
+
+Committed. 🐙
+
+## What I did
+
+Two mechanical repairs, both verified against the dispatcher before touching anything:
+
+A — `/goal verify` (src/commands.rs): handle_goal routes verify, verify clear, verify <cmd>; /help goal documents all three; GOAL_SUBCOMMANDS didn't list it. Both discovery surfaces read that one const (hint_from! for the inline hint, filter_candidates for tab-completion), so a working documented feature was invisible to exactly the surfaces users find commands through. Added "verify" — nothing more, since #702 was the opposite failure (a hinted verb nothing implemented).
+
+B — `/spawn manifest[s]` (src/help_data.rs): three usage lines matching what's actually routed (manifest/manifests → list, manifest <id> → show).
+
+## The part worth reporting
+
+Instance B already had a guard — `test_spawn_help_mentions_every_subcommand asserted help.contains(sub) for every entry, and it was **green**. It passed because "manifests" occurs in the entry's prose as a noun ("--parallel` run manifests"). The proof had settled at the layer cheapest to assert against: a container check standing in for the payload. I replaced it with one asserting the usage form /spawn <verb>, and confirmed it fails red against the pre-fix text.
+
+## Verification
+
+Both tests written first and observed failing for the right reasons before either fix (/goal verify … GOAL_SUBCOMMANDS omits it; /spawn help never writes /spawn manifest). After: 4737 passed, 1 ignored, 0 failed; cargo test --test module_size green; clippy --all-targets -D warnings clean; fmt applied.
+
+src/commands_spawn.rs untouched — it sits at exactly its 3913-line recorded ceiling, and one added line would have reverted the whole task (that killed #719 and #721 today).
+
+## What I did *not* do
+
+The structural fix stays open, and I said so in the commit rather than letting the closure imply more than it earned: there are three hand-maintained copies per command and a drift test on exactly one of them (/git). Until the table-driven generalisation exists, the next drift gets found the way this one did — by accident. I skipped filing the follow-up issue (explicitly optional, and #722 remains open carrying the class).
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+  📊 Risk validation: 2/2 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands.rs, src/help_data.rs
+

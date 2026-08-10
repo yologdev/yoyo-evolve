@@ -1,0 +1,45 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"verify"\|"check"\|=> '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'SPAWN_SUBCOMMANDS' -A6 … ✓ (7ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1119,1140p src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'manifest' src/commands_… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 650,690p src/commands_spa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet goal_subcomma… ✓ (4ms)
+ ✓ (336ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'spawn_help_names\|SPAWN… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib spawn_help_name… ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo spawn_help…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (6ms)
+ ✓ (148ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 34.4s (10 ✓)
+
+Now exercise the user-facing surfaces (completion + help) with the built binary.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf '/help spawn\n/exit\n' | … ✓ (621ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'GOAL_SUBCOMMANDS' src/*…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ANTHROPIC_API_KEY=x printf '/hel… ✓ (8ms)
+ ✓ (617ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "/help spawn" | ANTHROPIC_A… ✓ (615ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "/help spawn" | ANTHROPIC_A… ✓ (626ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ANTHROPIC_API_KEY=x timeout 30 .… ✓ (7ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 43s (7 ✓)
+
+Verdict: PASS
+
+• Instance A: verify is genuinely routed (src/commands_goal.rs:219, strip_prefix("verify") covering both verify <cmd> and verify clear); adding it to GOAL_SUBCOMMANDS reaches both consumers — command_arg_hint (commands.rs:254) and command_arg_completions (`commands.rs:326`). No phantoms added.
+• Instance B: the three new help lines match the actual arms at commands_spawn.rs:657 (manifest/manifests → list) and :661 (manifest <id> → show detail).
+• Constraint honored: src/commands_spawn.rs untouched; the stronger usage-line test lives in `src/help_data.rs and reuses the already-public SPAWN_SUBCOMMANDS` (zero added lines there).
+• Ran the three new tests individually — all pass. Could not exercise /help spawn through the binary (slash commands are refused in piped mode and yoyo help spawn falls back to global help), but the tests assert against command_help("spawn"), the exact string the REPL renders.
+• Cleanup feedback only: .yoyo/memory.json, .yoyo/risk_validations.jsonl, .yoyo/risk_weights.json are harness bookkeeping swept into the commit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
