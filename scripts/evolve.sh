@@ -2039,6 +2039,17 @@ EVALEOF
             echo "eval_checklist task=$TASK_NUM attempt=$EVAL_ATTEMPT status=${EVAL_MISSING:+incomplete}${EVAL_MISSING:-complete} missing=${EVAL_MISSING:-none} na=$EVAL_NA" \
                 >> "$SESSION_STAGING/eval_checklist.log" \
                 || echo "    WARNING: could not record checklist status to $SESSION_STAGING/eval_checklist.log" >&2
+            # Stage the verdict itself, not just the status line. The checklist
+            # log records whether the four items were ANSWERED; it cannot record
+            # whether the answers were specific or boilerplate, and the verdict
+            # file is deleted before the next attempt (and with session_plan/ at
+            # wrap-up), so that question was unanswerable from the audit branch.
+            # 17/17 complete over Day 163 with zero degrades is either a
+            # compliant evaluator or a non-discriminating check, and the status
+            # line alone cannot tell those apart.
+            cp "$EVAL_F" \
+                "$SESSION_STAGING/eval_verdict_task${TASK_NUM}_attempt${EVAL_ATTEMPT}.md" 2>/dev/null \
+                || echo "    WARNING: could not stage evaluator verdict for task $TASK_NUM attempt $EVAL_ATTEMPT" >&2
             if [ -n "$EVAL_MISSING" ]; then
                 echo "    Evaluator: checklist incomplete (missing/malformed: $EVAL_MISSING) — falling back to the freeform verdict."
             else

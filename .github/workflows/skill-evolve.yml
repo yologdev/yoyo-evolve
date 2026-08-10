@@ -2,7 +2,15 @@ name: Skill Evolution
 
 on:
   schedule:
-    - cron: '30 * * * *'  # hourly at :30 (off-phase from evolve which runs at :00); inner gate filters to ~once per ≥5 sessions
+    # Every 4h at :30 (off-phase from evolve's :00). Was hourly until Day 163.
+    # Every fire enters the shared `evolution` concurrency group below, and GitHub
+    # keeps only ONE pending run per group — so a no-op fire EVICTS whatever is
+    # queued, including a full scheduled evolve session. Measured 2026-08-10:
+    # 24 fires/day evicting ~33% of scheduled evolve runs, to serve a gate
+    # (counter >= 5 sessions) that has actually fired twice since 2026-05-25.
+    # At ~8 evolve sessions/day the counter reaches 5 within hours, so a 4h
+    # cadence still gives 6 chances/day and loses no responsiveness.
+    - cron: '30 */4 * * *'
   workflow_dispatch:       # manual trigger for testing
 
 concurrency:
