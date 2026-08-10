@@ -906,6 +906,9 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn collect <id>             Collect a finished background spawn\n\
              \x20 /spawn status                   Show all tracked spawns\n\
              \x20 /spawn worktrees                List active spawn worktrees\n\
+             \x20 /spawn manifest                 List recorded fan-out run manifests\n\
+             \x20 /spawn manifests                Alias for /spawn manifest\n\
+             \x20 /spawn manifest <id>            Show one recorded manifest in detail\n\
              \x20 /spawn runs                     List recorded --parallel run manifests\n\
              \x20 /spawn replay [<run_id>|latest] Re-launch a recorded fan-out\n\n\
              Creates a new AI agent with a separate context window to\n\
@@ -1492,6 +1495,28 @@ mod tests {
             assert!(
                 help.contains(sub),
                 "/spawn help is missing subcommand `{sub}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_spawn_help_names_every_verb_in_a_usage_line() {
+        // Stronger than the sibling above, which passes on a bare substring
+        // match anywhere in the entry. `manifest`/`manifests` were routed by
+        // handle_spawn and listed in SPAWN_SUBCOMMANDS, yet appeared in the
+        // help only as a NOUN in prose ("--parallel run manifests") — so the
+        // substring check was green while the usage block never named them as
+        // verbs (#722). Assert the payload (a `/spawn <verb>` usage line), not
+        // the container (the word occurring somewhere).
+        let help = command_help("spawn").expect("/spawn has a help entry");
+        for sub in crate::commands_spawn::SPAWN_SUBCOMMANDS {
+            if sub.starts_with('-') {
+                continue; // flags are documented as `/spawn --flag <task>` forms
+            }
+            assert!(
+                help.contains(&format!("/spawn {sub}")),
+                "/spawn help never writes `/spawn {sub}` as a usage line — the verb is \
+                 routed but users can't discover it"
             );
         }
     }

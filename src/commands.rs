@@ -206,8 +206,10 @@ pub const BG_SUBCOMMANDS: &[&str] = &["run", "list", "output", "kill"];
 /// Config subcommand names for `/config <Tab>` completion.
 pub const CONFIG_SUBCOMMANDS: &[&str] = &["show", "edit", "set", "get"];
 
-/// Subcommands for `/goal`.
-pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check"];
+/// Subcommands for `/goal`. Mirrors the arms `handle_goal` actually routes —
+/// `verify` is routed (and documented) but was missing here until #722, so the
+/// inline hint and `/goal ver<Tab>` silently under-reported a working feature.
+pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check", "verify"];
 
 pub const HISTORY_SUBCOMMANDS: &[&str] = &["detail"];
 
@@ -1680,5 +1682,46 @@ mod tests {
     #[test]
     fn test_closest_match_empty_candidates() {
         assert_eq!(closest_match("anything", &[], 2), None);
+    }
+
+    #[test]
+    fn test_goal_subcommands_cover_every_documented_verb() {
+        // Drift guard (#722): `/goal verify` was routed by handle_goal and
+        // documented in /help goal, but missing from GOAL_SUBCOMMANDS — so the
+        // inline hint never named it and `/goal ver<Tab>` completed nothing. A
+        // working feature invisible to the surfaces users discover it through.
+        //
+        // Direction that catches THAT drift: every verb the help entry writes
+        // as `/goal <verb>` must be in the completion table.
+        let entry = crate::help_data::command_help("goal").expect("/goal has a help entry");
+        for line in entry.lines() {
+            for occurrence in line.split("/goal ").skip(1) {
+                let verb = occurrence.split_whitespace().next().unwrap_or("");
+                // A verb is a bare lowercase word. Skip placeholders (`<desc>`)
+                // and prose that merely follows the command name (the entry's
+                // own title line reads "/goal — Set, view, or check ...").
+                if verb.is_empty() || !verb.chars().all(|c| c.is_ascii_lowercase()) {
+                    continue;
+                }
+                assert!(
+                    GOAL_SUBCOMMANDS.contains(&verb),
+                    "/help goal documents `/goal {verb}` but GOAL_SUBCOMMANDS omits it \
+                     — the hint and tab-completion will never offer it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_goal_subcommands_have_no_phantoms() {
+        // Opposite direction (#702's failure): a completion table must not
+        // advertise a verb the help entry doesn't document.
+        let entry = crate::help_data::command_help("goal").expect("/goal has a help entry");
+        for sub in GOAL_SUBCOMMANDS {
+            assert!(
+                entry.contains(&format!("/goal {sub}")),
+                "GOAL_SUBCOMMANDS offers `{sub}` but /help goal never documents `/goal {sub}`"
+            );
+        }
     }
 }
