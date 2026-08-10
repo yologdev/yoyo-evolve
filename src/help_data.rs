@@ -607,6 +607,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /skill show <name>  Show the full content of a skill\n\
              \x20 /skill path         Show the skills directory path(s)\n\
              \x20 /skill search [query]  Search GitHub for community skills\n\
+             \x20 /skill init <name>  Scaffold a new skill in .yoyo/skills/<name>/SKILL.md\n\
              \x20 /skill install <path>           Install a skill from a local directory\n\
              \x20 /skill install gh:user/repo     Install a skill from a GitHub repository\n\
              \x20 /skill install gh:user/repo/path  Install from a subdirectory of a repo\n\
@@ -797,7 +798,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /git stage           Interactive file staging picker\n\
              \x20 /git diff            Show unstaged changes\n\
              \x20 /git branch          List branches\n\
-             \x20 /git stash           Stash current changes\n\
+             \x20 /git stash push      Stash current changes (bare /git stash does the same)\n\
              \x20 /git stash pop       Restore stashed changes\n\
              \x20 /git stash list      List all stash entries\n\
              \x20 /git stash show [n]  Show diff of stash entry\n\
@@ -1019,11 +1020,15 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         "plan" => Some(
             "/plan — Plan mode toggle, one-shot planning, and plan-then-apply workflow\n\n\
              Usage:\n\
-             \x20 /plan on|open        Enter plan mode (read-only, agent thinks but won't modify)\n\
-             \x20 /plan off|close      Exit plan mode (return to normal operation)\n\
+             \x20 /plan on             Enter plan mode (read-only, agent thinks but won't modify)\n\
+             \x20 /plan open           Alias for /plan on\n\
+             \x20 /plan off            Exit plan mode (return to normal operation)\n\
+             \x20 /plan close          Alias for /plan off\n\
              \x20 /plan                Show current plan mode status\n\
              \x20 /plan <task>         One-shot plan: create a step-by-step plan without tools\n\
              \x20 /plan show           Display the last generated plan\n\
+             \x20 /plan status         Show per-step progress of the stored plan\n\
+             \x20 /plan step <N> done|undo  Mark step N of the stored plan complete (or not)\n\
              \x20 /plan apply          Execute the last generated plan (agent runs it with tools)\n\
              \x20 /plan clear          Discard the stored plan\n\n\
              Plan mode restricts the agent to read-only operations — it can read files,\n\
@@ -1464,6 +1469,91 @@ mod tests {
     use std::collections::HashSet;
 
     // ── Completeness tests ──
+
+    /// Every `*_SUBCOMMANDS` completion table paired with the command it belongs
+    /// to, plus the usage prefix its lines are written under. Consts are
+    /// IMPORTED, never re-typed — a hand-copied verb list pins my belief about
+    /// the table, not the table (Day 147).
+    ///
+    /// The prefix is separate from the help key because one table documents a
+    /// sub-subcommand: `git::STASH_SUBCOMMANDS` is the verb set after
+    /// `/git stash`, and lives in `command_help("git")`. Pairing it with the
+    /// conversation-level `/stash` would have silently "passed" on push/pop/
+    /// list/drop, which both commands happen to share — an accidental green of
+    /// exactly the kind this test exists to stop.
+    fn subcommand_tables() -> Vec<(&'static str, &'static str, &'static [&'static str])> {
+        vec![
+            ("bg", "/bg", crate::commands::BG_SUBCOMMANDS),
+            ("config", "/config", crate::commands::CONFIG_SUBCOMMANDS),
+            ("copy", "/copy", crate::commands_web::COPY_SUBCOMMANDS),
+            ("fork", "/fork", crate::commands_fork::FORK_SUBCOMMANDS),
+            ("git", "/git", crate::commands::GIT_SUBCOMMANDS),
+            ("git", "/git stash", crate::git::STASH_SUBCOMMANDS),
+            ("goal", "/goal", crate::commands::GOAL_SUBCOMMANDS),
+            ("history", "/history", crate::commands::HISTORY_SUBCOMMANDS),
+            ("lint", "/lint", crate::commands_lint::LINT_SUBCOMMANDS),
+            ("plan", "/plan", crate::commands_plan::PLAN_SUBCOMMANDS),
+            ("pr", "/pr", crate::commands::PR_SUBCOMMANDS),
+            ("refactor", "/refactor", crate::commands::REFACTOR_SUBCOMMANDS),
+            ("revisit", "/revisit", crate::commands_revisit::REVISIT_SUBCOMMANDS),
+            ("risk", "/risk", crate::commands_risk::RISK_SUBCOMMANDS),
+            ("skill", "/skill", crate::commands_skill::SKILL_SUBCOMMANDS),
+            ("spawn", "/spawn", crate::commands_spawn::SPAWN_SUBCOMMANDS),
+            ("watch", "/watch", crate::watch::WATCH_SUBCOMMANDS),
+            ("web", "/web", crate::commands_web::WEB_SUBCOMMANDS),
+        ]
+    }
+
+    #[test]
+    fn test_every_subcommand_table_is_documented_in_usage_form() {
+        // Arithmetic version of a guard I had been re-remembering per command.
+        // Three copies of every verb set exist — dispatcher, completion table,
+        // prose help — and nothing kept them in agreement, so the class was hit
+        // three times by accident (#702 /todo, #722 /goal verify + /spawn).
+        //
+        // The assertion is the literal USAGE FORM "/<cmd> <verb>", not a bare
+        // substring: /spawn's old bespoke guard stayed green while the drift was
+        // live because "manifests" happened to appear as a noun in prose.
+        //
+        // Disclosed scope limits (known gaps, NOT claims of coverage):
+        //  - Tokens starting with '-' (--deep, --all, -o, …) are skipped; flags
+        //    are documented in their own way and are not usage-form lines.
+        //  - CHECKPOINT_SUBCOMMANDS (src/commands_fork.rs) and
+        //    CONTEXT_SUBCOMMANDS (src/commands_project.rs) are private to their
+        //    modules and are NOT covered here. Widening their visibility is a
+        //    separate sweep, deliberately not done in this task.
+        //  - A verb documented only inside an alternation ("/plan on|open")
+        //    does not count: `/help` readers scan usage lines, and an alias
+        //    hidden behind a pipe is what the drift looked like in practice.
+        let mut missing: Vec<String> = Vec::new();
+
+        for (cmd, prefix, subs) in subcommand_tables() {
+            let help =
+                command_help(cmd).unwrap_or_else(|| panic!("/{cmd} should have a help entry"));
+            for sub in subs {
+                if sub.starts_with('-') {
+                    continue;
+                }
+                let usage = format!("{prefix} {sub}");
+                if !help.contains(&usage) {
+                    missing.push(format!(
+                        "  {prefix} — table lists `{sub}` but `command_help(\"{cmd}\")` never \
+                         contains the usage form \"{usage}\""
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "{} subcommand(s) are in a completion table but undocumented in usage form.\n\
+             Either add a `\\x20 /<cmd> <verb>   <description>` line to that command's Usage \
+             block in src/help_data.rs, or — if the dispatcher does not implement the verb — \
+             remove the phantom token from its table.\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+    }
 
     #[test]
     fn test_risk_help_mentions_every_subcommand() {
