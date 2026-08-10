@@ -294,7 +294,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "mark" => Some("<name>"),
         "jump" => Some("<name>"),
         "ast" => Some("<pattern> [path]"),
-        "todo" => Some("add | done | list | clear"),
+        "todo" => hint_from!(crate::commands_todo::TODO_VERBS),
         "docs" => Some("<crate-name>"),
         "rename" => Some("<old> <new> [path]"),
         "side" => Some("<prompt>"),

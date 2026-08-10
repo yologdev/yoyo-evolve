@@ -14,6 +14,16 @@ fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T
     lock.write().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The verbs `handle_todo` actually implements, in the order a user meets them.
+///
+/// Consumed by the usage fallback below and by `/todo`'s tab-completion arg hint
+/// in `commands.rs`, so those two surfaces can't drift from the code again (#702:
+/// completion advertised a `list` verb that didn't exist, while `board` — the only
+/// disk-backed verb — was advertised nowhere).
+pub(crate) const TODO_VERBS: &[&str] = &[
+    "list", "add", "done", "wip", "remove", "clear", "board",
+];
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TodoStatus {
     Pending,
@@ -132,8 +142,9 @@ pub fn handle_todo(input: &str) -> String {
         return handle_todo_board(arg.strip_prefix("board").unwrap_or("").trim());
     }
 
-    if arg.is_empty() {
-        // Show all tasks
+    if arg.is_empty() || arg == "list" {
+        // Show all tasks. `list` is an alias for bare `/todo` — tab-completion has
+        // advertised it since before it existed (#702).
         let items = todo_list();
         return format_todo_list(&items);
     }
@@ -204,15 +215,19 @@ pub fn handle_todo(input: &str) -> String {
         }
     }
 
-    // Unknown subcommand — show usage
-    "  Usage:\n\
-     \x20 /todo                    Show all tasks\n\
-     \x20 /todo add <description>  Add a new task\n\
-     \x20 /todo done <id>          Mark task as done\n\
-     \x20 /todo wip <id>           Mark as in-progress\n\
-     \x20 /todo remove <id>        Remove a task\n\
-     \x20 /todo clear              Clear all tasks"
-        .to_string()
+    // Unknown subcommand — show usage. The verb line is derived from TODO_VERBS
+    // so it can never advertise a verb this function doesn't implement (#702).
+    format!(
+        "  Usage: /todo <{}>\n\
+         \x20 /todo, /todo list        Show all tasks\n\
+         \x20 /todo add <description>  Add a new task\n\
+         \x20 /todo done <id>          Mark task as done\n\
+         \x20 /todo wip <id>           Mark as in-progress\n\
+         \x20 /todo remove <id>        Remove a task\n\
+         \x20 /todo clear              Clear all tasks\n\
+         \x20 /todo board              Kanban view of session_plan/*.md (see /help todo)",
+        TODO_VERBS.join(" | ")
+    )
 }
 
 // === Board (session_plan/ Kanban view) ===
@@ -1405,6 +1420,34 @@ mod tests {
                 || result.contains("task"),
             "Board routing should work: got: {result}"
         );
+    }
+
+    /// Every verb `handle_todo` implements must be findable in the detailed
+    /// help text. This is the cross-pin for #702: `/help todo` can no longer
+    /// silently omit an implemented verb (`board` was findable only from the
+    /// one-line short description; `list` didn't exist at all).
+    #[test]
+    fn test_help_text_mentions_every_implemented_todo_verb() {
+        let help = crate::help_data::command_help("todo").expect("/help todo exists");
+        for verb in TODO_VERBS {
+            assert!(
+                help.contains(&format!("/todo {verb}")),
+                "detailed /help todo omits the implemented verb `{verb}`: {help}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_todo_list_is_an_alias_for_bare_todo() {
+        todo_clear();
+        todo_add("alias check");
+        assert_eq!(
+            handle_todo("/todo list"),
+            handle_todo("/todo"),
+            "`/todo list` (advertised by tab-completion) must show the same list as bare `/todo`"
+        );
+        todo_clear();
     }
 
     #[test]

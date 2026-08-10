@@ -1243,9 +1243,10 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              quickly switch tasks and come back later.",
         ),
         "todo" => Some(
-            "/todo — Track tasks during complex operations\n\n\
+             "/todo — Track tasks during complex operations\n\n\
              Usage:\n\
              \x20 /todo                    Show all tasks\n\
+             \x20 /todo list               Show all tasks (alias for bare /todo)\n\
              \x20 /todo add <description>  Add a new task\n\
              \x20 /todo done <id>          Mark task as done\n\
              \x20 /todo wip <id>           Mark as in-progress\n\
@@ -1255,7 +1256,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Tasks persist for the duration of the session.\n\n\
              The AI agent can also manage tasks via the todo tool during\n\
              agentic runs, helping it stay organized on multi-step operations.\n\n\
-             Board (Kanban view of session_plan/ tasks):\n\
+             Board (Kanban view of session_plan/ tasks — the only /todo verb that\n\
+             reads and writes files on disk: session_plan/*.md):\n\
              \x20 /todo board              Show board (reads session_plan/task_*.md)\n\
              \x20 /todo board init [goal]  Create session_plan/ with optional goal\n\
              \x20 /todo board add <title>  Add task (creates task_NN.md, status: backlog)\n\
