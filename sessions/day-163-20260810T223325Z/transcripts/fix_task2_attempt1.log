@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_NEVER_FORECAS… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 640,800p scripts/extract_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:684..714  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1190..1320 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1500..1540  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:858..883 ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_TOP_N =\|EPIS… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 10 lines)
+    # Header of the never-forecast section — a hard stop for entry parsing.
+    EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
+  + # A row inside that section: "  ◦ src/commands_skill.rs (risk 0.3)". Anchored on
+  + # the ◦ glyph AND the "(risk " suffix so the "... (+N more)" tail and the two
+  + # explanatory prose lines below it can never be mistaken for paths.
+  + EPISTEMIC_NEVER_FORECAST_ROW_RE = re.compile(r"^\s*◦\s+(\S+)\s+\(risk\s")
+  + # How many never-forecast paths reach the planner. They are unranked (a list
+  + # where everything is equally unknown ranks nothing), so this is a byte budget,
+  + # not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+  + EPISTEMIC_NEVER_FORECAST_SHOWN = 2
+ ✓ (55.2s)
+    # Header of the never-forecast section — a hard stop for entry parsing.
+    EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
+  + # A row inside that section: "  ◦ src/commands_skill.rs (risk 0.3)". Anchored on
+  + # the ◦ glyph AND the "(risk " suffix so the "... (+N more)" tail and the two
+  + # explanatory prose lines below it can never be mistaken for paths.
+  + EPISTEMIC_NEVER_FORECAST_ROW_RE = re.compile(r"^\s*◦\s+(\S+)\s+\(risk\s")
+  + # How many never-forecast paths reach the planner. They are unranked (a list
+  + # where everything is equally unknown ranks nothing), so this is a byte budget,
+  + # not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+  + EPISTEMIC_NEVER_FORECAST_SHOWN = 2
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 38s (9 ✓)
+
+Now the parser:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (16 → 34 lines)
+  - def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]:
+  -     """Parse `yoyo risk epistemic` report output into compact bullet lines.
+  + def parse_epistemic_output(
+  +     text: str, top_n: int = EPISTEMIC_TOP_N
+  + ) -> tuple[list[str], list[str]]:
+  +     """Parse `yoyo risk epistemic` report output.
+  + 
+  +     Returns `(ranked_lines, never_forecast_paths)`. The two halves are
+  +     deliberately separate values: the first is a *ranking*, the second is a set
+  +     of files no prediction column has ever named, which nothing ranks. Merging
+  +     them would dress the dark half up as the bottom of the lit one.
+    
+        Pure (no subprocess) so the self-tests can exercise it on canned output.
+  -     Returns [] when nothing parseable is found (empty states, garbage).
+  +     Returns ([], []) when nothing parseable is found (empty states, garbage);
+  +     the second half is [] for reports with no never-forecast section at all.
+        """
+        entries: list[tuple[str, str, list[str]]] = []
+  +     never_forecast: list[str] = []
+  +     in_never_forecast = False
+  ... (21 more lines)
+ ✓ (55.3s)
+  - def parse_epistemic_output(text: str, top_n: int = EPISTEMIC_TOP_N) -> list[str]:
+  -     """Parse `yoyo risk epistemic` report output into compact bullet lines.
+  + def parse_epistemic_output(
+  +     text: str, top_n: int = EPISTEMIC_TOP_N
+  + ) -> tuple[list[str], list[str]]:
+  +     """Parse `yoyo risk epistemic` report output.
+  + 
+  +     Returns `(ranked_lines, never_forecast_paths)`. The two halves are
+  ... (13 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:722..752 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 2 lines)
+            out.append(line)
+  -     return out
+  +     return out, never_forecast
+ ✓ (54.9s)
+            out.append(line)
+  -     return out
+  +     return out, never_forecast
+  3 tools completed in 1m 57s (3 ✓)
+
+Now the collector and renderer:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (30 → 50 lines)
+  - def collect_epistemic_blind_spots() -> list[str]:
+  -     """Run `yoyo risk epistemic` and compact its top entries. Fail-soft:
+  -     every skip path warn()s (fail-soft without a freshness signal is
+  -     fail-silent — Day 139) and returns []."""
+  + def collect_epistemic_blind_spots() -> tuple[list[str], list[str]]:
+  +     """Run `yoyo risk epistemic` and compact its output into
+  +     `(ranked_lines, never_forecast_paths)`. Fail-soft: every skip path warn()s
+  +     (fail-soft without a freshness signal is fail-silent — Day 139) and returns
+  +     ([], []).
+  + 
+  +     An empty ranked list is NOT a skip when never-forecast paths exist: the
+  +     dark half is the half the ranking structurally cannot see, so dropping it
+  +     for want of a ranking would reproduce the exact bug this reads back."""
+        binary = find_yoyo_binary()
+        if binary is None:
+            warn("epistemic section skipped: yoyo binary not found in target/{debug,release}")
+  -         return []
+  +         return [], []
+        rc, stdout, _stderr = run_cmd([binary, "risk", "epistemic"], timeout=15)
+        if rc != 0:
+  ... (47 more lines)
+ ✓ (54.5s)
+  - def collect_epistemic_blind_spots() -> list[str]:
+  -     """Run `yoyo risk epistemic` and compact its top entries. Fail-soft:
+  -     every skip path warn()s (fail-soft without a freshness signal is
+  -     fail-silent — Day 139) and returns []."""
+  + def collect_epistemic_blind_spots() -> tuple[list[str], list[str]]:
+  +     """Run `yoyo risk epistemic` and compact its output into
+  +     `(ranked_lines, never_forecast_paths)`. Fail-soft: every skip path warn()s
+  +     (fail-soft without a freshness signal is fail-silent — Day 139) and returns
+  ... (13 more lines)
+
+Now the main() call site:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 3 lines)
+  -     epistemic_entries = collect_epistemic_blind_spots()
+  -     if sections or epistemic_entries:
+  -         sections.append(render_epistemic(epistemic_entries))
+  +     epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
+  +     if sections or epistemic_entries or epistemic_never:
+  +         sections.append(render_epistemic(epistemic_entries, epistemic_never))
+ ✓ (54.6s)
+  -     epistemic_entries = collect_epistemic_blind_spots()
+  -     if sections or epistemic_entries:
+  -         sections.append(render_epistemic(epistemic_entries))
+  +     epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
+  +     if sections or epistemic_entries or epistemic_never:
+  +         sections.append(render_epistemic(epistemic_entries, epistemic_never))
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (45ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_epistemic_output(… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1208..1218 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo target/rele… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (572ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_TRAJECTORY_OUT=/tmp/traj.md… ✓ (117ms)
+  7 tools completed in 1m 13s (7 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
