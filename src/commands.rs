@@ -288,7 +288,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "remember" => Some("<note>"),
         "forget" => Some("<id>"),
         "explain" => Some("<file>"),
-        "map" => Some("[path] [--depth N]"),
+        "map" => Some("[--all] [--regex] [path]"),
         "outline" => Some("<query> [--all]"),
         "def" => Some("<symbol-name>"),
         "refs" => Some("<symbol-name>"),

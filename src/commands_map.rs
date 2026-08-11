@@ -395,6 +395,29 @@ mod tests {
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
 
+    /// The REPL tab-completion hint for `/map` must advertise only flags that
+    /// `parse_map_args` actually accepts. It said `[path] [--depth N]` while no
+    /// `--depth` handling has ever existed here, and since #727 an unrecognised
+    /// flag is an honest `MapArgs::Error` — so the completion was teaching users
+    /// a flag the parser rejects on contact. Asserted against the parser itself
+    /// (the real judge), not against a second hand-typed list.
+    #[test]
+    fn map_arg_hint_advertises_only_flags_the_parser_accepts() {
+        let hint = crate::commands::command_arg_hint("map").expect("/map should have an arg hint");
+        for flag in MAP_FLAGS {
+            assert!(hint.contains(flag), "hint {hint:?} should advertise {flag}");
+        }
+        for token in hint.split_whitespace() {
+            let token = token.trim_matches(|c| c == '[' || c == ']');
+            if token.starts_with("--") {
+                assert!(
+                    !matches!(parse_map_args(token), MapArgs::Error(_)),
+                    "hint {hint:?} advertises {token}, which parse_map_args rejects"
+                );
+            }
+        }
+    }
+
     #[test]
     fn format_repo_map_empty_project() {
         let entries: Vec<FileSymbols> = vec![];
