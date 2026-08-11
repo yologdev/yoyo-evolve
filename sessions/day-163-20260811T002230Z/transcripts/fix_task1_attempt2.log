@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the two failures: the self-test fixture in extract_trajectory.py and the untouched CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (9ms)
+ ✓ (45ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "entry with reasons comp… ✓ (4ms)
+ ✓ (48ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 630,700p scripts/extract_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 643,650p scripts/extract_… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 14.8s (6 ✓)
+
+Now fix the self-test fixture — its input still carries the deleted reason line while the expectation was updated:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 2 lines)
+            "      • predicted 28×, never graded\n"
+  -         "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+  +         "      • last seen 7 snapshots ago, no graded event since\n"
+ ✓ (54.7s)
+            "      • predicted 28×, never graded\n"
+  -         "      • reactive/emerging disagree in 3 of last 3 snapshots\n"
+  +         "      • last seen 7 snapshots ago, no graded event since\n"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 0s (2 ✓)
+
+Self-tests pass. Now Step 4 — CLAUDE.md. Let me read the current state of both bullets and the module doc:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/commands_risk_e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "column disagreement\|W_… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,22p src/commands_risk_e… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (22 lines) ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (19ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `format_epistemic_report` — signals: predicted-but-never-graded, reactive/emerging column disagreement, stale snapshot presence; weights documented as consts — Day 144: the disagreement weight is magnitude-scaled (`W_DISAGREE × (0,1]` by how strongly the claiming column ranks the file) instead of a flat per-snapshot count, and scores tied within `SCORE_EPSILON` are ordered by current risk score via `commands_risk::top_risk_files` (higher first, unscored/abstaining files after scored ones, then path — the report prints an honest tie-break note)).
+  + `format_epistemic_report` — signals: predicted-but-never-graded (`W_NEVER_GRADED`), stale snapshot presence (`W_STALE`/`STALE_SNAPSHOT_GAP`), and the two study-history discounts (`W_RECENTLY_STUDIED`, `W_VISITED_UNGRADED`); weights documented as consts, and scores tied within `SCORE_EPSILON` are ordered by current risk score via `commands_risk::top_risk_files` (higher first, unscored/abstaining files after scored ones, then path — the report prints an honest tie-break note)). Day 163 (#726): a third signal, **reactive/emerging column disagreement** (`W_DISAGREE`, magnitude-scaled since Day 144, plus `DISAGREE_WINDOW` and its `rank_magnitude` helper), was **removed** as the third and last live consumer of the `emerging` column deleted in #724 — it was producing the entire live top-3 of `yoyo risk epistemic`, i.e. a column measured at **0% recall over 10 graded failure days** (against 24% for the reactive column on the same days) was the primary input to *which file yoyo works on next*. The disagreeing entries are precisely the ~37% of emerging entries not already in `top_10` (63% mean overlap, #724), which is the part measured at zero, so the "disagreement signals uncertainty regardless of which column is right" counter-argument loses: an *unmeasured* signal may earn a place, a *falsified* one may not. What it would take to bring it back: a **measured non-zero emerging recall** on graded failure-day events — the meter that would show it is still running (`/risk accuracy`). Removing it can leave the ranked list short; that is the honest state of the instrument, and the never-forecast section still prints even when the ranked list is empty.
+ ✓ (55.2s)
+  - `format_epistemic_report` — signals: predicted-but-never-graded, reactive/emerging column disagreement, stale snapshot presence; weights documented as consts — Day 144: the disagreement weight is magnitude-scaled (`W_DISAGREE × (0,1]` by how strongly the claiming column ranks the file) instead of a flat per-snapshot count, and scores tied within `SCORE_EPSILON` are ordered by current risk score via `commands_risk::top_risk_files` (higher first, unscored/abstaining files after scored ones, then path — the report prints an honest tie-break note)).
+  + `format_epistemic_report` — signals: predicted-but-never-graded (`W_NEVER_GRADED`), stale snapshot presence (`W_STALE`/`STALE_SNAPSHOT_GAP`), and the two study-history discounts (`W_RECENTLY_STUDIED`, `W_VISITED_UNGRADED`); weights documented as consts, and scores tied within `SCORE_EPSILON` are ordered by current risk score via `commands_risk::top_risk_files` (higher first, unscored/abstaining files after scored ones, then path — the report prints an honest tie-break note)). Day 163 (#726): a third signal, **reactive/emerging column disagreement** (`W_DISAGREE`, magnitude-scaled since Day 144, plus `DISAGREE_WINDOW` and its `rank_magnitude` helper), was **removed** as the third and last live consumer of the `emerging` column deleted in #724 — it was producing the entire live top-3 of `yoyo risk epistemic`, i.e. a column measured at **0% recall over 10 graded failure days** (against 24% for the reactive column on the same days) was the primary input to *which file yoyo works on next*. The disagreeing entries are precisely the ~37% of emerging entries not already in `top_10` (63% mean overlap, #724), which is the part measured at zero, so the "disagreement signals uncertainty regardless of which column is right" counter-argument loses: an *unmeasured* signal may earn a place, a *falsified* one may not. What it would take to bring it back: a **measured non-zero emerging recall** on graded failure-day events — the meter that would show it is still running (`/risk accuracy`). Removing it can leave the ranked list short; that is the honest state of the instrument, and the never-forecast section still prints even when the ranked list is empty.
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 18s (6 ✓)
+
+Now the commands_risk_emerging.rs retained/removed ledger:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_emerging_risks"… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,535p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging_count" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 565,600p src/commands_ris… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `detect_emerging_risks` now has exactly two consumers, both on the meter side: `commands_risk.rs` (`/risk accuracy` evidence) and `commands_risk_snapshots.rs` (snapshot recording + grading). Nothing feeds the emerging list into a prompt.
+  + `detect_emerging_risks` now has exactly two consumers, both on the meter side: `commands_risk.rs` (`/risk accuracy` evidence) and `commands_risk_snapshots.rs` (snapshot recording + grading). Nothing feeds the emerging list into a prompt. Day 163 (#726, third sibling) closed the enumeration: the **epistemic ranking's `reactive/emerging` disagreement signal** (`W_DISAGREE`, `DISAGREE_WINDOW`, `rank_magnitude`, and the `columns disagree N of last M snapshots (magnitude X)` reason, plus its `EPISTEMIC_DISAGREE_RE` compaction in `scripts/extract_trajectory.py`) is **removed** — it was the third and last live *claim*-side consumer, and it was steering task selection: it produced the entire live top-3 of `yoyo risk epistemic`, which `extract_trajectory.py` hands the planner as "point your self-driven slot here". Its own tests went with it (the #724 precedent); every never-graded / stale / study-state / never-forecast / families test is untouched. Bring-back condition, same as the display's: a measured non-zero emerging recall on graded failure days. **Residual reads that are deliberately kept** (so the two bullets cannot disagree): `ParsedSnapshot.emerging` is still read in `commands_risk_epistemic.rs` for *membership* accounting only — it counts toward a file's `appearances` in the "predicted N×, never graded" reason text (never toward the score, which is a flat `W_NEVER_GRADED`), and `never_forecast_files` unions it with `predicted` to decide which files no column has *ever* named. Both are statements about what yoyo once claimed, not forecasts about what will break, so they stay on the meter side of the line.
+ ✓ (54.7s)
+  - `detect_emerging_risks` now has exactly two consumers, both on the meter side: `commands_risk.rs` (`/risk accuracy` evidence) and `commands_risk_snapshots.rs` (snapshot recording + grading). Nothing feeds the emerging list into a prompt.
+  + `detect_emerging_risks` now has exactly two consumers, both on the meter side: `commands_risk.rs` (`/risk accuracy` evidence) and `commands_risk_snapshots.rs` (snapshot recording + grading). Nothing feeds the emerging list into a prompt. Day 163 (#726, third sibling) closed the enumeration: the **epistemic ranking's `reactive/emerging` disagreement signal** (`W_DISAGREE`, `DISAGREE_WINDOW`, `rank_magnitude`, and the `columns disagree N of last M snapshots (magnitude X)` reason, plus its `EPISTEMIC_DISAGREE_RE` compaction in `scripts/extract_trajectory.py`) is **removed** — it was the third and last live *claim*-side consumer, and it was steering task selection: it produced the entire live top-3 of `yoyo risk epistemic`, which `extract_trajectory.py` hands the planner as "point your self-driven slot here". Its own tests went with it (the #724 precedent); every never-graded / stale / study-state / never-forecast / families test is untouched. Bring-back condition, same as the display's: a measured non-zero emerging recall on graded failure days. **Residual reads that are deliberately kept** (so the two bullets cannot disagree): `ParsedSnapshot.emerging` is still read in `commands_risk_epistemic.rs` for *membership* accounting only — it counts toward a file's `appearances` in the "predicted N×, never graded" reason text (never toward the score, which is a flat `W_NEVER_GRADED`), and `never_forecast_files` unions it with `predicted` to decide which files no column has *ever* named. Both are statements about what yoyo once claimed, not forecasts about what will break, so they stay on the meter side of the line.
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 26s (6 ✓)
+
+Now the full verification sweep:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.2s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
