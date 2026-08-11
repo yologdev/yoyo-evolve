@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_reverts\|REVERT_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,230p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 275,305p scripts/extract_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_reverts\|def run… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 931,1045p scripts/extract… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tasks_attempted\|tasks_… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 16.4s (7 ✓)
+
+Now the edit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (6 → 60 lines)
+  - def render_reverts(reverts: int, total_sessions: int) -> str:
+  + def _int_or_zero(value: object) -> int:
+  +     """Outcome JSON is written by a shell script — read every number defensively."""
+  +     if isinstance(value, bool):
+  +         return 0
+  +     if isinstance(value, int):
+  +         return value
+  +     return 0
+  + 
+  + 
+  + def count_task_reverts(outcomes: list[dict]) -> tuple[int, int]:
+  +     """Return (reverted_task_count, sessions_with_reverts) from loaded outcomes.
+  + 
+  +     Per-task reverts are the COMMON case and leave no commit: the harness does a
+  +     `git reset --hard` and files an agent-revert issue, so REVERT_COMMIT_RE (which
+  +     only matches the whole-session build-failure commit) can never see them. The
+  +     evidence is already in the outcome dicts as attempted-minus-succeeded.
+  +     """
+  +     reverted_tasks = 0
+  +     sessions = 0
+  ... (44 more lines)
+ ✓ (44.9s)
+  - def render_reverts(reverts: int, total_sessions: int) -> str:
+  + def _int_or_zero(value: object) -> int:
+  +     """Outcome JSON is written by a shell script — read every number defensively."""
+  +     if isinstance(value, bool):
+  +         return 0
+  +     if isinstance(value, int):
+  +         return value
+  +     return 0
+  ... (13 more lines)
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     s = render_reverts(reverts, len(outcomes))
+  +     s = render_reverts(reverts, outcomes)
+ ✓ (44.7s)
+  -     s = render_reverts(reverts, len(outcomes))
+  +     s = render_reverts(reverts, outcomes)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_unchosen_session… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1700,1765p scripts/extrac… ✓ (3ms)
+  ▶ edit scripts/extract_trajectory.py (2 → 90 lines)
+  +     # --- Reverts in window (per-task resets + whole-session commits) ---------
+  +     print("\n=== revert counting self-tests ===\n")
+  + 
+  +     def outcome(attempted: int, succeeded: int, reverted: bool = False) -> dict:
+  +         return {
+  +             "tasks_attempted": attempted,
+  +             "tasks_succeeded": succeeded,
+  +             "reverted": reverted,
+  +         }
+  + 
+  +     GREEN = [outcome(2, 2), outcome(1, 1), outcome(3, 3)]
+  + 
+  +     # 1. Nothing reverted at all: the all-clear must say what was CHECKED.
+  +     #    A bare "0 reverts" is the sentence that misled the planner for months.
+  +     assert_eq(
+  +         "zero reverts names both signals",
+  +         render_reverts(0, GREEN),
+  +         "## Reverts in window\n"
+  +         "0 task reverts in last ~3 sessions, "
+  +         f"0 whole-session revert commits in {WINDOW_DAYS} days.",
+  ... (70 more lines)
+ ✓ (44.9s)
+  +     # --- Reverts in window (per-task resets + whole-session commits) ---------
+  +     print("\n=== revert counting self-tests ===\n")
+  + 
+  +     def outcome(attempted: int, succeeded: int, reverted: bool = False) -> dict:
+  +         return {
+  +             "tasks_attempted": attempted,
+  +             "tasks_succeeded": succeeded,
+  +             "reverted": reverted,
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (44ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def main/,/^    sectio… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 git fetch origin aud… ✓ (455ms)
+  8 tools completed in 2m 51s (8 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

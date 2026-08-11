@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff. Let me check the key facts: the self-test passes, call sites, and doc sync.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_reverts\|count_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && git lo… ✓ (3ms)
+ ✓ (6ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/def load_outcomes/,/^de… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def render_outcomes/,/… ✓ (4ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (44.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 18s (7 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_1.md)
+
+The implementation itself is good — I verified:
+• `python3 scripts/extract_trajectory.py --test → ALL PASSED`, including all 8 new revert cases
+• count_task_reverts reads tasks_attempted/tasks_succeeded/reverted — the same keys render_outcomes already uses, so the derivation is on real data, not invented keys
+• The two signals render as distinct named lines, never summed; all-clear line names both things checked; ≤3-line budget asserted
+• Only production call site (line 941) updated to pass outcomes; both new helpers have consumers in this diff
+
+The blocker is the skipped Docs deliverable: CLAUDE.md line 191 still describes the section as just "reverts in window" with no mention of per-task resets leaving no commit, and git status is clean — commit cc65b128 touches one file only. The task spelled that bullet out explicitly.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

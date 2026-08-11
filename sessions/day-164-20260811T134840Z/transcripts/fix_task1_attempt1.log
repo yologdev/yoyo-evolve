@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing docs deliverable. Let me look at the current CLAUDE.md bullet and the implemented code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_trajectory.py" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 188,196p CLAUDE.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def count_task_reverts… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=188 && NR<=194 {print N… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 191p CLAUDE.md ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - reverts in window, subsystem concentration
+  + reverts in window (Day 164: two signals reported as **distinct named lines, never summed** — per-task reverts derived from the already-loaded outcome dicts via `count_task_reverts` (`max(0, tasks_attempted - tasks_succeeded)`, plus the whole-session `reverted` flag as a session with reverts), and whole-session revert *commits* matched by `REVERT_COMMIT_RE`; a per-task revert is a `git reset --hard` + filed issue and so leaves **no commit**, which is why the commit-only counter printed a reassuring `0` for 120 days while six `agent-revert` receipts existed, and why the all-clear line now names both things it checked), subsystem concentration
+ ✓ (45.4s)
+  - reverts in window, subsystem concentration
+  + reverts in window (Day 164: two signals reported as **distinct named lines, never summed** — per-task reverts derived from the already-loaded outcome dicts via `count_task_reverts` (`max(0, tasks_attempted - tasks_succeeded)`, plus the whole-session `reverted` flag as a session with reverts), and whole-session revert *commits* matched by `REVERT_COMMIT_RE`; a per-task revert is a `git reset --hard` + filed issue and so leaves **no commit**, which is why the commit-only counter printed a reassuring `0` for 120 days while six `agent-revert` receipts existed, and why the all-clear line now names both things it checked), subsystem concentration
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 4s (7 ✓)
+
+Now verify everything still passes.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+ ✓ (45ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (45.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (44.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAUDE.md && git commit … ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 44s (5 ✓)
+
+Fixed the one thing the evaluator failed: the Docs deliverable.
+
+What changed — CLAUDE.md line 191, the extract_trajectory.py sub-sections bullet. The phrase reverts in window, was expanded in place (bullet not rewritten, section order untouched) to state:
+
+• the section now reports two distinct named signals, never summed;
+• per-task reverts are derived from the already-loaded outcome dicts via count_task_reverts (max(0, tasks_attempted - tasks_succeeded), plus the reverted flag counting as a session with reverts);
+• whole-session revert commits are the separate REVERT_COMMIT_RE signal;
+• a per-task revert is a git reset --hard + filed issue and therefore leaves no commit — the reason the commit-only counter printed 0 for 120 days while six agent-revert receipts existed — and the all-clear line now names both things it checked.
+
+**Verification (actually run, this pass):**
+• python3 scripts/extract_trajectory.py --test → ALL PASSED (includes the ≤3-line budget and revert cases).
+• cargo fmt, `cargo clippy --all-targets -- -D warnings → clean, cargo build → ok, cargo test` → 4748 passed, 0 failed (plus the two smaller suites).
+• I did not run the extractor against a live audit-log worktree — I didn't fetch one, so I can't claim a real-data run. The --test self-tests assert the rendered string at the emission point, which is the evidence I have.
+
+Committed as 4a0999de; working tree clean. No code was refactored — the previously-passing count_task_reverts / render_reverts implementation is untouched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
