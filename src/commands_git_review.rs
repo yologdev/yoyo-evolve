@@ -38,8 +38,10 @@ pub fn build_review_content(arg: &str) -> Option<(String, String)> {
     } else if arg.starts_with("--pr") {
         // Review a PR: --pr <number>
         build_review_content_pr(arg)
-    } else if arg.contains("..") {
+    } else if arg.contains("..") && !std::path::Path::new(arg).exists() {
         // Review a commit range: HEAD~3..HEAD, abc123..def456, etc.
+        // An existing path wins: `../shared/src/lib.rs` is a file, not a range
+        // (a commit range never names something that exists on disk).
         build_review_content_range(arg)
     } else {
         // Review a specific file
@@ -1116,6 +1118,32 @@ mod tests {
         // Either None (git error) or Some (if git works) is fine.
         // The key test: it should not panic.
         let _ = result;
+    }
+
+    #[test]
+    fn build_review_content_treats_existing_dotdot_path_as_a_file() {
+        // `/review <path>` is a documented target ("Review a specific file"), but the
+        // commit-range heuristic keys on ".." appearing ANYWHERE in the arg — so a real
+        // relative path like `../shared/src/lib.rs` was routed to `git diff <path>` and
+        // the user got "no changes in range" for a file they asked to have reviewed.
+        // An existing path must win over the range heuristic; a range never exists on disk.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).expect("create subdir");
+        std::fs::write(dir.path().join("review_target.rs"), "fn main() {}\n").expect("write file");
+
+        // A genuinely existing path that contains "..": <tmp>/sub/../review_target.rs
+        let dotdot = sub.join("..").join("review_target.rs");
+        let arg = dotdot.to_str().expect("utf-8 temp path");
+        assert!(arg.contains(".."), "test path must contain '..'");
+
+        let (label, content) = build_review_content(arg)
+            .expect("an existing file whose path contains '..' should be reviewable");
+        assert_eq!(label, arg, "label should be the requested path");
+        assert!(
+            content.contains("fn main()"),
+            "should return the file's contents, not a diff: {content:?}"
+        );
     }
 
     #[test]
