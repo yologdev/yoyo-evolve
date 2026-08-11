@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the prediction line I committed, so I grade exactly what I guessed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction line is committed and unread-target-blind. Now step 2: read the file and grade each hypothesis.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_git_review.rs… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_non_interactive_re… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,345p src/commands_git… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 226,256p src/commands_git… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 344,530p src/commands_git… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 529,560p src/commands_git… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 18s (6 ✓)
+
+Four hypotheses already settled as MISS. Let me check the existing tests before grading h5 and looking for a real bug.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test\|build_review_c… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1105,1135p src/commands_g… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "review" src/help_data.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/review" src/help.rs s… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 22.1s (4 ✓)
+
+A real, reachable bug surfaced that none of my five hypotheses named. Let me confirm it before fixing.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A12 "dev-dependencies" … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the reachable misroute. Writing the failing test first (repo convention), before touching the logic:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_review.rs (2 → 28 lines)
+  +     #[test]
+  +     fn build_review_content_treats_existing_dotdot_path_as_a_file() {
+  +         // `/review <path>` is a documented target ("Review a specific file"), but the
+  +         // commit-range heuristic keys on ".." appearing ANYWHERE in the arg — so a real
+  +         // relative path like `../shared/src/lib.rs` was routed to `git diff <path>` and
+  +         // the user got "no changes in range" for a file they asked to have reviewed.
+  +         // An existing path must win over the range heuristic; a range never exists on disk.
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let sub = dir.path().join("sub");
+  +         std::fs::create_dir(&sub).expect("create subdir");
+  +         std::fs::write(dir.path().join("review_target.rs"), "fn main() {}\n").expect("write file");
+  + 
+  +         // A genuinely existing path that contains "..": <tmp>/sub/../review_target.rs
+  +         let dotdot = sub.join("..").join("review_target.rs");
+  +         let arg = dotdot.to_str().expect("utf-8 temp path");
+  +         assert!(arg.contains(".."), "test path must contain '..'");
+  + 
+  +         let (label, content) = build_review_content(arg)
+  +             .expect("an existing file whose path contains '..' should be reviewable");
+  +         assert_eq!(label, arg, "label should be the requested path");
+  ... (8 more lines)
+ ✓ (1m 32s)
+  +     #[test]
+  +     fn build_review_content_treats_existing_dotdot_path_as_a_file() {
+  +         // `/review <path>` is a documented target ("Review a specific file"), but the
+  +         // commit-range heuristic keys on ".." appearing ANYWHERE in the arg — so a real
+  +         // relative path like `../shared/src/lib.rs` was routed to `git diff <path>` and
+  +         // the user got "no changes in range" for a file they asked to have reviewed.
+  +         // An existing path must win over the range heuristic; a range never exists on disk.
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test build_review_content_… ✓ (189ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 38s (2 ✓)
+
+Bug confirmed live. Now the smallest fix — one condition, zero new names:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_review.rs (3 → 5 lines)
+  -     } else if arg.contains("..") {
+  +     } else if arg.contains("..") && !std::path::Path::new(arg).exists() {
+            // Review a commit range: HEAD~3..HEAD, abc123..def456, etc.
+  +         // An existing path wins: `../shared/src/lib.rs` is a file, not a range
+  +         // (a commit range never names something that exists on disk).
+            build_review_content_range(arg)
+ ✓ (1m 38s)
+  -     } else if arg.contains("..") {
+  +     } else if arg.contains("..") && !std::path::Path::new(arg).exists() {
+            // Review a commit range: HEAD~3..HEAD, abc123..def456, etc.
+  +         // An existing path wins: `../shared/src/lib.rs` is a file, not a range
+  +         // (a commit range never names something that exists on disk).
+            build_review_content_range(arg)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_git_review 2… ✓ (195ms)
+  2 tools completed in 1m 40s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

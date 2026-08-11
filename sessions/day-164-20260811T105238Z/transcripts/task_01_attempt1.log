@@ -1,0 +1,274 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 370,470p src/format/outpu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,570p src/format/outpu… ✓ (7ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "filter_test_output" -r …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 110,125p tests/module_siz… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "filter_test_output" src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1620,1880p src/format/out… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1712,1790p src/format/out… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 20.7s (7 ✓)
+
+All existing fixtures already contain a runner summary — good. Now the gate:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (2 → 15 lines)
+    /// Minimum number of test-pass lines required to activate the test filter.
+    const TEST_FILTER_MIN_PASS_LINES: usize = 5;
+  + 
+  + /// Cargo's runner banner: `running 12 tests` / `running 1 test`.
+  + /// A header a test runner emits — not something arbitrary CLI output produces.
+  + fn is_test_runner_header(line: &str) -> bool {
+  +     let trimmed = line.trim();
+  +     let Some(rest) = trimmed.strip_prefix("running ") else {
+  +         return false;
+  +     };
+  +     let count = rest
+  +         .strip_suffix(" tests")
+  +         .or_else(|| rest.strip_suffix(" test"));
+  +     matches!(count, Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+  + }
+ ✓ (20.0s)
+    /// Minimum number of test-pass lines required to activate the test filter.
+    const TEST_FILTER_MIN_PASS_LINES: usize = 5;
+  + 
+  + /// Cargo's runner banner: `running 12 tests` / `running 1 test`.
+  + /// A header a test runner emits — not something arbitrary CLI output produces.
+  + fn is_test_runner_header(line: &str) -> bool {
+  +     let trimmed = line.trim();
+  +     let Some(rest) = trimmed.strip_prefix("running ") else {
+  ... (7 more lines)
+
+Expected — adding the consumer now:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (3 → 14 lines)
+        if pass_count < TEST_FILTER_MIN_PASS_LINES {
+  +         return output.to_string();
+  +     }
+  + 
+  +     // Provenance gate: a `✓` glyph is a shape, a runner summary is provenance —
+  +     // collapsing on shape alone deletes user data and lies about what it deleted
+  +     // (npm, docker, eslint and yoyo's own /doctor all print `✓`).
+  +     let has_runner_provenance = classifications
+  +         .iter()
+  +         .any(|k| matches!(k, TestLineKind::Summary))
+  +         || lines.iter().any(|l| is_test_runner_header(l));
+  +     if !has_runner_provenance {
+            return output.to_string();
+        }
+ ✓ (1m 34s)
+        if pass_count < TEST_FILTER_MIN_PASS_LINES {
+  +         return output.to_string();
+  +     }
+  + 
+  +     // Provenance gate: a `✓` glyph is a shape, a runner summary is provenance —
+  +     // collapsing on shape alone deletes user data and lies about what it deleted
+  +     // (npm, docker, eslint and yoyo's own /doctor all print `✓`).
+  +     let has_runner_provenance = classifications
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | grep -E … ✓ (148ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (50.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2425,2480p src/tool_wrapp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quoted_test_lines_paylo… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 49s (5 ✓)
+
+That failure is the fixture the task predicted — a bare pass-list with no runner summary. Repairing the fixture (keeping both assertions):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (3 → 7 lines)
+                "test epsilon ... ok",
+                "closing prose.",
+  +             // Day 164: a real runner always emits a summary line; without one
+  +             // this fixture asserted the ✓/pass-shape-only collapse that was
+  +             // eating non-test bash output. The provenance gate needs it here.
+  +             "test result: ok. 5 passed; 0 failed; 0 ignored",
+            ]
+ ✓ (1m 38s)
+                "test epsilon ... ok",
+                "closing prose.",
+  +             // Day 164: a real runner always emits a summary line; without one
+  +             // this fixture asserted the ✓/pass-shape-only collapse that was
+  +             // eating non-test bash output. The provenance gate needs it here.
+  +             "test result: ok. 5 passed; 0 failed; 0 ignored",
+            ]
+
+Now the two new regression tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (4 → 38 lines)
+        #[test]
+        fn test_filter_test_empty_input() {
+            assert_eq!(filter_test_output(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_check_glyph_lines_without_runner_summary_survive_verbatim() {
+  +         // Day 164 (observed live): `yoyo risk accuracy` piped through the bash
+  +         // tool lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+  +         // A ✓ is a shape; with no runner provenance nothing may be collapsed.
+  +         let mut lines = vec!["Prediction accuracy".to_string()];
+  +         for i in 0..6 {
+  +             lines.push(format!("  ✓ src/foo_{i}.rs, src/bar_{i}.rs"));
+  +         }
+  +         let input = lines.join("\n");
+  +         let result = filter_test_output(&input);
+  +         assert_eq!(result, input, "must be byte-identical, got: {result}");
+  +         assert!(
+  +             !result.contains("passing tests omitted"),
+  +             "must not claim it hid tests, got: {result}"
+  ... (18 more lines)
+ ✓ (1m 38s)
+        #[test]
+        fn test_filter_test_empty_input() {
+            assert_eq!(filter_test_output(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_check_glyph_lines_without_runner_summary_survive_verbatim() {
+  +         // Day 164 (observed live): `yoyo risk accuracy` piped through the bash
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4748 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The size gate — the authorized raise. Let me check exact counts:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/output.rs src/t… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (12 → 7 lines)
+  - /// Cargo's runner banner: `running 12 tests` / `running 1 test`.
+  - /// A header a test runner emits — not something arbitrary CLI output produces.
+  + /// Cargo's runner banner (`running 12 tests`) — provenance, not shape.
+    fn is_test_runner_header(line: &str) -> bool {
+  -     let trimmed = line.trim();
+  -     let Some(rest) = trimmed.strip_prefix("running ") else {
+  -         return false;
+  -     };
+  -     let count = rest
+  -         .strip_suffix(" tests")
+  -         .or_else(|| rest.strip_suffix(" test"));
+  -     matches!(count, Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+  +     line.trim()
+  +         .strip_prefix("running ")
+  +         .and_then(|r| r.strip_suffix(" tests").or_else(|| r.strip_suffix(" test")))
+  +         .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    }
+ ✓ (1m 37s)
+  - /// Cargo's runner banner: `running 12 tests` / `running 1 test`.
+  - /// A header a test runner emits — not something arbitrary CLI output produces.
+  + /// Cargo's runner banner (`running 12 tests`) — provenance, not shape.
+    fn is_test_runner_header(line: &str) -> bool {
+  -     let trimmed = line.trim();
+  -     let Some(rest) = trimmed.strip_prefix("running ") else {
+  -         return false;
+  -     };
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (33 → 25 lines)
+        #[test]
+        fn test_check_glyph_lines_without_runner_summary_survive_verbatim() {
+  -         // Day 164 (observed live): `yoyo risk accuracy` piped through the bash
+  -         // tool lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+  -         // A ✓ is a shape; with no runner provenance nothing may be collapsed.
+  +         // Day 164 (observed live): `yoyo risk accuracy` through the bash tool
+  +         // lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+            let mut lines = vec!["Prediction accuracy".to_string()];
+            for i in 0..6 {
+                lines.push(format!("  ✓ src/foo_{i}.rs, src/bar_{i}.rs"));
+  ···
+            let input = lines.join("\n");
+            let result = filter_test_output(&input);
+            assert_eq!(result, input, "must be byte-identical, got: {result}");
+  -         assert!(
+  -             !result.contains("passing tests omitted"),
+  -             "must not claim it hid tests, got: {result}"
+  -         );
+  +         assert!(!result.contains("passing tests omitted"), "got: {result}");
+        }
+  ... (16 more lines)
+ ✓ (1m 37s)
+        #[test]
+        fn test_check_glyph_lines_without_runner_summary_survive_verbatim() {
+  -         // Day 164 (observed live): `yoyo risk accuracy` piped through the bash
+  -         // tool lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+  -         // A ✓ is a shape; with no runner provenance nothing may be collapsed.
+  +         // Day 164 (observed live): `yoyo risk accuracy` through the bash tool
+  +         // lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+            let mut lines = vec!["Prediction accuracy".to_string()];
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/format/ou… ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 58s (4 ✓)
+
++45 exactly, within the authorized bound. Updating the size gate:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 114,122p tests/module_siz… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (54.2s)
+  3 tools completed in 1m 3s (3 ✓)
+
+All green. Now the emission-point proof — running yoyo risk accuracy through the bash tool itself:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk accurac… ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ✓ src/… hit lists are visible in the tool result now. Docs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format/output.rs" CLAUD… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation
+  + - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation. Day 164: `filter_test_output` collapses pass lines only when the same output also carries a runner **summary** line (`test result:`, pytest `=== N passed ===`, jest `Tests:`, go `ok pkg 0.12s`) or a cargo `running N tests` header — a `✓` glyph is a shape, a runner summary is provenance, and collapsing on shape alone was deleting non-test bash output (npm/docker/eslint/yoyo's own `/doctor`, and observed live eating `/risk accuracy`'s `✓ src/…` hit lists) while labelling it "N passing tests omitted"
+ ✓ (54.5s)
+  - - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation
+  + - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation. Day 164: `filter_test_output` collapses pass lines only when the same output also carries a runner **summary** line (`test result:`, pytest `=== N passed ===`, jest `Tests:`, go `ok pkg 0.12s`) or a cargo `running N tests` header — a `✓` glyph is a shape, a runner summary is provenance, and collapsing on shape alone was deleting non-test bash output (npm/docker/eslint/yoyo's own `/doctor`, and observed live eating `/risk accuracy`'s `✓ src/…` hit lists) while labelling it "N passing tests omitted"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1.2s)
+  3 tools completed in 1m 5s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+
