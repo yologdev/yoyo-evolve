@@ -85,7 +85,13 @@ pub fn find_impl_blocks(source: &str, type_name: &str) -> Vec<(usize, usize, Str
                     || before.trim_end().is_empty()
                     || before.trim_end() == "pub"
                     || before.trim_end().starts_with("pub(");
-                if is_valid_prefix {
+                // `impl Foo for Bar` is a trait impl of Bar, not an inherent impl of
+                // Foo — but "impl Foo " is a prefix of it, so the pattern matches.
+                // SAFETY: the pattern matched exactly at pos, so pos + pat.len() is a
+                // char boundary.
+                let after = trimmed[pos + pat.len()..].trim_start();
+                let is_trait_impl = after == "for" || after.starts_with("for ");
+                if is_valid_prefix && !is_trait_impl {
                     found = true;
                     break;
                 }
@@ -721,6 +727,44 @@ impl Foo {
         let src = "struct Foo;\nimpl Bar {\n    fn baz() {}\n}\n";
         let blocks = find_impl_blocks(src, "Foo");
         assert!(blocks.is_empty());
+    }
+
+    /// Blind round 29 (Day 164): `impl Foo for Bar` is a trait impl of `Bar`, not
+    /// an inherent impl of `Foo` — but `find_impl_blocks(src, "Foo")` matched it
+    /// because the pattern `"impl Foo "` is a prefix of `"impl Foo for Bar {"`.
+    /// `move_method` takes `target_impls[0]` with no disambiguation, so a trait
+    /// impl sitting above the real one silently became the destination.
+    #[test]
+    fn test_find_impl_blocks_ignores_trait_impls_named_by_trait() {
+        let src = "\
+impl Foo for Bar {
+    fn from_trait(&self) {}
+}
+
+impl Foo {
+    fn inherent(&self) {}
+}
+";
+        let blocks = find_impl_blocks(src, "Foo");
+        assert_eq!(
+            blocks.len(),
+            1,
+            "`impl Foo for Bar` is not an impl block of Foo: {blocks:?}"
+        );
+        assert!(blocks[0].2.contains("fn inherent"));
+        assert!(!blocks[0].2.contains("fn from_trait"));
+
+        // KNOWN GAP, pinned here as current behavior and NOT as a goal: a trait
+        // impl is not reachable under its self type either — `find_impl_blocks`
+        // only matches inherent impls. So `impl Foo for Bar` is invisible to
+        // `/move` from both directions. Narrowing the false match (above) does
+        // not widen this; if `/move` ever needs to target trait impls, this
+        // assertion is the one that must change.
+        let for_bar = find_impl_blocks(src, "Bar");
+        assert!(
+            for_bar.is_empty(),
+            "known gap: trait impls are not matched under their self type"
+        );
     }
 
     #[test]
