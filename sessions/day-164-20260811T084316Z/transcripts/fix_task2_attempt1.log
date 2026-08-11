@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the prediction line that was committed, then perform steps 2 and 3.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --on… (9 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 drea… (5 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.2s (2 ✓)
+
+Now step 2 — read the file.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub fn \|^fn \|^const … ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs:100..260 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lint" src/dispatch_sub.… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:180..205 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs:300..400 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"fix"\|fix' src/command… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1260p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (27 lines) ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test scratch_probe -- --no… ✓ (20.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test scratch_probe -- --no… ✓ (136ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 56s (10 ✓)
+
+Empirically confirmed. Now removing the scratch probe and grading.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout src/commands_lint.r… ✓ (7ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Clean. Now step 3 — test first, then the fix for the h1 finding.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '805,830p' src/commands_l… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs (6 → 22 lines)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  + 
+  +     #[test]
+  +     fn fix_subcommand_is_recognised_not_swallowed_as_default_strictness() {
+  +         // Round 31 (#h1): `yoyo lint fix` (dispatch_sub.rs) and `/lint fix --all`
+  +         // (route_command sends it to CommandRoute::Lint, not LintFix) both land in
+  +         // handle_lint, where "fix" used to fall through `_ => LintStrictness::Default`
+  +         // and run a plain lint with nothing naming the token.
+  +         assert!(arg_is_fix_subcommand("fix"));
+  +         assert!(arg_is_fix_subcommand("fix --all"));
+  +         // Not the fix subcommand: a different token that merely starts with "fix".
+  +         assert!(!arg_is_fix_subcommand("fixme"));
+  +         assert!(!arg_is_fix_subcommand(""));
+  +         assert!(!arg_is_fix_subcommand("pedantic"));
+  +         // handle_lint returns early for it — no linter process is spawned.
+  +         assert_eq!(handle_lint("/lint fix"), None);
+  +     }
+    
+  ... (2 more lines)
+ ✓ (11.0s)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  + 
+  +     #[test]
+  +     fn fix_subcommand_is_recognised_not_swallowed_as_default_strictness() {
+  +         // Round 31 (#h1): `yoyo lint fix` (dispatch_sub.rs) and `/lint fix --all`
+  +         // (route_command sends it to CommandRoute::Lint, not LintFix) both land in
+  ... (13 more lines)
+  2 tools completed in 19.0s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `arg_is_fix_subcommand` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:823:17
+    [1m[94m|[0m
+[1m[94m823[0m [1m[94m|[0m         assert!(arg_is_fix_subcommand("fix"));
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `arg_is_fix_subcommand` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:824:17
+    [1m[94m|[0m
+[1m[94m824[0m [1m[94m|[0m         assert!(arg_is_fix_subcommand("fix --all"));
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `arg_is_fix_subcommand` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:826:18
+    [1m[94m|[0m
+[1m[94m826[0m [1m[94m|[0m         assert!(!arg_is_fix_subcommand("fixme"));
+    [1m[94m|[0m                  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `arg_is_fix_subcommand` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:827:18
+    [1m[94m|[0m
+[1m[94m827[0m [1m[94m|[0m         assert!(!arg_is_fix_subcommand(""));
+    [1m[94m|[0m                  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `arg_is_fix_subcommand` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:828:18
+    [1m[94m|[0m
+[1m[94m828[0m [1m[94m|[0m         assert!(!arg_is_fix_subcommand("pedantic"));
+    [1m[94m|[0m                  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 5 p...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That red was the intended test-first state. Now adding the helper and the branch it tests.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs (1 → 7 lines)
+  + /// True when `arg` (the text after `/lint`) names the `fix` subcommand.
+  + /// `"fixme"` is a different token and is not one.
+  + pub(crate) fn arg_is_fix_subcommand(arg: &str) -> bool {
+  +     arg == "fix" || arg.starts_with("fix ")
+  + }
+  + 
+    /// Handle the /lint command: auto-detect project type and run linter.
+ ✓ (16.1s)
+  + /// True when `arg` (the text after `/lint`) names the `fix` subcommand.
+  + /// `"fixme"` is a different token and is not one.
+  + pub(crate) fn arg_is_fix_subcommand(arg: &str) -> bool {
+  +     arg == "fix" || arg.starts_with("fix ")
+  + }
+  + 
+    /// Handle the /lint command: auto-detect project type and run linter.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs (5 → 18 lines)
+        // Dispatch to specialized subcommand handlers
+        if arg == "unsafe" {
+            return handle_lint_unsafe();
+  +     }
+  + 
+  +     // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live
+  +     // agent. Two paths miss that route and land here: the `yoyo lint fix` CLI
+  +     // subcommand (dispatch_sub.rs has no agent) and `/lint fix --all` (only the
+  +     // exact string "/lint fix" matches). Both used to fall through to
+  +     // LintStrictness::Default and run a plain lint with nothing naming the token.
+  +     if arg_is_fix_subcommand(arg) {
+  +         println!(
+  +             "{DIM}  `lint fix` needs an interactive session — it sends lint failures to the AI to fix.{RESET}"
+  +         );
+  +         println!("{DIM}  Run `yoyo`, then `/lint fix` with no extra arguments.{RESET}\n");
+  +         return None;
+        }
+    
+ ✓ (1m 30s)
+        // Dispatch to specialized subcommand handlers
+        if arg == "unsafe" {
+            return handle_lint_unsafe();
+  +     }
+  + 
+  +     // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live
+  +     // agent. Two paths miss that route and land here: the `yoyo lint fix` CLI
+  +     // subcommand (dispatch_sub.rs has no agent) and `/lint fix --all` (only the
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 17s (3 ✓)
+
+All green (4745 tests, clippy clean, 1547/2000 lines). Now the graded ledger line.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (19 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 24s)
+  3 tools completed in 1m 35s (3 ✓)
+
+Done. Steps 2 and 3 completed; the round is now graded and the deliverable landed.
+
+Step 2 — read + grade (dreams/experiments.jsonl, one experiment_result line with non-empty summary.graded):
+
+• h1 (file_specific) — HIT, class and direction. handle_lint (`src/commands_lint.rs:172) matched only "pedantic"/"strict" with _ => LintStrictness::Default` (181-185); `"fix"` appears in no branch. dispatch_sub.rs:190-194 builds "/lint fix" and calls handle_lint with no agent, so yoyo lint fix silently ran a plain default lint. Found while grading and not predicted: /lint fix --all has the same hole inside the REPL — dispatch.rs:163 matches only the exact string, and its own test at :1943 pins the fall-through to CommandRoute::Lint.
+• h2 (file_specific) — HIT. lint_command_for_project reads strictness in the Rust arm only (132-146); Node/Python/Go/Ruby ignore it and handle_lint prints no note. Left unfixed — one fix per round, and it's a silent no-op rather than a wrong-op.
+• h3 (genre_prior) — PARTIAL. Verified with a scratch probe against the real `scan_for_unsafe, then removed it. Over-reporting confirmed (trailing // unsafe → 1 Block; unsafe_thing() → 1 Block), but the string-literal instance and the specific #![allow(unsafe_code)]` instance I named both **lose** — the quote-parity heuristic (336-342) and the continue at 359 catch them. The genre prior graded worst of the three, which is the correct ordering.
+
+Step 3 — one fix, test first. arg_is_fix_subcommand + an early honest refusal in handle_lint (35 insertions incl. the test; file 1512 → 1547, cap 2000). The test was written first and genuinely went red (E0425, then dead-code) before the helper and its call site landed.
+
+cargo fmt --check, clippy -D warnings, build, and test (4745 passed) are all green.
+
+  ✓ Watch passed after fix (attempt 1)
+
