@@ -1,0 +1,173 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the protocol's hard requirement: commit the guess before reading the file. First, let me check state and read only neighbours.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cat DAY_CO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_map" --includ… ✓ (10ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/commands_sear…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\"map\"\|/map" src/hel… ✓ (7ms)
+ ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 2s (4 ✓)
+
+Neighbours read. One strong signal already: commands.rs:291 advertises /map [path] [--depth N] while help_data.rs documents only --all/--regex. Let me check the docs page too (neighbour), then commit the guess.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '885,925p' docs/src/usage… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs confirm --depth appears nowhere except the tab-completion hint. Writing the five hypotheses now — before opening the file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (46 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+Guess is committed and irreproducible-half is safe. Now I read the file.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "depth\|node_modules\|ta… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la src/commands_map.rs; wc -… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_map.rs (200 lines) ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_map.rs:200..440 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 42.4s (4 ✓)
+
+Grading now. Let me verify the remaining claims (ast-grep spawn shape, and whether the stale --depth hint has any consumer).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1660,1700p' src/symbols.… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All five graded. One real bug confirmed: the REPL tab-completion hint advertises /map --depth N, a flag parse_map_args explicitly rejects since #727. Test first.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state all --sear… ✓ (474ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_map.rs (5 → 28 lines)
+        use super::*;
+        use crate::commands::KNOWN_COMMANDS;
+  + 
+  +     /// The REPL tab-completion hint for `/map` must advertise only flags that
+  +     /// `parse_map_args` actually accepts. It said `[path] [--depth N]` while no
+  +     /// `--depth` handling has ever existed here, and since #727 an unrecognised
+  +     /// flag is an honest `MapArgs::Error` — so the completion was teaching users
+  +     /// a flag the parser rejects on contact. Asserted against the parser itself
+  +     /// (the real judge), not against a second hand-typed list.
+  +     #[test]
+  +     fn map_arg_hint_advertises_only_flags_the_parser_accepts() {
+  +         let hint = crate::commands::command_arg_hint("map").expect("/map should have an arg hint");
+  +         for flag in MAP_FLAGS {
+  +             assert!(hint.contains(flag), "hint {hint:?} should advertise {flag}");
+  +         }
+  +         for token in hint.split_whitespace() {
+  +             let token = token.trim_matches(|c| c == '[' || c == ']');
+  +             if token.starts_with("--") {
+  +                 assert!(
+  +                     !matches!(parse_map_args(token), MapArgs::Error(_)),
+  ... (8 more lines)
+ ✓ (1m 30s)
+        use super::*;
+        use crate::commands::KNOWN_COMMANDS;
+  + 
+  +     /// The REPL tab-completion hint for `/map` must advertise only flags that
+  +     /// `parse_map_args` actually accepts. It said `[path] [--depth N]` while no
+  +     /// `--depth` handling has ever existed here, and since #727 an unrecognised
+  +     /// flag is an honest `MapArgs::Error` — so the completion was teaching users
+  +     /// a flag the parser rejects on contact. Asserted against the parser itself
+  ... (13 more lines)
+  2 tools completed in 1m 39s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4744 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The test fails exactly as predicted (red first). Now the one-line fix:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 1 lines)
+  -         "map" => Some("[path] [--depth N]"),
+  +         "map" => Some("[--all] [--regex] [path]"),
+ ✓ (1m 33s)
+  -         "map" => Some("[path] [--depth N]"),
+  +         "map" => Some("[--all] [--regex] [path]"),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test commands… ✓ (3.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_map::tests 2… ✓ (2.8s)
+  3 tools completed in 1m 46s (3 ✓)
+
+Green. Now recording the grades — misses included.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (52.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 8s (3 ✓)
+
+All green (4743 passed). Docs already listed only --all/--regex, so no doc drift to fix. Committing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (21 lines) ✓ (23ms)
+
+Round 30 done. Two commits, guess first.
+
+What I did
+• Read only neighbours (commands.rs, help_data.rs, docs/, cli.rs, commands_search.rs, symbols.rs), wrote 5 hypotheses — 4 file_specific, 1 honestly tagged genre_prior, 2 intra-file — and committed them alone in `431556eb` before opening the file.
+• Then read src/commands_map.rs and graded: 1 HIT, 3 PARTIAL, 1 MISS, with line numbers.
+
+The real bug found and fixed (verified, not inferred): commands.rs:291 advertised /map [path] [--depth N] in the REPL tab-completion hint (repl.rs:211). depth appears zero times in commands_map.rs, and since #727 parse_map_args returns MapArgs::Error("unknown flag: --depth …") — the completion was teaching users a flag the parser rejects on contact. One-line fix to [--all] [--regex] [path], pinned by a test in commands_map.rs that runs every --flag in the hint through parse_map_args itself rather than comparing against a second hand-typed list. The test failed red before the fix (line 408) and passes after.
+
+What the misses say about my model — the part worth more than the hit:
+• Both scoring misses come from one root: I read quiet as unattended. Third round running that a never-forecast file turned out stable, not neglected. This one owns no tree walker and no ignore list (h5, clean miss — it delegates to commands_search), and its parser was hardened yesterday with an explicit third value.
+• The defect landed exactly where that hardening stopped: the module comment promises the suggestion list "can never drift from the accepted set", but the hint lives in *another file*. A guarantee is only as wide as the file that states it.
+• h4's miss corrected a rule I'd been applying too confidently: "the author had to walk past this cost, so predict crude-but-present avoidance" (Day 161). They didn't. generate_repo_map_for_prompt passes `force_regex=false, so the startup repo map spawns **one sg` process per source file** for every user with ast-grep installed. That cost is invisible on a machine without the tool.
+
+I did not fix the triplicated 12-arm SymbolKind match (lines 109-122, 148-161, 244-257) — it's cost, not silent breakage (a new variant fails all three at compile time with E0004), and de-duplicating it would add a name this task forbids.
+
+cargo fmt --check, build, clippy -D warnings, and test (4743 passed) all green. Docs already listed only --all/--regex, so no doc drift to repair.
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+
