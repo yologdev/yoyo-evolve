@@ -116,7 +116,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // provenance, so read_file results stop being eaten. Signature recorded
     // retroactively during Day 162 reflection: the raise itself shipped
     // unattributed in commit 6e446f09.
-    ("src/format/output.rs", 2635),
+    // Day 164: +45 lines — provenance corroboration gate for filter_test_output
+    // (a `✓` glyph is a shape, a runner summary is provenance) + its regression tests.
+    ("src/format/output.rs", 2680),
     ("src/help.rs", 2672),
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
@@ -142,7 +144,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // short-circuit in RecoveryHintTool; the ~70 lines are tests the task
     // required — the helper's per-stem cases plus the both-sides wrapper
     // discriminator (verbatim message + counter unmoved vs hint + bump).
-    ("src/tool_wrappers.rs", 3964),
+    // Day 164: +4 lines — the #665 fixture gained the runner summary line a real
+    // runner emits; without it the fixture asserted the ✓-shape-only collapse.
+    ("src/tool_wrappers.rs", 3968),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the

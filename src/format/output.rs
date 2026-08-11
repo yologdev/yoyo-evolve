@@ -378,6 +378,14 @@ fn collapse_repetitive_lines(s: &str) -> String {
 /// Minimum number of test-pass lines required to activate the test filter.
 const TEST_FILTER_MIN_PASS_LINES: usize = 5;
 
+/// Cargo's runner banner (`running 12 tests`) — provenance, not shape.
+fn is_test_runner_header(line: &str) -> bool {
+    line.trim()
+        .strip_prefix("running ")
+        .and_then(|r| r.strip_suffix(" tests").or_else(|| r.strip_suffix(" test")))
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// Detect and filter test framework output, keeping only failures + summary.
 ///
 /// Supports:
@@ -410,6 +418,17 @@ pub fn filter_test_output(output: &str) -> String {
         .count();
 
     if pass_count < TEST_FILTER_MIN_PASS_LINES {
+        return output.to_string();
+    }
+
+    // Provenance gate: a `✓` glyph is a shape, a runner summary is provenance —
+    // collapsing on shape alone deletes user data and lies about what it deleted
+    // (npm, docker, eslint and yoyo's own /doctor all print `✓`).
+    let has_runner_provenance = classifications
+        .iter()
+        .any(|k| matches!(k, TestLineKind::Summary))
+        || lines.iter().any(|l| is_test_runner_header(l));
+    if !has_runner_provenance {
         return output.to_string();
     }
 
@@ -2159,6 +2178,32 @@ mod tests {
     #[test]
     fn test_filter_test_empty_input() {
         assert_eq!(filter_test_output(""), "");
+    }
+
+    #[test]
+    fn test_check_glyph_lines_without_runner_summary_survive_verbatim() {
+        // Day 164 (observed live): `yoyo risk accuracy` through the bash tool
+        // lost its `✓ src/…` hit lists to "(N passing tests omitted)".
+        let mut lines = vec!["Prediction accuracy".to_string()];
+        for i in 0..6 {
+            lines.push(format!("  ✓ src/foo_{i}.rs, src/bar_{i}.rs"));
+        }
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        assert_eq!(result, input, "must be byte-identical, got: {result}");
+        assert!(!result.contains("passing tests omitted"), "got: {result}");
+    }
+
+    #[test]
+    fn test_check_glyph_lines_with_runner_summary_still_collapse() {
+        // The feature still works when the output really is test output.
+        let mut lines: Vec<String> = (0..6).map(|i| format!("  ✓ case {i}")).collect();
+        lines.push("test result: ok. 6 passed; 0 failed;".to_string());
+        let result = filter_test_output(&lines.join("\n"));
+        assert!(
+            result.contains("6 passing tests omitted"),
+            "should collapse real test output, got: {result}"
+        );
     }
 
     #[test]

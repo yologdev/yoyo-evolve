@@ -2417,6 +2417,10 @@ mod tests {
             "prose line four.",
             "test epsilon ... ok",
             "closing prose.",
+            // Day 164: a real runner always emits a summary line; without one
+            // this fixture asserted the ✓/pass-shape-only collapse that was
+            // eating non-test bash output. The provenance gate needs it here.
+            "test result: ok. 5 passed; 0 failed; 0 ignored",
         ]
         .join("\n")
     }
