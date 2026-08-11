@@ -104,7 +104,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
     ("src/commands_web.rs", 2415),
-    ("src/config.rs", 2308),
+    // Day 164 (#732): +105 lines — TOML basic-string escaping on the write
+    // side, matching unescaping (and a lone-quote panic fix) on the read side,
+    // plus the round-trip tests that pin writer and reader as one promise.
+    ("src/config.rs", 2413),
     ("src/dispatch.rs", 2307),
     ("src/format/cost.rs", 2095),
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming

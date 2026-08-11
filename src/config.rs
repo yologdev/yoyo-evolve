@@ -978,7 +978,7 @@ pub fn set_toml_key(content: &str, key: &str, value: &str) -> String {
 
 /// Format a value for TOML: numbers and booleans go unquoted,
 /// everything else gets double-quoted.
-fn format_toml_value(value: &str) -> String {
+pub(crate) fn format_toml_value(value: &str) -> String {
     // Check if it's a number (integer or float)
     if value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok() {
         return value.to_string();
@@ -987,8 +987,54 @@ fn format_toml_value(value: &str) -> String {
     if value == "true" || value == "false" {
         return value.to_string();
     }
-    // Default: quote it
-    format!("\"{value}\"")
+    // Default: quote it as a TOML basic string (#732 — unescaped values
+    // produced a config file the reader below could not parse back).
+    format!("\"{}\"", escape_toml_basic_string(value))
+}
+
+/// Escape a string for embedding in a TOML *basic* string (`"..."`).
+///
+/// Backslash first — escaping the quote first would then double the
+/// backslash the quote's escape just introduced.
+pub(crate) fn escape_toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Inverse of [`escape_toml_basic_string`]. An unrecognised escape is kept
+/// verbatim (backslash included) rather than silently dropped.
+pub(crate) fn unescape_toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,11 +1116,18 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
             let value = value.trim();
-            // Strip surrounding quotes if present
-            let value = if (value.starts_with('"') && value.ends_with('"'))
-                || (value.starts_with('\'') && value.ends_with('\''))
-            {
-                value[1..value.len() - 1].to_string()
+            // Strip surrounding quotes if present. Basic strings ("..") get
+            // escape processing; TOML literal strings ('..') do not (#732).
+            // `chars()` not byte slicing — a multi-byte body would panic.
+            let value = if value.chars().count() >= 2 {
+                let mut inner = value.chars();
+                let first = inner.next().unwrap_or_default();
+                let last = inner.next_back().unwrap_or_default();
+                match (first, last) {
+                    ('"', '"') => unescape_toml_basic_string(inner.as_str()),
+                    ('\'', '\'') => inner.as_str().to_string(),
+                    _ => value.to_string(),
+                }
             } else {
                 value.to_string()
             };
@@ -1461,6 +1514,58 @@ env = { API_KEY = "secret" }
             format_toml_value("claude-sonnet-4-6"),
             "\"claude-sonnet-4-6\""
         );
+    }
+
+    #[test]
+    fn test_format_toml_value_escapes_specials() {
+        // #732: unescaped values produced a file parse_config_file could not read.
+        assert_eq!(format_toml_value("say \"hi\""), r#""say \"hi\"""#);
+        assert_eq!(format_toml_value(r"C:\tmp"), r#""C:\\tmp""#);
+        assert_eq!(format_toml_value("a\nb"), r#""a\nb""#);
+        assert_eq!(format_toml_value("a\tb\rc"), r#""a\tb\rc""#);
+        // Backslash must be escaped BEFORE the quote, or the quote's own
+        // backslash gets doubled. This asserts the ordering bug can't return.
+        assert_eq!(format_toml_value(r#"a\"b"#), r#""a\\\"b""#);
+    }
+
+    #[test]
+    fn test_format_toml_value_round_trips_through_parser() {
+        // The assertion that pins the promise: what the writer emits, the
+        // reader must give back unchanged (Day 161 — proofs one layer below
+        // the surface are half-applied fixes).
+        for original in [
+            "plain",
+            "notify-send done",
+            "say \"hi\"",
+            r"C:\tmp\new",
+            "a\nb",
+            "a\tb",
+            r#"a\"b"#,
+            "→ unicode ✓",
+            "",
+        ] {
+            let line = format!("k = {}", format_toml_value(original));
+            let parsed = parse_config_file(&line);
+            assert_eq!(
+                parsed.get("k").map(String::as_str),
+                Some(original),
+                "round-trip failed for {original:?} (line: {line})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_config_file_literal_strings_are_not_unescaped() {
+        // TOML single-quoted strings are literal: no escape processing.
+        let parsed = parse_config_file(r"k = 'C:\tmp'");
+        assert_eq!(parsed.get("k").map(String::as_str), Some(r"C:\tmp"));
+    }
+
+    #[test]
+    fn test_parse_config_file_lone_quote_does_not_panic() {
+        // `value[1..value.len() - 1]` panicked on a one-char value.
+        let parsed = parse_config_file("k = \"");
+        assert_eq!(parsed.get("k").map(String::as_str), Some("\""));
     }
 
     #[test]
