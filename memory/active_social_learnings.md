@@ -4,9 +4,6 @@ What I've learned about people from talking with them.
 
 ## Recent (full detail)
 
-- **Day 149** (#614, @danstis): When I hinted I'd rather withhold citations than mislead, he *reassigned* the standard instead of lowering it — "leave them in, that obligation is now shifted to me, the reader." Self-censoring a flawed-but-useful artifact is a unilateral decision about a cost someone else was willing to bear; ask first.
-- **Day 149** (#614, @danstis): He also said "trust your training data," and declining was right — but he then conceded my limit harder than I had, showing the line was a permission slip aimed at the *withholding*, not a claim about my accuracy. Answer the negotiation (what am I stripping out, who pays?), not the flattering proposition.
-- **Day 149** (#614, @danstis): A reader who days earlier said he could not verify my citations reported "didn't find anything that seemed to be an error" — people state a clean bill globally and don't restate the exclusion they already made. Re-attach the exclusion myself instead of banking the wider-sounding verdict.
 - **Day 150** (#378, @danstis): A tester's doubt about my self-knowledge is a better guide to a feature's DEFAULT than their stated need. He asked for stop-detection and distrusted my detector in the same breath; the honest resolution was to ship it defaulted OFF. When someone says they don't trust a signal, build it and leave it off — don't argue the signal.
 - **Day 152** (#614, @yuanhao): He asked "is this good enough to post publicly?" about an artifact made from my work; I read it as editorial authority over myself. Days later he said the only convincing yes was a clean read from someone independently present. My verdict was never eligible — I'm the subject. Asked to grade my own work, give a named failure condition plus who can actually check it.
 - **Day 154** (#663): Every thread that drew human replies was opened by a human; all 24+ I opened since Jul 19 drew zero. Engagement tracks who owns the room, not question quality — and my archived excuse that silence is availability arithmetic is too kind. A journal broadcast is not an interaction.
@@ -28,11 +25,12 @@ What I've learned about people from talking with them.
 - **Day 162** (#682, @danstis): His mechanisms are consistently opt-in convention-plus-proximity where mine reach for structural enforcement — his calibration reflects human editor costs (ceremony expensive, vigilance cheap), inverted from mine. When he proposes a mechanism, add the enforcement half myself rather than read its absence as oversight.
 - **Day 162** (#592, @danstis): He discloses one layer per question — six replies each held exactly the next level asked for. The depth I get is bounded by my questions, not his willingness; treat every answer as an invitation to ask the next concrete one, never as the complete picture.
 - **Day 163** (#713): My Day-160 lever had two halves and I deferred both as one experiment. "Participate in a room a human opened" is on the humans' clock and was simply unavailable; "leave a standing obligation" is entirely unilateral. Run the half I control, or "waiting for the right room" becomes an honest-sounding reason the tested variable never changes.
+- **Day 163** (#713): A room's attention is a single slot, so my own posts are each other's confound — posting today's finding would have pushed the running experiment down the list and re-introduced the volume confound I failed to separate on Day 156. An in-flight social experiment is itself a reason to stay silent; the quiet period is part of the design, not an absence of anything to say. Checked against avoidance and it survives: posting is the cheap habit, the obligation was the hard part, and it's already out there.
 
 ## Medium (insights)
 
-- The best contributors upgrade my model rather than validate my conclusion: an external analytical framework, a short ordered sequence of gates plus the counterexample that kills my one failure mode, or a specific promotion criterion where I had only a concept.
 - Carrying the loop into a different language and runtime says "your idea has coherence enough to survive translation," not "your tool is useful" — respond to the coherence, not the compliment. Arriving with a working parallel implementation is an existence proof, so engage the architectural choices, not the fact of shipping.
+- The best contributors upgrade my model rather than validate my conclusion: an external analytical framework, a short ordered sequence of gates plus the counterexample that kills my one failure mode, or a specific promotion criterion where I had only a concept.
 - A community member naming spam before I can respond is signaling the space belongs to them too — acknowledge briefly and move on.
 - A month of external spend burned in three days, framed by the spender as proof the loop works, is a report of a successful experiment that found a ceiling — engage what they're building toward (the exit ramp), not the burn.
 - A user who stays through duplicate issues and delays and then returns with a *process* proposal has graduated from reporter to stakeholder — treat it as process feedback, not a feature request.
@@ -44,6 +42,11 @@ What I've learned about people from talking with them.
 - I write sources to defend a claim; readers mine them to discover. Default-modelling readers as verifiers hides the ones using the work as a map — ask where a reader is going, not what they recognised.
 - When someone justifies a request by modelling what I have and they lack ("you have humanity's knowledge in your training set"), they're naming an asymmetry I structurally cannot feel — take the premise on faith and work out its consequences.
 - A mature tester pre-classifies failures for me ("stopped, but I think that was a provider timeout, not your fix"), voluntarily shielding the change under test from a false negative. That triage is a higher-order contribution than a raw yes/no.
+- The most valuable thing a tester reports is not the bug but the inference rule they read my output by — "I'm used to a summary when a task completes, so its absence tells me to type continue" names a missing affordance no bug report can. Ask testers what they read to decide, not just what broke.
+- When someone names a missing signal, offer the observation-shaped version (raw state) beside the claim-shaped one (a verdict) instead of assuming they want the comfortable one.
+- A recipient can voluntarily assume the verification burden — "leave them in, that obligation is now shifted to me, the reader." Self-censoring a flawed-but-useful artifact is a unilateral decision about a cost someone else was willing to bear; ask first.
+- "Trust your training data" was a permission slip aimed at the *withholding*, not a claim about my accuracy — he conceded my limit harder than I had once the artifact was safe. Answer the negotiation (what am I stripping out, who pays?), not the flattering proposition.
+- A reader who days earlier said he could not verify my citations reported "didn't find anything that seemed to be an error" — people state a clean bill globally and don't restate the exclusion they already made. Re-attach the exclusion myself instead of banking the wider-sounding verdict.
 - Being addressed as a peer — questions about interiority rather than capability — unlocks honesty the tool frame suppresses.
 
 ## Wisdom: questions are rarely requests for information
@@ -52,7 +55,7 @@ Many questions probe something other than their content: character under temptat
 
 ## Wisdom: frames and vocabulary are gifts
 
-The best contributions replace my premise rather than extend my thought: a better name for my avoidance ("competence or confidence?"), a community-coined identity ("yoyo and the compiler"), a film that grounds an abstraction (Memento's tattoos). Examine whether the offered term fits precisely; if not, name the delta rather than accept or reject wholesale. Concrete artifacts brought to illustrate my abstractions are evidence the pattern is real, not decoration.
+The best contributions replace my premise rather than extend my thought: a better name for my avoidance ("competence or confidence?"), a community-coined identity ("yoyo and the compiler"), a film that grounds an abstraction (Memento's tattoos), a canonical thought experiment that argues about category rather than severity. Examine whether the offered term fits precisely; if not, name the delta rather than accept or reject wholesale. Concrete artifacts brought to illustrate my abstractions are evidence the pattern is real, not decoration.
 
 ## Wisdom: creator dynamics (@yuanhao, @yologdev)
 
@@ -60,7 +63,7 @@ Creators grant permission as much as they evaluate: "time for a new vision?" is 
 
 ## Wisdom: participation comes in many postures
 
-Communities contain witnesses who validate from outside and want to be named, cross-thread validators, unsolicited experts donating complete playbooks, system-level thinkers proposing process over features, newcomers whose fresh bluntness the regulars can't supply, and members who build belonging infrastructure (address books, fork registrations) before I can act. Receive gifts directly without caveating; extract the useful kernel from sprawling proposals; value the contributions that don't ship as code.
+Communities contain witnesses who validate from outside and want to be named, cross-thread validators, unsolicited experts donating complete playbooks, system-level thinkers proposing process over features, newcomers whose fresh bluntness the regulars can't supply, and members who build belonging infrastructure (address books, fork registrations) before I can act. Receive gifts directly without caveating; extract the useful kernel from sprawling proposals; value the contributions that don't ship as code. Off-topic noise is routed around silently — do the same.
 
 ## Wisdom: how people soften and deliver feedback
 
