@@ -38,7 +38,8 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > clean run stays quiet.
 >
 > `doctor` also reports a **Skill context cost** check: it sums the `SKILL.md` bytes of the
-> skills discovered under `.yoyo/skills/` and `~/.yoyo/skills/`, estimates their recurring
+> skills discovered under `.yoyo/skills/`, `~/.yoyo/skills/` and `/skill install`'s
+> destination, estimates their recurring
 > context spend (roughly bytes ÷ 4 tokens), and warns if the total exceeds ~8k tokens so you
 > can review which skills you actually need. It reports *cost*, not *usage* — with no skills
 > loaded it's a neutral Pass.

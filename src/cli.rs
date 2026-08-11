@@ -84,8 +84,9 @@ pub fn auto_discovered_skill_count() -> usize {
 
 /// Directories that actually *contributed* auto-discovered skills this run.
 ///
-/// The count above is a total across two directories (`~/.yoyo/skills/` and
-/// `.yoyo/skills/`), so it cannot answer "where did these come from?". Any
+/// The count above is a total across every auto-discovery directory (see
+/// [`auto_discovery_sources`] for the current list), so it cannot answer
+/// "where did these come from?". Any
 /// surface that names a directory must read this, not hard-code one of them —
 /// a user whose skills all live in `~/.yoyo/skills/` was previously told they
 /// came from `.yoyo/skills/` and sent to an empty directory.
@@ -108,7 +109,7 @@ static SKILL_FLAG_DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync
 
 /// Return the skill directories supplied with `--skills`.
 ///
-/// These are a real source of loaded skills alongside the two auto-discovery
+/// These are a real source of loaded skills alongside the auto-discovery
 /// dirs, so anything reporting on skills (e.g. `/doctor`'s context-cost audit)
 /// must consult this too — otherwise it describes only the skills it happens to
 /// know where to look for, and calls that "no skills loaded".
@@ -116,12 +117,70 @@ pub fn skill_flag_dirs() -> Vec<std::path::PathBuf> {
     SKILL_FLAG_DIRS.get().cloned().unwrap_or_default()
 }
 
-/// Auto-discover skills from `~/.yoyo/skills/` (user-global) and `.yoyo/skills/` (project-local).
+/// One directory auto-discovery reads: where it is, its `load_dir_resilient`
+/// source tag, how it is named in the recorded `sources` list, and how it is
+/// named inside a malformed-skill warning (those last two differ for `global`).
+struct SkillSourceDir {
+    dir: std::path::PathBuf,
+    label: &'static str,
+    display: String,
+    warn_target: String,
+}
+
+/// Every directory auto-discovery reads, ordered **lowest precedence first** —
+/// the order they must be merged in, since `SkillSet::merge` lets the argument
+/// win. Order: installed < global < project.
+///
+/// Pure: `HOME` / `XDG_CONFIG_HOME` are parameters, not env reads, so the
+/// ordering claim is testable. The install dir (`/skill install`'s destination,
+/// #728) is deliberately *lowest*: reading it can never override a skill a user
+/// already had working in the two older directories.
+fn auto_discovery_sources(
+    home: Option<&std::path::Path>,
+    xdg: Option<&std::path::Path>,
+) -> Vec<SkillSourceDir> {
+    let mut sources = Vec::new();
+
+    // Before #728 this directory was never read, so a skill the user explicitly
+    // installed by name silently never loaded again.
+    if let Some(dir) = crate::commands_skill::skill_install_dir_from(xdg, home) {
+        let shown = dir.display().to_string();
+        sources.push(SkillSourceDir {
+            dir,
+            label: "installed",
+            display: shown.clone(),
+            warn_target: shown,
+        });
+    }
+    if let Some(home) = home {
+        let dir = home.join(".yoyo/skills");
+        let warn_target = dir.display().to_string();
+        sources.push(SkillSourceDir {
+            dir,
+            label: "global",
+            display: "~/.yoyo/skills/".to_string(),
+            warn_target,
+        });
+    }
+    sources.push(SkillSourceDir {
+        dir: std::path::PathBuf::from(".yoyo/skills"),
+        label: "project",
+        display: ".yoyo/skills/".to_string(),
+        warn_target: ".yoyo/skills/".to_string(),
+    });
+
+    sources
+}
+
+/// Auto-discover skills from every directory in [`auto_discovery_sources`]:
+/// `/skill install`'s destination, `~/.yoyo/skills/` (user-global), and
+/// `.yoyo/skills/` (project-local).
 ///
 /// Merges discovered skills into `skills`. The merge order ensures:
 ///   1. `--skills` flag directories (already in `skills`) have highest precedence.
 ///   2. `.yoyo/skills/` (project-local) overrides `~/.yoyo/skills/` (global).
-///   3. `~/.yoyo/skills/` (global) is lowest precedence among auto-discovered.
+///   3. `~/.yoyo/skills/` (global) overrides the install dir.
+///   4. The install dir (`~/.config/yoyo/skills/`) is lowest precedence.
 ///
 /// Returns the total number of skills auto-discovered (before dedup with flag skills).
 fn auto_discover_skills(skills: &mut SkillSet) -> usize {
@@ -131,37 +190,24 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     // exists but is empty contributed nothing and must not be named.
     let mut sources: Vec<String> = Vec::new();
 
-    // 1. User-global: ~/.yoyo/skills/
-    if let Ok(home) = std::env::var("HOME") {
-        let global_dir = std::path::PathBuf::from(home).join(".yoyo/skills");
-        if global_dir.is_dir() {
-            // Resilient: one malformed SKILL.md is skipped with a warning naming
-            // that skill, instead of dropping every skill in the directory (#677).
-            let (set, errors) = SkillSet::load_dir_resilient(&global_dir, "global");
-            for e in &errors {
-                eprintln!(
-                    "{YELLOW}warning:{RESET} skipping malformed skill in {}: {e}",
-                    global_dir.display()
-                );
-            }
-            if !set.is_empty() {
-                sources.push("~/.yoyo/skills/".to_string());
-            }
-            count += set.len();
-            auto_skills.merge(set);
-        }
-    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
 
-    // 2. Project-local: .yoyo/skills/
-    let project_dir = std::path::PathBuf::from(".yoyo/skills");
-    if project_dir.is_dir() {
-        // Resilient: skip the bad file, keep the good ones (#677).
-        let (set, errors) = SkillSet::load_dir_resilient(&project_dir, "project");
+    for source in auto_discovery_sources(home.as_deref(), xdg.as_deref()) {
+        if !source.dir.is_dir() {
+            continue;
+        }
+        // Resilient: one malformed SKILL.md is skipped with a warning naming
+        // that skill, instead of dropping every skill in the directory (#677).
+        let (set, errors) = SkillSet::load_dir_resilient(&source.dir, source.label);
         for e in &errors {
-            eprintln!("{YELLOW}warning:{RESET} skipping malformed skill in .yoyo/skills/: {e}");
+            eprintln!(
+                "{YELLOW}warning:{RESET} skipping malformed skill in {}: {e}",
+                source.warn_target
+            );
         }
         if !set.is_empty() {
-            sources.push(".yoyo/skills/".to_string());
+            sources.push(source.display);
         }
         count += set.len();
         auto_skills.merge(set);
@@ -172,7 +218,7 @@ fn auto_discover_skills(skills: &mut SkillSet) -> usize {
     // We want flag > project > global, so we merge flag skills *into* auto_skills
     // (giving flag higher priority), then replace the original set.
     if count > 0 {
-        // auto_skills already has global < project ordering.
+        // auto_skills already has installed < global < project ordering.
         // Now merge the original flag-provided skills on top (highest priority).
         auto_skills.merge(skills.clone());
         *skills = auto_skills;
@@ -1027,7 +1073,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         set
     };
 
-    // Auto-discover skills from ~/.yoyo/skills/ (user-global) and .yoyo/skills/ (project-local).
+    // Auto-discover skills from the install dir, ~/.yoyo/skills/ (user-global)
+    // and .yoyo/skills/ (project-local).
     // Later loads override earlier ones on name conflict, so project-local wins over global,
     // and --skills flag wins over both (since flag skills are already in `skills`).
     let _auto_skill_count = auto_discover_skills(&mut skills);
@@ -1276,6 +1323,57 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_auto_discovery_sources_order_is_lowest_precedence_first() {
+        // SkillSet::merge lets the *argument* win, so auto_discover_skills merges
+        // in list order — which means this list must run lowest → highest.
+        // #728 added the install dir and it must be FIRST (lowest), so loading it
+        // can never override a skill a user already had working.
+        let dirs = auto_discovery_sources(
+            Some(std::path::Path::new("/home/tester")),
+            Some(std::path::Path::new("/xdg")),
+        );
+        let labels: Vec<&str> = dirs.iter().map(|d| d.label).collect();
+        assert_eq!(labels, vec!["installed", "global", "project"], "{labels:?}");
+        assert_eq!(dirs[0].dir, std::path::PathBuf::from("/xdg/yoyo/skills"));
+        assert_eq!(
+            dirs[1].dir,
+            std::path::PathBuf::from("/home/tester/.yoyo/skills")
+        );
+        assert_eq!(dirs[2].dir, std::path::PathBuf::from(".yoyo/skills"));
+        // Byte-for-byte guard on the dedup: `global` is *named* ~/.yoyo/skills/
+        // but *warns* with the expanded path; `project` uses one literal string.
+        assert_eq!(dirs[1].display, "~/.yoyo/skills/");
+        assert_eq!(dirs[1].warn_target, "/home/tester/.yoyo/skills");
+        assert_eq!(dirs[2].display, ".yoyo/skills/");
+        assert_eq!(dirs[2].warn_target, ".yoyo/skills/");
+    }
+
+    #[test]
+    fn test_auto_discovery_sources_includes_skill_install_destination() {
+        // The #728 bug: `/skill install` copied into ~/.config/yoyo/skills/ and
+        // auto-discovery never read that directory, so an explicitly installed
+        // skill silently never loaded again.
+        let dirs = auto_discovery_sources(Some(std::path::Path::new("/home/tester")), None);
+        assert!(
+            dirs.iter().any(
+                |d| d.dir.as_path() == std::path::Path::new("/home/tester/.config/yoyo/skills")
+            ),
+            "install dir must be auto-discovered: {:?}",
+            dirs.iter().map(|d| &d.dir).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_auto_discovery_sources_without_home_or_xdg_is_project_only() {
+        // No HOME and no XDG_CONFIG_HOME: neither the global nor the install dir
+        // can be located, and we invent neither.
+        let dirs = auto_discovery_sources(None, None);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].label, "project");
+        assert_eq!(dirs[0].dir, std::path::PathBuf::from(".yoyo/skills"));
+    }
     use crate::config::glob_match;
     use serial_test::serial;
 

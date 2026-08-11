@@ -544,15 +544,35 @@ fn extract_skill_name_from_frontmatter(content: &str) -> Option<String> {
 /// Default skill install directory: `~/.config/yoyo/skills/`
 ///
 /// Uses `XDG_CONFIG_HOME` if set, otherwise falls back to `~/.config`.
-fn default_skill_install_dir() -> Option<std::path::PathBuf> {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .ok()
+///
+/// `pub(crate)` since #728: auto-discovery (`cli::auto_discover_skills`) and the
+/// `/doctor` skill context-cost audit (`commands_dev::skill_source_dirs`) both
+/// need this directory. They call *this* function rather than re-deriving the
+/// XDG rule — one path rule, one place.
+pub(crate) fn default_skill_install_dir() -> Option<std::path::PathBuf> {
+    skill_install_dir_from(
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+    )
+}
+
+/// Pure core of [`default_skill_install_dir`]: no environment reads, so callers
+/// that already know the relevant paths (and tests) can use it directly.
+///
+/// `xdg` wins when present; otherwise `<home>/.config`. Neither → `None`, which
+/// is the honest "there is no install directory on this system" answer rather
+/// than a guessed path.
+pub(crate) fn skill_install_dir_from(
+    xdg: Option<&std::path::Path>,
+    home: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let config_dir = xdg
         .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| std::path::PathBuf::from(h).join(".config"))
-        })?;
+        .or_else(|| home.map(|h| h.join(".config")))?;
     Some(config_dir.join("yoyo").join("skills"))
 }
 
@@ -1063,6 +1083,28 @@ fn skill_install_to(source: &str, install_dir: &std::path::Path) -> Result<Strin
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn test_skill_install_dir_from_prefers_xdg_then_home() {
+        assert_eq!(
+            skill_install_dir_from(Some(std::path::Path::new("/xdg")), None),
+            Some(std::path::PathBuf::from("/xdg/yoyo/skills"))
+        );
+        assert_eq!(
+            skill_install_dir_from(None, Some(std::path::Path::new("/home/tester"))),
+            Some(std::path::PathBuf::from("/home/tester/.config/yoyo/skills"))
+        );
+        // XDG wins when both are present.
+        assert_eq!(
+            skill_install_dir_from(
+                Some(std::path::Path::new("/xdg")),
+                Some(std::path::Path::new("/home/tester"))
+            ),
+            Some(std::path::PathBuf::from("/xdg/yoyo/skills"))
+        );
+        // Neither → None, not a guessed path.
+        assert_eq!(skill_install_dir_from(None, None), None);
+    }
     use super::*;
     use std::fs;
     use tempfile::TempDir;

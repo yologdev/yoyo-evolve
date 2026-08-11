@@ -294,29 +294,40 @@ pub fn skill_context_cost_status(total_estimated_tokens: usize) -> (DoctorStatus
 }
 
 /// Sum the byte sizes of every `SKILL.md` in every directory skills can be
-/// loaded from on this run: the two auto-discovery dirs AND any `--skills`
+/// loaded from on this run: every auto-discovery dir AND any `--skills`
 /// directories. Missing dirs contribute 0.
 ///
 /// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
 fn discovered_skill_bytes() -> usize {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let dirs = skill_source_dirs(&cli::skill_flag_dirs(), home.as_deref());
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
+    let dirs = skill_source_dirs(&cli::skill_flag_dirs(), home.as_deref(), xdg.as_deref());
     skill_bytes_in_dirs(&dirs)
 }
 
 /// Enumerate every directory skills can be loaded from, in discovery order.
 ///
 /// Pure (no I/O) so the *enumeration itself* is testable — the previous version
-/// of this audit hardcoded only the two auto-discovery dirs inline, so skills
-/// supplied with `--skills` were structurally invisible and a repo loading all
-/// of its skills that way was told "no skills loaded".
+/// of this audit hardcoded only the project + global auto-discovery dirs inline,
+/// so skills supplied with `--skills` were structurally invisible and a repo
+/// loading all of its skills that way was told "no skills loaded".
+///
+/// #728: `/skill install`'s destination is an auto-discovery source too, so it
+/// belongs here as well. If a directory can load skills and this audit cannot
+/// see it, the audit under-reports and calls it a pass — the exact blind spot
+/// this function exists to close. `skill_bytes_in_dirs` dedups by canonicalized
+/// path, so listing a dir twice cannot double-count.
 fn skill_source_dirs(
     flag_dirs: &[std::path::PathBuf],
     home: Option<&std::path::Path>,
+    xdg: Option<&std::path::Path>,
 ) -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(".yoyo/skills")];
     if let Some(home) = home {
         dirs.push(home.join(".yoyo/skills"));
+    }
+    if let Some(install) = crate::commands_skill::skill_install_dir_from(xdg, home) {
+        dirs.push(install);
     }
     dirs.extend(flag_dirs.iter().cloned());
     dirs
@@ -879,11 +890,11 @@ mod tests {
     #[test]
     fn test_skill_source_dirs_includes_flag_dirs() {
         // The bug this pins: skills loaded via `--skills <dir>` were invisible to
-        // the /doctor cost audit, which only ever looked at the two auto-discovery
-        // dirs. On a repo that passes `--skills ./skills` (this one does) the audit
+        // the /doctor cost audit, which only ever looked at the project + global
+        // auto-discovery dirs. On a repo that passes `--skills ./skills` (this one does) the audit
         // summed 0 bytes and reported "no skills loaded" — a false clean bill.
         let flag = vec![std::path::PathBuf::from("./skills")];
-        let dirs = skill_source_dirs(&flag, Some(std::path::Path::new("/home/tester")));
+        let dirs = skill_source_dirs(&flag, Some(std::path::Path::new("/home/tester")), None);
         assert!(
             dirs.contains(&std::path::PathBuf::from("./skills")),
             "flag skill dirs must be part of the cost audit's source set: {dirs:?}"
@@ -895,10 +906,50 @@ mod tests {
     #[test]
     fn test_skill_source_dirs_without_home_still_has_project_and_flags() {
         let flag = vec![std::path::PathBuf::from("/opt/team-skills")];
-        let dirs = skill_source_dirs(&flag, None);
+        let dirs = skill_source_dirs(&flag, None, None);
         assert!(dirs.contains(&std::path::PathBuf::from(".yoyo/skills")));
         assert!(dirs.contains(&std::path::PathBuf::from("/opt/team-skills")));
-        assert_eq!(dirs.len(), 2, "no HOME → no global dir: {dirs:?}");
+        assert_eq!(
+            dirs.len(),
+            2,
+            "no HOME and no XDG → no global dir and no install dir: {dirs:?}"
+        );
+    }
+
+    #[test]
+    fn test_skill_source_dirs_includes_the_install_dir() {
+        // #728: `/skill install` writes into ~/.config/yoyo/skills/, which is now
+        // an auto-discovery source. A directory that can LOAD skills but that the
+        // cost audit cannot SEE makes the audit under-report and call it a pass —
+        // the same blind spot the `--skills` half fixed on Day 151.
+        let dirs = skill_source_dirs(&[], Some(std::path::Path::new("/home/tester")), None);
+        assert!(
+            dirs.contains(&std::path::PathBuf::from(
+                "/home/tester/.config/yoyo/skills"
+            )),
+            "the /skill install destination must be audited too: {dirs:?}"
+        );
+    }
+
+    #[test]
+    fn test_skill_source_dirs_install_dir_honours_xdg() {
+        // XDG_CONFIG_HOME wins over ~/.config — and the rule is not re-derived
+        // here, it comes from commands_skill::skill_install_dir_from.
+        let dirs = skill_source_dirs(
+            &[],
+            Some(std::path::Path::new("/home/tester")),
+            Some(std::path::Path::new("/xdg")),
+        );
+        assert!(
+            dirs.contains(&std::path::PathBuf::from("/xdg/yoyo/skills")),
+            "XDG_CONFIG_HOME must decide the install dir: {dirs:?}"
+        );
+        assert!(
+            !dirs.contains(&std::path::PathBuf::from(
+                "/home/tester/.config/yoyo/skills"
+            )),
+            "with XDG set, the ~/.config fallback must not also be counted: {dirs:?}"
+        );
     }
 
     #[test]

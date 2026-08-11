@@ -58,8 +58,10 @@ pub fn print_banner() {
 /// Build the banner's auto-discovered-skills line, or `None` when there is
 /// nothing to say.
 ///
-/// Skills are auto-discovered from **two** directories (`~/.yoyo/skills/` and
-/// `.yoyo/skills/`), so the count alone cannot answer "where did these come
+/// Skills are auto-discovered from **several** directories (`~/.yoyo/skills/`,
+/// `.yoyo/skills/`, and `/skill install`'s destination — see
+/// `cli::auto_discovery_sources` for the live list, never a count repeated
+/// here), so the count alone cannot answer "where did these come
 /// from?". This names only the directories that actually contributed, which is
 /// the difference between a helpful pointer and sending a user to an empty
 /// directory.

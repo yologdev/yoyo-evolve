@@ -618,10 +618,11 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              The search subcommand finds skills on GitHub tagged with the\n\
              yoyo-skill topic. Requires the gh CLI (https://cli.github.com/).\n\n\
              The install subcommand copies a skill directory into\n\
-             ~/.config/yoyo/skills/<name>/. That directory is NOT\n\
-             auto-discovered — auto-discovery reads only ~/.yoyo/skills/\n\
-             and .yoyo/skills/ — so load an installed skill with\n\
-             --skills ~/.config/yoyo/skills (see issue #728).\n\
+             ~/.config/yoyo/skills/<name>/. That directory IS\n\
+             auto-discovered (since #728), so an installed skill loads on\n\
+             every later run with no flag. It is the lowest-precedence of\n\
+             the three auto-discovery dirs, so a same-named skill in\n\
+             .yoyo/skills/ or ~/.yoyo/skills/ still wins.\n\
              Remote install uses 'git clone --depth 1' and cleans up after.\n\n\
              Examples:\n\
              \x20 /skill\n\

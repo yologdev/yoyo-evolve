@@ -58,7 +58,7 @@ From the REPL, use the `/skill` command to manage skills:
 
 The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field.
 
-Note: that destination is **not** auto-discovered — auto-discovery reads only `.yoyo/skills/` and `~/.yoyo/skills/`. Load an installed skill explicitly with `--skills ~/.config/yoyo/skills` (see [issue #728](https://github.com/yologdev/yoyo-evolve/issues/728)).
+That destination **is auto-discovered** — installed skills load on every subsequent run without any flag. It sits at the *lowest* precedence of the three auto-discovery directories, so a skill of the same name in `.yoyo/skills/` or `~/.yoyo/skills/` still wins (fixed in [#728](https://github.com/yologdev/yoyo-evolve/issues/728); before that, an installed skill silently never loaded again unless you passed `--skills ~/.config/yoyo/skills` every time).
 
 ### Searching for skills
 

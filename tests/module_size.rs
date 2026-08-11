@@ -40,8 +40,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     ("src/agent_builder.rs", 2647),
-    // Day 162 (#677): +30 lines — resilient skill loading at all 3 sites + regression test.
-    ("src/cli.rs", 3747),
+    // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
+    // auto-discovery source, so an explicitly installed skill actually loads.
+    // The two near-identical per-directory blocks were collapsed into one loop
+    // over a pure `auto_discovery_sources` list first (that dedup is why this is
+    // +98 and not more); the rest is the new source, its doc comments, and three
+    // tests pinning the precedence order (installed < global < project).
+    ("src/cli.rs", 3845),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
