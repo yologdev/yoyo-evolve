@@ -112,8 +112,8 @@ mod watch;
 use cli::*;
 use format::*;
 use prompt::{
-    run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
-    run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+    run_prompt_stream_json, run_prompt_stream_json_with_content, run_prompt_with_changes,
+    run_prompt_with_content_and_changes, PromptOutcome,
 };
 use prompt_budget::enable_audit_log;
 use prompt_utils::write_output_file;
@@ -303,11 +303,12 @@ async fn run_single_prompt(
                         mime_type: mime_type.clone(),
                     },
                 ];
-                let initial = run_prompt_with_content(
+                let initial = run_prompt_with_content_and_changes(
                     agent,
                     content_blocks,
                     &mut session_total,
                     &agent_config.model,
+                    &session_changes,
                 )
                 .await;
                 // Fallback retry for multi-modal prompts
@@ -350,11 +351,12 @@ async fn run_single_prompt(
         }
     } else {
         // Text-only prompt
-        let initial = run_prompt(
+        let initial = run_prompt_with_changes(
             agent,
             prompt_text.trim(),
             &mut session_total,
             &agent_config.model,
+            &session_changes,
         )
         .await;
         // Fallback retry for text-only prompts
@@ -1435,6 +1437,31 @@ mod tests {
 
         assert_eq!(parsed["session"]["files_changed"], 0);
         assert!(parsed["session"]["changes"].as_array().unwrap().is_empty());
+    }
+
+    /// #678 / #700: `prompt.rs` exposes wrapper pairs, and one of each pair builds a
+    /// *throwaway* `SessionChanges` tracker. When `main.rs` calls the throwaway flavour it
+    /// still owns a `session_changes` that nothing ever writes to — so the post-prompt watch
+    /// cycle sees "no files changed this turn" and skips, and `--output-format json` reports
+    /// an empty session summary, for a run that demonstrably edited files.
+    ///
+    /// There is no unit-testable seam here (the real check needs a live `Agent`), so this is
+    /// pinned at the source level instead. The needles are assembled at runtime so that the
+    /// literals never appear in this file — otherwise the test would match itself and pass
+    /// (or fail) for the wrong reason.
+    #[test]
+    fn test_main_never_calls_the_tracker_less_prompt_wrappers() {
+        let src = include_str!("main.rs");
+        for stem in ["run_prompt", "run_prompt_with_content"] {
+            let needle = format!("{}{}", stem, "(");
+            assert!(
+                !src.contains(&needle),
+                "src/main.rs calls the tracker-less `{needle})` wrapper, which builds a \
+                 throwaway SessionChanges. Call the *_with_changes / *_and_changes sibling \
+                 and pass the caller's tracker — watch gating (should_run_watch_after_prompt) \
+                 and --output-format json both read it."
+            );
+        }
     }
 
     // --- looks_like_slash_command edge case tests ---
