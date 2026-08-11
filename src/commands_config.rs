@@ -661,7 +661,29 @@ pub fn parse_config_set_args(input: &str) -> Result<(String, String, bool), Stri
         .collect::<Vec<_>>()
         .join(" ");
 
+    // #732: shell-style quotes arrive attached. Strip exactly one matching
+    // layer — never unbalanced, never inner, never recursively. An inner
+    // quote survives and is escaped later by `format_toml_value`.
+    let value = strip_one_quote_layer(&value);
+
     Ok((key, value, is_global))
+}
+
+/// Remove exactly one layer of matching surrounding `"` or `'`.
+///
+/// Uses `chars()` rather than byte slicing — `&s[1..s.len() - 1]` panics on a
+/// multi-byte first character (CLAUDE.md rule, #250).
+fn strip_one_quote_layer(value: &str) -> String {
+    let mut chars = value.chars();
+    let (Some(first), Some(last)) = (chars.next(), chars.next_back()) else {
+        // Fewer than 2 chars: nothing can be a layer.
+        return value.to_string();
+    };
+    if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+        chars.as_str().to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 /// Handle `/config set <key> <value> [--global]`.
@@ -1567,6 +1589,56 @@ mod tests {
     fn test_parse_config_set_args_global_only_no_value() {
         // "/config set model --global" — --global is filtered out, no value remains
         assert!(parse_config_set_args("/config set model --global").is_err());
+    }
+
+    #[test]
+    fn test_parse_config_set_args_strips_one_quote_layer() {
+        // #732: shell-style quotes arrived attached and landed in the file as
+        // `notify_command = ""notify-send done""`.
+        let cases = [
+            (
+                r#"/config set notify_command "notify-send done""#,
+                "notify-send done",
+            ),
+            (
+                "/config set notify_command 'notify-send done'",
+                "notify-send done",
+            ),
+            (
+                "/config set notify_command notify-send done",
+                "notify-send done",
+            ),
+            // Unbalanced: leave it alone, half 1 escapes it.
+            (r#"/config set k "unbalanced"#, r#""unbalanced"#),
+            (r#"/config set k unbalanced""#, r#"unbalanced""#),
+            // Exactly one layer — inner quotes survive.
+            (r#"/config set k ""double"""#, r#""double""#),
+            (r#"/config set k "a"b""#, r#"a"b"#),
+            // Mismatched delimiters are not a layer.
+            (r#"/config set k "mixed'"#, r#""mixed'"#),
+            // Empty quoted value.
+            (r#"/config set k """#, ""),
+            // A lone quote is 1 char: not a layer, must not panic.
+            (r#"/config set k ""#, "\""),
+            // Multi-byte first char: never byte-index (#250).
+            ("/config set k → x", "→ x"),
+            ("/config set k \"→ x\"", "→ x"),
+        ];
+        for (input, expected) in cases {
+            let (_, value, _) = parse_config_set_args(input).unwrap();
+            assert_eq!(value, expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_parse_config_set_args_quoted_value_survives_to_toml() {
+        // End-to-end on the promise: what the user typed is what the file
+        // holds, and what the reader gives back.
+        let (key, value, _) =
+            parse_config_set_args(r#"/config set notify_command "notify-send \"done\"""#).unwrap();
+        let line = format!("{key} = {}", crate::config::format_toml_value(&value));
+        let parsed = crate::config::parse_config_file(&line);
+        assert_eq!(parsed.get("notify_command"), Some(&value));
     }
 
     // --- architect mode tests ---
