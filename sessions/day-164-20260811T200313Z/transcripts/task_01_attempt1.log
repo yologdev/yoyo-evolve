@@ -1,0 +1,336 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two functions in question.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_toml_value" -A 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_config_set_arg… ✓ (5ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Both halves confirmed. Now let me find the parser for the round-trip test.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_config_file\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config.rs src/commands… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1063,1130p src/config.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 17.5s (3 ✓)
+
+parse_config_file strips quotes but never unescapes — so a real round-trip needs the reader half too, otherwise I'd only move the bug. Also spotted a live panic: a value of exactly " hits value[1..0]. Writing failing tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1450,1470p src/config.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 56 lines)
+                format_toml_value("claude-sonnet-4-6"),
+                "\"claude-sonnet-4-6\""
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_toml_value_escapes_specials() {
+  +         // #732: unescaped values produced a file parse_config_file could not read.
+  +         assert_eq!(format_toml_value("say \"hi\""), r#""say \"hi\"""#);
+  +         assert_eq!(format_toml_value(r"C:\tmp"), r#""C:\\tmp""#);
+  +         assert_eq!(format_toml_value("a\nb"), r#""a\nb""#);
+  +         assert_eq!(format_toml_value("a\tb\rc"), r#""a\tb\rc""#);
+  +         // Backslash must be escaped BEFORE the quote, or the quote's own
+  +         // backslash gets doubled. This asserts the ordering bug can't return.
+  +         assert_eq!(format_toml_value(r#"a\"b"#), r#""a\\\"b""#);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_toml_value_round_trips_through_parser() {
+  +         // The assertion that pins the promise: what the writer emits, the
+  ... (36 more lines)
+ ✓ (1m 13s)
+                format_toml_value("claude-sonnet-4-6"),
+                "\"claude-sonnet-4-6\""
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_toml_value_escapes_specials() {
+  +         // #732: unescaped values produced a file parse_config_file could not read.
+  ... (13 more lines)
+  2 tools completed in 1m 28s (2 ✓)
+
+Now the parse_config_set_args tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_config_set_args" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1575p src/commands_c… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (6 → 47 lines)
+        fn test_parse_config_set_args_global_only_no_value() {
+            // "/config set model --global" — --global is filtered out, no value remains
+            assert!(parse_config_set_args("/config set model --global").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_config_set_args_strips_one_quote_layer() {
+  +         // #732: shell-style quotes arrived attached and landed in the file as
+  +         // `notify_command = ""notify-send done""`.
+  +         let cases = [
+  +             (r#"/config set notify_command "notify-send done""#, "notify-send done"),
+  +             ("/config set notify_command 'notify-send done'", "notify-send done"),
+  +             ("/config set notify_command notify-send done", "notify-send done"),
+  +             // Unbalanced: leave it alone, half 1 escapes it.
+  +             (r#"/config set k "unbalanced"#, r#""unbalanced"#),
+  +             (r#"/config set k unbalanced""#, r#"unbalanced""#),
+  +             // Exactly one layer — inner quotes survive.
+  +             (r#"/config set k ""double"""#, r#""double""#),
+  +             (r#"/config set k "a"b""#, r#"a"b"#),
+  +             // Mismatched delimiters are not a layer.
+  ... (26 more lines)
+ ✓ (10.1s)
+        fn test_parse_config_set_args_global_only_no_value() {
+            // "/config set model --global" — --global is filtered out, no value remains
+            assert!(parse_config_set_args("/config set model --global").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_config_set_args_strips_one_quote_layer() {
+  +         // #732: shell-style quotes arrived attached and landed in the file as
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (12 → 58 lines)
+  - fn format_toml_value(value: &str) -> String {
+  + pub(crate) fn format_toml_value(value: &str) -> String {
+        // Check if it's a number (integer or float)
+        if value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok() {
+            return value.to_string();
+  ···
+        if value == "true" || value == "false" {
+            return value.to_string();
+        }
+  -     // Default: quote it
+  -     format!("\"{value}\"")
+  +     // Default: quote it as a TOML basic string (#732 — unescaped values
+  +     // produced a config file the reader below could not parse back).
+  +     format!("\"{}\"", escape_toml_basic_string(value))
+  + }
+  + 
+  + /// Escape a string for embedding in a TOML *basic* string (`"..."`).
+  + ///
+  + /// Backslash first — escaping the quote first would then double the
+  + /// backslash the quote's escape just introduced.
+  ... (40 more lines)
+ ✓ (15.3s)
+  - fn format_toml_value(value: &str) -> String {
+  + pub(crate) fn format_toml_value(value: &str) -> String {
+        // Check if it's a number (integer or float)
+        if value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok() {
+            return value.to_string();
+  ···
+        if value == "true" || value == "false" {
+            return value.to_string();
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 52.6s (4 ✓)
+
+Definition without its consumer — wiring the reader now (same rule that killed #618/#653):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (10 → 17 lines)
+                let key = key.trim().to_string();
+                let value = value.trim();
+  -             // Strip surrounding quotes if present
+  -             let value = if (value.starts_with('"') && value.ends_with('"'))
+  -                 || (value.starts_with('\'') && value.ends_with('\''))
+  -             {
+  -                 value[1..value.len() - 1].to_string()
+  +             // Strip surrounding quotes if present. Basic strings ("..") get
+  +             // escape processing; TOML literal strings ('..') do not (#732).
+  +             // `chars()` not byte slicing — a multi-byte body would panic.
+  +             let value = if value.chars().count() >= 2 {
+  +                 let mut inner = value.chars();
+  +                 let first = inner.next().unwrap_or_default();
+  +                 let last = inner.next_back().unwrap_or_default();
+  +                 match (first, last) {
+  +                     ('"', '"') => unescape_toml_basic_string(inner.as_str()),
+  +                     ('\'', '\'') => inner.as_str().to_string(),
+  +                     _ => value.to_string(),
+  +                 }
+                } else {
+  ... (2 more lines)
+ ✓ (1m 14s)
+                let key = key.trim().to_string();
+                let value = value.trim();
+  -             // Strip surrounding quotes if present
+  -             let value = if (value.starts_with('"') && value.ends_with('"'))
+  -                 || (value.starts_with('\'') && value.ends_with('\''))
+  -             {
+  -                 value[1..value.len() - 1].to_string()
+  +             // Strip surrounding quotes if present. Basic strings ("..") get
+  ... (13 more lines)
+
+Now half 2 — the quote stripping in parse_config_set_args:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (8 → 30 lines)
+            .map(|p| **p)
+            .collect::<Vec<_>>()
+            .join(" ");
+  + 
+  +     // #732: shell-style quotes arrive attached. Strip exactly one matching
+  +     // layer — never unbalanced, never inner, never recursively. An inner
+  +     // quote survives and is escaped later by `format_toml_value`.
+  +     let value = strip_one_quote_layer(&value);
+    
+        Ok((key, value, is_global))
+  + }
+  + 
+  + /// Remove exactly one layer of matching surrounding `"` or `'`.
+  + ///
+  + /// Uses `chars()` rather than byte slicing — `&s[1..s.len() - 1]` panics on a
+  + /// multi-byte first character (CLAUDE.md rule, #250).
+  + fn strip_one_quote_layer(value: &str) -> String {
+  +     let mut chars = value.chars();
+  +     let (Some(first), Some(last)) = (chars.next(), chars.next_back()) else {
+  +         // Fewer than 2 chars: nothing can be a layer.
+  ... (8 more lines)
+ ✓ (1m 17s)
+            .map(|p| **p)
+            .collect::<Vec<_>>()
+            .join(" ");
+  + 
+  +     // #732: shell-style quotes arrive attached. Strip exactly one matching
+  +     // layer — never unbalanced, never inner, never recursively. An inner
+  +     // quote survives and is escaped later by `format_toml_value`.
+  +     let value = strip_one_quote_layer(&value);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test 2>&1 | g… ✓ (1m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 34s (2 ✓)
+
+All new tests pass. Now step 4 — the ceiling, in this same commit:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config.rs src/commands… ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4755 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ......
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the expected failure — step 4 of the task. Updating the ceiling entry with a signed comment:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 4 lines)
+  -     ("src/config.rs", 2308),
+  +     // Day 164 (#732): +105 lines — TOML basic-string escaping on the write
+  +     // side, matching unescaping (and a lone-quote panic fix) on the read side,
+  +     // plus the round-trip tests that pin writer and reader as one promise.
+  +     ("src/config.rs", 2413),
+ ✓ (42.1s)
+  -     ("src/config.rs", 2308),
+  +     // Day 164 (#732): +105 lines — TOML basic-string escaping on the write
+  +     // side, matching unescaping (and a lone-quote panic fix) on the read side,
+  +     // plus the round-trip tests that pin writer and reader as one promise.
+  +     ("src/config.rs", 2413),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (41.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 37s (2 ✓)
+
+All green. Now the external-authority check — my own tests only compare my writer to my reader, which is a null check if both encode the same mistake. Validating against a real TOML parser:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/e… (25 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A real TOML parser agrees — not just my writer agreeing with my reader. Now the full file path:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 925,945p src/config.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (22 lines) ✓ (19.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.7s (2 ✓)
+
+Real file, real path: literal ", a literal backslash, and a real tab all come back byte-identical. Removing the scratch check now that it's served its purpose:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (16.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.3s (2 ✓)
+
+2413 exactly — matches the ceiling entry. Full verification:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git status --… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 13s (2 ✓)
+
+Diff is scoped to task files only. Committing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (35 lines) ✓ (14ms)
+
+Committed. cargo build, cargo test (4754 + 89 + 12, zero failures), cargo clippy --all-targets -- -D warnings, and cargo fmt all green.
+
+## What I changed
+
+Half 1 — escaping (src/config.rs): format_toml_value wrapped strings in quotes and escaped nothing. New pure `escape_toml_basic_string applies the TOML basic-string rule — \ **first**, then ", plus \n \r \t`. A test pins that ordering, since escaping the quote first would double the backslash its own escape introduces.
+
+Half 2 — stripping (src/commands_config.rs): strip_one_quote_layer removes exactly one matching "/' layer from the joined value. Unbalanced quotes, mismatched delimiters, inner quotes, and sub-2-char values are left alone. Uses chars() + next_back(), never &s[1..len-1].
+
+A third thing I found while testing. Writing valid TOML would have been a half-fix: parse_config_file strips quotes but never unescaped, so it would hand back say \"hi\" and I'd have called that a round-trip. So the reader now unescapes basic strings and leaves literal '..' strings alone, per TOML. That also killed a live panic — value[1..value.len() - 1] on a one-char value " is a slice from 1 to 0.
+
+## Verification beyond the unit tests
+
+The escaper's own unit test is the shape that burned me on Day 161 — true of the wrong object. So the load-bearing assertion is a round-trip through the crate's actual parser over nine values. And because my writer agreeing with my reader is a null check when the authority is external (Day 162), I put the emitted lines through python's tomllib: all six nasty cases are valid TOML and round-trip exactly. I also ran a real file through set_toml_key → disk → parse_config_file and got the value back byte-identical.
+
+## Ceiling
+
+src/config.rs went 2308 → 2413. Updated tests/module_size.rs in this same commit with a dated signed comment — #719 died to exactly that revert. Final wc -l is 2413, matching the entry. commands_config.rs is 1839 against a 2000 cap; fixture untouched.
+
+One honest note: I raised a ceiling rather than fitting under it. My own Day 161–162 lesson says a signed raise is evidence the smaller design was never attempted. I did try — but ~55 of the 105 lines are tests, and the reader half wasn't optional once I saw it, so I think this raise is the legitimate kind. The raise-count on that file is the thing to watch, not this instance.
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+
