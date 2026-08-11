@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,400p' src/commands_c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1040,1080p' src/config.r… ✓ (8ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs:528..573  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "resolve_config_edit_pat… ✓ (1ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn write_config_value" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1520,1560p' src/commands… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '765,795p' src/config.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 21.6s (7 ✓)
+
+Confirmed the mechanism. Now the fix — pure resolver first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (33 → 61 lines)
+    /// Resolve which config file to open for editing.
+    ///
+  - /// Priority:
+  - /// 1. `.yoyo.toml` in current directory (project-level) — only if it exists
+  - /// 2. `~/.config/yoyo/config.toml` (XDG user-level) — even if it doesn't exist yet
+  + /// Resolution follows [`crate::config::load_config_file`]'s precedence, so the
+  + /// file `/config edit` opens is the file yoyo would actually *read*:
+  + /// 1. `./.yoyo.toml` (project-level) — only if it exists
+  + /// 2. `~/.yoyo.toml` (home shorthand) — only if it exists
+  + /// 3. `~/.config/yoyo/config.toml` (XDG user-level) — only if it exists
+  + /// 4. Otherwise `~/.yoyo.toml`, the same path `/config set --global` writes
+    ///
+  - /// Returns the path to open. If no user config directory can be determined,
+  - /// returns `None`.
+  + /// Returns the path to open, or `None` when no home directory can be
+  + /// determined (e.g. `$HOME` unset) — never panics.
+    ///
+    /// This is a pure function (no I/O side effects beyond `exists()` checks)
+    /// so it can be tested.
+  ···
+  ... (52 more lines)
+ ✓ (1m 35s)
+    /// Resolve which config file to open for editing.
+    ///
+  - /// Priority:
+  - /// 1. `.yoyo.toml` in current directory (project-level) — only if it exists
+  - /// 2. `~/.config/yoyo/config.toml` (XDG user-level) — even if it doesn't exist yet
+  + /// Resolution follows [`crate::config::load_config_file`]'s precedence, so the
+  + /// file `/config edit` opens is the file yoyo would actually *read*:
+  + /// 1. `./.yoyo.toml` (project-level) — only if it exists
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (22 → 121 lines)
+        #[test]
+        fn test_resolve_config_edit_path_falls_back_to_user_config() {
+  -         // When no .yoyo.toml exists, should fall back to user config path
+  +         // When no project-level .yoyo.toml exists, we fall back to a home-level
+  +         // path. Which one depends on what exists on this machine (#733), so the
+  +         // env-dependent assertion here is deliberately weak — the exact
+  +         // precedence is pinned env-free by
+  +         // `test_resolve_config_edit_path_from_fixtures`.
+            let tmp = std::env::temp_dir().join("yoyo_test_config_edit_fallback");
+            let _ = std::fs::create_dir_all(&tmp);
+            // Make sure there's no .yoyo.toml
+  ···
+            let result = resolve_config_edit_path_in(&tmp);
+            // As long as HOME is set, we should get a path
+            if std::env::var("HOME").is_ok() {
+  -             assert!(result.is_some(), "should return user config path");
+  +             assert!(result.is_some(), "should return a home-level config path");
+                let path = result.unwrap();
+  +             let home = crate::cli::home_config_path();
+  +             let xdg = crate::cli::user_config_path();
+  ... (104 more lines)
+ ✓ (20.0s)
+        #[test]
+        fn test_resolve_config_edit_path_falls_back_to_user_config() {
+  -         // When no .yoyo.toml exists, should fall back to user config path
+  +         // When no project-level .yoyo.toml exists, we fall back to a home-level
+  +         // path. Which one depends on what exists on this machine (#733), so the
+  +         // env-dependent assertion here is deliberately weak — the exact
+  +         // precedence is pinned env-free by
+  +         // `test_resolve_config_edit_path_from_fixtures`.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (9 → 10 lines)
+            // (project, home, xdg, home_default, expected, label)
+  -         let cases: &[(
+  -             Option<&Path>,
+  -             Option<&Path>,
+  -             Option<&Path>,
+  -             Option<&Path>,
+  +         type Case<'a> = (
+  +             Option<&'a Path>,
+  +             Option<&'a Path>,
+  +             Option<&'a Path>,
+  +             Option<&'a Path>,
+                Option<PathBuf>,
+  -             &str,
+  -         )] = &[
+  +             &'a str,
+  +         );
+  +         let cases: &[Case] = &[
+ ✓ (1m 36s)
+            // (project, home, xdg, home_default, expected, label)
+  -         let cases: &[(
+  -             Option<&Path>,
+  -             Option<&Path>,
+  -             Option<&Path>,
+  -             Option<&Path>,
+  +         type Case<'a> = (
+  +             Option<&'a Path>,
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 6m 52s (6 ✓)
+
+Green. But 1974/2000 lines is tight headroom — let me compact the fixture rows without losing coverage.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_config" tests/… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (68 → 29 lines)
+                Option<PathBuf>,
+                &'a str,
+            );
+  +         let p = Some(project);
+  +         let h = Some(home);
+  +         let x = Some(xdg);
+            let cases: &[Case] = &[
+  -             (
+  -                 Some(project),
+  -                 Some(home),
+  -                 Some(xdg),
+  -                 Some(home),
+  -                 Some(project.to_path_buf()),
+  -                 "project-level wins over everything",
+  -             ),
+  -             (
+  -                 None,
+  -                 Some(home),
+  -                 None,
+  -                 Some(home),
+  ... (44 more lines)
+ ✓ (1m 40s)
+                Option<PathBuf>,
+                &'a str,
+            );
+  +         let p = Some(project);
+  +         let h = Some(home);
+  +         let x = Some(xdg);
+            let cases: &[Case] = &[
+  -             (
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (44.0s)
+  3 tools completed in 2m 39s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

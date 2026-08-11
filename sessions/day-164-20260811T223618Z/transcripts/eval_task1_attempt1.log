@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff. Let me check the key facts: the doc update in CLAUDE.md (the diff shown doesn't include it), and whether the resolution actually works.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1050,1075p' src/config.r… ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+The commit touched only one file. Let me check the CLAUDE.md doc requirement and verify behavior live.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_config.rs" CLA… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "config/yoyo\|~/.yoyo.t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && cd… ✓ (6ms)
+ ✓ (180ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib resolve_config_… ✓ (116ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo resolve_co… ✓ (303ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (56.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 53s (7 ✓)
+
+**Verdict: PASS**
+
+The diff implements the editor-half fix correctly:
+
+• resolve_config_edit_path_in now does four .exists() checks and delegates to the new env-free resolve_config_edit_path_from, whose order project.or(home).or(xdg).or(home_default) matches config::load_config_file's precedence (verified at src/config.rs:1144-1173).
+• No-files fallback returns home_config_path() — byte-equal to what write_config_value targets for --global, pinned by test_config_edit_default_agrees_with_global_set_destination.
+• `write_config_value / user_config_path / home_config_path untouched, as required. None (not panic) when $HOME` is unset, covered by a fixture row.
+• Ran the four relevant tests directly — all pass. /config edit itself is interactive-only, so it can't be exercised headlessly; the env-free fixture table is the substitute evidence.
+
+Feedback (not grounds for failure): the commit touches only src/commands_config.rs, though the task listed CLAUDE.md. I confirmed CLAUDE.md has no commands_config.rs bullet to update, and no existing doc (installation.md:101-102, README.md:300, permissions.md:102, commands.md:139) was made stale by the change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
