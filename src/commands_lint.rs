@@ -166,6 +166,12 @@ pub fn lint_command_for_project(
     }
 }
 
+/// True when `arg` (the text after `/lint`) names the `fix` subcommand.
+/// `"fixme"` is a different token and is not one.
+pub(crate) fn arg_is_fix_subcommand(arg: &str) -> bool {
+    arg == "fix" || arg.starts_with("fix ")
+}
+
 /// Handle the /lint command: auto-detect project type and run linter.
 /// Returns a summary string suitable for AI context.
 /// Accepts the full input string (e.g. "/lint", "/lint pedantic", "/lint strict").
@@ -176,6 +182,19 @@ pub fn handle_lint(input: &str) -> Option<String> {
     // Dispatch to specialized subcommand handlers
     if arg == "unsafe" {
         return handle_lint_unsafe();
+    }
+
+    // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live
+    // agent. Two paths miss that route and land here: the `yoyo lint fix` CLI
+    // subcommand (dispatch_sub.rs has no agent) and `/lint fix --all` (only the
+    // exact string "/lint fix" matches). Both used to fall through to
+    // LintStrictness::Default and run a plain lint with nothing naming the token.
+    if arg_is_fix_subcommand(arg) {
+        println!(
+            "{DIM}  `lint fix` needs an interactive session — it sends lint failures to the AI to fix.{RESET}"
+        );
+        println!("{DIM}  Run `yoyo`, then `/lint fix` with no extra arguments.{RESET}\n");
+        return None;
     }
 
     let strictness = match arg {
@@ -813,6 +832,22 @@ pub fn handle_security() -> Option<String> {
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+
+    #[test]
+    fn fix_subcommand_is_recognised_not_swallowed_as_default_strictness() {
+        // Round 31 (#h1): `yoyo lint fix` (dispatch_sub.rs) and `/lint fix --all`
+        // (route_command sends it to CommandRoute::Lint, not LintFix) both land in
+        // handle_lint, where "fix" used to fall through `_ => LintStrictness::Default`
+        // and run a plain lint with nothing naming the token.
+        assert!(arg_is_fix_subcommand("fix"));
+        assert!(arg_is_fix_subcommand("fix --all"));
+        // Not the fix subcommand: a different token that merely starts with "fix".
+        assert!(!arg_is_fix_subcommand("fixme"));
+        assert!(!arg_is_fix_subcommand(""));
+        assert!(!arg_is_fix_subcommand("pedantic"));
+        // handle_lint returns early for it — no linter process is spawned.
+        assert_eq!(handle_lint("/lint fix"), None);
+    }
 
     #[test]
     fn test_command_rust() {
