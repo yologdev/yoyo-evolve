@@ -437,6 +437,53 @@ fn format_experiment_families(fam: &ExperimentFamilies) -> String {
 /// Default number of entries shown in the report.
 const REPORT_TOP_N: usize = 10;
 
+/// Max characters of a single reason bullet in the human report, ellipsis
+/// included. A **judgment threshold** for readability, not a measurement:
+/// summaries have no natural length bound (one live reason ran ~1,600 chars).
+/// Sibling cap: `EPISTEMIC_ENTRY_MAX_CHARS = 90` in
+/// `scripts/extract_trajectory.py`, which clamps this same text for the
+/// *planner* view — the two numbers are independent by construction and this
+/// comment is the only link that will ever exist between them (Day 159).
+/// Display-only: nothing here changes a score, a grade, or a persisted field.
+const REASON_MAX_CHARS: usize = 140;
+
+/// Shorten one reason bullet for display. Returns the text to print and
+/// whether anything was **cut** (whitespace flattening is not a cut).
+///
+/// Rules, all deliberate:
+/// - a reason is one line: embedded newlines/tabs/CRs collapse to spaces first;
+/// - the cut is on a **character** boundary, never a byte index (`truncate`
+///   panics mid-UTF-8 — CLAUDE.md rule);
+/// - `max_chars` counts the FINAL string including the ellipsis, so the output
+///   never exceeds the cap;
+/// - if the reason ends with `)`, the closing paren is preserved after the
+///   ellipsis. That is the consumer contract, not cosmetics:
+///   `EPISTEMIC_STUDIED_RE` in `scripts/extract_trajectory.py` is
+///   `studied by graded experiment \(day (\d+), ([^)]+)\)` and stops matching
+///   the moment the paren disappears — the planner's blind-spot section would
+///   silently degrade to raw text with nobody noticing.
+pub(crate) fn truncate_reason(reason: &str, max_chars: usize) -> (String, bool) {
+    // A reason is one line: any embedded newline/tab/other whitespace becomes
+    // a plain space so a multi-line summary can't break the numbered list.
+    let flat: String = reason
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
+    if flat.chars().count() <= max_chars {
+        return (flat, false);
+    }
+    let suffix = if flat.ends_with(')') { "…)" } else { "…" };
+    let suffix_len = suffix.chars().count();
+    if max_chars <= suffix_len {
+        // No room for content. `max_chars == 0` is an explicit case, not an
+        // accident: it yields the empty string, still marked as cut.
+        return (suffix.chars().take(max_chars).collect(), true);
+    }
+    let mut out: String = flat.chars().take(max_chars - suffix_len).collect();
+    out.push_str(suffix);
+    (out, true)
+}
+
 /// How many never-forecast files are listed as a sample. The honest *total*
 /// is always printed alongside — the cap is a display budget, not a claim.
 pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
@@ -722,6 +769,7 @@ pub(crate) fn format_epistemic_report(
             "  {DIM}no ungraded predictions — the model has been graded on everything it predicted{RESET}\n"
         ));
     } else {
+        let mut truncated_reasons = 0usize;
         for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
             out.push_str(&format!(
                 "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
@@ -730,7 +778,11 @@ pub(crate) fn format_epistemic_report(
                 e.score
             ));
             for r in &e.reasons {
-                out.push_str(&format!("      {DIM}• {r}{RESET}\n"));
+                let (text, was_cut) = truncate_reason(r, REASON_MAX_CHARS);
+                if was_cut {
+                    truncated_reasons += 1;
+                }
+                out.push_str(&format!("      {DIM}• {text}{RESET}\n"));
             }
         }
         // Honest ordering note: if any displayed neighbours are tied (within
@@ -748,6 +800,15 @@ pub(crate) fn format_epistemic_report(
         out.push_str(&format!(
             "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
         ));
+        // Mark my own elisions in-band (Day 162): a silent cut is a lie of
+        // omission. Absent entirely when nothing was shortened.
+        if truncated_reasons > 0 {
+            out.push_str(&format!(
+                "  {DIM}({} reason{} shortened for display — full experiment summaries live in dreams/experiments.jsonl){RESET}\n",
+                truncated_reasons,
+                if truncated_reasons == 1 { "" } else { "s" }
+            ));
+        }
     }
 
     // The unknown unknowns, kept as an explicit separate section — merging
@@ -1788,5 +1849,151 @@ mod tests {
                 "block must not reuse the reason bullet: {line}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reason_truncation_tests {
+    use super::*;
+
+    /// Local snapshot builder — the sibling `tests` module's helper is private
+    /// to it, and one non-empty snapshot is all these render tests need.
+    fn snap(day: u64, predicted: &[&str]) -> ParsedSnapshot {
+        ParsedSnapshot {
+            day,
+            git_hash: format!("hash{day}"),
+            ts: format!("2026-08-{:02}T00:00:00Z", (day % 28) + 1),
+            predicted: predicted.iter().map(|s| s.to_string()).collect(),
+            emerging: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn short_reason_comes_back_byte_identical_and_uncut() {
+        let r = "predicted 17×, never graded";
+        let (out, cut) = truncate_reason(r, REASON_MAX_CHARS);
+        assert_eq!(out, r, "a short reason must not be rewritten at all");
+        assert!(!cut, "nothing was cut, so the flag must be false");
+    }
+
+    #[test]
+    fn long_ascii_reason_is_capped_and_marked() {
+        let r = "x".repeat(1_600);
+        let (out, cut) = truncate_reason(&r, 140);
+        assert!(cut, "a 1600-char reason is cut");
+        assert!(
+            out.chars().count() <= 140,
+            "cap counts the FINAL string incl. ellipsis, got {}",
+            out.chars().count()
+        );
+        assert!(out.ends_with('…'), "a cut must be visible: {out}");
+    }
+
+    #[test]
+    fn cut_inside_a_multi_byte_char_does_not_panic() {
+        // Every char is 3 bytes, so any byte-index cut lands mid-character.
+        let r = "→".repeat(600);
+        for cap in [0usize, 1, 2, 3, 7, 139, 140] {
+            let (out, _) = truncate_reason(&r, cap);
+            assert!(
+                out.chars().count() <= cap,
+                "cap {cap} exceeded: {}",
+                out.chars().count()
+            );
+        }
+        let (out, cut) = truncate_reason(&"✓ ok ".repeat(200), 90);
+        assert!(cut);
+        assert!(out.chars().count() <= 90);
+    }
+
+    #[test]
+    fn embedded_newlines_and_tabs_collapse_to_one_line() {
+        let (out, cut) = truncate_reason("first\nsecond\tthird\r\nfourth", 140);
+        assert!(!out.contains('\n'), "a reason is one line: {out:?}");
+        assert!(!out.contains('\t'), "a reason is one line: {out:?}");
+        assert!(!out.contains('\r'), "a reason is one line: {out:?}");
+        assert!(!cut, "flattening whitespace is not a truncation");
+        assert_eq!(out, "first second third  fourth");
+    }
+
+    #[test]
+    fn zero_cap_is_an_explicit_case_not_an_accident() {
+        assert_eq!(truncate_reason("", 0), (String::new(), false));
+        assert_eq!(truncate_reason("anything", 0), (String::new(), true));
+    }
+
+    /// The consumer contract, not just the helper: `EPISTEMIC_STUDIED_RE` in
+    /// `scripts/extract_trajectory.py` is
+    /// `studied by graded experiment \(day (\d+), ([^)]+)\)` — it needs the
+    /// prefix AND the closing paren. A naive cut eats the paren and the
+    /// planner's compaction silently stops matching.
+    #[test]
+    fn studied_reason_keeps_its_parsable_shape_when_cut() {
+        let reason = format!(
+            "studied by graded experiment (day 164, {})",
+            "2 clean hits / 5 (h2, h5); 3 partial ".repeat(45)
+        );
+        assert!(reason.chars().count() > 1_600);
+        let (out, cut) = truncate_reason(&reason, REASON_MAX_CHARS);
+        assert!(cut);
+        assert!(out.chars().count() <= REASON_MAX_CHARS);
+        assert!(
+            out.starts_with("studied by graded experiment (day 164, "),
+            "the prefix the parser anchors on must survive verbatim: {out}"
+        );
+        assert!(
+            out.ends_with("…)"),
+            "the closing paren must survive the cut or the regex stops matching: {out}"
+        );
+    }
+
+    #[test]
+    fn report_caps_reason_bullets_and_discloses_the_cut() {
+        let snapshots = vec![snap(1, &["src/a.rs"])];
+        let entries = vec![EpistemicEntry {
+            path: "src/a.rs".to_string(),
+            score: 2.0,
+            reasons: vec![
+                "predicted 3×, never graded".to_string(),
+                format!(
+                    "studied by graded experiment (day 164, {})",
+                    "y".repeat(1_600)
+                ),
+            ],
+            risk_score: Some(1.0),
+        }];
+        let report =
+            format_epistemic_report(&snapshots, &entries, &[], &ExperimentFamilies::default());
+        for line in report.lines() {
+            assert!(
+                line.chars().count() < 400,
+                "a reason bullet escaped the cap: {line}"
+            );
+        }
+        assert!(
+            report.contains("1 reason shortened for display"),
+            "an elision I own must mark its cut in-band:\n{report}"
+        );
+        assert!(
+            report.contains("dreams/experiments.jsonl"),
+            "the disclosure must say where the full text lives:\n{report}"
+        );
+    }
+
+    #[test]
+    fn no_disclosure_line_when_nothing_was_cut() {
+        let snapshots = vec![snap(1, &["src/a.rs"])];
+        let entries = vec![EpistemicEntry {
+            path: "src/a.rs".to_string(),
+            score: 2.0,
+            reasons: vec!["predicted 3×, never graded".to_string()],
+            risk_score: Some(1.0),
+        }];
+        let report =
+            format_epistemic_report(&snapshots, &entries, &[], &ExperimentFamilies::default());
+        assert!(
+            !report.contains("shortened for display"),
+            "silence is correct when nothing was cut:\n{report}"
+        );
     }
 }
