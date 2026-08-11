@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to add the CLAUDE.md doc sentence. Let me verify current state first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --stat | head -20 && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "main.rs. — entry point"… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_with_changes… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers
+  + - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers. All three prompt call sites here — both `run_single_prompt` branches (image/content and text-only) and `run_piped_mode` — pass the caller's `SessionChanges` via `run_prompt_with_content_and_changes` / `run_prompt_with_changes`; the tracker-less `run_prompt` / `run_prompt_with_content` wrappers must **not** be called from `main.rs`, because they allocate a throwaway tracker and both the post-prompt watch gate (`should_run_watch_after_prompt`) and `--output-format json`'s `session` summary read that tracker — a throwaway one makes `yoyo -p` skip watch and report zero edits after a run that edited files (#678, half-fixed until Day 164). A source-level test in `main.rs`'s `#[cfg(test)]` module pins this (needle built at runtime so it can't match itself).
+ ✓ (54.0s)
+  - - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers
+  + - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers. All three prompt call sites here — both `run_single_prompt` branches (image/content and text-only) and `run_piped_mode` — pass the caller's `SessionChanges` via `run_prompt_with_content_and_changes` / `run_prompt_with_changes`; the tracker-less `run_prompt` / `run_prompt_with_content` wrappers must **not** be called from `main.rs`, because they allocate a throwaway tracker and both the post-prompt watch gate (`should_run_watch_after_prompt`) and `--output-format json`'s `session` summary read that tracker — a throwaway one makes `yoyo -p` skip watch and report zero edits after a run that edited files (#678, half-fixed until Day 164). A source-level test in `main.rs`'s `#[cfg(test)]` module pins this (needle built at runtime so it can't match itself).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (54.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (54.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (53.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (21 lines) ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 4m 2s (8 ✓)
+
+Fixed the one thing the evaluator failed on.
+
+What was missing: the Docs step. The code half was already complete and passing (doc_sync: FAIL was the sole rejection).
+
+What I did:
+• Verified the code state first rather than trusting the report: grep in src/main.rs returns zero run_prompt( / run_prompt_with_content( call sites, and exactly three *_with_changes sites — :306 (single-prompt image/content), :354 (single-prompt text-only), :486 (piped). So the count claim in the docs is one I actually ran.
+• Extended the main.rs bullet in `CLAUDE.md to state that all three call sites pass the caller's SessionChanges, that the tracker-less wrappers must not be called from main.rs, and why (watch gating + --output-format json` session summary both read that tracker), plus a note that the source-level test pins it.
+• Committed with the enumerated list in the message, and explicitly named the remaining hole: `try_fallback_prompt is still tracker-less, left alone because threading it would leave src/main.rs` — the exact scope creep that got the Day-162 attempt reverted (#700).
+
+Verification: cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test — clippy clean, every test binary reports 0 failed.
+
+One caveat: I did not run the manual yoyo -p ... --output-format json sanity check, so the end-to-end user-visible behavior is argued from the call-site rewire and the source test, not observed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

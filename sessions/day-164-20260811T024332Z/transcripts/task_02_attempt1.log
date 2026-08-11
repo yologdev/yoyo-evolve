@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state of the call sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt\|run_piped\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub async fn run_prompt… ✓ (5ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 285,410p src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 855,900p src/prompt.rs &&… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,320p src/main.rs && e… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:286..366  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn try_fallback_prompt… ✓ (1ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1355,1440p src/main.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 25.4s (8 ✓)
+
+Now the test first (it should fail against current source):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (3 → 28 lines)
+            assert_eq!(parsed["session"]["files_changed"], 0);
+            assert!(parsed["session"]["changes"].as_array().unwrap().is_empty());
+  +     }
+  + 
+  +     /// #678 / #700: `prompt.rs` exposes wrapper pairs, and one of each pair builds a
+  +     /// *throwaway* `SessionChanges` tracker. When `main.rs` calls the throwaway flavour it
+  +     /// still owns a `session_changes` that nothing ever writes to — so the post-prompt watch
+  +     /// cycle sees "no files changed this turn" and skips, and `--output-format json` reports
+  +     /// an empty session summary, for a run that demonstrably edited files.
+  +     ///
+  +     /// There is no unit-testable seam here (the real check needs a live `Agent`), so this is
+  +     /// pinned at the source level instead. The needles are assembled at runtime so that the
+  +     /// literals never appear in this file — otherwise the test would match itself and pass
+  +     /// (or fail) for the wrong reason.
+  +     #[test]
+  +     fn test_main_never_calls_the_tracker_less_prompt_wrappers() {
+  +         let src = include_str!("main.rs");
+  +         for stem in ["run_prompt", "run_prompt_with_content"] {
+  +             let needle = format!("{}{}", stem, "(");
+  +             assert!(
+  ... (8 more lines)
+ ✓ (1m 11s)
+            assert_eq!(parsed["session"]["files_changed"], 0);
+            assert!(parsed["session"]["changes"].as_array().unwrap().is_empty());
+  +     }
+  + 
+  +     /// #678 / #700: `prompt.rs` exposes wrapper pairs, and one of each pair builds a
+  +     /// *throwaway* `SessionChanges` tracker. When `main.rs` calls the throwaway flavour it
+  +     /// still owns a `session_changes` that nothing ever writes to — so the post-prompt watch
+  +     /// cycle sees "no files changed this turn" and skips, and `--output-format json` reports
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_main_never_calls… ✓ (141ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (7 → 8 lines)
+  -                 let initial = run_prompt_with_content(
+  +                 let initial = run_prompt_with_content_and_changes(
+                        agent,
+                        content_blocks,
+                        &mut session_total,
+                        &agent_config.model,
+  +                     &session_changes,
+                    )
+                    .await;
+ ✓ (9.7s)
+  -                 let initial = run_prompt_with_content(
+  +                 let initial = run_prompt_with_content_and_changes(
+                        agent,
+                        content_blocks,
+                        &mut session_total,
+                        &agent_config.model,
+  +                     &session_changes,
+                    )
+                    .await;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (7 → 8 lines)
+  -         let initial = run_prompt(
+  +         let initial = run_prompt_with_changes(
+                agent,
+                prompt_text.trim(),
+                &mut session_total,
+                &agent_config.model,
+  +             &session_changes,
+            )
+            .await;
+ ✓ (9.8s)
+  -         let initial = run_prompt(
+  +         let initial = run_prompt_with_changes(
+                agent,
+                prompt_text.trim(),
+                &mut session_total,
+                &agent_config.model,
+  +             &session_changes,
+            )
+            .await;
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:113..119 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (4 → 4 lines)
+    use prompt::{
+  -     run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
+  -     run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+  +     run_prompt_stream_json, run_prompt_stream_json_with_content, run_prompt_with_changes,
+  +     run_prompt_with_content_and_changes, PromptOutcome,
+    };
+ ✓ (1m 15s)
+    use prompt::{
+  -     run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content,
+  -     run_prompt_with_changes, run_prompt_with_content, PromptOutcome,
+  +     run_prompt_stream_json, run_prompt_stream_json_with_content, run_prompt_with_changes,
+  +     run_prompt_with_content_and_changes, PromptOutcome,
+    };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (42.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (38.2s)
+  8 tools completed in 4m 35s (8 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

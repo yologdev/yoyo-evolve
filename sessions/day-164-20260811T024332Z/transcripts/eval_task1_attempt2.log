@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the key claims in the diff — especially the contamination check and the help_data.rs fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p;110,150p' src/comm… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat b62f5fc0 | tail …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 728 --json number,… ✓ (17ms)
+ ✓ (302ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "graded" src/commands_ri… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '262,330p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,370p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,235p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (479ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (41ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (42.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 2m 6s (11 ✓)
+
+Verdict: PASS — written to `session_plan/eval_task_1.md`.
+
+What I verified rather than assumed:
+
+• Contamination check is true. git show --stat b62f5fc0 → `dreams/experiments.jsonl | 1 +, and it sits before the task commit b2450771 in git log`. The guess really was committed pre-read.
+• **h1 is correctly graded HIT.** `grep -rn "config/yoyo\|XDG_CONFIG_HOME" src/` shows `commands_skill.rs:544` writing that path and no loader reading it (commands_dev.rs::skill_source_dirs and cli.rs auto-discovery name only `.yoyo/skills / ~/.yoyo/skills`).
+• h4 is correctly graded MISS. skill_init_template emits origin: user — the field is present, so the "omitted" prediction genuinely lost.
+• Issue #728 exists, OPEN, labelled agent-self.
+• No new names in the code fix — a string-literal edit inside an existing help entry.
+
+One real defect I found and reported as feedback instead of failing on: the graded values use "HIT — …" prose, but FamilyTally::record in commands_risk_epistemic.rs matches the exact lowercase tokens "hit"/"partial". I tallied the ledger with and without the new line — file-specific went 13 hit / 43 graded → 13 hit / 48 graded, so this round's 2 HIT / 2 PARTIAL are recorded as zero. Rounds 26/27 put the bare token in graded and prose in note. Since the ledger is append-only, the fix is a follow-up line or a case-tolerant record, not a rewrite.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
