@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the docs half. Let me look at the current state first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "18\`\|~18\|10 of 18" CL… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Let me verify the real numbers rather than trusting the evaluator's count.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn subcommand_tables/,/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn dispatcher_source/,/… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "const [A-Z_]*SUBCOMMAN… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B6 '"checkpoint" =>' sr… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 34.1s (5 ✓)
+
+Now the doc fix — with verified numbers (the old "10 of 18" was itself an undercount; it's 13 of 20):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - the same `subcommand_tables()` fixture (~18 `(cmd, prefix, table)` triples), in **opposite directions**
+  + the same `subcommand_tables()` fixture (20 `(cmd, prefix, table)` triples), in **opposite directions**
+ ✓ (1m 25s)
+  - the same `subcommand_tables()` fixture (~18 `(cmd, prefix, table)` triples), in **opposite directions**
+  + the same `subcommand_tables()` fixture (20 `(cmd, prefix, table)` triples), in **opposite directions**
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - strips `*_SUBCOMMANDS` table declarations (10 of 18 tables live in the same file as their dispatcher — without this the token would be found in the table itself and the test would be vacuously green), and asserts each non-flag token appears as a quoted literal `"token"`. **What it does not catch, plainly:** it is a *presence* check, not a match-arm parse — a literal appearing anywhere in the non-test half of the module counts as present, even in a printed hint, an error string, or an arm for a different command.
+  + strips `*_SUBCOMMANDS` table declarations (13 of the 20 tables live in the same file as their dispatcher — without this the token would be found in the table itself and the test would be vacuously green), and asserts each non-flag token appears as a quoted literal `"token"`. **What it does not catch, plainly:** it is a *presence* check, not a match-arm parse — a literal appearing anywhere in the non-test half of the module counts as present, even in a printed hint, an error string, or an arm for a different command. Day 164 (#730) added `/checkpoint` and `/context` (18 → 20 triples), and `/checkpoint` is the sharpest live instance of that weakness: `handle_checkpoint` and `handle_fork` share `src/commands_fork.rs`, and `list`/`delete` are arms in *both*, so those two tokens would read as present even if `handle_checkpoint` dropped them — the `"checkpoint"` arm of `dispatcher_source` says so in a comment rather than implying coverage it doesn't have.
+ ✓ (1m 27s)
+  - strips `*_SUBCOMMANDS` table declarations (10 of 18 tables live in the same file as their dispatcher — without this the token would be found in the table itself and the test would be vacuously green), and asserts each non-flag token appears as a quoted literal `"token"`. **What it does not catch, plainly:** it is a *presence* check, not a match-arm parse — a literal appearing anywhere in the non-test half of the module counts as present, even in a printed hint, an error string, or an arm for a different command.
+  + strips `*_SUBCOMMANDS` table declarations (13 of the 20 tables live in the same file as their dispatcher — without this the token would be found in the table itself and the test would be vacuously green), and asserts each non-flag token appears as a quoted literal `"token"`. **What it does not catch, plainly:** it is a *presence* check, not a match-arm parse — a literal appearing anywhere in the non-test half of the module counts as present, even in a printed hint, an error string, or an arm for a different command. Day 164 (#730) added `/checkpoint` and `/context` (18 → 20 triples), and `/checkpoint` is the sharpest live instance of that weakness: `handle_checkpoint` and `handle_fork` share `src/commands_fork.rs`, and `list`/`delete` are arms in *both*, so those two tokens would read as present even if `handle_checkpoint` dropped them — the `"checkpoint"` arm of `dispatcher_source` says so in a comment rather than implying coverage it doesn't have.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -sb | head -3 && git … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (45 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -6 &… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 5m 57s (7 ✓)
+
+Done. The code half was already correct; the missing work was the docs half.
+
+What I changed (amended into the same unpushed commit — 4 files, git status clean):
+
+1. `CLAUDE.md`, the `help_data.rs` bullet — the one thing the evaluator flagged:
+   • `~18 (cmd, prefix, table) triples` → 20.
+   • 10 of 18 tables live in the same file as their dispatcher → 13 of the 20.
+   • Added a sentence naming /checkpoint as the sharpest live instance of the presence-check weakness (handle_checkpoint and handle_fork share src/commands_fork.rs; list/delete are arms in both), pointing at the comment already in the "checkpoint" arm.
+   • The KNOWN_INDIRECT sentence is unchanged — no entries were added, so `/config show|edit|set|get and /lint fix` is still the complete list.
+
+2. Commit message — rewritten from the bare title to state the fixture count (20), that the guards surfaced zero misses on first run (so: no help edits, no phantom removed, no KNOWN_INDIRECT, no grandfather raise, fallback did not fire), the `/checkpoint` coverage caveat, the 1995-line count, and the FORK_SUBCOMMANDS-style follow-up as explicitly out of scope.
+
+One correction to the evaluator's note: it said the new same-file count was 12. I recounted mechanically (each table's declaration site vs its dispatcher_source arm) and it is 13 of 20 — and by the same method the pre-existing "10 of 18" was already an undercount (it was 11 of 18 before this change). So that number was wrong before today's diff, not just made wrong by it; I fixed it rather than bumping it, and said so in the commit message.
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings (clean), cargo build, cargo test — all green, zero failures across the suite. wc -l src/help_data.rs = 1995, under the 2000 cap, and GRANDFATHERED_OVERSIZED_MODULES is untouched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
