@@ -280,20 +280,86 @@ pub fn generate_repo_map_for_prompt() -> Option<String> {
 /// Usage: `/map [path]` — show all symbols
 /// Usage: `/map --all [path]` — include private symbols
 /// Usage: `/map --regex [path]` — force regex backend even if ast-grep is available
-pub fn handle_map(input: &str) {
-    let rest = input.strip_prefix("/map").unwrap_or("").trim();
+/// The two real flags `/map` accepts. Used for parsing and for near-miss
+/// suggestions, so the suggestion list can never drift from the accepted set.
+const MAP_FLAGS: &[&str] = &["--all", "--regex"];
 
+/// Result of parsing `/map` arguments.
+///
+/// `Error` is an explicit third value: an unrecognised flag is neither a valid
+/// flag nor a path, and must not be silently reinterpreted as one (#727).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MapArgs {
+    Ok {
+        show_all: bool,
+        force_regex: bool,
+        path_filter: Option<String>,
+    },
+    Error(String),
+}
+
+/// Parse the argument tail of `/map` (everything after the command word).
+///
+/// Pure — no I/O, no printing. Unknown flags and a second positional path are
+/// honest errors rather than a path filter that silently matches nothing.
+pub(crate) fn parse_map_args(rest: &str) -> MapArgs {
     let mut show_all = false;
     let mut force_regex = false;
-    let mut path_filter: Option<&str> = None;
+    let mut path_filter: Option<String> = None;
 
     for part in rest.split_whitespace() {
         match part {
             "--all" => show_all = true,
             "--regex" => force_regex = true,
-            _ => path_filter = Some(part),
+            _ if part.starts_with('-') => {
+                let mut msg = format!("unknown flag: {part}");
+                // Absence gets its own value: no close match → no suggestion,
+                // never a wrong guess.
+                if let Some(suggestion) = crate::commands::closest_match(part, MAP_FLAGS, 2) {
+                    msg.push_str(&format!(" — did you mean {suggestion}?"));
+                }
+                msg.push_str("\n  usage: /map [--all] [--regex] [path]");
+                return MapArgs::Error(msg);
+            }
+            _ => {
+                if let Some(first) = &path_filter {
+                    return MapArgs::Error(format!(
+                        "two paths given ('{first}' and '{part}') — /map takes at most one path\n  usage: /map [--all] [--regex] [path]"
+                    ));
+                }
+                // `./src` should behave like `src`: the filter is a plain
+                // `starts_with` against repo-relative paths, which never begin
+                // with "./".
+                let normalized = part.strip_prefix("./").unwrap_or(part);
+                path_filter = Some(normalized.to_string());
+            }
         }
     }
+
+    MapArgs::Ok {
+        show_all,
+        force_regex,
+        path_filter,
+    }
+}
+
+pub fn handle_map(input: &str) {
+    let rest = input.strip_prefix("/map").unwrap_or("").trim();
+
+    let (show_all, force_regex, path_filter) = match parse_map_args(rest) {
+        MapArgs::Ok {
+            show_all,
+            force_regex,
+            path_filter,
+        } => (show_all, force_regex, path_filter),
+        MapArgs::Error(msg) => {
+            // Stop before any work or progress output — an unrecognised flag
+            // must not produce a confident "no symbols found".
+            eprintln!("{RED}  ✗ {msg}{RESET}\n");
+            return;
+        }
+    };
+    let path_filter = path_filter.as_deref();
 
     println!("{DIM}  Building repo map...{RESET}");
     let public_only = !show_all;
@@ -389,6 +455,80 @@ mod tests {
     }
 
     // ── handle_map ──────────────────────────────────────────────────
+
+    /// Fixture table: input → expected parse outcome (#727).
+    #[test]
+    fn parse_map_args_fixture_table() {
+        let ok = |show_all, force_regex, path: Option<&str>| MapArgs::Ok {
+            show_all,
+            force_regex,
+            path_filter: path.map(|s| s.to_string()),
+        };
+
+        let cases: Vec<(&str, MapArgs)> = vec![
+            ("", ok(false, false, None)),
+            ("--all", ok(true, false, None)),
+            ("--regex", ok(false, true, None)),
+            ("--all --regex src/", ok(true, true, Some("src/"))),
+            // `./src` normalises to `src` so the starts_with filter matches.
+            ("./src", ok(false, false, Some("src"))),
+            // Unchanged: a plain relative path is passed through verbatim.
+            ("src/", ok(false, false, Some("src/"))),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                parse_map_args(input),
+                expected,
+                "parse_map_args({input:?}) mismatched"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_map_args_unknown_flag_is_an_error_with_suggestion() {
+        match parse_map_args("--al") {
+            MapArgs::Error(msg) => {
+                assert!(msg.contains("--al"), "error should name the token: {msg}");
+                assert!(
+                    msg.contains("--all"),
+                    "error should suggest the near miss: {msg}"
+                );
+            }
+            other => panic!("expected Error for '--al', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_map_args_far_flag_is_an_error_without_bogus_guess() {
+        match parse_map_args("--public") {
+            MapArgs::Error(msg) => {
+                assert!(
+                    msg.contains("--public"),
+                    "error should name the token: {msg}"
+                );
+                assert!(
+                    !msg.contains("did you mean"),
+                    "no close match, so no suggestion should be offered: {msg}"
+                );
+            }
+            other => panic!("expected Error for '--public', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_map_args_two_paths_is_an_error_naming_both() {
+        match parse_map_args("src/ tests/") {
+            MapArgs::Error(msg) => {
+                assert!(msg.contains("src/"), "error should name first path: {msg}");
+                assert!(
+                    msg.contains("tests/"),
+                    "error should name second path: {msg}"
+                );
+            }
+            other => panic!("expected Error for two paths, got {other:?}"),
+        }
+    }
 
     #[test]
     fn handle_map_no_panic_empty() {
@@ -945,5 +1085,13 @@ mod tests {
         // density is capped at 50, so extreme gets 50 density + 0 size = 50
         // moderate gets 50 density + 2 size = 52
         // Actually moderate has more lines so might win due to size bonus
+    }
+}
+
+#[cfg(test)]
+mod tmp_manual {
+    #[test]
+    fn tmp_handle_map_bad_flag() {
+        super::handle_map("/map --al");
     }
 }
