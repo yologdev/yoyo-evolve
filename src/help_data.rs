@@ -1471,6 +1471,7 @@ mod tests {
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
     use std::collections::HashSet;
+    use std::path::Path;
 
     // ── Completeness tests ──
 
@@ -1562,6 +1563,175 @@ mod tests {
              Either add a `\\x20 /<cmd> <verb>   <description>` line to that command's Usage \
              block in src/help_data.rs, or — if the dispatcher does not implement the verb — \
              remove the phantom token from its table.\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+    }
+
+    /// The dispatcher module that actually *executes* each command's verbs.
+    /// Every command in `subcommand_tables()` must have an entry — a command
+    /// whose verbs are handled in several modules would be listed here at its
+    /// entry point, with a comment, never silently omitted.
+    fn dispatcher_source(cmd: &str) -> &'static str {
+        match cmd {
+            "bg" => "src/commands_bg.rs",         // handle_bg
+            "config" => "src/commands_config.rs", // handle_config / handle_config_set
+            "copy" => "src/commands_web.rs",      // handle_copy
+            "fork" => "src/commands_fork.rs",     // handle_fork
+            // Both /git and `/git stash` route through parse_git_args.
+            "git" => "src/git.rs",
+            "goal" => "src/commands_goal.rs", // handle_goal
+            // /history's only verb ("detail") is routed in dispatch_command,
+            // not inside commands_session.rs — the entry point is the REPL router.
+            "history" => "src/dispatch.rs",
+            "lint" => "src/commands_lint.rs",
+            "plan" => "src/commands_plan.rs",
+            "pr" => "src/commands_git_pr.rs", // parse_pr_args
+            "refactor" => "src/commands_refactor.rs",
+            "revisit" => "src/commands_revisit.rs",
+            "risk" => "src/commands_risk.rs",
+            "skill" => "src/commands_skill.rs",
+            "spawn" => "src/commands_spawn.rs",
+            "watch" => "src/watch.rs",
+            "web" => "src/commands_web.rs",
+            other => panic!(
+                "subcommand_tables() lists `/{other}` but dispatcher_source() has no entry for it \
+                 — add the module that executes its verbs (or say why it has none)"
+            ),
+        }
+    }
+
+    /// Verbs that ARE implemented, but never as the bare literal `"verb"` in
+    /// their dispatcher's non-test half. Every entry names the code that
+    /// actually handles it — a bare entry is how a deleted feature keeps
+    /// breathing.
+    const KNOWN_INDIRECT: &[(&str, &str, &str)] = &[
+        // (command, token, the code that actually handles it)
+        // /config's verbs are routed on the COMPOUND literal in the REPL router,
+        // then executed by handle_config_* in src/commands_config.rs.
+        (
+            "config",
+            "show",
+            "src/dispatch.rs:198 `rest.starts_with(\"config show\")`",
+        ),
+        (
+            "config",
+            "edit",
+            "src/dispatch.rs:201 `rest.starts_with(\"config edit\")`",
+        ),
+        (
+            "config",
+            "set",
+            "src/dispatch.rs:204 `rest.starts_with(\"config set\")`",
+        ),
+        (
+            "config",
+            "get",
+            "src/dispatch.rs:207 `rest == \"config get\"`",
+        ),
+        // /lint fix is an exact-match arm on the whole command string, and runs
+        // commands::handle_lint_fix (src/dispatch.rs:662) — not handle_lint.
+        (
+            "lint",
+            "fix",
+            "src/dispatch.rs:163 `\"/lint fix\" => CommandRoute::LintFix`",
+        ),
+    ];
+
+    /// Marker for the start of a module's own `#[cfg(test)]` block. Built from
+    /// pieces at runtime so this file's own test module doesn't match it.
+    fn test_module_marker() -> String {
+        format!("#[cfg{}]\nmod tests", "(test)")
+    }
+
+    /// Drop `*_SUBCOMMANDS` table declarations from a dispatcher's source.
+    /// Ten of the eighteen tables live in the same file as their dispatcher, so
+    /// without this the search would find the token in the table itself and the
+    /// whole test would be vacuously green — a guard that cannot fail.
+    fn strip_subcommand_tables(src: &str) -> String {
+        let mut out = String::new();
+        let mut skipping = false;
+        for line in src.lines() {
+            if skipping {
+                if line.contains("];") {
+                    skipping = false;
+                }
+                continue;
+            }
+            if line.contains("_SUBCOMMANDS") && line.contains("&[") {
+                if !line.contains("];") {
+                    skipping = true;
+                }
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn test_every_subcommand_table_token_appears_in_its_dispatcher() {
+        // The OTHER direction of the drift guard (#725). The sibling test above
+        // compares the completion table against the prose help (copy 2 vs copy
+        // 3); this one compares it against the DISPATCHER (copy 2 vs copy 1).
+        //
+        // Both real bugs lived in this direction and were invisible to a
+        // prose check, because the help entry documented the phantom too:
+        // /todo hinted a `list` verb four mirrors described and no code
+        // implemented (#702), and /map advertised `--depth N` that
+        // parse_map_args rejects (Day 164).
+        //
+        // What this does NOT catch, stated plainly: it is a PRESENCE check, not
+        // a match-arm parse. A token that appears as a quoted literal anywhere
+        // in the non-test half of the dispatcher module counts as present, even
+        // if that occurrence is a printed hint, an error string, or a match arm
+        // for a different command. Cutting the haystack at `#[cfg(test)]` and
+        // removing the table declarations is the cheap sharpening available
+        // today; a real parse of the dispatch match is a separate task.
+        let mut missing: Vec<String> = Vec::new();
+        let marker = test_module_marker();
+
+        for (cmd, prefix, subs) in subcommand_tables() {
+            let rel = dispatcher_source(cmd);
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+            let src = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "dispatcher source for /{cmd} is unreadable at {}: {e}",
+                    path.display()
+                )
+            });
+            // Cut at the module's own test module: a test quoting the token is
+            // not evidence the dispatcher accepts it. The marker is the
+            // `#[cfg(test)] mod tests` pair, not a bare `#[cfg(test)]` —
+            // src/git.rs carries `#[cfg(test)]` guards inside real functions
+            // near the top, and splitting on those would blank the whole file.
+            let non_test = src.split(marker.as_str()).next().unwrap_or("");
+            let haystack = strip_subcommand_tables(non_test);
+
+            for sub in subs {
+                if sub.starts_with('-') {
+                    continue; // flags, same skip as the usage-form test
+                }
+                if KNOWN_INDIRECT.iter().any(|(c, t, _)| *c == cmd && t == sub) {
+                    continue;
+                }
+                if !haystack.contains(&format!("\"{sub}\"")) {
+                    missing.push(format!(
+                        "  {prefix} {sub} — no `\"{sub}\"` literal in {rel} (outside its tests)"
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "{} subcommand token(s) are offered by a completion table but never \
+             appear in the dispatcher that would have to accept them.\n\
+             Either implement the verb, or delete the phantom from its table AND from its \
+             `command_help` usage line. If the verb IS implemented under a different literal \
+             (alias, prefix match, parsed enum, helper in another module), add it to \
+             KNOWN_INDIRECT with a comment naming the code that handles it.\n{}",
             missing.len(),
             missing.join("\n")
         );
