@@ -535,12 +535,15 @@ pub fn handle_config_show() {
 
 /// Resolve which config file to open for editing.
 ///
-/// Priority:
-/// 1. `.yoyo.toml` in current directory (project-level) — only if it exists
-/// 2. `~/.config/yoyo/config.toml` (XDG user-level) — even if it doesn't exist yet
+/// Resolution follows [`crate::config::load_config_file`]'s precedence, so the
+/// file `/config edit` opens is the file yoyo would actually *read*:
+/// 1. `./.yoyo.toml` (project-level) — only if it exists
+/// 2. `~/.yoyo.toml` (home shorthand) — only if it exists
+/// 3. `~/.config/yoyo/config.toml` (XDG user-level) — only if it exists
+/// 4. Otherwise `~/.yoyo.toml`, the same path `/config set --global` writes
 ///
-/// Returns the path to open. If no user config directory can be determined,
-/// returns `None`.
+/// Returns the path to open, or `None` when no home directory can be
+/// determined (e.g. `$HOME` unset) — never panics.
 ///
 /// This is a pure function (no I/O side effects beyond `exists()` checks)
 /// so it can be tested.
@@ -552,19 +555,44 @@ pub fn resolve_config_edit_path() -> Option<std::path::PathBuf> {
 /// explicit `root` directory instead of the process CWD. This avoids the need
 /// for `set_current_dir` in tests (global mutable state that races across
 /// parallel threads).
+///
+/// The thin I/O half: does the `.exists()` checks and delegates the decision to
+/// the env-free [`resolve_config_edit_path_from`].
 fn resolve_config_edit_path_in(root: &std::path::Path) -> Option<std::path::PathBuf> {
-    // Project-level config takes priority if it already exists
-    let project_config = root.join(".yoyo.toml");
-    if project_config.exists() {
-        return Some(project_config);
-    }
+    let project = root.join(".yoyo.toml");
+    let home = crate::cli::home_config_path();
+    let xdg = crate::cli::user_config_path();
 
-    // Fall back to user-level config (create path even if file doesn't exist)
-    if let Some(user_path) = crate::cli::user_config_path() {
-        return Some(user_path);
-    }
+    resolve_config_edit_path_from(
+        Some(project.as_path()).filter(|p| p.exists()),
+        home.as_deref().filter(|p| p.exists()),
+        xdg.as_deref().filter(|p| p.exists()),
+        // Where `/config set --global` would write, existing or not.
+        home.as_deref(),
+    )
+}
 
-    None
+/// Env-free core of [`resolve_config_edit_path_in`]. Each `Option` is `Some`
+/// only when that file *exists*; `home_default` is where `--global` writes
+/// (`config::write_config_value`'s non-project branch = `home_config_path()`),
+/// existing or not.
+///
+/// The decision, made explicitly (#733): `/config edit` must open the config
+/// file yoyo would actually read — so this mirrors the loader's precedence
+/// rather than jumping straight to the XDG path (which the loader consults
+/// *last*, and which `--global` never writes). When nothing exists yet, it
+/// returns the `--global` destination, so set-then-edit agrees on one file.
+fn resolve_config_edit_path_from(
+    project: Option<&std::path::Path>,
+    home: Option<&std::path::Path>,
+    xdg: Option<&std::path::Path>,
+    home_default: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    project
+        .or(home)
+        .or(xdg)
+        .or(home_default)
+        .map(|p| p.to_path_buf())
 }
 
 /// Open the config file in the user's preferred editor.
@@ -1526,7 +1554,11 @@ mod tests {
 
     #[test]
     fn test_resolve_config_edit_path_falls_back_to_user_config() {
-        // When no .yoyo.toml exists, should fall back to user config path
+        // When no project-level .yoyo.toml exists, we fall back to a home-level
+        // path. Which one depends on what exists on this machine (#733), so the
+        // env-dependent assertion here is deliberately weak — the exact
+        // precedence is pinned env-free by
+        // `test_resolve_config_edit_path_from_fixtures`.
         let tmp = std::env::temp_dir().join("yoyo_test_config_edit_fallback");
         let _ = std::fs::create_dir_all(&tmp);
         // Make sure there's no .yoyo.toml
@@ -1535,16 +1567,115 @@ mod tests {
         let result = resolve_config_edit_path_in(&tmp);
         // As long as HOME is set, we should get a path
         if std::env::var("HOME").is_ok() {
-            assert!(result.is_some(), "should return user config path");
+            assert!(result.is_some(), "should return a home-level config path");
             let path = result.unwrap();
+            let home = crate::cli::home_config_path();
+            let xdg = crate::cli::user_config_path();
             assert!(
-                path.to_string_lossy().contains("config.toml"),
-                "should point to user config.toml, got: {}",
+                Some(path.clone()) == home || Some(path.clone()) == xdg,
+                "should point at one of the two home-level config paths, got: {}",
                 path.display()
             );
         }
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_config_edit_path_from_fixtures() {
+        use std::path::{Path, PathBuf};
+        let project = Path::new("/repo/.yoyo.toml");
+        let home = Path::new("/home/u/.yoyo.toml");
+        let xdg = Path::new("/home/u/.config/yoyo/config.toml");
+
+        // (project, home, xdg, home_default, expected, label)
+        type Case<'a> = (
+            Option<&'a Path>,
+            Option<&'a Path>,
+            Option<&'a Path>,
+            Option<&'a Path>,
+            Option<PathBuf>,
+            &'a str,
+        );
+        let p = Some(project);
+        let h = Some(home);
+        let x = Some(xdg);
+        let cases: &[Case] = &[
+            (
+                p,
+                h,
+                x,
+                h,
+                Some(project.into()),
+                "project-level wins over all",
+            ),
+            (None, h, None, h, Some(home.into()), "home-only"),
+            (
+                None,
+                None,
+                x,
+                h,
+                Some(xdg.into()),
+                "xdg-only (wizard machine)",
+            ),
+            (
+                None,
+                h,
+                x,
+                h,
+                Some(home.into()),
+                "home beats xdg — loader order",
+            ),
+            (
+                None,
+                None,
+                None,
+                h,
+                Some(home.into()),
+                "none exist — --global dest",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                "no home at all — None, no panic",
+            ),
+        ];
+
+        for (p, h, x, d, expected, label) in cases {
+            assert_eq!(
+                resolve_config_edit_path_from(*p, *h, *x, *d),
+                *expected,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_edit_default_agrees_with_global_set_destination() {
+        // The user-facing promise of #733, asserted at the emission point:
+        // when no config file exists, `/config edit` opens exactly the file
+        // `/config set --global` would create. Both halves call
+        // `home_config_path()` here so they cannot drift.
+        let home_default = crate::cli::home_config_path();
+        let resolved = resolve_config_edit_path_from(None, None, None, home_default.as_deref());
+        assert_eq!(
+            resolved, home_default,
+            "config edit fallback must be byte-equal to the --global write target"
+        );
+
+        if let Some(expected) = home_default {
+            // And that target really is what write_config_value picks for
+            // --global: it writes to `home_config_path()`, so a temp-file write
+            // through the same helper round-trips at that exact path.
+            assert!(
+                expected.ends_with(".yoyo.toml"),
+                "global writes land on ~/.yoyo.toml, got {}",
+                expected.display()
+            );
+        }
     }
 
     // --- /config set argument parsing tests ---
