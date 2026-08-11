@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code in scope.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 75,175p src/cli.rs && ech…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 285,340p src/commands_dev… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn load_dir_resilient"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "two director\|both dir… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn merge" -A 15 ~/.… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 34.1s (5 ✓)
+
+Confirmed: later merge wins, so lowest precedence must be merged first. Writing tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "default_skill_install_d… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_skill.rs (14 → 34 lines)
+    /// Default skill install directory: `~/.config/yoyo/skills/`
+    ///
+    /// Uses `XDG_CONFIG_HOME` if set, otherwise falls back to `~/.config`.
+  - fn default_skill_install_dir() -> Option<std::path::PathBuf> {
+  -     let config_dir = std::env::var("XDG_CONFIG_HOME")
+  -         .ok()
+  + ///
+  + /// `pub(crate)` since #728: auto-discovery (`cli::auto_discover_skills`) and the
+  + /// `/doctor` skill context-cost audit (`commands_dev::skill_source_dirs`) both
+  + /// need this directory. They call *this* function rather than re-deriving the
+  + /// XDG rule — one path rule, one place.
+  + pub(crate) fn default_skill_install_dir() -> Option<std::path::PathBuf> {
+  +     skill_install_dir_from(
+  +         std::env::var_os("XDG_CONFIG_HOME")
+  +             .map(std::path::PathBuf::from)
+  +             .as_deref(),
+  +         std::env::var_os("HOME")
+  +             .map(std::path::PathBuf::from)
+  +             .as_deref(),
+  +     )
+  ... (22 more lines)
+ ✓ (1m 14s)
+    /// Default skill install directory: `~/.config/yoyo/skills/`
+    ///
+    /// Uses `XDG_CONFIG_HOME` if set, otherwise falls back to `~/.config`.
+  - fn default_skill_install_dir() -> Option<std::path::PathBuf> {
+  -     let config_dir = std::env::var("XDG_CONFIG_HOME")
+  -         .ok()
+  + ///
+  + /// `pub(crate)` since #728: auto-discovery (`cli::auto_discover_skills`) and the
+  ... (13 more lines)
+  2 tools completed in 1m 26s (2 ✓)
+
+Now the cli.rs refactor — collapse the two near-identical blocks into one loop with a pure source-list helper.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 105,135p src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 84,92p src/cli.rs && echo… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:75..130 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.1s (3 ✓)
+
+Now the main edit to cli.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 5 lines)
+    /// Directories that actually *contributed* auto-discovered skills this run.
+    ///
+  - /// The count above is a total across two directories (`~/.yoyo/skills/` and
+  - /// `.yoyo/skills/`), so it cannot answer "where did these come from?". Any
+  + /// The count above is a total across every auto-discovery directory (see
+  + /// [`auto_discovery_sources`] for the current list), so it cannot answer
+  + /// "where did these come from?". Any
+ ✓ (1m 14s)
+    /// Directories that actually *contributed* auto-discovered skills this run.
+    ///
+  - /// The count above is a total across two directories (`~/.yoyo/skills/` and
+  - /// `.yoyo/skills/`), so it cannot answer "where did these come from?". Any
+  + /// The count above is a total across every auto-discovery directory (see
+  + /// [`auto_discovery_sources`] for the current list), so it cannot answer
+  + /// "where did these come from?". Any
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 2 lines)
+  - /// These are a real source of loaded skills alongside the two auto-discovery
+  + /// These are a real source of loaded skills alongside the auto-discovery
+    /// dirs, so anything reporting on skills (e.g. `/doctor`'s context-cost audit)
+ ✓ (1m 17s)
+  - /// These are a real source of loaded skills alongside the two auto-discovery
+  + /// These are a real source of loaded skills alongside the auto-discovery
+    /// dirs, so anything reporting on skills (e.g. `/doctor`'s context-cost audit)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:120..180 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (50 → 107 lines)
+  - /// Auto-discover skills from `~/.yoyo/skills/` (user-global) and `.yoyo/skills/` (project-local).
+  + /// One directory auto-discovery will read, with the strings the run needs to
+  + /// talk about it honestly.
+  + ///
+  + /// Split out so the *ordering* claim (which dirs, in which precedence order) is
+  + /// a pure value that can be tested without touching a filesystem or `HOME`.
+  + struct SkillSourceDir {
+  +     /// The directory to load from.
+  +     dir: std::path::PathBuf,
+  +     /// `SkillSet::load_dir_resilient`'s source tag.
+  +     label: &'static str,
+  +     /// How this source is named in the recorded `sources` list (banner-facing).
+  +     display: String,
+  +     /// How this source is named inside a malformed-skill warning.
+  +     warn_target: String,
+  + }
+  + 
+  + /// Every directory auto-discovery reads, ordered **lowest precedence first**
+  + /// (that is the order they must be merged in — `SkillSet::merge` lets the
+  + /// argument win).
+  ... (113 more lines)
+ ✓ (1m 14s)
+  - /// Auto-discover skills from `~/.yoyo/skills/` (user-global) and `.yoyo/skills/` (project-local).
+  + /// One directory auto-discovery will read, with the strings the run needs to
+  + /// talk about it honestly.
+  + ///
+  + /// Split out so the *ordering* claim (which dirs, in which precedence order) is
+  + /// a pure value that can be tested without touching a filesystem or `HOME`.
+  + struct SkillSourceDir {
+  +     /// The directory to load from.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 226,240p src/cli.rs ✓ (3ms)
+  5 tools completed in 4m 20s (5 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4737 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (22ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:300..318 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (64 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.0s (3 ✓)
+
+Now the tests. Let me update the two existing call sites and add new tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:886..926 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (84 lines) ✓ (18ms)
+  2 tools completed in 16.7s (2 ✓)
+
+Now tests for the pure auto_discovery_sources ordering helper in cli.rs, and for skill_install_dir_from.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^    use su… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (94 lines) ✓ (8.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 13s (3 ✓)
+
+cli.rs grew +117. Let me trim the design before touching the ceiling — a signed raise should be a last resort.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (162 lines) ✓ (805ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 35,50p tests/module_size.… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 7 lines)
+  -     // Day 162 (#677): +30 lines — resilient skill loading at all 3 sites + regression test.
+  -     ("src/cli.rs", 3747),
+  +     // Day 164 (#728): +97 lines — `/skill install`'s destination becomes a third
+  +     // auto-discovery source, so an explicitly installed skill actually loads.
+  +     // The two near-identical per-directory blocks were collapsed into one loop
+  +     // over a pure `auto_discovery_sources` list first (that dedup is why this is
+  +     // +97 and not more); the rest is the new source, its doc comments, and three
+  +     // tests pinning the precedence order (installed < global < project).
+  +     ("src/cli.rs", 3844),
+ ✓ (14.9s)
+  -     // Day 162 (#677): +30 lines — resilient skill loading at all 3 sites + regression test.
+  -     ("src/cli.rs", 3747),
+  +     // Day 164 (#728): +97 lines — `/skill install`'s destination becomes a third
+  +     // auto-discovery source, so an explicitly installed skill actually loads.
+  +     // The two near-identical per-directory blocks were collapsed into one loop
+  +     // over a pure `auto_discovery_sources` list first (that dedup is why this is
+  +     // +97 and not more); the rest is the new source, its doc comments, and three
+  +     // tests pinning the precedence order (installed < global < project).
+  +     ("src/cli.rs", 3844),
+  3 tools completed in 23.7s (3 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 2 lines)
+  -                 .any(|d| d.dir == std::path::PathBuf::from("/home/tester/.config/yoyo/skills")),
+  +                 .any(|d| d.dir.as_path()
+  +                     == std::path::Path::new("/home/tester/.config/yoyo/skills")),
+ ✓ (1m 15s)
+  -                 .any(|d| d.dir == std::path::PathBuf::from("/home/tester/.config/yoyo/skills")),
+  +                 .any(|d| d.dir.as_path()
+  +                     == std::path::Path::new("/home/tester/.config/yoyo/skills")),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/cli.rs &&… ✓ (15.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    // Day 164 (#728):… ✓ (6ms)
+  3 tools completed in 1m 38s (3 ✓)
+
+Now the docs — the cardinality claims.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,70p docs/src/configura… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.yoyo/skills" docs/sr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 615,630p src/help_data.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (7.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 13s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 54s (6 ✓)
+
+All green. Now the honest end-to-end check — does an installed skill actually load?
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && T=$(mktemp -d) && mkdir -p "$T/.… ✓ (3.2s)
+
+  ✓ Watch passed after fix (attempt 2)
+
