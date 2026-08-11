@@ -58,6 +58,8 @@ From the REPL, use the `/skill` command to manage skills:
 
 The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field.
 
+Note: that destination is **not** auto-discovered — auto-discovery reads only `.yoyo/skills/` and `~/.yoyo/skills/`. Load an installed skill explicitly with `--skills ~/.config/yoyo/skills` (see [issue #728](https://github.com/yologdev/yoyo-evolve/issues/728)).
+
 ### Searching for skills
 
 Find community-created skills on GitHub:
