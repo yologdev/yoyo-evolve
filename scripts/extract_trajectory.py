@@ -283,12 +283,66 @@ def render_unchosen_sessions(tasks: list[tuple[int, str]]) -> str:
 # ── Section 3: Reverts in window (already counted above) ─────────────────
 
 
-def render_reverts(reverts: int, total_sessions: int) -> str:
+def _int_or_zero(value: object) -> int:
+    """Outcome JSON is written by a shell script — read every number defensively."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return 0
+
+
+def count_task_reverts(outcomes: list[dict]) -> tuple[int, int]:
+    """Return (reverted_task_count, sessions_with_reverts) from loaded outcomes.
+
+    Per-task reverts are the COMMON case and leave no commit: the harness does a
+    `git reset --hard` and files an agent-revert issue, so REVERT_COMMIT_RE (which
+    only matches the whole-session build-failure commit) can never see them. The
+    evidence is already in the outcome dicts as attempted-minus-succeeded.
+    """
+    reverted_tasks = 0
+    sessions = 0
+    for o in outcomes:
+        attempted = _int_or_zero(o.get("tasks_attempted", 0))
+        succeeded = _int_or_zero(o.get("tasks_succeeded", 0))
+        lost = max(0, attempted - succeeded)
+        reverted_tasks += lost
+        # A whole-session revert is a session with reverts too, even if the
+        # per-task counters happen to agree (attempted == succeeded).
+        if lost > 0 or bool(o.get("reverted", False)):
+            sessions += 1
+    return reverted_tasks, sessions
+
+
+def render_reverts(reverts: int, outcomes: list[dict]) -> str:
+    """Report the two revert signals as distinct named things — never summed.
+
+    They measure different events: a whole-session revert COMMIT (build failure
+    after the session) vs a per-task `git reset --hard` that leaves no commit.
+    Summing them would invent a number that counts nothing.
+    """
+    total_sessions = len(outcomes)
     if total_sessions == 0:
         return ""
-    if reverts == 0:
-        return f"## Reverts in window\n0 of last ~{total_sessions} sessions had reverts."
-    return f"## Reverts in window\n{reverts} revert commit(s) in last {WINDOW_DAYS} days."
+    reverted_tasks, revert_sessions = count_task_reverts(outcomes)
+    if reverted_tasks == 0 and reverts == 0:
+        return (
+            "## Reverts in window\n"
+            f"0 task reverts in last ~{total_sessions} sessions, "
+            f"0 whole-session revert commits in {WINDOW_DAYS} days."
+        )
+    lines = ["## Reverts in window"]
+    if reverted_tasks:
+        lines.append(
+            f"{reverted_tasks} task(s) reverted across {revert_sessions} of the last "
+            f"~{total_sessions} sessions (per-task resets, no commit)."
+        )
+    else:
+        lines.append(f"0 task reverts in last ~{total_sessions} sessions.")
+    lines.append(
+        f"{reverts} whole-session revert commit(s) in last {WINDOW_DAYS} days."
+    )
+    return "\n".join(lines)
 
 
 # --- Subsystem concentration (the monoculture gate) ---------------------------
@@ -884,7 +938,7 @@ def main() -> int:
     s = render_unchosen_sessions(tasks)
     if s:
         sections.append(s)
-    s = render_reverts(reverts, len(outcomes))
+    s = render_reverts(reverts, outcomes)
     if s:
         sections.append(s)
     # Placed mid-order deliberately: a capped surface has an implicit sacrifice
@@ -1698,6 +1752,94 @@ src/commands_config.rs
             for line in rows.splitlines()
             if FALLBACK_TASK_TITLE not in line
         ),
+    )
+
+    # --- Reverts in window (per-task resets + whole-session commits) ---------
+    print("\n=== revert counting self-tests ===\n")
+
+    def outcome(attempted: int, succeeded: int, reverted: bool = False) -> dict:
+        return {
+            "tasks_attempted": attempted,
+            "tasks_succeeded": succeeded,
+            "reverted": reverted,
+        }
+
+    GREEN = [outcome(2, 2), outcome(1, 1), outcome(3, 3)]
+
+    # 1. Nothing reverted at all: the all-clear must say what was CHECKED.
+    #    A bare "0 reverts" is the sentence that misled the planner for months.
+    assert_eq(
+        "zero reverts names both signals",
+        render_reverts(0, GREEN),
+        "## Reverts in window\n"
+        "0 task reverts in last ~3 sessions, "
+        f"0 whole-session revert commits in {WINDOW_DAYS} days.",
+    )
+
+    # 2. Per-task resets only — invisible to REVERT_COMMIT_RE, visible here.
+    PER_TASK = [outcome(2, 1), outcome(1, 1), outcome(2, 0)]
+    assert_eq(
+        "per-task resets are counted and named",
+        render_reverts(0, PER_TASK),
+        "## Reverts in window\n"
+        "3 task(s) reverted across 2 of the last ~3 sessions "
+        "(per-task resets, no commit).\n"
+        f"0 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
+    )
+
+    # 3. Whole-session revert commit only — the old signal, still reported,
+    #    still named as its own thing.
+    assert_eq(
+        "whole-session commits reported separately",
+        render_reverts(1, GREEN),
+        "## Reverts in window\n"
+        "0 task reverts in last ~3 sessions.\n"
+        f"1 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
+    )
+
+    # 4. Both — the two numbers must never be summed into one.
+    assert_eq(
+        "both signals render as two distinct lines",
+        render_reverts(2, PER_TASK),
+        "## Reverts in window\n"
+        "3 task(s) reverted across 2 of the last ~3 sessions "
+        "(per-task resets, no commit).\n"
+        f"2 whole-session revert commit(s) in last {WINDOW_DAYS} days.",
+    )
+
+    # 5. A whole-session revert counts as a session with reverts even when the
+    #    per-task counters agree (absence gets its own value, Day 144).
+    assert_eq(
+        "whole-session flag counts the session",
+        count_task_reverts([outcome(1, 1, reverted=True), outcome(1, 1)]),
+        (0, 1),
+    )
+
+    # 6. Defensive reads: the JSON is written by a shell script.
+    assert_eq(
+        "junk counters degrade to zero, never crash",
+        count_task_reverts(
+            [{"tasks_attempted": "two", "tasks_succeeded": None}, {}]
+        ),
+        (0, 0),
+    )
+    assert_eq(
+        "succeeded > attempted never goes negative",
+        count_task_reverts([outcome(1, 3)]),
+        (0, 0),
+    )
+
+    # 7. No outcomes at all → no section (the section can't speak about nothing).
+    assert_eq("no outcomes renders nothing", render_reverts(0, []), "")
+
+    # 8. The section stays inside its 3-line budget under TOTAL_LINE_CAP.
+    assert_true(
+        "section is at most 3 lines",
+        max(
+            len(render_reverts(r, o).splitlines())
+            for r, o in ((0, GREEN), (0, PER_TASK), (1, GREEN), (2, PER_TASK))
+        )
+        <= 3,
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
