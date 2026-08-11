@@ -17,7 +17,7 @@ use yoagent::agent::Agent;
 // ── /context ─────────────────────────────────────────────────────────────
 
 /// Subcommands for /context.
-const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files", "relevant"];
+pub(crate) const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files", "relevant"];
 
 pub fn context_subcommands() -> &'static [&'static str] {
     CONTEXT_SUBCOMMANDS

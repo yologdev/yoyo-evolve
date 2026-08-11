@@ -371,7 +371,7 @@ pub struct CheckpointStore {
 }
 
 /// Subcommands for `/checkpoint`.
-const CHECKPOINT_SUBCOMMANDS: &[&str] = &["save", "list", "restore", "diff", "delete"];
+pub(crate) const CHECKPOINT_SUBCOMMANDS: &[&str] = &["save", "list", "restore", "diff", "delete"];
 
 impl CheckpointStore {
     /// Create a new empty store.

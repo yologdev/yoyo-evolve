@@ -1489,7 +1489,17 @@ mod tests {
     fn subcommand_tables() -> Vec<(&'static str, &'static str, &'static [&'static str])> {
         vec![
             ("bg", "/bg", crate::commands::BG_SUBCOMMANDS),
+            (
+                "checkpoint",
+                "/checkpoint",
+                crate::commands_fork::CHECKPOINT_SUBCOMMANDS,
+            ),
             ("config", "/config", crate::commands::CONFIG_SUBCOMMANDS),
+            (
+                "context",
+                "/context",
+                crate::commands_project::CONTEXT_SUBCOMMANDS,
+            ),
             ("copy", "/copy", crate::commands_web::COPY_SUBCOMMANDS),
             ("fork", "/fork", crate::commands_fork::FORK_SUBCOMMANDS),
             ("git", "/git", crate::commands::GIT_SUBCOMMANDS),
@@ -1574,8 +1584,14 @@ mod tests {
     /// entry point, with a comment, never silently omitted.
     fn dispatcher_source(cmd: &str) -> &'static str {
         match cmd {
-            "bg" => "src/commands_bg.rs",         // handle_bg
+            "bg" => "src/commands_bg.rs", // handle_bg
+            // /checkpoint's verbs are matched in handle_checkpoint, which lives
+            // in commands_fork.rs beside CHECKPOINT_SUBCOMMANDS. Weak for `list`
+            // and `delete`: handle_fork has arms on those same literals in this
+            // file, so a presence check can't tell the two dispatchers apart.
+            "checkpoint" => "src/commands_fork.rs",
             "config" => "src/commands_config.rs", // handle_config / handle_config_set
+            "context" => "src/commands_project.rs", // handle_context
             "copy" => "src/commands_web.rs",      // handle_copy
             "fork" => "src/commands_fork.rs",     // handle_fork
             // Both /git and `/git stash` route through parse_git_args.
