@@ -1,0 +1,200 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the backlog. Issue #735 looks like the smallest concrete one — let me verify its claims against the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 360,440p src/commands_con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1140,1180p src/config.rs … ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shadowing_config_file\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_config" tests/… ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shadowing_config_file\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,340p tests/module_siz… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_config\|MAX_MO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,800p src/commands_con… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 45.7s (8 ✓)
+
+Verified: `shadowing_config_file returns None at position 0, so it structurally can't see the inverse. Note the constraint — commands_config.rs` is 1970 lines against a hard 2000 cap:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,432p src/commands_con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1880,1970p src/commands_c… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+Plan: extract the precedence-helper family into a new small module (that's the module-size compliance step, done up front — Day 163's lesson), then add the sibling predicate there.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 344,360p src/commands_con… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,430p src/commands_con… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 21.1s (4 ✓)
+
+Now register the module and wire the call sites:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_loaded_config_pa… ✓ (4ms)
+ ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^} *$" src/comma… ✓ (3ms)
+  ▶ edit src/commands_config.rs (1 → 5 lines)
+    use crate::commands::thinking_level_name;
+  + use crate::config_paths::{
+  +     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
+  +     shadowed_write_warning, shadowing_config_file,
+  + };
+ ✓ (19.9s)
+    use crate::commands::thinking_level_name;
+  + use crate::config_paths::{
+  +     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
+  +     shadowed_write_warning, shadowing_config_file,
+  + };
+  4 tools completed in 30.3s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0432][0m[1m: unresolved imports `crate::config_paths::demoted_config_file`, `crate::config_paths::demoted_write_warning`[0m
+ [1m[94m--> [0msrc/commands_config.rs:9:5
+  [1m[94m|[0m
+[1m[94m9[0m [1m[94m|[0m     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
+  [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mno `demoted_write_warning` in `config_paths`[0m
+  [1m[94m|[0m     [1m[91m|[0m
+  [1m[94m|[0m     [1m[91mno `demoted_config_file` in `config_paths`[0m
+  [1m[94m|[0m
+[1m[96mhelp[0m: a similar name exists in the module
+  [1m[94m|[0m
+[1m[94m9[0m [91m- [0m    demoted_config_file, [91mdemoted_write_warning[0m, detect_loaded_config_path, existing_config_paths,
+[1m[94m9[0m [92m+ [0m    demoted_config_file, [92mshadowed_write_warning[0m, detect_loaded_config_path, existing_config_paths,
+  [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0432`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I imported the two new functions before writing them. Let me add them now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,120p src/config_paths.… ✓ (3ms)
+  ▶ edit src/config_paths.rs (5 → 51 lines)
+  + /// The sibling of [`shadowing_config_file`], looking the *other* way down the
+  + /// precedence chain (#735).
+  + ///
+  + /// `shadowing_config_file` asks "will the file I just wrote be ignored?" — it
+  + /// answers `None` at position 0 and so structurally cannot see the inverse
+  + /// case: a write that *creates* a new highest-precedence file silently demotes
+  + /// whatever config yoyo was reading before, because loading is
+  + /// first-existing-wins with no merge. Every other setting in the demoted file
+  + /// stops being read, and the green checkmark says nothing about it.
+  + ///
+  + /// `before` must be the precedence-ordered existing files captured **before**
+  + /// the write, and `after` the same list recomputed afterwards. The pre-write
+  + /// capture is load-bearing: recomputing both sides after the write is exactly
+  + /// what makes the shadow guard blind here, since the new file is already in
+  + /// the list by then.
+  + ///
+  + /// Returns the file that yoyo was loading and no longer loads, or `None` when
+  + /// nothing went dark: the write did not become the head of the chain, there was
+  + /// no config file before, or the file written is the same one already in use.
+  + pub(crate) fn demoted_config_file(
+  ... (29 more lines)
+ ✓ (19.5s)
+  + /// The sibling of [`shadowing_config_file`], looking the *other* way down the
+  + /// precedence chain (#735).
+  + ///
+  + /// `shadowing_config_file` asks "will the file I just wrote be ignored?" — it
+  + /// answers `None` at position 0 and so structurally cannot see the inverse
+  + /// case: a write that *creates* a new highest-precedence file silently demotes
+  + /// whatever config yoyo was reading before, because loading is
+  + /// first-existing-wins with no merge. Every other setting in the demoted file
+  ... (13 more lines)
+  2 tools completed in 31.3s (2 ✓)
+
+Now the consumer — the /config set call site, which must capture the path list before the write:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 650,682p src/commands_con… ✓ (3ms)
+  ▶ edit src/commands_config.rs (3 → 6 lines)
+  -     // Write to disk
+  +     // Write to disk. Capture the precedence chain BEFORE the write: after it,
+  +     // a newly created file is already in the list, which is precisely what
+  +     // blinds the shadow guard to the inverse direction (#735).
+  +     let before_write = existing_config_paths();
+        let project_local = !is_global;
+        match crate::config::write_config_value(&key, &canonical, project_local) {
+ ✓ (19.4s)
+  -     // Write to disk
+  +     // Write to disk. Capture the precedence chain BEFORE the write: after it,
+  +     // a newly created file is already in the list, which is precisely what
+  +     // blinds the shadow guard to the inverse direction (#735).
+  +     let before_write = existing_config_paths();
+        let project_local = !is_global;
+        match crate::config::write_config_value(&key, &canonical, project_local) {
+  ▶ edit src/commands_config.rs (7 → 18 lines)
+                // Say so instead of letting the green checkmark imply effect.
+  -             if let Some(shadow) = shadowing_config_file(&path, &existing_config_paths()) {
+  +             let after_write = existing_config_paths();
+  +             if let Some(shadow) = shadowing_config_file(&path, &after_write) {
+                    println!(
+                        "{YELLOW}  {}{RESET}",
+                        shadowed_write_warning(&path, &shadow)
+  +                 );
+  +             }
+  +             // The other end of the same fact (#735): a write that created a
+  +             // new highest-precedence file takes effect itself while silently
+  +             // demoting whatever config yoyo was reading. Name the file that
+  +             // just went dark.
+  +             if let Some(demoted) = demoted_config_file(&path, &before_write, &after_write) {
+  +                 println!(
+  +                     "{YELLOW}  {}{RESET}",
+  +                     demoted_write_warning(&path, &demoted)
+                    );
+                }
+ ✓ (1m 41s)
+                // Say so instead of letting the green checkmark imply effect.
+  -             if let Some(shadow) = shadowing_config_file(&path, &existing_config_paths()) {
+  +             let after_write = existing_config_paths();
+  +             if let Some(shadow) = shadowing_config_file(&path, &after_write) {
+                    println!(
+                        "{YELLOW}  {}{RESET}",
+                        shadowed_write_warning(&path, &shadow)
+  +                 );
+  ... (11 more lines)
+  3 tools completed in 2m 11s (3 ✓)
+
+Compiles. Now the tests for the new predicate — including the exact scenario from #735:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> /tmp/… (85 lines) ✓ (20.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (19.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets 2>&1 … ✓ (19.2s)
+  ▶ edit src/config_paths.rs (1 → 4 lines)
+  -         assert_eq!(demoted_config_file(&home, &[], &[home.clone()]), None);
+  +         assert_eq!(
+  +             demoted_config_file(&home, &[], std::slice::from_ref(&home)),
+  +             None
+  +         );
+ ✓ (1m 36s)
+  -         assert_eq!(demoted_config_file(&home, &[], &[home.clone()]), None);
+  +         assert_eq!(
+  +             demoted_config_file(&home, &[], std::slice::from_ref(&home)),
+  +             None
+  +         );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (54.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (54.7s)
+  6 tools completed in 4m 37s (6 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     Predicted correctly: src/commands_config.rs
+     Surprises (not predicted): src/config_paths.rs
+
