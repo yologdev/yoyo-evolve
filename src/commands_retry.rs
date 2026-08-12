@@ -45,13 +45,19 @@ const KNOWN_TOOL_NAMES: &[&str] = &[
 /// match found. This is used by `/retry` to provide tool-specific recovery
 /// hints when the tool name wasn't preserved through the error propagation path.
 ///
+/// **Every** occurrence of each candidate name is boundary-checked, not just the
+/// first: an error like `"no_bash_here; bash: command not found"` embeds `bash`
+/// inside a larger identifier before mentioning it as a real word, and checking
+/// only the first occurrence would abandon that candidate and report `None`
+/// (blind round 42).
+///
 /// Returns `None` if no recognizable tool name is found.
 pub fn extract_tool_name_from_error(error: &str) -> Option<&'static str> {
     if error.is_empty() {
         return None;
     }
     for &tool in KNOWN_TOOL_NAMES {
-        if let Some(pos) = error.find(tool) {
+        for (pos, _) in error.match_indices(tool) {
             // Check word boundary before
             let before_ok = pos == 0
                 || error
@@ -893,6 +899,31 @@ mod tests {
         assert!(
             result == Some("edit_file") || result == Some("bash"),
             "should match one of the mentioned tools: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_extract_tool_name_checks_every_occurrence_not_just_the_first() {
+        // Blind round 42: the boundary check used to run on `error.find(tool)`
+        // only, so a name embedded in a larger identifier EARLIER in the string
+        // made the whole candidate be abandoned — even though the same name
+        // appeared later as a real word. Each of these returned None before.
+        assert_eq!(
+            extract_tool_name_from_error("no_bash_here; bash: command not found"),
+            Some("bash")
+        );
+        assert_eq!(
+            extract_tool_name_from_error("searching failed; search returned no results"),
+            Some("search")
+        );
+        assert_eq!(
+            extract_tool_name_from_error("my_edit_file.rs is bad; edit_file: old_text not found"),
+            Some("edit_file")
+        );
+        // A name that only ever appears embedded still does not match.
+        assert_eq!(
+            extract_tool_name_from_error("prefix_bash_suffix only"),
+            None
         );
     }
 
