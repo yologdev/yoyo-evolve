@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,360p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "wants_summary\|wants_di… ✓ (17ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '598,618p' src/dispatch.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_changes_summary"… ✓ (4ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 23.6s (4 ✓)
+
+Now I'll make the edits — pure positional parser plus an explicit refusal for the --diff summary combination.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_retry.rs (7 → 39 lines)
+  - /// Returns `true` if the raw `/changes` input contains the `summary` subcommand.
+  - pub(crate) fn wants_summary(input: &str) -> bool {
+  + /// The first non-flag argument of a `/changes` invocation, if any.
+  + ///
+  + /// Skips the `/changes` token itself and every argument starting with `-`, so
+  + /// `/changes --diff summary` yields `Some("summary")` and `/changes --diff`
+  + /// yields `None`.
+  + fn first_non_flag_arg(input: &str) -> Option<&str> {
+        input
+            .split_whitespace()
+            .skip(1) // skip "/changes" itself
+  -         .any(|arg| arg == "summary")
+  +         .find(|arg| !arg.starts_with('-'))
+  + }
+  + 
+  + /// Returns `true` if `/changes` was invoked with the `summary` subcommand.
+  + ///
+  + /// The subcommand is decided by the FIRST non-flag argument, not by any
+  + /// argument anywhere in the line: `summary` routes to a paid side-agent call,
+  + /// so `/changes somefile.rs summary` must not spend tokens just because a
+  ... (22 more lines)
+ ✓ (18.0s)
+  - /// Returns `true` if the raw `/changes` input contains the `summary` subcommand.
+  - pub(crate) fn wants_summary(input: &str) -> bool {
+  + /// The first non-flag argument of a `/changes` invocation, if any.
+  + ///
+  + /// Skips the `/changes` token itself and every argument starting with `-`, so
+  + /// `/changes --diff summary` yields `Some("summary")` and `/changes --diff`
+  + /// yields `None`.
+  + fn first_non_flag_arg(input: &str) -> Option<&str> {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 3 lines)
+  - pub(crate) use crate::commands_retry::{handle_changes_summary, wants_summary};
+  + pub(crate) use crate::commands_retry::{
+  +     changes_conflict_message, handle_changes_summary, wants_summary,
+  + };
+ ✓ (18.0s)
+  - pub(crate) use crate::commands_retry::{handle_changes_summary, wants_summary};
+  + pub(crate) use crate::commands_retry::{
+  +     changes_conflict_message, handle_changes_summary, wants_summary,
+  + };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (8 → 10 lines)
+            CommandRoute::Changes => {
+  -             if commands::wants_summary(ctx.input) {
+  +             if let Some(msg) = commands::changes_conflict_message(ctx.input) {
+  +                 eprintln!("{msg}");
+  +             } else if commands::wants_summary(ctx.input) {
+                    commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
+                } else {
+                    commands::handle_changes(ctx.session_changes, ctx.input);
+ ✓ (1m 41s)
+            CommandRoute::Changes => {
+  -             if commands::wants_summary(ctx.input) {
+  +             if let Some(msg) = commands::changes_conflict_message(ctx.input) {
+  +                 eprintln!("{msg}");
+  +             } else if commands::wants_summary(ctx.input) {
+                    commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
+                } else {
+                    commands::handle_changes(ctx.session_changes, ctx.input);
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 26s (3 ✓)
+
+Now the tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_retry.rs (10 → 56 lines)
+            // summary is a subcommand, not a flag — "summari" shouldn't match
+            assert!(!wants_summary("/changes summari"));
+            assert!(!wants_summary("/changes --summary"));
+  +     }
+  + 
+  +     /// The `summary` subcommand routes to a PAID side-agent call, so it is
+  +     /// decided by the first non-flag argument only. A token named `summary`
+  +     /// sitting after a positional argument used to spend money (#743).
+  +     #[test]
+  +     fn test_wants_summary_is_positional() {
+  +         // (input, expected)
+  +         let cases: &[(&str, bool)] = &[
+  +             ("/changes summary", true),
+  +             ("/changes   summary", true),
+  +             // flags are skipped when looking for the first non-flag arg
+  +             ("/changes --diff summary", true),
+  +             // ...but the combination is refused before any model call runs
+  +             ("/changes somefile.rs summary", false),
+  +             ("/changes src/main.rs summary --diff", false),
+  +             ("/changes summary extra", true),
+  ... (30 more lines)
+ ✓ (1m 50s)
+            // summary is a subcommand, not a flag — "summari" shouldn't match
+            assert!(!wants_summary("/changes summari"));
+            assert!(!wants_summary("/changes --summary"));
+  +     }
+  + 
+  +     /// The `summary` subcommand routes to a PAID side-agent call, so it is
+  +     /// decided by the first non-flag argument only. A token named `summary`
+  +     /// sitting after a positional argument used to spend money (#743).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_retry.rs (7 → 12 lines)
+            assert!(wants_diff("/changes   --diff"));
+            assert!(!wants_diff("/changes --dif"));
+            assert!(!wants_diff("/changes --verbose"));
+  +         // --diff is a flag: position doesn't matter, and it is still seen when
+  +         // combined with the summary subcommand (which is why they conflict).
+  +         assert!(wants_diff("/changes summary --diff"));
+  +         assert!(wants_diff("/changes --diff summary"));
+  +         assert!(!wants_diff("/changes summary"));
+        }
+ ✓ (1m 43s)
+            assert!(wants_diff("/changes   --diff"));
+            assert!(!wants_diff("/changes --dif"));
+            assert!(!wants_diff("/changes --verbose"));
+  +         // --diff is a flag: position doesn't matter, and it is still seen when
+  +         // combined with the summary subcommand (which is why they conflict).
+  +         assert!(wants_diff("/changes summary --diff"));
+  +         assert!(wants_diff("/changes --diff summary"));
+  +         assert!(!wants_diff("/changes summary"));
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 35s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/help_data.… ✓ (4ms)
+ ✓ (52.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/changes' -A 14 src/he… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_retry" CLAUDE.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_re" CLAUD… ✓ (3ms)
+  8 tools completed in 6m 21s (8 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
