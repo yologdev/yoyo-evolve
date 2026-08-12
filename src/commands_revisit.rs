@@ -165,7 +165,9 @@ fn is_shelved(issue: &ClosedIssue) -> bool {
 /// Format a date string for display (extract just the date part from ISO 8601).
 fn format_date(iso: &str) -> &str {
     // "2025-05-13T09:33:00Z" → "2025-05-13"
-    if iso.len() >= 10 {
+    // `iso` is server-controlled JSON text, so byte 10 may land inside a
+    // multi-byte char — slicing there panics. Fall back to the whole string.
+    if iso.len() >= 10 && iso.is_char_boundary(10) {
         &iso[..10]
     } else {
         iso
@@ -617,6 +619,20 @@ mod tests {
         assert_eq!(format_date("2025-05-13T09:33:00Z"), "2025-05-13");
         assert_eq!(format_date("short"), "short");
         assert_eq!(format_date(""), "");
+    }
+
+    #[test]
+    fn test_format_date_multibyte_at_the_cut_does_not_panic() {
+        // `closedAt` is server-controlled JSON text, so `format_date` must not
+        // assume byte 10 is a char boundary. "2026-08-1✓…" puts a 3-byte char
+        // across bytes 9..12, which the old `&iso[..10]` sliced into (panic).
+        let iso = "2026-08-1✓T09:33:00Z";
+        assert!(iso.len() >= 10 && !iso.is_char_boundary(10));
+        assert_eq!(format_date(iso), iso);
+        // A date-shaped prefix ending exactly on a boundary still truncates.
+        assert_eq!(format_date("2026-08-13T09:33:00Z"), "2026-08-13");
+        // Multi-byte before the cut, boundary at 10: still truncates at byte 10.
+        assert_eq!(format_date("✓026-08-1x"), "✓026-08-");
     }
 
     #[test]
