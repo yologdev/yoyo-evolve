@@ -86,6 +86,8 @@ mod dispatch;
 mod dispatch_sub;
 mod docs;
 mod format;
+#[cfg(feature = "gasp")]
+mod gasp;
 mod git;
 mod help;
 mod help_data;
@@ -774,6 +776,24 @@ async fn main() {
     // Record the resolved provider so error diagnosis names the *configured*
     // provider's env var (not one guessed from the model name) on auth failures (#590).
     cli::set_configured_provider(&agent_config.provider);
+
+    // GASP recording (default-off `gasp` feature, opt-in via env). Step 1 of
+    // #683 is the build layer only: this opens the store and reports it, but
+    // nothing is recorded yet — the prompt path still calls `agent.prompt()`,
+    // which owns the event receiver. The recorder is dropped here on purpose.
+    #[cfg(feature = "gasp")]
+    {
+        let recorder = gasp::open_recorder_from_env().await;
+        if cli::is_verbose() {
+            match &recorder {
+                Some(r) => eprintln!(
+                    "gasp: recorder open (goal {}) — no events recorded yet (#683 step 2)",
+                    r.goal()
+                ),
+                None => eprintln!("gasp: recording disabled"),
+            }
+        }
+    }
 
     let mut agent = agent_config.build_agent();
 
