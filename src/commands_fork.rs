@@ -373,6 +373,52 @@ pub struct CheckpointStore {
 /// Subcommands for `/checkpoint`.
 pub(crate) const CHECKPOINT_SUBCOMMANDS: &[&str] = &["save", "list", "restore", "diff", "delete"];
 
+/// What a `restore` actually did — the counts come from the branch taken while
+/// writing, never from re-reading the rendered strings (shape is not provenance).
+#[derive(Default, Debug)]
+pub struct RestoreOutcome {
+    /// One human-readable line per file touched, in the order they were touched.
+    pub actions: Vec<String>,
+    /// Files that existed and were overwritten with their checkpoint content.
+    pub restored: usize,
+    /// Files that had been deleted and were written back.
+    pub recreated: usize,
+    /// Files whose write failed.
+    pub failed: usize,
+}
+
+impl RestoreOutcome {
+    /// Total files the checkpoint asked us to touch.
+    fn total(&self) -> usize {
+        self.restored + self.recreated + self.failed
+    }
+}
+
+/// Render the header line for a restore. Pure — no I/O, so the three states are
+/// testable directly. Absence gets its own name (Day 144): an empty checkpoint is
+/// neither a success nor a failure, and an all-failed restore never wears a green
+/// success header.
+fn format_restore_header(name: &str, outcome: &RestoreOutcome) -> String {
+    if outcome.total() == 0 {
+        return format!("{DIM}Checkpoint '{name}' holds no files — nothing to restore.{RESET}");
+    }
+    if outcome.failed > 0 && outcome.restored + outcome.recreated == 0 {
+        let n = outcome.failed;
+        let files = if n == 1 { "file" } else { "files" };
+        return format!(
+            "{RED}Could not restore checkpoint '{name}': all {n} {files} failed.{RESET}"
+        );
+    }
+    let mut counts = format!("{} restored", outcome.restored);
+    if outcome.recreated > 0 {
+        counts.push_str(&format!(", {} recreated", outcome.recreated));
+    }
+    if outcome.failed > 0 {
+        counts.push_str(&format!(", {} failed", outcome.failed));
+    }
+    format!("{GREEN}Restored checkpoint '{name}' ({counts}):{RESET}")
+}
+
 impl CheckpointStore {
     /// Create a new empty store.
     pub fn new() -> Self {
@@ -401,19 +447,21 @@ impl CheckpointStore {
     }
 
     /// Restore files to their state at the named checkpoint.
-    /// Returns a list of action descriptions, or an error message.
-    pub fn restore(&self, name: &str) -> Result<Vec<String>, String> {
+    /// Returns what actually happened, or an error message.
+    pub fn restore(&self, name: &str) -> Result<RestoreOutcome, String> {
         let cp = self
             .checkpoints
             .get(name)
             .ok_or_else(|| format!("No checkpoint named '{name}'"))?;
-        let mut actions = Vec::new();
+        let mut outcome = RestoreOutcome::default();
         for (path, content) in &cp.files {
             if std::path::Path::new(path).exists() {
                 if let Err(e) = std::fs::write(path, content) {
-                    actions.push(format!("  ✗ {path}: {e}"));
+                    outcome.actions.push(format!("  ✗ {path}: {e}"));
+                    outcome.failed += 1;
                 } else {
-                    actions.push(format!("  ✓ restored {path}"));
+                    outcome.actions.push(format!("  ✓ restored {path}"));
+                    outcome.restored += 1;
                 }
             } else {
                 // File was deleted since checkpoint — recreate it
@@ -421,13 +469,17 @@ impl CheckpointStore {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if let Err(e) = std::fs::write(path, content) {
-                    actions.push(format!("  ✗ {path} (recreate): {e}"));
+                    outcome.actions.push(format!("  ✗ {path} (recreate): {e}"));
+                    outcome.failed += 1;
                 } else {
-                    actions.push(format!("  ⚠ recreated {path} (was deleted)"));
+                    outcome
+                        .actions
+                        .push(format!("  ⚠ recreated {path} (was deleted)"));
+                    outcome.recreated += 1;
                 }
             }
         }
-        Ok(actions)
+        Ok(outcome)
     }
 
     /// List all checkpoints: (name, file_count, created).
@@ -552,9 +604,9 @@ pub fn handle_checkpoint(input: &str, store: &mut CheckpointStore, changes: &Ses
                 return;
             }
             match store.restore(arg) {
-                Ok(actions) => {
-                    println!("{GREEN}Restored checkpoint '{arg}':{RESET}");
-                    for a in &actions {
+                Ok(outcome) => {
+                    println!("{}", format_restore_header(arg, &outcome));
+                    for a in &outcome.actions {
                         println!("{a}");
                     }
                 }
@@ -726,8 +778,11 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "modified");
 
         // Restore
-        let actions = store.restore("snap").unwrap();
-        assert!(!actions.is_empty());
+        let outcome = store.restore("snap").unwrap();
+        assert!(!outcome.actions.is_empty());
+        assert_eq!(outcome.restored, 1);
+        assert_eq!(outcome.recreated, 0);
+        assert_eq!(outcome.failed, 0);
         assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "original");
     }
 
@@ -798,6 +853,85 @@ mod tests {
         let result = store.restore("nope");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("nope"));
+    }
+
+    #[test]
+    fn test_restore_header_empty_checkpoint_claims_nothing() {
+        let outcome = RestoreOutcome::default();
+        let header = format_restore_header("empty", &outcome);
+        // No work happened, so no success claim and no success glyph.
+        assert!(!header.contains('✓'), "header: {header}");
+        assert!(!header.contains("Restored checkpoint"), "header: {header}");
+        assert!(header.contains("nothing to restore"), "header: {header}");
+        assert!(header.contains("empty"), "header: {header}");
+    }
+
+    #[test]
+    fn test_restore_header_all_failed_is_not_a_success_line() {
+        let outcome = RestoreOutcome {
+            actions: vec!["  ✗ a.txt: denied".into(), "  ✗ b.txt: denied".into()],
+            restored: 0,
+            recreated: 0,
+            failed: 2,
+        };
+        let header = format_restore_header("cp", &outcome);
+        assert!(!header.contains("Restored checkpoint"), "header: {header}");
+        assert!(header.contains('2'), "header: {header}");
+        assert!(header.contains("failed"), "header: {header}");
+    }
+
+    #[test]
+    fn test_restore_header_mixed_states_the_counts() {
+        let outcome = RestoreOutcome {
+            actions: vec![
+                "  ✓ restored a.txt".into(),
+                "  ⚠ recreated b.txt (was deleted)".into(),
+                "  ✗ c.txt: denied".into(),
+            ],
+            restored: 1,
+            recreated: 1,
+            failed: 1,
+        };
+        let header = format_restore_header("cp", &outcome);
+        assert!(header.contains("Restored checkpoint"), "header: {header}");
+        assert!(header.contains("1 restored"), "header: {header}");
+        assert!(header.contains("1 recreated"), "header: {header}");
+        assert!(header.contains("1 failed"), "header: {header}");
+    }
+
+    #[test]
+    fn test_restore_header_clean_success_omits_zero_counts() {
+        let outcome = RestoreOutcome {
+            actions: vec!["  ✓ restored a.txt".into()],
+            restored: 1,
+            recreated: 0,
+            failed: 0,
+        };
+        let header = format_restore_header("cp", &outcome);
+        assert!(header.contains("1 restored"), "header: {header}");
+        assert!(!header.contains("recreated"), "header: {header}");
+        assert!(!header.contains("failed"), "header: {header}");
+    }
+
+    #[test]
+    fn test_restore_counts_recreated_files_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("gone.txt");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let changes = SessionChanges::new();
+        changes.record(file_path.to_str().unwrap(), ChangeKind::Write);
+
+        let mut store = CheckpointStore::new();
+        store.save("snap", &changes);
+
+        std::fs::remove_file(&file_path).unwrap();
+
+        let outcome = store.restore("snap").unwrap();
+        assert_eq!(outcome.restored, 0);
+        assert_eq!(outcome.recreated, 1);
+        assert_eq!(outcome.failed, 0);
+        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "content");
     }
 
     #[test]
