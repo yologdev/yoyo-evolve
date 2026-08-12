@@ -21,6 +21,14 @@ yoyo --api-key sk-ant-...
 > environment variable first or press Ctrl+C to cancel. Re-running setup over
 > an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
 > the wizard doesn't manage (e.g. `auto_watch`).
+>
+> **AWS Bedrock** needs *both* halves of the credential. If you fill in only the
+> Access Key ID or only the Secret Access Key, the wizard names the blank half
+> and stops instead of accepting a half-formed credential — leave both blank to
+> fall back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from the
+> environment. This checks only that both halves are *present*: it does not
+> validate their format, and it does not verify them against AWS, so a typo in
+> either half still surfaces later as an auth error.
 
 You'll see a banner like this:
 
