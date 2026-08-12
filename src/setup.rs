@@ -385,8 +385,26 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
             region
         };
 
-        // Build the combined key and base URL
-        let combined_key = if access_key.is_empty() && secret_key.is_empty() {
+        // Build the combined key and base URL.
+        // A Bedrock key is two payloads joined by ':' — judge both halves, not
+        // the presence of "something typed". One half alone is not a credential
+        // and must never be announced as received (#749, blind round 38).
+        let combined_key = if !access_key.is_empty() && !secret_key.is_empty() {
+            writeln!(writer, "  {GREEN}✓{RESET} AWS credentials received").ok();
+            format!("{access_key}:{secret_key}")
+        } else if !access_key.is_empty() || !secret_key.is_empty() {
+            writeln!(
+                writer,
+                "  {YELLOW}Incomplete AWS credentials.{RESET} {} was left blank — both halves are required. Re-run the wizard.",
+                if access_key.is_empty() {
+                    "AWS Secret Access Key"
+                } else {
+                    "AWS Access Key ID"
+                }
+            )
+            .ok();
+            return None;
+        } else if access_key.is_empty() && secret_key.is_empty() {
             // Check environment variables
             let env_access = std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default();
             let env_secret = std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default();
@@ -1557,6 +1575,39 @@ mod tests {
         assert!(output_str.contains("us-east-1"));
     }
 
+    #[test]
+    fn test_wizard_bedrock_half_credentials_are_refused() {
+        // Blind round 38: a Bedrock key is TWO payloads joined by ':'. Entering
+        // only one half must not be reported as "credentials received" — that
+        // ships `AKIATEST123:` (or `:secret`) into the config as a real key.
+        // Reads no env var in either direction, so the outcome is env-independent.
+        for (input, missing) in [
+            // access key typed, secret left blank
+            ("12\nAKIATEST123\n\n\n\nn\n", "AWS Secret Access Key"),
+            // secret typed, access key left blank
+            ("12\n\nwJalrXUtnFEMI/test\n\n\nn\n", "AWS Access Key ID"),
+        ] {
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+
+            let result = run_wizard_interactive(&mut reader, &mut output);
+            let output_str = String::from_utf8(output).unwrap();
+
+            assert!(
+                result.is_none(),
+                "half AWS credentials must not produce a wizard result, got {result:?}"
+            );
+            assert!(
+                !output_str.contains("AWS credentials received"),
+                "half AWS credentials must not be announced as received:\n{output_str}"
+            );
+            assert!(
+                output_str.contains(missing),
+                "the refusal should name the blank half ({missing}):\n{output_str}"
+            );
+        }
+    }
+
     // --- API key persistence (#628) ---
 
     #[test]
@@ -1819,17 +1870,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod scratch_probe {
-    use super::*;
-    use std::io::Cursor;
-    #[test]
-    fn probe_half_credentials() {
-        let input = "12\nAKIATEST123\n\n\n\nn\n";
-        let mut reader = Cursor::new(input.as_bytes());
-        let mut out = Vec::new();
-        let r = run_wizard_interactive(&mut reader, &mut out);
-        eprintln!("RESULT: {r:?}");
-        eprintln!("OUT: {}", String::from_utf8_lossy(&out));
-    }
-}
