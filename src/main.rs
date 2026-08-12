@@ -79,6 +79,7 @@ mod commands_tree;
 mod commands_update;
 mod commands_web;
 mod config;
+mod config_paths;
 mod context;
 mod conversations;
 mod dispatch;
