@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Structural tests for the pure decision logic in scripts/evolve.sh.
+# Structural tests for the harness and its cross-file contracts — the pure
+# decision logic in scripts/evolve.sh, plus the couplings it cannot express
+# alone (evolve.yml budgets, gasp_shim.sh vs src/gasp.rs, ci.yml feature gates).
 #
 # The harness grew to ~3k lines of interlocking gates whose only automated
 # checks were `bash -n` and the heredoc linter — every real bug this week was
@@ -236,6 +238,61 @@ TMIN=$(grep -oE 'timeout-minutes: [0-9]+' "$WF" | grep -oE '[0-9]+' | head -1)
 DEADMIN=$(grep -oE '\+ [0-9]+\*60' "$WF" | grep -oE '^[0-9]+|[0-9]+' | head -1)
 require "job timeout-minutes extracted" "$TMIN" && require "deadline minutes extracted" "$DEADMIN" \
     && check "JOB_DEADLINE_EPOCH minutes == timeout-minutes" "$DEADMIN" "$TMIN"
+
+# ── GASP: exactly one writer to the state store (#683) ───────────────────
+# gasp-emit holds a run open from session-start to session-end, a GASP repo is
+# single-writer, and GaspRecorder::open MUTATES it: past the 600s lease TTL an
+# in-process recorder steals the lease, writes run.finished{interrupted} over
+# the sidecar's live run, and the sidecar's session-end then dies with "no run
+# is open" — losing the whole session's record (measured, Day 165).
+#
+# NOT a name-equality check. The obvious test — "the shim exports exactly what
+# src/gasp.rs reads" — encodes "the bridge must be live", which is false while
+# the sidecar writes: it would PASS on the two-writer hazard and FAIL on the
+# correct fix. So follow whichever half is the writer, and let the invariant
+# flip automatically when gasp-emit is retired.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+GASP_SHIM="$ROOT/scripts/gasp_shim.sh"
+GASP_RS="$ROOT/src/gasp.rs"
+RS_VARS=$(grep -oE 'const [A-Z_]+: &str = "YOYO_GASP_[A-Z_]+"' "$GASP_RS" \
+    | grep -oE 'YOYO_GASP_[A-Z_]+' | sort -u | tr '\n' ' ')
+SHIM_EXPORTS=$(grep -oE '^[[:space:]]*export YOYO_GASP_[A-Z_]+=' "$GASP_SHIM" \
+    | grep -oE 'YOYO_GASP_[A-Z_]+' | sort -u | tr '\n' ' ')
+SHIM_UNSETS=$(grep -oE '^[[:space:]]*unset (YOYO_GASP_[A-Z_]+[[:space:]]*)+' "$GASP_SHIM" \
+    | sed 's/^[[:space:]]*unset //' | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+SIDECAR_OPENS=$(grep -cE '^[[:space:]]*_gasp_emit session-start' "$GASP_SHIM")
+if require "gasp env vars declared in src/gasp.rs" "$RS_VARS"; then
+    if [ "$SIDECAR_OPENS" -gt 0 ]; then
+        check "gasp: sidecar owns the store — in-process bridge stays unexported" \
+            "${SHIM_EXPORTS:-none}" "none"
+    else
+        check "gasp: sidecar retired — bridge exports exactly what src/gasp.rs reads" \
+            "$SHIM_EXPORTS" "$RS_VARS"
+        check "gasp: _gasp_off clears exactly what gasp_session_start exported" \
+            "$SHIM_UNSETS" "$SHIM_EXPORTS"
+    fi
+fi
+
+# ── the gasp feature is default-off, so CI is the ONLY thing that builds it ──
+# yoyo's own `cargo build && cargo test` and evolve.sh's Step 1 both compile
+# src/gasp.rs into nothing, and evolve.sh deliberately does not build the
+# feature. Dropping the CI steps would silently un-verify the whole module —
+# Day 164 already lost a session to yoagent-state failing to resolve under it.
+# The feature name is lifted from the cfg gate so a rename must move in lockstep.
+GASP_CI="$ROOT/.github/workflows/ci.yml"
+GASP_CARGO="$ROOT/Cargo.toml"
+GASP_FEAT=$(grep -B1 '^mod gasp;' "$ROOT/src/main.rs" \
+    | grep -oE 'feature = "[a-z_]+"' | grep -oE '"[a-z_]+"' | tr -d '"')
+if require "gasp cfg-gate feature name extracted from main.rs" "$GASP_FEAT"; then
+    check "gasp: feature declared in Cargo.toml" \
+        "$(grep -cE "^${GASP_FEAT} = \[" "$GASP_CARGO")" "1"
+    check "gasp: feature stays default-off" \
+        "$(grep -cE '^default = \[\]' "$GASP_CARGO")" "1"
+    check "gasp: CI runs the test suite with it" \
+        "$(grep -cE "cargo test .*--features ${GASP_FEAT}" "$GASP_CI")" "1"
+    check "gasp: CI runs clippy with it" \
+        "$(grep -cE "cargo clippy .*--features ${GASP_FEAT}" "$GASP_CI")" "1"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -307,6 +307,15 @@ else
 fi
 YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
+
+# No `--features gasp` build here on purpose (#683). Nothing in the session can
+# use a gasp-featured binary until the sidecar is retired — see the long note in
+# gasp_shim.sh's gasp_session_start — and building one anyway would be actively
+# misleading: cargo uplifts to the same target/debug/yoyo, so the first plain
+# `cargo build` in Phase B (evolve.sh's own re-verify, plus the ones the impl
+# prompt tells the agent to run) silently replaces it, while the "Build OK
+# (--features gasp)" line stays in the log. The feature's build integrity is
+# verified in CI instead, where it cannot be clobbered mid-run.
 gasp_session_start "$DAY"
 echo ""
 

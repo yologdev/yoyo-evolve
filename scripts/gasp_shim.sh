@@ -133,6 +133,35 @@ gasp_session_start() {
         --worker "evolve-shim-$$" --day "$day" --goal "$GASP_GOAL_ID" \
         --goal-title "$GASP_GOAL_TITLE" --goal-summary "$GASP_GOAL_SUMMARY" \
         --task "$task"
+    # DO NOT export YOYO_GASP_STATE_DIR / YOYO_GASP_GOAL_ID here.
+    #
+    # src/gasp.rs reads those two vars, and bridging them to this clone looks
+    # harmless — the in-process recorder records nothing until #683 box 4/5
+    # lands. It is not harmless: `GaspRecorder::open` MUTATES the store. A GASP
+    # repo is single-writer, and this shim is already the writer, holding a run
+    # open from session-start until session-end.
+    #
+    # Measured end-to-end against a real yoyo-gasp clone, not reasoned about:
+    #   within  600s of a sidecar call (git_store.rs lease_ttl):
+    #       open fails, "lease held by worker evolve-shim-<pid>" -> recorder
+    #       disabled. Noisy, harmless, and useless.
+    #   after  600s — i.e. any invocation following a 30-min impl task, which
+    #   is most of them:
+    #       the in-process worker STEALS the expired lease, writes
+    #       run.finished{outcome:"interrupted"} against the sidecar's live run,
+    #       and never releases the lease (release happens only in
+    #       record_stream's close path, which never runs — main.rs opens the
+    #       recorder and drops it). Then the sidecar's own session-end fails:
+    #           Error: Validation("cannot finish <run>: no run is open")
+    #       -> _gasp_off -> no boundary commit, no push. The ENTIRE session's
+    #       GASP record is lost, and the failure counter blames GH_PAT.
+    #
+    # This is the two-writer interim #683 explicitly exists to avoid
+    # ("replacement avoids ever operating the awkward two-writer interim").
+    # The bridge is correct only AFTER tools/gasp-emit is retired and this shim
+    # stops opening runs — same commit, not before. Until then the in-process
+    # recorder must stay unreachable, which is exactly what an unset
+    # YOYO_GASP_STATE_DIR gives us (src/gasp.rs -> RecorderPlan::Disabled).
     [ "$GASP_ENABLED" = true ] && echo "  [gasp] recording as $GASP_RUN_ID -> ${GASP_STATE_REPO}"
     return 0
 }
