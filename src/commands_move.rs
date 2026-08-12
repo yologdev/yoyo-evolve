@@ -407,10 +407,13 @@ pub fn move_method(
             new_target.push('\n');
         }
 
-        std::fs::write(source_file, &new_source)
-            .map_err(|e| format!("Failed to write source '{source_file}': {e}"))?;
-        std::fs::write(actual_target, &new_target)
-            .map_err(|e| format!("Failed to write target '{actual_target}': {e}"))?;
+        write_move_pair(
+            actual_target,
+            &new_target,
+            &target_content,
+            source_file,
+            &new_source,
+        )?;
     }
 
     let line_count = abs_method_end - abs_method_start + 1;
@@ -434,6 +437,41 @@ pub fn move_method(
     };
 
     Ok((summary, warning))
+}
+
+/// Write the two halves of a cross-file move, ordered so a partial failure
+/// cannot destroy the method.
+///
+/// The target is written FIRST. If the source write then fails, the method
+/// exists in both files (a visible duplicate, nothing lost) and the target is
+/// restored to `original_target`, leaving the pre-move state intact. The
+/// reverse order — source first — deletes the method from the source and then
+/// loses it entirely when the target write fails: silent data loss on the
+/// losing branch. If the rollback itself fails, the error says so explicitly
+/// and names the manual repair rather than reporting a clean failure.
+fn write_move_pair(
+    target_path: &str,
+    new_target: &str,
+    original_target: &str,
+    source_path: &str,
+    new_source: &str,
+) -> Result<(), String> {
+    std::fs::write(target_path, new_target)
+        .map_err(|e| format!("Failed to write target '{target_path}': {e}"))?;
+
+    if let Err(e) = std::fs::write(source_path, new_source) {
+        return Err(match std::fs::write(target_path, original_target) {
+            Ok(()) => format!(
+                "Failed to write source '{source_path}': {e} — target '{target_path}' was rolled back, no files changed."
+            ),
+            Err(rollback_err) => format!(
+                "Failed to write source '{source_path}': {e} — AND rolling back target '{target_path}' failed: {rollback_err}. \
+                 The method is now present in BOTH files; remove the copy in '{source_path}' by hand."
+            ),
+        });
+    }
+
+    Ok(())
 }
 
 /// Re-indent a method block to the given indentation.
@@ -644,6 +682,64 @@ mod tests {
     use crate::help::help_text;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_write_move_pair_writes_both_on_success() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("src.rs");
+        let target = dir.path().join("tgt.rs");
+        fs::write(&source, "old source\n").unwrap();
+        fs::write(&target, "old target\n").unwrap();
+
+        write_move_pair(
+            target.to_str().unwrap(),
+            "new target\n",
+            "old target\n",
+            source.to_str().unwrap(),
+            "new source\n",
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&source).unwrap(), "new source\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new target\n");
+    }
+
+    // The losing branch: the source write fails after the target was already
+    // rewritten. The target must be restored byte-for-byte, so the method is
+    // never lost. Source-first ordering (the pre-fix shape) could not do this:
+    // by the time the target write failed the source had already been rewritten
+    // without the method.
+    #[test]
+    fn test_write_move_pair_rolls_back_target_when_source_write_fails() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("tgt.rs");
+        let original_target = "impl Dst {\n    fn other(&self) {}\n}\n";
+        fs::write(&target, original_target).unwrap();
+
+        // A directory path is unwritable as a file for every user, root
+        // included — a deterministic write failure without relying on chmod.
+        let unwritable_source = dir.path().join("a_directory");
+        fs::create_dir(&unwritable_source).unwrap();
+
+        let err = write_move_pair(
+            target.to_str().unwrap(),
+            "impl Dst {\n    fn other(&self) {}\n\n    fn moved(&self) {}\n}\n",
+            original_target,
+            unwritable_source.to_str().unwrap(),
+            "impl Src {}\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.contains("rolled back"),
+            "error should report the rollback, got: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            original_target,
+            "target must be restored byte-for-byte after a failed source write"
+        );
+    }
 
     #[test]
     fn test_parse_move_args_basic() {
