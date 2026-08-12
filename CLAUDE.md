@@ -31,6 +31,14 @@ cargo fmt                # Auto-format
 
 CI runs all four checks (build, test, clippy with -D warnings, fmt check) on PR to main. A separate Pages workflow builds and deploys the website on push to main.
 
+**Module-size gate** (`tests/module_size.rs`): a deterministic line-count check over `src/`, holding `MAX_MODULE_LINES = 2000` plus a `GRANDFATHERED_OVERSIZED_MODULES` debt register of `(file, recorded_lines)` entries. Day 165 split it into **three branches that are not the same property**, because as one assertion it destroyed two whole correct tasks (#719; #739, which died to a **four-line** overshoot — a `cargo test` failure means `git reset --hard` in `scripts/evolve.sh`, so the gate's real price was never the sentence it asked for):
+
+1. **Un-grandfathered module over `MAX_MODULE_LINES` → fatal.** The actual invariant; a new module going oversized is a design event worth stopping the task for. Unchanged.
+2. **Grandfathered module *above* its recorded lines → warning, run stays green.** Growth of an already-capped module is information, not an emergency. The warning names the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back, so the register is still updated on purpose rather than absorbed.
+3. **Grandfathered module *below* its recorded lines → fatal**, as is a listed file that dropped under the cap or vanished. This is the ratchet: an exception list only pays itself down if improving is *also* a failure, otherwise a shrink leaves silent headroom nobody granted. Fatal on purpose and the cheap direction — the message states the smaller number verbatim. (Landing this found one live instance: `src/dispatch.rs` was recorded at 2307 against an actual 2296.)
+
+The branch-2 warning is written through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what branch 2 now produces. **Verified by running it** (a grandfathered entry temporarily lowered by 4 lines, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+
 To run the agent interactively:
 ```bash
 ANTHROPIC_API_KEY=sk-... cargo run
