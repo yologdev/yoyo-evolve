@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state and understanding the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "closest_match\|KNOWN_CO… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Confirmed: nothing landed. Let me read the relevant code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 430,500p src/commands.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn try_dispatch_subcomm… ✓ (6ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=136 && NR<=700' src/dis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "try_dispatch_subcommand… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "try_dispatch_subcomman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,140p src/dispatch_sub… ✓ (3ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 10.0s (6 ✓)
+
+The call site is actually in src/cli.rs, not main.rs. Let me check both spots.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,400p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 875,920p src/cli.rs ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>136 && NR<420' src/dispa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,420p src/dispatch_sub… ✓ (9ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_args" -A 25 src/m… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const RED\|pub cons…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub use " src/d… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 220,250p src/format/mod.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RED\b" src/format/mod.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 12s (9 ✓)
+
+Now let me implement the helper in src/dispatch_sub.rs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 405,418p src/dispatch_sub… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (8 → 140 lines)
+        }
+    
+        None
+  + }
+  + 
+  + /// Every verb `try_dispatch_subcommand` routes as `yoyo <verb>`.
+  + ///
+  + /// This is the candidate list for the bare-word near-miss guard below. It is a
+  + /// second copy of the match arms above, so `test_routed_subcommands_matches_the_dispatcher`
+  + /// reads this file's source and asserts the two agree in BOTH directions — a verb
+  + /// added to the `match` without being added here would make the guard fire on a verb
+  + /// that actually works, and a verb removed from the `match` but left here would make
+  + /// the guard stay silent on a word that is now a paid prompt.
+  + pub const ROUTED_SUBCOMMANDS: &[&str] = &[
+  +     "blame",
+  +     "changelog",
+  +     "commit",
+  +     "config",
+  +     "diff",
+  +     "docs",
+  ... (118 more lines)
+ ✓ (19.3s)
+        }
+    
+        None
+  + }
+  + 
+  + /// Every verb `try_dispatch_subcommand` routes as `yoyo <verb>`.
+  + ///
+  + /// This is the candidate list for the bare-word near-miss guard below. It is a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.6s (2 ✓)
+
+Definition without consumer — wiring the call site now (same edit, per the project rule).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 655,676p src/main.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (5 → 18 lines)
+        apply_cli_flags(&args);
+  + 
+  +     // Near-miss guard on the bare-word path: `yoyo tokens` / `yoyo statsu` used to
+  +     // fall through to the single-prompt path and be answered by the model — a paid
+  +     // API call with write-capable tools attached, for a typo. This runs before any
+  +     // agent is built and spends zero tokens. It fires only on `yoyo <single-word>`
+  +     // where the word is a near miss; anything else (including a single word that
+  +     // resembles nothing) still becomes a prompt.
+  +     if let Some(word) = dispatch_sub::bare_word_arg(&args) {
+  +         if let Some(msg) = dispatch_sub::bare_word_near_miss(word) {
+  +             eprintln!("{msg}");
+  +             std::process::exit(2);
+  +         }
+  +     }
+    
+        let Some(config) = parse_args(&args) else {
+            return; // --help or --version was handled
+ ✓ (1m 39s)
+        apply_cli_flags(&args);
+  + 
+  +     // Near-miss guard on the bare-word path: `yoyo tokens` / `yoyo statsu` used to
+  +     // fall through to the single-prompt path and be answered by the model — a paid
+  +     // API call with write-capable tools attached, for a typo. This runs before any
+  +     // agent is built and spends zero tokens. It fires only on `yoyo <single-word>`
+  +     // where the word is a near miss; anything else (including a single word that
+  +     // resembles nothing) still becomes a prompt.
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod \|^use crate::disp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (165ms)
+  4 tools completed in 1m 49s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

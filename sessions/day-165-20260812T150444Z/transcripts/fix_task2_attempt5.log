@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what was committed, what the prediction line says, and what the fix did.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 drea… (8 lines) ✓ (10ms)
+ ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+The result line is genuinely missing. Let me read the prediction and the landed fix.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 dreams/experiments.jsonl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show f511fc8c --stat && echo… ✓ (12ms)
+ ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me read src/setup.rs to grade the five hypotheses honestly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|SaveLocation\|\.ba…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/setup.rs ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '105,235p' src/setup.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '596,700p' src/setup.rs &… ✓ (4ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 44.9s (4 ✓)
+
+Grading requires evidence. Let me verify h3 (config_paths absence + demotion) and h4 (`--api-key` blindness) concretely.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== config_paths refs in s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_setup\|run_setup_… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '775,790p' src/main.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '383,432p' src/setup.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,670p' src/cli.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 18.6s (5 ✓)
+
+Both halves verified. Now the doc surface — let me see what actually describes this behavior.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "bedrock\|wizard\|fir…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn -i "setup.rs\|setup wiz… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,30p' docs/src/getting… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.8s (3 ✓)
+
+Now the doc fix — the described first-run behavior changed. Let me read the exact block and edit it.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '16,24p' docs/src/getting… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/getting-started/quick-start.md:16..25 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/getting-started/quick-start.md (2 → 10 lines)
+    > an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
+    > the wizard doesn't manage (e.g. `auto_watch`).
+  + >
+  + > **AWS Bedrock** needs *both* halves of the credential. If you fill in only the
+  + > Access Key ID or only the Secret Access Key, the wizard names the blank half
+  + > and stops instead of accepting a half-formed credential — leave both blank to
+  + > fall back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from the
+  + > environment. This checks only that both halves are *present*: it does not
+  + > validate their format, and it does not verify them against AWS, so a typo in
+  + > either half still surfaces later as an auth error.
+ ✓ (1m 11s)
+    > an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
+    > the wizard doesn't manage (e.g. `auto_watch`).
+  + >
+  + > **AWS Bedrock** needs *both* halves of the credential. If you fill in only the
+  + > Access Key ID or only the Secret Access Key, the wizard names the blank half
+  + > and stops instead of accepting a half-formed credential — leave both blank to
+  + > fall back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from the
+  + > environment. This checks only that both halves are *present*: it does not
+  + > validate their format, and it does not verify them against AWS, so a typo in
+  + > either half still surfaces later as an auth error.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 23s (3 ✓)
+
+Now the missing deliverable — the graded result line. Let me match the existing schema exactly.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '"exper… (8 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HIT\|hit\b\|starts_with… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,230p' src/commands_r… ✓ (5ms)
+  3 tools completed in 28.2s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff by exercising the binary.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (5ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "near.miss\|bare-word\|b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && carg… ✓ (6ms)
+ ✓ (174ms)
+  ▶ $ cd /tmp && OUT=$(ANTHROPIC_API_KEY=fake /home/runner/work/yoyo-evolve/yoyo-evolv… ✓ (234ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff dd938300..HEAD --stat; … ✓ (198ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (54.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 33s (7 ✓)
+
+Verdict: FAIL (documentation only — code is correct and verified working)
+
+What I verified by running the binary:
+• yoyo tokens → guard message + /tokens REPL hint + -p escape hatch, exit 2, no agent banner, zero API call
+• yoyo statsu → `did you mean: yoyo status`, exit 2
+• yoyo zzqqx and yoyo -p "tokens" → still reach the prompt path (banner + 401 from fake key), so the escape hatch and "resembles nothing = still a prompt" rule hold
+• yoyo doctor → still dispatches normally
+
+Why FAIL: git diff dd938300..HEAD --stat shows only src/dispatch_sub.rs and src/main.rs. CLAUDE.md — explicitly listed in the task's Files and given its own Docs step — was never touched (grep near.miss|bare-word CLAUDE.md → nothing). The dispatch_sub.rs bullet still describes a bare-word path with no guard, and doesn't state the deliberate non-goals. One bullet edit fixes it; the implementation itself should stand as-is.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
