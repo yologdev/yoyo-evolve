@@ -254,8 +254,10 @@ pub(crate) fn write_validation_event(
         }
     }
 
-    // Snapshot hash is optional — only green-outcome events carry it (it's
-    // the dedup key for "grade each snapshot at most once").
+    // Snapshot hash is optional. Green events use it as their dedup key
+    // ("grade each snapshot at most once"); failure-day events carry it purely
+    // for auditability (#723) — so recall can be traced back to the exact
+    // prediction list it graded instead of paired by timestamp guess.
     if let Some(hash) = snapshot_git_hash {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("snapshot_git_hash".to_string(), serde_json::json!(hash));
@@ -324,9 +326,12 @@ pub(crate) fn emerging_grade_of(changed: &[&str], emerging: &[String]) -> Option
     Some(accuracy_of(changed, &emerging_set))
 }
 
-/// Return true if a validation event referencing this snapshot's git hash
-/// already exists in the validations JSONL content. Only green-outcome events
-/// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+/// Return true if a **green** validation event referencing this snapshot's git
+/// hash already exists in the validations JSONL content. Since Day 165 (#723)
+/// failure-day events carry `snapshot_git_hash` too — for *auditability*, not
+/// as a dedup key — so the severity filter below is load-bearing: without it a
+/// red event would silently suppress a legitimate green grade for the same
+/// snapshot. This is exactly the "was this snapshot
 /// already green-graded?" question — the dedup that keeps repeated
 /// `yoyo risk validate` runs from spamming duplicate green events.
 pub(crate) fn green_event_exists_for(content: &str, snapshot_git_hash: &str) -> bool {
@@ -334,7 +339,27 @@ pub(crate) fn green_event_exists_for(content: &str, snapshot_git_hash: &str) -> 
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .filter(is_green_json_event)
         .any(|v| v.get("snapshot_git_hash").and_then(|h| h.as_str()) == Some(snapshot_git_hash))
+}
+
+/// Green-day predicate over a raw JSONL value. Delegates the severity test to
+/// `commands_risk_accuracy::is_green_event` — the authoritative definition —
+/// instead of re-typing the marker string here (Day 140: never hand-copy a
+/// predicate the code already owns). Only `severity` is read, so the other
+/// fields are filler.
+fn is_green_json_event(v: &serde_json::Value) -> bool {
+    crate::commands_risk_accuracy::is_green_event(&ValidationEvent {
+        day: 0,
+        hit_count: 0,
+        total_changed: 0,
+        accuracy_pct: 0.0,
+        emerging_accuracy_pct: None,
+        severity: v
+            .get("severity")
+            .and_then(|s| s.as_str())
+            .map(str::to_string),
+    })
 }
 
 /// Outcome of attempting to record a green (no-failure) validation event.
@@ -533,8 +558,8 @@ fn auto_validate_after_failure_to(
         accuracy_pct_rounded,
         emerging_accuracy_pct,
         Some(severity),
-        None, // not a green-grade event — no snapshot dedup key
-        None, // not a CI-harvested event — no run id
+        Some(&last.git_hash), // the snapshot this event graded — auditability, not a dedup key
+        None,                 // not a CI-harvested event — no run id
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
