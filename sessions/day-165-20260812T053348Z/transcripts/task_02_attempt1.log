@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restore\|fn save\|fn de… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,620p src/commands_for… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 444,512p src/commands_for… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 705,810p src/commands_for… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.6s (4 ✓)
+
+Now the change — RestoreOutcome + pure formatter:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (29 → 35 lines)
+        /// Restore files to their state at the named checkpoint.
+  -     /// Returns a list of action descriptions, or an error message.
+  -     pub fn restore(&self, name: &str) -> Result<Vec<String>, String> {
+  +     /// Returns what actually happened, or an error message.
+  +     pub fn restore(&self, name: &str) -> Result<RestoreOutcome, String> {
+            let cp = self
+                .checkpoints
+                .get(name)
+                .ok_or_else(|| format!("No checkpoint named '{name}'"))?;
+  -         let mut actions = Vec::new();
+  +         let mut outcome = RestoreOutcome::default();
+            for (path, content) in &cp.files {
+                if std::path::Path::new(path).exists() {
+                    if let Err(e) = std::fs::write(path, content) {
+  -                     actions.push(format!("  ✗ {path}: {e}"));
+  +                     outcome.actions.push(format!("  ✗ {path}: {e}"));
+  +                     outcome.failed += 1;
+                    } else {
+  -                     actions.push(format!("  ✓ restored {path}"));
+  +                     outcome.actions.push(format!("  ✓ restored {path}"));
+  ... (23 more lines)
+ ✓ (13.0s)
+        /// Restore files to their state at the named checkpoint.
+  -     /// Returns a list of action descriptions, or an error message.
+  -     pub fn restore(&self, name: &str) -> Result<Vec<String>, String> {
+  +     /// Returns what actually happened, or an error message.
+  +     pub fn restore(&self, name: &str) -> Result<RestoreOutcome, String> {
+            let cp = self
+                .checkpoints
+                .get(name)
+  ... (13 more lines)
+
+Expected — now the type and the pure formatter:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (2 → 46 lines)
+    /// Subcommands for `/checkpoint`.
+    pub(crate) const CHECKPOINT_SUBCOMMANDS: &[&str] = &["save", "list", "restore", "diff", "delete"];
+  + 
+  + /// What a `restore` actually did — the counts come from the branch taken while
+  + /// writing, never from re-reading the rendered strings (shape is not provenance).
+  + #[derive(Default)]
+  + pub struct RestoreOutcome {
+  +     /// One human-readable line per file touched, in the order they were touched.
+  +     pub actions: Vec<String>,
+  +     /// Files that existed and were overwritten with their checkpoint content.
+  +     pub restored: usize,
+  +     /// Files that had been deleted and were written back.
+  +     pub recreated: usize,
+  +     /// Files whose write failed.
+  +     pub failed: usize,
+  + }
+  + 
+  + impl RestoreOutcome {
+  +     /// Total files the checkpoint asked us to touch.
+  +     fn total(&self) -> usize {
+  ... (26 more lines)
+ ✓ (13.5s)
+    /// Subcommands for `/checkpoint`.
+    pub(crate) const CHECKPOINT_SUBCOMMANDS: &[&str] = &["save", "list", "restore", "diff", "delete"];
+  + 
+  + /// What a `restore` actually did — the counts come from the branch taken while
+  + /// writing, never from re-reading the rendered strings (shape is not provenance).
+  + #[derive(Default)]
+  + pub struct RestoreOutcome {
+  +     /// One human-readable line per file touched, in the order they were touched.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,616p src/commands_for… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (9 → 9 lines)
+                match store.restore(arg) {
+  -                 Ok(actions) => {
+  -                     println!("{GREEN}Restored checkpoint '{arg}':{RESET}");
+  -                     for a in &actions {
+  +                 Ok(outcome) => {
+  +                     println!("{}", format_restore_header(arg, &outcome));
+  +                     for a in &outcome.actions {
+                            println!("{a}");
+                        }
+                    }
+ ✓ (13.0s)
+                match store.restore(arg) {
+  -                 Ok(actions) => {
+  -                     println!("{GREEN}Restored checkpoint '{arg}':{RESET}");
+  -                     for a in &actions {
+  +                 Ok(outcome) => {
+  +                     println!("{}", format_restore_header(arg, &outcome));
+  +                     for a in &outcome.actions {
+                            println!("{a}");
+                        }
+                    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 37.8s (4 ✓)
+
+Now the tests for the pure formatter:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_checkpoint_rest… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (6 → 85 lines)
+            let result = store.restore("nope");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("nope"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_restore_header_empty_checkpoint_claims_nothing() {
+  +         let outcome = RestoreOutcome::default();
+  +         let header = format_restore_header("empty", &outcome);
+  +         // No work happened, so no success claim and no success glyph.
+  +         assert!(!header.contains('✓'), "header: {header}");
+  +         assert!(!header.contains("Restored checkpoint"), "header: {header}");
+  +         assert!(header.contains("nothing to restore"), "header: {header}");
+  +         assert!(header.contains("empty"), "header: {header}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_restore_header_all_failed_is_not_a_success_line() {
+  +         let outcome = RestoreOutcome {
+  +             actions: vec!["  ✗ a.txt: denied".into(), "  ✗ b.txt: denied".into()],
+  ... (63 more lines)
+ ✓ (1m 40s)
+            let result = store.restore("nope");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("nope"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_restore_header_empty_checkpoint_claims_nothing() {
+  +         let outcome = RestoreOutcome::default();
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (33.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 38s (3 ✓)
+
+Now the bounded sweep of siblings in this file. list/diff/delete all handle their empty/failure cases explicitly; save prints a green success for a checkpoint that captured nothing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "saved ({count} files)" … ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
