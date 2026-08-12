@@ -169,6 +169,40 @@ enum PromptResult {
     FatalError { error_msg: String, usage: Usage },
 }
 
+/// The one place this module starts a text prompt (#683 step 2).
+///
+/// Every agent-start call site routes through this seam so recording is either
+/// on for all of them or off for all of them — a partial sweep reads as done.
+/// With the default-off `gasp` feature compiled in *and* a recorder installed,
+/// the run is tee'd into the GASP recorder and the caller gets the forwarded
+/// event stream; in every other case (default build, feature on but recording
+/// disabled) this is exactly `agent.prompt(input)`.
+async fn start_prompt(
+    agent: &mut Agent,
+    input: &str,
+) -> tokio::sync::mpsc::UnboundedReceiver<AgentEvent> {
+    #[cfg(feature = "gasp")]
+    if let Some(rx) = crate::gasp::tee_prompt(agent, input.to_string()).await {
+        return rx;
+    }
+    agent.prompt(input).await
+}
+
+/// Messages sibling of [`start_prompt`] — same contract.
+///
+/// The `clone` exists only under the `gasp` feature (the tee consumes the
+/// messages, and the fallback still needs them); a default build never clones.
+async fn start_prompt_messages(
+    agent: &mut Agent,
+    messages: Vec<AgentMessage>,
+) -> tokio::sync::mpsc::UnboundedReceiver<AgentEvent> {
+    #[cfg(feature = "gasp")]
+    if let Some(rx) = crate::gasp::tee_prompt_messages(agent, messages.clone()).await {
+        return rx;
+    }
+    agent.prompt_messages(messages).await
+}
+
 /// Execute a single prompt attempt and process all events.
 /// Returns whether we got a retriable error (so the caller can retry).
 async fn run_prompt_once(
@@ -177,7 +211,7 @@ async fn run_prompt_once(
     changes: &SessionChanges,
     model: &str,
 ) -> PromptResult {
-    let rx = agent.prompt(input).await;
+    let rx = start_prompt(agent, input).await;
     handle_prompt_events(agent, rx, changes, model).await
 }
 
@@ -189,7 +223,7 @@ async fn run_prompt_once_with_messages(
     changes: &SessionChanges,
     model: &str,
 ) -> PromptResult {
-    let rx = agent.prompt_messages(messages).await;
+    let rx = start_prompt_messages(agent, messages).await;
     handle_prompt_events(agent, rx, changes, model).await
 }
 
@@ -1333,7 +1367,7 @@ pub async fn run_prompt_stream_json(
     session_total: &mut Usage,
     model: &str,
 ) -> PromptOutcome {
-    let rx = agent.prompt(input).await;
+    let rx = start_prompt(agent, input).await;
     let outcome = handle_stream_json_events(agent, rx, model).await;
 
     accumulate_usage(session_total, &outcome.1);
@@ -1352,7 +1386,7 @@ pub async fn run_prompt_stream_json_with_content(
         content,
         timestamp: now_ms(),
     })];
-    let rx = agent.prompt_messages(messages).await;
+    let rx = start_prompt_messages(agent, messages).await;
     let outcome = handle_stream_json_events(agent, rx, model).await;
 
     accumulate_usage(session_total, &outcome.1);

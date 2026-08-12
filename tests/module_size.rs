@@ -132,7 +132,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#686): +68 lines — REFUSAL_NOTICE_MARKER + the pure
     // `refusal_notice` builder that makes the harness's grep contract
     // mechanical, plus the test that pins the emitted bytes.
-    ("src/prompt.rs", 2430),
+    // Day 165 (#683 step 2): +34 lines — the two agent-start seams
+    // (`start_prompt` / `start_prompt_messages`) that route all four prompt
+    // call sites through one place so GASP recording is on for all of them or
+    // none. Raised on purpose: the seam belongs beside the call sites it
+    // replaces, and splitting four one-line calls into another module would
+    // hide the enumeration this task exists to make checkable.
+    ("src/prompt.rs", 2464),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     ("src/repl.rs", 3260),

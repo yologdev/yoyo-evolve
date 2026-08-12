@@ -351,11 +351,7 @@ mod tests {
                 Some("abc123def456"),
                 "GITHUB_TOKEN=[redacted]",
             ),
-            (
-                "password: hunter2hunter2",
-                Some("hunter2hunter2"),
-                REDACTED,
-            ),
+            ("password: hunter2hunter2", Some("hunter2hunter2"), REDACTED),
             // NEGATIVE: an innocent sentence must pass through byte-identical.
             (
                 "the sky is blue and cargo test passed in 0.42s",

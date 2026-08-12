@@ -790,21 +790,25 @@ async fn main() {
     // provider's env var (not one guessed from the model name) on auth failures (#590).
     cli::set_configured_provider(&agent_config.provider);
 
-    // GASP recording (default-off `gasp` feature, opt-in via env). Step 1 of
-    // #683 is the build layer only: this opens the store and reports it, but
-    // nothing is recorded yet — the prompt path still calls `agent.prompt()`,
-    // which owns the event receiver. The recorder is dropped here on purpose.
+    // GASP recording (default-off `gasp` feature, opt-in via env). Installing
+    // the recorder here is what makes the four agent-start call sites in
+    // `prompt.rs` tee their event streams into the store (#683 step 2); without
+    // the install they fall back to the plain `agent.prompt*` path.
     #[cfg(feature = "gasp")]
     {
         let recorder = gasp::open_recorder_from_env().await;
         if cli::is_verbose() {
             match &recorder {
                 Some(r) => eprintln!(
-                    "gasp: recorder open (goal {}) — no events recorded yet (#683 step 2)",
+                    "gasp: recording into goal {} — all four prompt paths tee'd \
+                     (failures are logged by yoagent, not surfaced here)",
                     r.goal()
                 ),
                 None => eprintln!("gasp: recording disabled"),
             }
+        }
+        if let Some(r) = recorder {
+            gasp::install(r);
         }
     }
 
