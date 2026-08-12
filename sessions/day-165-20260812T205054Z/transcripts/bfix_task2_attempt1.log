@@ -1,0 +1,138 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -rn "… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_audit_args\|fn… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+Now adding the missing consumer (step 2):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (2 → 6 lines)
+  -     // Truncate args to avoid huge entries (e.g., file content in write_file)
+  -     let truncated_args = truncate_audit_args(args);
+  +     // Truncate args to avoid huge entries (e.g., file content in write_file),
+  +     // then mask credential-shaped substrings: `.yoyo/audit.jsonl` is pushed to
+  +     // the public `audit-log` branch, and tool arguments carry user-authored
+  +     // command text (e.g. `ANTHROPIC_API_KEY=sk-ant-…` in a bash command).
+  +     // Scope: arguments only — tool *output* is not written here.
+  +     let truncated_args = redact_audit_value(&truncate_audit_args(args));
+ ✓ (12.8s)
+  -     // Truncate args to avoid huge entries (e.g., file content in write_file)
+  -     let truncated_args = truncate_audit_args(args);
+  +     // Truncate args to avoid huge entries (e.g., file content in write_file),
+  +     // then mask credential-shaped substrings: `.yoyo/audit.jsonl` is pushed to
+  +     // the public `audit-log` branch, and tool arguments carry user-authored
+  +     // command text (e.g. `ANTHROPIC_API_KEY=sk-ant-…` in a bash command).
+  +     // Scope: arguments only — tool *output* is not written here.
+  +     let truncated_args = redact_audit_value(&truncate_audit_args(args));
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (1 → 25 lines)
+  + /// Mask credential-shaped substrings in every string leaf of an audit value.
+  + ///
+  + /// Strings are passed through [`crate::safety::redact_secrets`]; arrays and
+  + /// objects recurse; numbers, bools and null are returned unchanged. It is a
+  + /// mask, not a guarantee — a novel secret shape passes through.
+  + fn redact_audit_value(v: &serde_json::Value) -> serde_json::Value {
+  +     match v {
+  +         serde_json::Value::String(s) => {
+  +             serde_json::Value::String(crate::safety::redact_secrets(s))
+  +         }
+  +         serde_json::Value::Array(items) => {
+  +             serde_json::Value::Array(items.iter().map(redact_audit_value).collect())
+  +         }
+  +         serde_json::Value::Object(map) => {
+  +             let mut new_map = serde_json::Map::new();
+  +             for (k, val) in map {
+  +                 new_map.insert(k.clone(), redact_audit_value(val));
+  +             }
+  +             serde_json::Value::Object(new_map)
+  +         }
+  ... (5 more lines)
+ ✓ (1m 59s)
+  + /// Mask credential-shaped substrings in every string leaf of an audit value.
+  + ///
+  + /// Strings are passed through [`crate::safety::redact_secrets`]; arrays and
+  + /// objects recurse; numbers, bools and null are returned unchanged. It is a
+  + /// mask, not a guarantee — a novel secret shape passes through.
+  + fn redact_audit_value(v: &serde_json::Value) -> serde_json::Value {
+  +     match v {
+  +         serde_json::Value::String(s) => {
+  ... (13 more lines)
+  2 tools completed in 2m 18s (2 ✓)
+
+Now the test required by the task:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,300p' src/prompt_bud… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (2 → 43 lines)
+  +     #[test]
+  +     fn redact_audit_value_masks_nested_secrets_and_leaves_innocent_text_alone() {
+  +         let args = serde_json::json!({
+  +             "command": "ANTHROPIC_API_KEY=sk-ant-abcdefgh1234 cargo test",
+  +             "paths": ["src/main.rs", "token: ghp_abcdefghijklmnopqrst1234"],
+  +             "nested": {"note": "plain text, nothing secret"},
+  +             "count": 3,
+  +             "ok": true,
+  +             "nothing": serde_json::Value::Null,
+  +         });
+  +         let out = redact_audit_value(&args);
+  + 
+  +         let cmd = out.get("command").unwrap().as_str().unwrap();
+  +         assert!(
+  +             !cmd.contains("sk-ant-abcdefgh1234"),
+  +             "api key should be masked, got: {cmd}"
+  +         );
+  +         assert!(cmd.contains("[redacted]"), "mask marker missing: {cmd}");
+  +         assert!(
+  +             cmd.contains("cargo test"),
+  ... (23 more lines)
+ ✓ (2m 5s)
+  +     #[test]
+  +     fn redact_audit_value_masks_nested_secrets_and_leaves_innocent_text_alone() {
+  +         let args = serde_json::json!({
+  +             "command": "ANTHROPIC_API_KEY=sk-ant-abcdefgh1234 cargo test",
+  +             "paths": ["src/main.rs", "token: ghp_abcdefghijklmnopqrst1234"],
+  +             "nested": {"note": "plain text, nothing secret"},
+  +             "count": 3,
+  +             "ok": true,
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (33.5s)
+  3 tools completed in 2m 51s (3 ✓)
+
+3 redaction tests pass in the default run. Full verification:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (191ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    ("src/safety.rs", … ✓ (403ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (21.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo check --features gasp 2>&1… ✓ (10.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 7s (5 ✓)
+
+cargo check --features gasp passed here (observed above). Now the doc updates:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safety.rs\` — bash comm… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1|tail -2 && carg… ✓ (1m 41s)
+  3 tools completed in 1m 55s (3 ✓)
+
+All green. What was wrong and what I fixed:
+
+Cause: step 1 of the task had landed (redact_secrets moved into src/safety.rs) but step 2 had not — the audit-log consumer was missing, so in a default build (where gasp.rs is #[cfg(feature = "gasp")]) the moved constant, static, and function had zero callers and -D dead-code killed the build.
+
+Fix (the missing step 2, not a rewrite):
+• `src/prompt_budget.rs: added redact_audit_value — recursive over serde_json::Value, strings → crate::safety::redact_secrets, arrays/objects recurse, numbers/bools/null unchanged — and wired it at the one call site: redact_audit_value(&truncate_audit_args(args))` in write_audit_entry, with a comment stating the scope (arguments only; tool output isn't written there).
+• Added `redact_audit_value_masks_nested_secrets_and_leaves_innocent_text_alone: nested sk-ant-… and ghp_…` come back masked, innocent nested text and non-string leaves compare byte-identical to the input.
+• tests/module_size.rs: pasted the literal entry the branch-2 warning named — ("src/safety.rs", 3269) (was 3155; growth is the moved redaction block + its two tests).
+• CLAUDE.md: updated the safety.rs and gasp.rs bullets per the task — kept "mask, not a guarantee", and kept the honest caveat that the rest of gasp.rs still isn't in the default test run.
+
+**Verified (observed, not assumed):**
+• cargo test redact → 3 passed in the default run (the two moved tests + the new one). That was step 1's whole point.
+• cargo test → 4799 + 89 + 14 + 12 passed, 0 failed; module-size warning gone.
+• cargo clippy --all-targets -- -D warnings → clean; cargo fmt -- --check → clean.
+• `cargo check --features gasp → finished successfully, so the gasp call site pointing at crate::safety::redact_secrets` still compiles.
+
