@@ -1688,7 +1688,41 @@ fn is_mechanical_commit(subject: &str) -> bool {
         "social session",
     ];
     let lower = subject.to_ascii_lowercase();
-    MECHANICAL_SUBJECTS.iter().any(|m| lower.contains(m))
+    MECHANICAL_SUBJECTS.iter().any(|m| lower.contains(m)) || has_retry_suffix(&lower)
+}
+
+/// True when a subject carries the harness's fix-loop RETRY suffix —
+/// `… (Task 2, eval-fix 5)`.
+///
+/// Day 165: this is the Day-163 hole one layer down. `scripts/evolve.sh`
+/// re-commits the same task after each evaluator rejection with that suffix
+/// (line ~2194), and `message_claims_repair` tokenizes on non-alphanumerics —
+/// so `eval-fix` becomes `["eval", "fix"]` and EVERY retry commit reads as a
+/// repair claim. Worse, the sibling retries in one window touch the same files,
+/// so they satisfy tier-2 corroboration (`touches >= 2`) for each other: the
+/// harness supplied both the claim and its second opinion, and three green
+/// Day-165 sessions were booked as failure days with 0 hits.
+///
+/// The match is the retry SUFFIX, not the bare word `eval-fix`, so a human
+/// commit that merely mentions a task number keeps its corroborating power.
+/// Verified against 400 commits of `git log --oneline`: the harness emits
+/// exactly two shapes, `(Task N)` for a delivered task and `(Task N, <label>
+/// M)` for a retry. Only the second is bookkeeping — the first is the delivery
+/// itself and must stay real work. Any future retry label (`build-fix`) rides
+/// the same suffix and is covered by construction.
+fn has_retry_suffix(lower_subject: &str) -> bool {
+    let mut rest = lower_subject;
+    while let Some(pos) = rest.find("(task ") {
+        let after = &rest[pos + "(task ".len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        // `(task 2,` — a comma right after the number is the retry marker.
+        // `(task 2)` is a plain delivery commit and is deliberately NOT matched.
+        if digits > 0 && after[digits..].starts_with(',') {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 /// Classify commits and return the set of files that "broke".
@@ -5072,6 +5106,74 @@ de5f7070 docs: CLAUDE.md describes the three-state study reader (#711)
 CLAUDE.md
 ";
 
+    /// Verbatim capture — NOT hand-written. Produced by:
+    ///
+    /// ```text
+    /// git log --oneline --name-only 689cd3bd -n 7
+    /// ```
+    ///
+    /// Day 165 — the replacement fixture for the red branch. The old
+    /// `VERBATIM_GIT_LOG_CORROBORATED_3` window got its second touch from an
+    /// `(Task 2, eval-fix 1)` RETRY sibling, i.e. the harness corroborating
+    /// itself; that window is now (correctly) graded as no breakage, and it
+    /// lives on as the negative fixture in
+    /// `test_eval_fix_retry_siblings_do_not_manufacture_corroboration`.
+    ///
+    /// Here the two touches of `src/commands_bg.rs` come from two INDEPENDENT
+    /// commits — a delivered `Fix #736 … (Task 1)` and an earlier
+    /// `Blind round 37 … (Task 1)` — with three mechanical bookkeeping commits
+    /// and one eval-fix retry in between, so the window also exercises the
+    /// exclusion list. That independence is what the Day-163 tier-2 rule asks
+    /// for. It is a heuristic, not proof of breakage: whether two independent
+    /// deliveries touching one file really mean "it broke" is still open. What
+    /// this fixture pins is narrower and true — the red branch is reachable
+    /// end-to-end, and it is no longer reachable via harness retry siblings.
+    const VERBATIM_GIT_LOG_CORROBORATED_7: &str = "\
+689cd3bd Day 165 (10:08): Fix #736 — freeze /bg elapsed time when a job finishes (Task 1)
+CLAUDE.md
+src/commands_bg.rs
+87ac79d6 Day 165: bump skill-evolve counter (1)
+.skill_evolve_counter
+9be97c61 Day 165 (07:27): session wrap-up
+.yoyo/risk_snapshots.jsonl
+.yoyo/risk_validations.jsonl
+journals/JOURNAL.md
+465f6bfb Day 165 (07:27): update learnings
+memory/learnings.jsonl
+64bef0aa Day 165 (07:27): Fix #723 — stamp snapshot_git_hash on failure-day validation events so recall can be audited against the prediction it graded (Task 2, eval-fix 1)
+CLAUDE.md
+src/commands_risk.rs
+src/commands_risk_snapshots.rs
+4fb9300c Day 165 (07:27): Fix #723 — stamp snapshot_git_hash on failure-day validation events so recall can be audited against the prediction it graded (Task 2)
+src/commands_risk_snapshots.rs
+fde2b725 Day 165 (07:27): Blind round 37 — chosen experiment on src/commands_bg.rs (never forecast, never studied) (Task 1)
+.yoyo/memory.json
+CLAUDE.md
+src/commands_bg.rs
+";
+
+    /// Day 165 — the bug this fixture used to certify as correct.
+    ///
+    /// `scripts/evolve.sh` re-commits a task after each evaluator rejection as
+    /// `… (Task N, eval-fix M)`. `message_claims_repair` tokenizes on
+    /// non-alphanumerics, so `eval-fix` → `["eval", "fix"]` and every retry
+    /// reads as a repair claim — and the retry siblings touch the same files,
+    /// so they corroborated each other. Three green Day-165 sessions were
+    /// booked as failure days with 0 hits before `is_mechanical_commit` learned
+    /// the retry suffix. Those ledger events were deliberately NOT rewritten.
+    #[test]
+    fn test_eval_fix_retry_siblings_do_not_manufacture_corroboration() {
+        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_CORROBORATED_3);
+        assert_eq!(entries.len(), 3, "parser sanity on the verbatim capture");
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.is_empty(),
+            "an `(Task N, eval-fix M)` retry is harness bookkeeping, not a \
+             second opinion — the delivered fix beside it is a delivery, not \
+             breakage, got {broke:?}"
+        );
+    }
+
     /// Day 163 — the bug, asserted against REAL captured output.
     ///
     /// `VERBATIM_GIT_LOG_3` is an ordinary green session that DELIVERED a fix:
@@ -5111,14 +5213,14 @@ CLAUDE.md
         // grades as breakage — see the test above) to a corroborated repair
         // window. Both are verbatim captures; the red branch is proven with
         // the shape that is actually breakage evidence.
-        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_CORROBORATED_3);
+        let entries = parse_git_log_name_only(VERBATIM_GIT_LOG_CORROBORATED_7);
         assert_eq!(
             entries.len(),
-            3,
+            7,
             "commit boundaries must be detected by header shape — a collapsed \
              count is the exact Day-147 bug that made this branch dead"
         );
-        assert_eq!(entries[1].files, vec!["src/tool_wrappers.rs".to_string()]);
+        assert_eq!(entries[3].files, vec!["memory/learnings.jsonl".to_string()]);
 
         // --- 2. The gate the red branch depends on -------------------------
         let broke = classify_broke_files(&entries);
@@ -5126,13 +5228,19 @@ CLAUDE.md
             !broke.is_empty(),
             "the repair-claiming commit must yield a non-empty broken set"
         );
-        assert!(broke.contains("src/tool_wrappers.rs"));
+        assert!(broke.contains("src/commands_bg.rs"));
         // #708: the same repairing commit touched CLAUDE.md and
         // tests/module_size.rs, but the risk model scores only `src/**`, so
         // grading them was a guaranteed miss. The fixture stays verbatim; the
         // expectation moved.
         assert!(!broke.contains("CLAUDE.md"));
-        assert!(!broke.contains("tests/module_size.rs"));
+        assert!(!broke.contains("journals/JOURNAL.md"));
+        // The eval-fix retry's only unique src/ path — its claim is harness
+        // bookkeeping now, so it must not reach the broken set (Day 165).
+        assert!(!broke.contains("src/commands_risk.rs"));
+        // Claimed by a delivered `(Task 2)` fix but touched by nothing else
+        // once its retry sibling is excluded — uncorroborated, so not breakage.
+        assert!(!broke.contains("src/commands_risk_snapshots.rs"));
         // Files from the NON-repair commit must not be swept in — CLAUDE.md is
         // touched twice here, so this also pins that corroboration alone is
         // never sufficient.
@@ -5144,19 +5252,19 @@ CLAUDE.md
 
         // --- 3. Validation with one hit and one clean prediction -----------
         let predicted: Vec<String> = vec![
-            "src/tool_wrappers.rs".to_string(), // hit
-            "src/watch.rs".to_string(),         // clean
+            "src/commands_bg.rs".to_string(), // hit
+            "src/watch.rs".to_string(),       // clean
         ];
         let result = compute_validation(&predicted, &broke, None, entries.len());
-        assert_eq!(result.hits, vec!["src/tool_wrappers.rs".to_string()]);
+        assert_eq!(result.hits, vec!["src/commands_bg.rs".to_string()]);
         assert_eq!(result.clean, vec!["src/watch.rs".to_string()]);
         assert!(
             result.surprises.is_empty(),
-            "the only src/ file that broke was predicted; the two non-src \
+            "the only src/ file that broke was predicted; the non-src \
              paths are outside the model's universe, got {:?}",
             result.surprises
         );
-        assert_eq!(result.commit_count, 3);
+        assert_eq!(result.commit_count, 7);
 
         // --- 4. Persist the untagged (CLI red-path) event to a TEMPDIR -----
         let dir = tempfile::tempdir().expect("tempdir");
@@ -5329,6 +5437,17 @@ src/help_data.rs
             "def5678 Day 162: social session",
             // Case-insensitive.
             "abc1234 Day 163: CARGO FMT",
+            // Day 165: the fix-loop retry family. Verbatim subjects from
+            // `git log --oneline -60`, not hand-typed approximations — a
+            // hand-written fixture pins my belief about the input, not the
+            // input (Day 147).
+            "07cd8bcd Day 165 (13:13): Blind round 38 — chosen experiment on src/setup.rs (coldest room: 78 snapshots since last seen) (Task 2, eval-fix 7)",
+            "e0a7131b Day 165 (13:13): Blind round 38 — chosen experiment on src/setup.rs (coldest room: 78 snapshots since last seen) (Task 2, eval-fix 1)",
+            "aaec088b Day 165 (16:00): #683 step 2 — actually record run events (tee all four prompt call sites) + redact secrets in the same diff (Task 1, eval-fix 4)",
+            "64bef0aa Day 165 (07:27): Fix #723 — stamp snapshot_git_hash on failure-day validation events so recall can be audited against the prediction it graded (Task 2, eval-fix 1)",
+            "ca0f4e34 Day 165 (13:13): `yoyo <unknown-word>` is a silent paid prompt — add a near-miss guard on the bare-word CLI path (Task 1, eval-fix 3)",
+            // A future retry label rides the same suffix.
+            "abc1234 Day 165 (13:13): something (Task 3, build-fix 2)",
         ] {
             assert!(
                 is_mechanical_commit(subject),
@@ -5340,6 +5459,14 @@ src/help_data.rs
             "abc1234 Day 163: add the streaming bash cwd pin",
             "def5678 Revert \"Day 162: something\"",
             "ghi9012 Day 163: raise the module-size gate",
+            // Day 165 negatives, verbatim: a DELIVERED task carries the plain
+            // `(Task N)` suffix and is real work — the retry filter must not
+            // swallow it, or a genuine repair loses its claim.
+            "689cd3bd Day 165 (10:08): Fix #736 — freeze /bg elapsed time when a job finishes (Task 1)",
+            "4fb9300c Day 165 (07:27): Fix #723 — stamp snapshot_git_hash on failure-day validation events so recall can be audited against the prediction it graded (Task 2)",
+            "0469a932 Day 165 (04:49): /checkpoint restore claims work it did not do — empty and all-failed restores print a green success header (Task 2)",
+            // A human commit that merely mentions a task number, no retry marker.
+            "abc1234 Day 165: fix the parser (Task 2 follow-up)",
         ] {
             assert!(
                 !is_mechanical_commit(subject),
