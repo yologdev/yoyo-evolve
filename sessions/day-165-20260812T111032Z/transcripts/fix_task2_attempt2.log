@@ -1,0 +1,47 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll add the missing CLAUDE.md documentation bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c gasp CLAUDE.md; git log …  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs ✓ (2ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/main.rs Car… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 770,800p src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`format/tools.rs\`\… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 2 lines)
+  + - `gasp.rs` — GASP recorder wiring, **build layer only** (#683 step 1). Two things exist and nothing else: a **default-off `gasp` cargo feature** (`Cargo.toml`: `default = []`, `gasp = ["yoagent/gasp"]` — a plain `cargo build`/`cargo test`, which is what yoyo runs while modifying itself, never compiles `yoagent-state`), and an **env-gated open** of `yoagent::gasp::GaspRecorder` (`open_recorder_from_env` → `GaspRecorder::open(root, "yoyo", "yoyo-inproc", GoalRef::Existing(id))`; the worker id is deliberately distinct from the retiring sidecar's, because mixed-writer history is what that field is for). **No run or tool events are recorded yet** — yoyo's prompt path calls `agent.prompt()`, which owns the event receiver, and feeding a recorder needs `agent.prompt_with_sender(...)` threaded through that hot path; that wiring is a later task, so with the feature on and the env set the recorder opens, is reported under `--verbose`, and records nothing. The whole module is behind `#[cfg(feature = "gasp")]` (declared that way in `main.rs`, one call site at startup); nothing changes in a default build. The decision half is pure and testable: `plan_from_env_values(root, goal)` reads the two env values as `Option<&str>` and returns three explicit states — `Disabled` (no `YOYO_GASP_STATE_DIR`; the normal case on every machine that isn't the evolve runner — silent, warns nothing, creates nothing, needs no credentials), `Misconfigured` (dir set but `YOYO_GASP_GOAL_ID` unset — the operator asked for recording and won't get it, so this one says so), and `Open`. A configured-but-nonexistent directory degrades to `None` silently; an open failure returns `None` after **one** honest stderr line naming what failed. It never propagates, never panics, never aborts startup — a session must not break because instrumentation did.
+    - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic.
+ ✓ (52.8s)
+  + - `gasp.rs` — GASP recorder wiring, **build layer only** (#683 step 1). Two things exist and nothing else: a **default-off `gasp` cargo feature** (`Cargo.toml`: `default = []`, `gasp = ["yoagent/gasp"]` — a plain `cargo build`/`cargo test`, which is what yoyo runs while modifying itself, never compiles `yoagent-state`), and an **env-gated open** of `yoagent::gasp::GaspRecorder` (`open_recorder_from_env` → `GaspRecorder::open(root, "yoyo", "yoyo-inproc", GoalRef::Existing(id))`; the worker id is deliberately distinct from the retiring sidecar's, because mixed-writer history is what that field is for). **No run or tool events are recorded yet** — yoyo's prompt path calls `agent.prompt()`, which owns the event receiver, and feeding a recorder needs `agent.prompt_with_sender(...)` threaded through that hot path; that wiring is a later task, so with the feature on and the env set the recorder opens, is reported under `--verbose`, and records nothing. The whole module is behind `#[cfg(feature = "gasp")]` (declared that way in `main.rs`, one call site at startup); nothing changes in a default build. The decision half is pure and testable: `plan_from_env_values(root, goal)` reads the two env values as `Option<&str>` and returns three explicit states — `Disabled` (no `YOYO_GASP_STATE_DIR`; the normal case on every machine that isn't the evolve runner — silent, warns nothing, creates nothing, needs no credentials), `Misconfigured` (dir set but `YOYO_GASP_GOAL_ID` unset — the operator asked for recording and won't get it, so this one says so), and `Open`. A configured-but-nonexistent directory degrades to `None` silently; an open failure returns `None` after **one** honest stderr line naming what failed. It never propagates, never panics, never aborts startup — a session must not break because instrumentation did.
+    - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c gasp CLAUDE.md && cargo … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (52.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "resul… ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git di… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 4m 35s (11 ✓)
+
+Fixed the one issue the evaluator flagged.
+
+What changed: CLAUDE.md only — one bullet added to the src/ module map, placed between the format/tools.rs and prompt.rs entries. No code touched (the evaluator passed all three code checks).
+
+The bullet states exactly what exists and what doesn't:
+• Exists: default-off gasp cargo feature (default = [], gasp = ["yoagent/gasp"], so plain cargo build/cargo test never compiles `yoagent-state) and an env-gated GaspRecorder open with worker id yoyo-inproc` (distinct from the sidecar's, for mixed-writer history).
+• Does not exist: any recording. It says plainly that no run/tool events are recorded yet, and why — `agent.prompt() owns the event receiver, so feeding a recorder needs prompt_with_sender` threaded through the prompt path, which is a later task. With the feature on and env set, the recorder opens, is reported under --verbose, and records nothing.
+• Also documents the three explicit plan_from_env_values states (Disabled silent / Misconfigured speaks up / `Open`) and the never-panic, one-honest-stderr-line failure contract.
+
+Verified (all from actual runs, not assumed):
+• `grep -c gasp CLAUDE.md` → 1 (was 0)
+• cargo fmt — clean
+• cargo clippy --all-targets -- -D warnings — finished, no warnings
+• cargo build — ok
+• `cargo test` — 4787 + 89 + 11 + 12 passed, 0 failed, 0 FAILED lines
+• git status — only CLAUDE.md modified, 1 insertion
+
+I did not re-run the --features gasp configurations, since this diff is documentation-only and the evaluator already confirmed cargo check --features gasp --all-targets clean with 6 gasp tests passing on the unchanged code.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

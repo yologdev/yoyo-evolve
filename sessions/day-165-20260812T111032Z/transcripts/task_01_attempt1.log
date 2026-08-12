@@ -1,0 +1,244 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "finished.store\|exit_co… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,210p src/commands_bg.rs ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,32p src/commands_bg.rs… ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs:20..32 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs:159..169 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.elapsed\b\|JobSnapsh… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 455,485p src/commands_bg.… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 45.3s (7 ✓)
+
+Now the implementation. Tests first:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (12 → 122 lines)
+            assert!(tracker.is_finished(id));
+            let jobs = tracker.list();
+            assert_eq!(jobs[0].exit_code, Some(0));
+  +     }
+  + 
+  +     // --- #736: a finished job's elapsed must stop growing ---
+  + 
+  +     #[tokio::test]
+  +     async fn test_running_job_elapsed_still_grows() {
+  +         let tracker = create_tracker();
+  +         tracker.launch("sleep 5");
+  + 
+  +         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+  +         let first = tracker.list().remove(0);
+  +         assert!(!first.finished, "job should still be running");
+  +         assert!(first.runtime.is_none(), "running job has no frozen runtime");
+  + 
+  +         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+  +         let second = tracker.list().remove(0);
+  +         assert!(
+  ... (95 more lines)
+ ✓ (12.4s)
+            assert!(tracker.is_finished(id));
+            let jobs = tracker.list();
+            assert_eq!(jobs[0].exit_code, Some(0));
+  +     }
+  + 
+  +     // --- #736: a finished job's elapsed must stop growing ---
+  + 
+  +     #[tokio::test]
+  ... (13 more lines)
+
+Tests fail as expected (red). Now the implementation:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (9 → 14 lines)
+        pub output: Arc<Mutex<String>>,
+        pub finished: Arc<AtomicBool>,
+        pub exit_code: Arc<std::sync::Mutex<Option<i32>>>,
+  +     /// How long the job actually ran, stamped once at completion (#736).
+  +     /// `None` while the job is still running. Every writer that sets
+  +     /// `finished` must stamp this, or the elapsed column falls back to the
+  +     /// live clock and starts reporting "time since launch" as "runtime".
+  +     pub runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+    }
+ ✓ (12.0s)
+        pub output: Arc<Mutex<String>>,
+        pub finished: Arc<AtomicBool>,
+        pub exit_code: Arc<std::sync::Mutex<Option<i32>>>,
+  +     /// How long the job actually ran, stamped once at completion (#736).
+  +     /// `None` while the job is still running. Every writer that sets
+  +     /// `finished` must stamp this, or the elapsed column falls back to the
+  +     /// live clock and starts reporting "time since launch" as "runtime".
+  +     pub runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (10 → 12 lines)
+            let exit_code = Arc::new(std::sync::Mutex::new(None));
+  +         let runtime = Arc::new(std::sync::Mutex::new(None));
+    
+            let job = BackgroundJob {
+                id,
+  ···
+                output: Arc::clone(&output),
+                finished: Arc::clone(&finished),
+                exit_code: Arc::clone(&exit_code),
+  +             runtime: Arc::clone(&runtime),
+            };
+ ✓ (12.1s)
+            let exit_code = Arc::new(std::sync::Mutex::new(None));
+  +         let runtime = Arc::new(std::sync::Mutex::new(None));
+    
+            let job = BackgroundJob {
+                id,
+  ···
+                output: Arc::clone(&output),
+                finished: Arc::clone(&finished),
+  ... (3 more lines)
+  2 tools completed in 29.7s (2 ✓)
+
+Now list, the snapshot field, and the two writers:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (16 → 23 lines)
+        /// List all jobs as snapshots (id, command, finished, exit_code, elapsed).
+  +     ///
+  +     /// `elapsed` is the frozen runtime once the job has stamped one (#736);
+  +     /// only a still-running job reads the live clock.
+        pub fn list(&self) -> Vec<JobSnapshot> {
+            let jobs = lock_or_recover(&self.jobs);
+            let mut snapshots: Vec<JobSnapshot> = jobs
+                .values()
+  -             .map(|j| JobSnapshot {
+  -                 id: j.id,
+  -                 command: j.command.clone(),
+  -                 finished: j.finished.load(Ordering::Relaxed),
+  -                 exit_code: *lock_or_recover(&j.exit_code),
+  -                 elapsed: j.started_at.elapsed(),
+  +             .map(|j| {
+  +                 let runtime = *lock_or_recover(&j.runtime);
+  +                 JobSnapshot {
+  +                     id: j.id,
+  +                     command: j.command.clone(),
+  +                     finished: j.finished.load(Ordering::Relaxed),
+  ... (7 more lines)
+ ✓ (12.2s)
+        /// List all jobs as snapshots (id, command, finished, exit_code, elapsed).
+  +     ///
+  +     /// `elapsed` is the frozen runtime once the job has stamped one (#736);
+  +     /// only a still-running job reads the live clock.
+        pub fn list(&self) -> Vec<JobSnapshot> {
+            let jobs = lock_or_recover(&self.jobs);
+            let mut snapshots: Vec<JobSnapshot> = jobs
+                .values()
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (8 → 14 lines)
+        pub command: String,
+        pub finished: bool,
+        pub exit_code: Option<i32>,
+  +     /// Frozen runtime for a finished job, live clock for a running one.
+        pub elapsed: std::time::Duration,
+  +     /// `Some` once the job stamped its runtime at completion (#736).
+  +     /// A `finished` job with `None` here never stamped one — `elapsed` then
+  +     /// falls back to the live clock, which is NOT a runtime, so the renderer
+  +     /// must not print it as one (see `elapsed_column`).
+  +     pub runtime: Option<std::time::Duration>,
+    }
+ ✓ (12.1s)
+        pub command: String,
+        pub finished: bool,
+        pub exit_code: Option<i32>,
+  +     /// Frozen runtime for a finished job, live clock for a running one.
+        pub elapsed: std::time::Duration,
+  +     /// `Some` once the job stamped its runtime at completion (#736).
+  +     /// A `finished` job with `None` here never stamped one — `elapsed` then
+  +     /// falls back to the live clock, which is NOT a runtime, so the renderer
+  ... (3 more lines)
+  2 tools completed in 31.3s (2 ✓)
+
+Now the writers (run_background_command and kill) plus the renderer:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "finished.store\|run_bac… ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find value `UNKNOWN_ELAPSED` in this scope[0m
+   [1m[94m--> [0msrc/commands_bg.rs:995:40
+    [1m[94m|[0m
+[1m[94m995[0m [1m[94m|[0m         assert_eq!(elapsed_column(&s), UNKNOWN_ELAPSED);
+    [1m[94m|[0m                                        [1m[91m^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[0m[1m: field `runtime` is never read[0m
+   [1m[94m--> [0msrc/commands_bg.rs:185:9
+    [1m[94m|[0m
+[1m[94m174[0m [1m[94m|[0m pub struct JobSnapshot {
+    [1m[94m|[0m            [1m[94m-----------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m185[0m [1m[94m|[0m     pub runtime: Option<std::time::Duration>,
+    [1m[94m|[0m         [1m[91m^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[E0425][0m[1m: cannot find function `elapsed_column` in this scope[0m
+   [1m[94m--> [0msrc/commands_bg.rs:977:20
+    [1m[94m|[0m
+[1m[94m977[0m [1m[94m|[0m         assert_eq!(elapsed_column(&s), "42s");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `elapsed_column` in this scope[0m
+   [1m[94m--> [0msrc/commands_bg.rs:987:20
+    [1m[94m|[0m
+[1m[94m987[0m [1m[94m|[0m         assert_eq!(elapsed_column(&s), "5s");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `elapsed_column` in this scope[0m
+   [1m[94m--> [0msrc/commands_bg.rs:995:20
+    [1m[94m|[0m
+[1m[94m995[0m [1m[94m|[0m         assert_eq!(elapsed_column(&s), UNKNOWN_ELAPSED);
+    [1m[94m|[0m    ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 70,82p src/commands_bg.rs… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (110 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_bg 2>&1 | ta… ✓ (24.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (52.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 5s (5 ✓)
+
+All green. Now the docs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_bg.rs" CLAUDE.… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  -  Known and unfixed (#NNN): `JobSnapshot.elapsed` is `started_at.elapsed()` at snapshot time, so a *finished* job's duration keeps growing on every `/bg list`.
+  +  Day 165 (#736): a finished job's elapsed time is **frozen**, not recomputed — `BackgroundJob.runtime` (`Arc<Mutex<Option<Duration>>>`) is stamped once at completion by *every* writer that marks a job finished (normal exit, spawn failure, and `kill`, all via the shared `stamp_runtime`), and `list` reads `runtime.unwrap_or_else(|| started_at.elapsed())`, so only a still-running job reads the live clock. Before this, `/bg list` rendered `started_at.elapsed()` unconditionally and a job that took 0.2s read `✓ done 1h3m` an hour later — the number a user reads as "how long that build took" was "how long ago I started it". The abstention case has its own value rather than borrowing the convenient neighbour: `JobSnapshot.runtime` stays `Option`, and `elapsed_column` prints `--` (`UNKNOWN_ELAPSED`) for a job that is finished but never stamped a runtime (reachable: `finished` is a `Relaxed` store, so a reader can see the flag before the stamp) instead of presenting the live clock as a runtime. `format_elapsed` is unchanged — the formatter was always fine, its input wasn't.
+ ✓ (53.3s)
+  -  Known and unfixed (#NNN): `JobSnapshot.elapsed` is `started_at.elapsed()` at snapshot time, so a *finished* job's duration keeps growing on every `/bg list`.
+  +  Day 165 (#736): a finished job's elapsed time is **frozen**, not recomputed — `BackgroundJob.runtime` (`Arc<Mutex<Option<Duration>>>`) is stamped once at completion by *every* writer that marks a job finished (normal exit, spawn failure, and `kill`, all via the shared `stamp_runtime`), and `list` reads `runtime.unwrap_or_else(|| started_at.elapsed())`, so only a still-running job reads the live clock. Before this, `/bg list` rendered `started_at.elapsed()` unconditionally and a job that took 0.2s read `✓ done 1h3m` an hour later — the number a user reads as "how long that build took" was "how long ago I started it". The abstention case has its own value rather than borrowing the convenient neighbour: `JobSnapshot.runtime` stays `Option`, and `elapsed_column` prints `--` (`UNKNOWN_ELAPSED`) for a job that is finished but never stamped a runtime (reachable: `finished` is a `Relaxed` store, so a reader can see the flag before the stamp) instead of presenting the live clock as a runtime. `format_elapsed` is unchanged — the formatter was always fine, its input wasn't.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "elapsed" docs/src/usag… ✓ (4ms)
+  3 tools completed in 1m 4s (3 ✓)
+
+No user docs mention the elapsed column. Final verification:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (3.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (31 lines) ✓ (18ms)
+  2 tools completed in 14.5s (2 ✓)
+
+Done. #736 is fixed and committed.
+
+What changed (src/commands_bg.rs, one file + the CLAUDE.md bullet):
+
+• `BackgroundJob.runtime: Arc<Mutex<Option<Duration>>> — stamped once at completion through a shared stamp_runtime` helper.
+• Writer set, verified by grep rather than recall — there were three, not the two the task predicted: run_background_command's normal exit, its spawn-failure early return (stores finished and returns before the wait path), and kill. All three stamp before flipping finished.
+• list() → elapsed: runtime.unwrap_or_else(|| j.started_at.elapsed()), so only a running job reads the live clock.
+• **Abstention has its own value**: JobSnapshot.runtime stays Option, and a new elapsed_column prints -- for finished-but-unstamped. That state is genuinely reachable — finished is a `Relaxed` store, so a reader can observe the flag before the mutex-guarded stamp — so I rendered it honestly rather than claiming unreachability.
+• format_elapsed untouched, its existing tests untouched.
+
+Tests (written first, watched fail): running elapsed still grows; finished elapsed is byte-identical across two list() calls separated by a real 400 ms sleep (the "elapsed is small" version would have passed on the buggy code); killed job likewise; and the unstamped-finished string asserted at the emission point.
+
+Verified: cargo fmt --check, cargo build, cargo clippy --all-targets -- -D warnings, and the full cargo test — 4787 passed, 0 failed.
+
+  ✓ Watch passed after fix (attempt 1)
+
