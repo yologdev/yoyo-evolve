@@ -2466,7 +2466,7 @@ fn handle_risk_harvest() {
             accuracy_pct,
             emerging_grade.map(|(_, pct)| pct),
             Some("ci_failure"),
-            None, // red-path event — the green dedup key does not apply
+            Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
             Some(run.run_id),
         ) {
             skipped += 1;
@@ -2634,8 +2634,8 @@ fn handle_risk_validate() {
             accuracy_pct_rounded,
             emerging_accuracy_pct,
             None, // CLI manual grading — untagged severity
-            None, // red-path event — no green dedup key
-            None, // not a CI-harvest event
+            (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
+            None,                                                 // not a CI-harvest event
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
