@@ -404,8 +404,8 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
             )
             .ok();
             return None;
-        } else if access_key.is_empty() && secret_key.is_empty() {
-            // Check environment variables
+        } else {
+            // Both halves blank — fall back to the environment.
             let env_access = std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default();
             let env_secret = std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default();
             if !env_access.is_empty() && !env_secret.is_empty() {
@@ -423,9 +423,6 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
                 .ok();
                 return None;
             }
-        } else {
-            writeln!(writer, "  {GREEN}✓{RESET} AWS credentials received").ok();
-            format!("{access_key}:{secret_key}")
         };
 
         let bedrock_url = format!("https://bedrock-runtime.{region}.amazonaws.com");
@@ -1869,4 +1866,3 @@ mod tests {
         assert!(output_str.contains("eu-west-1"));
     }
 }
-
