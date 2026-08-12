@@ -99,8 +99,12 @@ fn write_audit_entry(
             .unwrap_or_else(|_| "unknown".to_string())
     };
 
-    // Truncate args to avoid huge entries (e.g., file content in write_file)
-    let truncated_args = truncate_audit_args(args);
+    // Truncate args to avoid huge entries (e.g., file content in write_file),
+    // then mask credential-shaped substrings: `.yoyo/audit.jsonl` is pushed to
+    // the public `audit-log` branch, and tool arguments carry user-authored
+    // command text (e.g. `ANTHROPIC_API_KEY=sk-ant-…` in a bash command).
+    // Scope: arguments only — tool *output* is not written here.
+    let truncated_args = redact_audit_value(&truncate_audit_args(args));
 
     let entry = serde_json::json!({
         "ts": ts,
@@ -135,6 +139,28 @@ fn truncate_audit_value(v: &serde_json::Value) -> serde_json::Value {
             safe_truncate(s, 200),
             s.len()
         )),
+        other => other.clone(),
+    }
+}
+
+/// Mask credential-shaped substrings in every string leaf of an audit value.
+///
+/// Strings are passed through [`crate::safety::redact_secrets`]; arrays and
+/// objects recurse; numbers, bools and null are returned unchanged. It is a
+/// mask, not a guarantee — a novel secret shape passes through.
+fn redact_audit_value(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => serde_json::Value::String(crate::safety::redact_secrets(s)),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(redact_audit_value).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (k, val) in map {
+                new_map.insert(k.clone(), redact_audit_value(val));
+            }
+            serde_json::Value::Object(new_map)
+        }
         other => other.clone(),
     }
 }
@@ -242,6 +268,50 @@ mod tests {
     use super::*;
 
     // ── Audit log tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn redact_audit_value_masks_nested_secrets_and_leaves_innocent_text_alone() {
+        let args = serde_json::json!({
+            "command": "ANTHROPIC_API_KEY=sk-ant-abcdefgh1234 cargo test",
+            "paths": ["src/main.rs", "token: ghp_abcdefghijklmnopqrst1234"],
+            "nested": {"note": "plain text, nothing secret"},
+            "count": 3,
+            "ok": true,
+            "nothing": serde_json::Value::Null,
+        });
+        let out = redact_audit_value(&args);
+
+        let cmd = out.get("command").unwrap().as_str().unwrap();
+        assert!(
+            !cmd.contains("sk-ant-abcdefgh1234"),
+            "api key should be masked, got: {cmd}"
+        );
+        assert!(cmd.contains("[redacted]"), "mask marker missing: {cmd}");
+        assert!(
+            cmd.contains("cargo test"),
+            "innocent tail should survive: {cmd}"
+        );
+
+        let arr = out.get("paths").unwrap().as_array().unwrap();
+        assert_eq!(arr[0].as_str().unwrap(), "src/main.rs");
+        assert!(
+            !arr[1]
+                .as_str()
+                .unwrap()
+                .contains("ghp_abcdefghijklmnopqrst1234"),
+            "nested array secret should be masked"
+        );
+
+        // Innocent nested text and non-string leaves are byte-identical.
+        assert_eq!(
+            out.get("nested").unwrap(),
+            args.get("nested").unwrap(),
+            "innocent nested text must survive byte-identical"
+        );
+        assert_eq!(out.get("count").unwrap(), args.get("count").unwrap());
+        assert_eq!(out.get("ok").unwrap(), args.get("ok").unwrap());
+        assert_eq!(out.get("nothing").unwrap(), args.get("nothing").unwrap());
+    }
 
     #[test]
     fn test_truncate_audit_args_short_values() {

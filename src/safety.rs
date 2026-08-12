@@ -27,6 +27,10 @@
 //! - Fd-redirect smuggling (`exec N<>file`, writes into `/dev/fd/N`,
 //!   odd `N>&M` dups combined with command substitution)
 
+use std::sync::LazyLock;
+
+use regex::Regex;
+
 /// A safety check function: receives `(cmd, cmd_lower)` and returns
 /// `Some(reason)` if the command matches a destructive pattern.
 type SafetyCheck = fn(&str, &str) -> Option<String>;
@@ -1931,12 +1935,122 @@ fn lexical_normalize(p: &std::path::Path) -> std::path::PathBuf {
 }
 
 // ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
+/// What a masked credential is replaced with.
+const REDACTED: &str = "[redacted]";
+
+/// Credential shapes we mask before anything is persisted.
+///
+/// Deliberately small and obvious rather than exhaustive: this catches the
+/// common provider/CI key shapes yoyo actually handles. It is a mask, not a
+/// guarantee — a novel secret shape will pass through, which is why the module
+/// docs say what this does and does not cover.
+static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    [
+        // Anthropic / OpenAI style: sk-..., sk-ant-...
+        r"\bsk-[A-Za-z0-9_-]{8,}",
+        // GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
+        r"\bgh[pousr]_[A-Za-z0-9]{8,}",
+        r"\bgithub_pat_[A-Za-z0-9_]{8,}",
+        // AWS access key ids.
+        r"\bAKIA[A-Z0-9]{12,}",
+        // KEY=/TOKEN=/SECRET=/PASSWORD= style assignments (also `: value`).
+        r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*[=:]\s*[^\s'\x22]+",
+    ]
+    .iter()
+    .filter_map(|p| Regex::new(p).ok())
+    .collect()
+});
+
+/// Mask common credential shapes. Pure; safe on any UTF-8 input (regex crate
+/// operates on chars, never raw byte offsets we choose ourselves).
+pub(crate) fn redact_secrets(s: &str) -> String {
+    let mut out = s.to_string();
+    for (i, re) in SECRET_PATTERNS.iter().enumerate() {
+        // The assignment pattern is last: keep the variable name, mask only the
+        // value, so a redacted log still says *which* credential appeared.
+        let is_assignment = i + 1 == SECRET_PATTERNS.len();
+        out = if is_assignment {
+            re.replace_all(&out, format!("${{1}}={REDACTED}").as_str())
+                .into_owned()
+        } else {
+            re.replace_all(&out, REDACTED).into_owned()
+        };
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redact_secrets_masks_known_shapes_and_leaves_innocent_text_alone() {
+        // (input, must_not_contain, must_contain)
+        let cases: &[(&str, Option<&str>, &str)] = &[
+            (
+                "export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop",
+                Some("abcdefghijklmnop"),
+                REDACTED,
+            ),
+            (
+                "token is ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123",
+                Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"),
+                REDACTED,
+            ),
+            (
+                "github_pat_11ABCDEFG0abcdefghij_KLMNOP",
+                Some("11ABCDEFG0abcdefghij"),
+                REDACTED,
+            ),
+            ("AKIAIOSFODNN7EXAMPLE", Some("IOSFODNN7EXAMPLE"), REDACTED),
+            (
+                "GITHUB_TOKEN=abc123def456",
+                Some("abc123def456"),
+                "GITHUB_TOKEN=[redacted]",
+            ),
+            ("password: hunter2hunter2", Some("hunter2hunter2"), REDACTED),
+            // NEGATIVE: an innocent sentence must pass through byte-identical.
+            (
+                "the sky is blue and cargo test passed in 0.42s",
+                None,
+                "the sky is blue and cargo test passed in 0.42s",
+            ),
+            // NEGATIVE + multi-byte: emoji/CJK must survive untouched.
+            (
+                "✓ 通过 — no secrets here, just a ✨ summary",
+                None,
+                "✓ 通过 — no secrets here, just a ✨ summary",
+            ),
+        ];
+
+        for (input, forbidden, expected_substr) in cases {
+            let out = redact_secrets(input);
+            if let Some(f) = forbidden {
+                assert!(!out.contains(f), "{input:?} leaked {f:?} -> {out:?}");
+            } else {
+                assert_eq!(&out, input, "innocent input must pass through unchanged");
+            }
+            assert!(
+                out.contains(expected_substr),
+                "{input:?} -> {out:?} missing {expected_substr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redact_secrets_keeps_multibyte_text_around_a_masked_secret() {
+        let out = redact_secrets("キー sk-ant-abcdefgh1234 ✓ done");
+        assert!(out.contains("キー"), "prefix preserved: {out:?}");
+        assert!(out.contains("✓ done"), "suffix preserved: {out:?}");
+        assert!(!out.contains("abcdefgh1234"), "secret masked: {out:?}");
+    }
 
     #[test]
     fn test_analyze_rm_rf_root() {

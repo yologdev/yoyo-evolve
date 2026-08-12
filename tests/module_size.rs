@@ -160,7 +160,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     ("src/repl.rs", 3260),
-    ("src/safety.rs", 3155),
+    ("src/safety.rs", 3269),
     ("src/symbols.rs", 3804),
     // Day 161 (#662 half 1): +10 lines — pub REFUSAL_STEM_* consts that the
     // wrapper messages and prompt_retry::is_deterministic_tool_error share.
