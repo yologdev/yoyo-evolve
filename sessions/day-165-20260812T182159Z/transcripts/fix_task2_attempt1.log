@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement this from scratch. Let me first look at the existing module.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_experiment_vis… ✓ (3ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_epistemic_rep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines) ✓ (4ms)
+ ✓ (115ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (17 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_epistemic_repor…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_risk_e… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_epistemic_report…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def parse_epistemic_out… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_epistemic_report… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 47.9s (10 ✓)
+
+Now I'll implement the helper and the rendered line.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 57 lines)
+  + /// Round numbers that the experiment ledger has **no record of at all**,
+  + /// within the range it does record.
+  + ///
+  + /// Why this exists: `scripts/evolve.sh` reverts a failed task with
+  + /// `git reset --hard "$PRE_TASK_SHA"`, and that SHA sits *before* the round's
+  + /// prediction commit — so a reverted blind round erases its own record. The
+  + /// round happened, the file was studied, and [`parse_experiment_visits`] then
+  + /// reads that file as **genuinely never studied**, which is the third of the
+  + /// three explicit study states and means the opposite of what is true. This
+  + /// helper cannot recover the prediction (see the constraint in the module
+  + /// docs: back-filling a destroyed prediction would be manufactured evidence).
+  + /// It only makes the loss sayable.
+  + ///
+  + /// A round counts as *present* if **either** an `experiment` or an
+  + /// `experiment_result` line names it: a round that recorded a prediction and
+  + /// died before grading is not a gap, it is an ungraded round, and
+  + /// [`StudyState::VisitedUngraded`] already has a name for that.
+  + ///
+  + /// Never infers a gap past the highest round recorded — the next round has
+  + /// not happened yet, it is not missing. Fewer than two distinct rounds, an
+  ... (37 more lines)
+ ✓ (19.3s)
+  + /// Round numbers that the experiment ledger has **no record of at all**,
+  + /// within the range it does record.
+  + ///
+  + /// Why this exists: `scripts/evolve.sh` reverts a failed task with
+  + /// `git reset --hard "$PRE_TASK_SHA"`, and that SHA sits *before* the round's
+  + /// prediction commit — so a reverted blind round erases its own record. The
+  + /// round happened, the file was studied, and [`parse_experiment_visits`] then
+  + /// reads that file as **genuinely never studied**, which is the third of the
+  ... (13 more lines)
+
+Expected — now the consumer, in the same edit.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 5 lines)
+        entries: &[EpistemicEntry],
+        never: &[NeverForecast],
+        families: &ExperimentFamilies,
+  +     ledger_gaps: &[u32],
+    ) -> String {
+ ✓ (12.4s)
+        entries: &[EpistemicEntry],
+        never: &[NeverForecast],
+        families: &ExperimentFamilies,
+  +     ledger_gaps: &[u32],
+    ) -> String {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 33 lines)
+        // Rendered last, below the never-forecast header, so the trajectory
+        // extractor (which hard-stops collecting there) can never absorb it.
+        out.push_str(&format_experiment_families(families));
+  + 
+  +     // Name the destroyed rounds. Display-only: no score, no ranking, no
+  +     // persisted field changes, and the lost prediction is NOT recovered — this
+  +     // line exists so the loss stops being silent, because the files those
+  +     // rounds studied are sitting in the ranking above wearing the wrong label.
+  +     //
+  +     // Consumer note: the shape matches neither regex in
+  +     // `scripts/extract_trajectory.py::parse_epistemic_output` — no leading
+  +     // `N.` (so not `EPISTEMIC_ENTRY_RE`), no `◦` (so not
+  +     // `EPISTEMIC_NEVER_FORECAST_ROW_RE`), and no leading `•` (so it is never
+  +     // appended as a reason to the last ranked entry). It also sits below the
+  +     // never-forecast header, where that parser has already stopped collecting.
+  +     if !ledger_gaps.is_empty() {
+  +         let list = ledger_gaps
+  +             .iter()
+  +             .map(|r| r.to_string())
+  +             .collect::<Vec<_>>()
+  ... (13 more lines)
+ ✓ (12.3s)
+        // Rendered last, below the never-forecast header, so the trajectory
+        // extractor (which hard-stops collecting there) can never absorb it.
+        out.push_str(&format_experiment_families(families));
+  + 
+  +     // Name the destroyed rounds. Display-only: no score, no ranking, no
+  +     // persisted field changes, and the lost prediction is NOT recovered — this
+  +     // line exists so the loss stops being silent, because the files those
+  +     // rounds studied are sitting in the ranking above wearing the wrong label.
+  ... (13 more lines)
+  2 tools completed in 34.4s (2 ✓)
+
+Now the real call site and the test call sites.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (9.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib --no-run 2>&1 |… ✓ (118ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib --no-run 2>&1 |… ✓ (113ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (12.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (22.9s)
+  6 tools completed in 1m 9s (6 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4795 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 290,330p tests/module_siz… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_epistemic… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (236ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 33,75p tests/module_size.… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 21.9s (4 ✓)
+
+Now the unit tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk_episte… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (173 lines) ✓ (10.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 46.2s (2 ✓)
+
+The file was already at 1999 lines — any addition trips the cap. Adding an acknowledged grandfather entry:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '("src/commands_risk' -B… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 87,96p tests/module_size.… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 10 lines)
+        ("src/commands_risk.rs", 5350),
+  +     // Day 165: +307 lines — missing_round_numbers (rounds whose record a task
+  +     // revert destroyed, so the study history they hold reads as "never
+  +     // studied") plus the rendered disclosure line and 8 tests, including the
+  +     // highest-round-is-not-a-gap off-by-one and the shape guard against
+  +     // scripts/extract_trajectory.py's parser. The module was already at 1999
+  +     // of the 2000-line cap, so any addition trips it; the split to carve out
+  +     // the experiment-ledger half (Provenance / ExperimentFamilies /
+  +     // tally_hypothesis_families) is the real fix and is not this task.
+  +     ("src/commands_risk_epistemic.rs", 2306),
+ ✓ (12.5s)
+        ("src/commands_risk.rs", 5350),
+  +     // Day 165: +307 lines — missing_round_numbers (rounds whose record a task
+  +     // revert destroyed, so the study history they hold reads as "never
+  +     // studied") plus the rendered disclosure line and 8 tests, including the
+  +     // highest-round-is-not-a-gap off-by-one and the shape guard against
+  +     // scripts/extract_trajectory.py's parser. The module was already at 1999
+  +     // of the 2000-line cap, so any addition trips it; the split to carve out
+  +     // the experiment-ledger half (Provenance / ExperimentFamilies /
+  +     // tally_hypothesis_families) is the real fix and is not this task.
+  +     ("src/commands_risk_epistemic.rs", 2306),
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn snap(\|^mod \|^#\[cf… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (14.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (12.4s)
+  6 tools completed in 1m 6s (6 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The move didn't apply; simplest fix is to use the 2-arg snap of the module the tests landed in.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (24.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines)

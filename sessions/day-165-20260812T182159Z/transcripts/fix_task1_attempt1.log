@@ -1,0 +1,107 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the ledger and the committed prediction.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction is committed. Now Step 2 — read the target and grade.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_lint.rs && gr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,320p' src/commands_l… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '171,240p' src/commands_l… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "arg_is_fix_subcommand"… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_lint\b\|handle_… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,200p' src/dispatch_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,12p' src/commands_lint… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,10p' src/commands_lint… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -8 src/commands_lint.rs | g… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 2m 1s (9 ✓)
+
+Now the fix at the call site (zero new names, uses existing LINT_SUBCOMMANDS):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs (5 → 20 lines)
+        let strictness = match arg {
+            "pedantic" => LintStrictness::Pedantic,
+            "strict" => LintStrictness::Strict,
+  -         _ => LintStrictness::Default,
+  +         "" => LintStrictness::Default,
+  +         // Day 165 (blind round 40, h5): an unrecognised token used to fall through
+  +         // to `LintStrictness::Default`, so `/lint pedntic` ran a plain lint and
+  +         // reported "Lint passed" — the user's request silently became a different
+  +         // operation. Name what was not recognised instead, as /risk and /fork do.
+  +         _ => {
+  +             println!("{YELLOW}  Unknown /lint subcommand: {arg}{RESET}");
+  +             println!(
+  +                 "{DIM}  Available: {}{RESET}\n",
+  +                 LINT_SUBCOMMANDS.join(" | ")
+  +             );
+  +             return Some(format!(
+  +                 "Unknown /lint subcommand: {arg} (available: {})",
+  +                 LINT_SUBCOMMANDS.join(" | ")
+  +             ));
+  +         }
+  ... (1 more lines)
+ ✓ (1m 35s)
+        let strictness = match arg {
+            "pedantic" => LintStrictness::Pedantic,
+            "strict" => LintStrictness::Strict,
+  -         _ => LintStrictness::Default,
+  +         "" => LintStrictness::Default,
+  +         // Day 165 (blind round 40, h5): an unrecognised token used to fall through
+  +         // to `LintStrictness::Default`, so `/lint pedntic` ran a plain lint and
+  +         // reported "Lint passed" — the user's request silently became a different
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs (3 → 26 lines)
+            // handle_lint returns early for it — no linter process is spawned.
+  +         assert_eq!(handle_lint("/lint fix"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn unknown_lint_subcommand_is_named_not_silently_defaulted() {
+  +         // Round 40 (h5): `/lint pedntic` used to fall through to
+  +         // LintStrictness::Default and report "Lint passed", so a typo silently
+  +         // became a different operation. This branch returns before project
+  +         // detection, so no linter process is spawned and the assertion holds in
+  +         // any working directory.
+  +         let summary =
+  +             handle_lint("/lint pedntic").expect("an unknown subcommand is reported, not ignored");
+  +         assert!(
+  +             summary.contains("Unknown /lint subcommand"),
+  +             "got: {summary}"
+  +         );
+  +         assert!(summary.contains("pedntic"), "got: {summary}");
+  +         // The message lists the real table, so it cannot drift from dispatch.
+  +         for sub in LINT_SUBCOMMANDS {
+  ... (6 more lines)
+ ✓ (1m 34s)
+            // handle_lint returns early for it — no linter process is spawned.
+  +         assert_eq!(handle_lint("/lint fix"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn unknown_lint_subcommand_is_named_not_silently_defaulted() {
+  +         // Round 40 (h5): `/lint pedntic` used to fall through to
+  +         // LintStrictness::Default and report "Lint passed", so a typo silently
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --quiet … ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git diff src/… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 44s (4 ✓)
+
+Now the grading line, authored from the actual diff:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (52 lines) ✓ (49ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
