@@ -27,6 +27,11 @@ pub struct BackgroundJob {
     pub output: Arc<Mutex<String>>,
     pub finished: Arc<AtomicBool>,
     pub exit_code: Arc<std::sync::Mutex<Option<i32>>>,
+    /// How long the job actually ran, stamped once at completion (#736).
+    /// `None` while the job is still running. Every writer that sets
+    /// `finished` must stamp this, or the elapsed column falls back to the
+    /// live clock and starts reporting "time since launch" as "runtime".
+    pub runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
 }
 
 /// Tracks all background jobs and their associated task handles.
@@ -52,6 +57,7 @@ impl BackgroundJobTracker {
         let output = Arc::new(Mutex::new(String::new()));
         let finished = Arc::new(AtomicBool::new(false));
         let exit_code = Arc::new(std::sync::Mutex::new(None));
+        let runtime = Arc::new(std::sync::Mutex::new(None));
 
         let job = BackgroundJob {
             id,
@@ -60,6 +66,7 @@ impl BackgroundJobTracker {
             output: Arc::clone(&output),
             finished: Arc::clone(&finished),
             exit_code: Arc::clone(&exit_code),
+            runtime: Arc::clone(&runtime),
         };
 
         // Spawn the process in a tokio task
@@ -67,9 +74,11 @@ impl BackgroundJobTracker {
         let out = Arc::clone(&output);
         let fin = Arc::clone(&finished);
         let code = Arc::clone(&exit_code);
+        let rt = Arc::clone(&runtime);
+        let job_start = job.started_at;
 
         let handle = tokio::spawn(async move {
-            run_background_command(&cmd_string, out, fin, code).await;
+            run_background_command(&cmd_string, out, fin, code, rt, job_start).await;
         });
 
         {
@@ -85,16 +94,23 @@ impl BackgroundJobTracker {
     }
 
     /// List all jobs as snapshots (id, command, finished, exit_code, elapsed).
+    ///
+    /// `elapsed` is the frozen runtime once the job has stamped one (#736);
+    /// only a still-running job reads the live clock.
     pub fn list(&self) -> Vec<JobSnapshot> {
         let jobs = lock_or_recover(&self.jobs);
         let mut snapshots: Vec<JobSnapshot> = jobs
             .values()
-            .map(|j| JobSnapshot {
-                id: j.id,
-                command: j.command.clone(),
-                finished: j.finished.load(Ordering::Relaxed),
-                exit_code: *lock_or_recover(&j.exit_code),
-                elapsed: j.started_at.elapsed(),
+            .map(|j| {
+                let runtime = *lock_or_recover(&j.runtime);
+                JobSnapshot {
+                    id: j.id,
+                    command: j.command.clone(),
+                    finished: j.finished.load(Ordering::Relaxed),
+                    exit_code: *lock_or_recover(&j.exit_code),
+                    elapsed: runtime.unwrap_or_else(|| j.started_at.elapsed()),
+                    runtime,
+                }
             })
             .collect();
         snapshots.sort_by_key(|s| s.id);
@@ -129,6 +145,9 @@ impl BackgroundJobTracker {
             // Mark the job as finished
             let jobs = lock_or_recover(&self.jobs);
             if let Some(j) = jobs.get(&id) {
+                // Stamp the runtime BEFORE flipping `finished` — a killed job
+                // has stopped running, so its elapsed column must freeze too (#736).
+                stamp_runtime(&j.runtime, j.started_at);
                 j.finished.store(true, Ordering::Relaxed);
                 let mut code = lock_or_recover(&j.exit_code);
                 if code.is_none() {
@@ -162,7 +181,13 @@ pub struct JobSnapshot {
     pub command: String,
     pub finished: bool,
     pub exit_code: Option<i32>,
+    /// Frozen runtime for a finished job, live clock for a running one.
     pub elapsed: std::time::Duration,
+    /// `Some` once the job stamped its runtime at completion (#736).
+    /// A `finished` job with `None` here never stamped one — `elapsed` then
+    /// falls back to the live clock, which is NOT a runtime, so the renderer
+    /// must not print it as one (see `elapsed_column`).
+    pub runtime: Option<std::time::Duration>,
 }
 
 /// Run a shell command, streaming output into the shared buffer.
@@ -171,6 +196,8 @@ async fn run_background_command(
     output: Arc<Mutex<String>>,
     finished: Arc<AtomicBool>,
     exit_code: Arc<std::sync::Mutex<Option<i32>>>,
+    runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+    started_at: Instant,
 ) {
     use tokio::io::AsyncReadExt;
     use tokio::process::Command;
@@ -187,6 +214,7 @@ async fn run_background_command(
         Err(e) => {
             let mut out = output.lock().await;
             out.push_str(&format!("Failed to spawn: {e}\n"));
+            stamp_runtime(&runtime, started_at);
             finished.store(true, Ordering::Relaxed);
             let mut code = lock_or_recover(&exit_code);
             *code = Some(-1);
@@ -265,7 +293,33 @@ async fn run_background_command(
         }
     }
 
+    stamp_runtime(&runtime, started_at);
     finished.store(true, Ordering::Relaxed);
+}
+
+/// Record how long a job ran, once. Called by every writer that marks a job
+/// finished (normal exit, spawn failure, kill) — see `BackgroundJob::runtime`.
+fn stamp_runtime(
+    runtime: &Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+    started_at: Instant,
+) {
+    let mut slot = lock_or_recover(runtime);
+    if slot.is_none() {
+        *slot = Some(started_at.elapsed());
+    }
+}
+
+/// Shown in the elapsed column for a job that is finished but never stamped a
+/// runtime. Absence gets its own value: borrowing the live clock there would
+/// print "time since launch" as if it were "how long the job took" (#736).
+const UNKNOWN_ELAPSED: &str = "--";
+
+/// The elapsed column exactly as `/bg list` prints it.
+fn elapsed_column(job: &JobSnapshot) -> String {
+    match (job.finished, job.runtime) {
+        (true, None) => UNKNOWN_ELAPSED.to_string(),
+        _ => format_elapsed(job.elapsed),
+    }
 }
 
 /// Format elapsed duration for display.
@@ -367,7 +421,7 @@ fn handle_bg_list(tracker: &BackgroundJobTracker) {
             format!("{YELLOW}● running{RESET}")
         };
 
-        let elapsed = format_elapsed(job.elapsed);
+        let elapsed = elapsed_column(job);
         let cmd = truncate_command(&job.command, 50);
         println!(
             "  {BOLD}[{}]{RESET}  {status}  {DIM}{elapsed}{RESET}  {cmd}",
@@ -864,5 +918,115 @@ mod tests {
         assert!(tracker.is_finished(id));
         let jobs = tracker.list();
         assert_eq!(jobs[0].exit_code, Some(0));
+    }
+
+    // --- #736: a finished job's elapsed must stop growing ---
+
+    #[tokio::test]
+    async fn test_running_job_elapsed_still_grows() {
+        let tracker = create_tracker();
+        tracker.launch("sleep 5");
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let first = tracker.list().remove(0);
+        assert!(!first.finished, "job should still be running");
+        assert!(first.runtime.is_none(), "running job has no frozen runtime");
+
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let second = tracker.list().remove(0);
+        assert!(
+            second.elapsed > first.elapsed,
+            "a running job's elapsed must keep growing: {:?} -> {:?}",
+            first.elapsed,
+            second.elapsed
+        );
+
+        tracker.kill(1).await;
+    }
+
+    #[tokio::test]
+    async fn test_finished_job_elapsed_is_frozen() {
+        let tracker = create_tracker();
+        tracker.launch("true");
+
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let first = tracker.list().remove(0);
+        assert!(first.finished, "job should have finished");
+        assert!(
+            first.runtime.is_some(),
+            "a finished job should carry a frozen runtime"
+        );
+
+        // A real sleep: on the buggy code elapsed would grow by ~400ms here.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let second = tracker.list().remove(0);
+        assert_eq!(
+            first.elapsed, second.elapsed,
+            "a finished job's elapsed must not move between list() calls"
+        );
+        assert_eq!(first.runtime, second.runtime);
+    }
+
+    #[tokio::test]
+    async fn test_killed_job_elapsed_is_frozen() {
+        let tracker = create_tracker();
+        let id = tracker.launch("sleep 30");
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(tracker.kill(id).await);
+
+        let first = tracker.list().remove(0);
+        assert!(first.finished);
+        assert!(
+            first.runtime.is_some(),
+            "kill() must stamp a runtime too — otherwise the elapsed column keeps growing"
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let second = tracker.list().remove(0);
+        assert_eq!(
+            first.elapsed, second.elapsed,
+            "a killed job's elapsed must not move between list() calls"
+        );
+    }
+
+    fn snapshot_for_test(
+        finished: bool,
+        runtime: Option<std::time::Duration>,
+        elapsed: std::time::Duration,
+    ) -> JobSnapshot {
+        JobSnapshot {
+            id: 1,
+            command: "echo hi".to_string(),
+            finished,
+            exit_code: if finished { Some(0) } else { None },
+            elapsed,
+            runtime,
+        }
+    }
+
+    #[test]
+    fn test_elapsed_column_running_shows_live_clock() {
+        let s = snapshot_for_test(false, None, std::time::Duration::from_secs(42));
+        assert_eq!(elapsed_column(&s), "42s");
+    }
+
+    #[test]
+    fn test_elapsed_column_finished_shows_frozen_runtime() {
+        let s = snapshot_for_test(
+            true,
+            Some(std::time::Duration::from_secs(5)),
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(elapsed_column(&s), "5s");
+    }
+
+    #[test]
+    fn test_elapsed_column_finished_without_runtime_is_unknown() {
+        // The abstention case: finished, but no duration was ever stamped.
+        // It must NOT borrow the live clock and present it as a runtime.
+        let s = snapshot_for_test(true, None, std::time::Duration::from_secs(3600));
+        assert_eq!(elapsed_column(&s), UNKNOWN_ELAPSED);
+        assert_ne!(elapsed_column(&s), "1h0m");
     }
 }
