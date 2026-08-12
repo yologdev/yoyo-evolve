@@ -280,27 +280,29 @@ fn format_elapsed(d: std::time::Duration) -> String {
     }
 }
 
-/// Tail the last N lines of a string.
+/// Tail the last `n` lines of a string.
+///
+/// The cut is made immediately after a `\n`, which is always a char boundary —
+/// so this never byte-indexes into the middle of a multi-byte character. The
+/// previous implementation walked `line.len() + 1` per line, but `str::lines`
+/// strips a trailing `\r`, so CRLF output undercounted the offset by one byte
+/// per line and could slice inside a multi-byte char, panicking `/bg output`
+/// (blind round 37, Day 165).
 fn tail_lines(s: &str, n: usize) -> &str {
-    let lines: Vec<&str> = s.lines().collect();
-    if lines.len() <= n {
+    let total = s.lines().count();
+    if total <= n {
         return s;
     }
-    let start_line = lines.len() - n;
-    // Find byte offset of the start_line-th line
-    let mut byte_offset = 0;
-    for (i, line) in s.lines().enumerate() {
-        if i == start_line {
-            break;
+    let skip = total - n;
+    let mut seen = 0;
+    for (idx, _) in s.match_indices('\n') {
+        seen += 1;
+        if seen == skip {
+            return &s[idx + 1..];
         }
-        byte_offset += line.len() + 1; // +1 for newline
     }
-    // Clamp to string boundary
-    if byte_offset >= s.len() {
-        ""
-    } else {
-        &s[byte_offset..]
-    }
+    // Fewer newlines than lines to skip (no trailing newline): nothing is left.
+    ""
 }
 
 /// Handle the `/bg` command with subcommands.
@@ -690,6 +692,39 @@ mod tests {
         // 5 empty lines via .lines(), take last 2 → two newlines
         assert!(tail.len() <= text.len());
         // Should not panic and should return a valid substring
+    }
+
+    /// Blind round 37 (Day 165): `s.lines()` strips a trailing `\r`, so an offset
+    /// walked as `line.len() + 1` undercounts by one byte per CRLF line. With
+    /// enough CRLF lines the resulting index lands inside a multi-byte character
+    /// and `&s[offset..]` panics — `/bg output <id>` crashing on a job whose
+    /// output has Windows line endings and any non-ASCII byte.
+    #[test]
+    fn test_tail_lines_crlf_with_multibyte_does_not_panic() {
+        let text = "aa✓\r\nbb✓\r\ncc✓\r\ndd✓\r\nee✓\r\n";
+        let tail = tail_lines(text, 2);
+        assert!(
+            tail.ends_with("ee✓\r\n"),
+            "tail should end at the last CRLF line: {tail:?}"
+        );
+        assert!(
+            tail.starts_with("dd✓"),
+            "tail of 2 should start exactly at the 4th line: {tail:?}"
+        );
+    }
+
+    #[test]
+    fn test_tail_lines_crlf_ascii_starts_on_line_boundary() {
+        let text = "one\r\ntwo\r\nthree\r\n";
+        assert_eq!(tail_lines(text, 2), "two\r\nthree\r\n");
+    }
+
+    #[test]
+    fn test_tail_lines_mixed_endings() {
+        // A job that mixes `\r\n` and bare `\n` (common when a tool's stdout and
+        // stderr both land in the same buffer) still cuts on a line boundary.
+        let text = "a\r\nb\nc\r\nd\n";
+        assert_eq!(tail_lines(text, 2), "c\r\nd\n");
     }
 
     // ── truncate_command edge cases ────────────────────────────────
