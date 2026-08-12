@@ -1,0 +1,326 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the gate itself.
+  ▶ read tests/module_size.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read tests/module_size.rs:100..360 ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.4s (2 ✓)
+
+Let me measure the current state of the grandfather table before deciding on branch 3's exact semantics.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (38ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read tests/module_size.rs:356..392 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 43.2s (2 ✓)
+
+Table state is clear: exactly one entry (src/dispatch.rs, 2307 → actual 2296) sits below its ceiling. That makes the literal branch-3 ratchet implementable with a one-entry edit. Now the code.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/module_size.rs (11 → 26 lines)
+  - //! Two rules, both deliberate:
+  + //! Three branches, and they are **not** the same property (Day 165, receipts
+  + //! #719 and #739 — this gate destroyed two whole correct tasks, once over a
+  + //! four-line overshoot, because `cargo test` failure means `git reset --hard`
+  + //! in my harness):
+    //!
+  - //! 1. A file not on the grandfather list may not cross `MAX_MODULE_LINES`.
+  - //! 2. A file **on** the list may not grow past the ceiling recorded for it.
+  - //!    The list is a debt register, not a loophole: raising a number is a
+  - //!    reviewable one-line diff that says "I chose to make this bigger",
+  - //!    never an absorbed threshold bump.
+  + //! 1. A file **not** on the grandfather list crossing `MAX_MODULE_LINES` →
+  + //!    **fatal**. A brand-new module going oversized is a design event and is
+  + //!    worth stopping the task for. This is the actual invariant.
+  + //! 2. A file **on** the list growing past its recorded ceiling → **warning,
+  + //!    not fatal**. Growth of an already-capped module is information, not an
+  + //!    emergency; a four-line overshoot does not deserve a whole-task revert.
+  + //!    The warning names the exact entry to paste back, so the debt register
+  + //!    still gets updated on purpose rather than absorbed.
+  + //! 3. A file on the list sitting **below** its recorded ceiling → **fatal**.
+  ... (14 more lines)
+ ✓ (52.9s)
+  - //! Two rules, both deliberate:
+  + //! Three branches, and they are **not** the same property (Day 165, receipts
+  + //! #719 and #739 — this gate destroyed two whole correct tasks, once over a
+  + //! four-line overshoot, because `cargo test` failure means `git reset --hard`
+  + //! in my harness):
+    //!
+  - //! 1. A file not on the grandfather list may not cross `MAX_MODULE_LINES`.
+  - //! 2. A file **on** the list may not grow past the ceiling recorded for it.
+  ... (13 more lines)
+  ▶ edit tests/module_size.rs (1 → 2 lines)
+  + use std::io::Write;
+    use std::path::{Path, PathBuf};
+ ✓ (378ms)
+  + use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit tests/module_size.rs (5 → 5 lines)
+    /// Modules already over `MAX_MODULE_LINES` when the gate was installed
+  - /// (Day 157). Each number is a **ceiling**, not a target: the file may
+  - /// shrink freely, and may not grow by even one line without this list being
+  - /// edited on purpose.
+  + /// (Day 157). Each number is the file's **recorded size**: growing past it
+  + /// warns (branch 2), sitting under it fails (branch 3, the ratchet), so the
+  + /// entry tracks reality in both directions and the register only shrinks.
+    const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
+ ✓ (259ms)
+    /// Modules already over `MAX_MODULE_LINES` when the gate was installed
+  - /// (Day 157). Each number is a **ceiling**, not a target: the file may
+  - /// shrink freely, and may not grow by even one line without this list being
+  - /// edited on purpose.
+  + /// (Day 157). Each number is the file's **recorded size**: growing past it
+  + /// warns (branch 2), sitting under it fails (branch 3, the ratchet), so the
+  + /// entry tracks reality in both directions and the register only shrinks.
+    const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 3s (3 ✓)
+
+Now the enum, fatality split, messages, and checker:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/module_size.rs (51 → 96 lines)
+  - /// A way the size gate can be violated. Three distinct values on purpose —
+  - /// "a new file got too big", "a known-big file got bigger", and "the debt
+  - /// register is stale" are different problems with different fixes, and
+  - /// collapsing them into one string would hide which one happened.
+  + /// A way the size gate can be violated. Four distinct values on purpose —
+  + /// "a new file got too big", "a known-big file got bigger", "a known-big
+  + /// file's recorded size is stale-high", and "the debt register lists a file
+  + /// that no longer belongs" are different problems with different fixes, and
+  + /// collapsing them into one string would hide which one happened. Only one
+  + /// of them is non-fatal; see `is_fatal`.
+    #[derive(Debug, PartialEq, Eq)]
+    enum SizeViolation {
+        /// A module not on the grandfather list crossed the cap.
+        OverCap { path: String, lines: usize },
+        /// A grandfathered module grew past its recorded ceiling.
+        GrewPastCeiling {
+  +         path: String,
+  +         lines: usize,
+  +         ceiling: usize,
+  +     },
+  ... (62 more lines)
+ ✓ (295ms)
+  - /// A way the size gate can be violated. Three distinct values on purpose —
+  - /// "a new file got too big", "a known-big file got bigger", and "the debt
+  - /// register is stale" are different problems with different fixes, and
+  - /// collapsing them into one string would hide which one happened.
+  + /// A way the size gate can be violated. Four distinct values on purpose —
+  + /// "a new file got too big", "a known-big file got bigger", "a known-big
+  + /// file's recorded size is stale-high", and "the debt register lists a file
+  + /// that no longer belongs" are different problems with different fixes, and
+  ... (13 more lines)
+
+Now the checker and the harness test — the consumers.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/module_size.rs (14 → 20 lines)
+                        });
+                    } else if lines > ceiling {
+                        violations.push(SizeViolation::GrewPastCeiling {
+  +                         path: path.clone(),
+  +                         lines: *lines,
+  +                         ceiling: *ceiling,
+  +                     });
+  +                 } else if lines < ceiling {
+  +                     violations.push(SizeViolation::StaleCeiling {
+                            path: path.clone(),
+                            lines: *lines,
+                            ceiling: *ceiling,
+ ✓ (259ms)
+                        });
+                    } else if lines > ceiling {
+                        violations.push(SizeViolation::GrewPastCeiling {
+  +                         path: path.clone(),
+  +                         lines: *lines,
+  +                         ceiling: *ceiling,
+  +                     });
+  +                 } else if lines < ceiling {
+  ... (4 more lines)
+  ▶ edit tests/module_size.rs (16 → 38 lines)
+        let violations = check_module_sizes(&files, MAX_MODULE_LINES, GRANDFATHERED_OVERSIZED_MODULES);
+  +     let (fatal, warnings): (Vec<&SizeViolation>, Vec<&SizeViolation>) =
+  +         violations.iter().partition(|v| v.is_fatal());
+    
+  -     if !violations.is_empty() {
+  -         let report = violations
+  +     if !warnings.is_empty() {
+  +         // Written to the raw stderr handle on purpose: libtest's capture hook
+  +         // only intercepts the `print!`/`eprint!` macro family, and it discards
+  +         // captured output from tests that PASS — which is exactly the case
+  +         // this branch creates. Going through the handle keeps the warning
+  +         // visible in a plain `cargo test` run, so "non-fatal" doesn't quietly
+  +         // become "silent".
+  +         let mut err = std::io::stderr();
+  +         for w in &warnings {
+  +             let _ = writeln!(err, "\nmodule size gate WARNING: {}", w.message());
+  +         }
+  +         let _ = writeln!(
+  +             err,
+  +             "     ({} grandfathered module(s) grew. Not failing the run — see \
+  ... (20 more lines)
+ ✓ (53.2s)
+        let violations = check_module_sizes(&files, MAX_MODULE_LINES, GRANDFATHERED_OVERSIZED_MODULES);
+  +     let (fatal, warnings): (Vec<&SizeViolation>, Vec<&SizeViolation>) =
+  +         violations.iter().partition(|v| v.is_fatal());
+    
+  -     if !violations.is_empty() {
+  -         let report = violations
+  +     if !warnings.is_empty() {
+  +         // Written to the raw stderr handle on purpose: libtest's capture hook
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (195ms)
+  3 tools completed in 1m 6s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4795 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ......
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both failures are the expected, forced ones. Fixing them:
+  ▶ edit tests/module_size.rs (1 → 3 lines)
+  -     ("src/dispatch.rs", 2307),
+  +     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
+  +     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
+  +     ("src/dispatch.rs", 2296),
+ ✓ (53.4s)
+  -     ("src/dispatch.rs", 2307),
+  +     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
+  +     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
+  +     ("src/dispatch.rs", 2296),
+  ▶ edit tests/module_size.rs (5 → 81 lines)
+        #[test]
+  -     fn grandfathered_module_may_shrink_while_still_over_cap() {
+  +     fn grandfathered_module_below_its_ceiling_is_a_stale_ceiling() {
+  +         // Was `grandfathered_module_may_shrink_while_still_over_cap`, which
+  +         // asserted this passes. Day 165 flipped it: a shrink that leaves the
+  +         // recorded number untouched is silent headroom, so it is fatal and the
+  +         // entry must be rewritten. That is the ratchet.
+            let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+  -         assert!(v.is_empty(), "{v:?}");
+  +         assert_eq!(
+  +             v,
+  +             vec![SizeViolation::StaleCeiling {
+  +                 path: "src/a.rs".to_string(),
+  +                 lines: 400,
+  +                 ceiling: 500
+  +             }]
+  +         );
+  +         assert!(v[0].is_fatal(), "the ratchet direction must stay fatal");
+  +     }
+  + 
+  ... (63 more lines)
+ ✓ (53.4s)
+        #[test]
+  -     fn grandfathered_module_may_shrink_while_still_over_cap() {
+  +     fn grandfathered_module_below_its_ceiling_is_a_stale_ceiling() {
+  +         // Was `grandfathered_module_may_shrink_while_still_over_cap`, which
+  +         // asserted this passes. Day 165 flipped it: a shrink that leaves the
+  +         // recorded number untouched is silent headroom, so it is fatal and the
+  +         // entry must be rewritten. That is the ratchet.
+            let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (199ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 9s (3 ✓)
+
+Green. Now the visibility check — does the warning actually survive libtest's capture in a default run?
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/dispatch.rs", 22… ✓ (405ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified with my own eyes — visible in a default run. Now checking the full cargo test path (what the harness actually runs), still tampered:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A4 "modu… ✓ (53.1s)
+
+Visible in the full cargo test run too, and the run stays green. Restoring the tampered entry:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/dispatch.rs", 22… ✓ (436ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, clean tree apart from the gate itself. Now the docs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "module_size\|MAX_MODULE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "module_size\|module ca… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+The size gate is entirely undocumented in CLAUDE.md — so I'll add the description rather than amend a nonexistent one.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^## Build & Test Comman… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 9 lines)
+    CI runs all four checks (build, test, clippy with -D warnings, fmt check) on PR to main. A separate Pages workflow builds and deploys the website on push to main.
+  + 
+  + **Module-size gate** (`tests/module_size.rs`): a deterministic line-count check over `src/`, holding `MAX_MODULE_LINES = 2000` plus a `GRANDFATHERED_OVERSIZED_MODULES` debt register of `(file, recorded_lines)` entries. Day 165 split it into **three branches that are not the same property**, because as one assertion it destroyed two whole correct tasks (#719; #739, which died to a **four-line** overshoot — a `cargo test` failure means `git reset --hard` in `scripts/evolve.sh`, so the gate's real price was never the sentence it asked for):
+  + 
+  + 1. **Un-grandfathered module over `MAX_MODULE_LINES` → fatal.** The actual invariant; a new module going oversized is a design event worth stopping the task for. Unchanged.
+  + 2. **Grandfathered module *above* its recorded lines → warning, run stays green.** Growth of an already-capped module is information, not an emergency. The warning names the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back, so the register is still updated on purpose rather than absorbed.
+  + 3. **Grandfathered module *below* its recorded lines → fatal**, as is a listed file that dropped under the cap or vanished. This is the ratchet: an exception list only pays itself down if improving is *also* a failure, otherwise a shrink leaves silent headroom nobody granted. Fatal on purpose and the cheap direction — the message states the smaller number verbatim. (Landing this found one live instance: `src/dispatch.rs` was recorded at 2307 against an actual 2296.)
+  + 
+  + The branch-2 warning is written through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what branch 2 now produces. **Verified by running it** (a grandfathered entry temporarily lowered by 4 lines, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+ ✓ (52.7s)
+    CI runs all four checks (build, test, clippy with -D warnings, fmt check) on PR to main. A separate Pages workflow builds and deploys the website on push to main.
+  + 
+  + **Module-size gate** (`tests/module_size.rs`): a deterministic line-count check over `src/`, holding `MAX_MODULE_LINES = 2000` plus a `GRANDFATHERED_OVERSIZED_MODULES` debt register of `(file, recorded_lines)` entries. Day 165 split it into **three branches that are not the same property**, because as one assertion it destroyed two whole correct tasks (#719; #739, which died to a **four-line** overshoot — a `cargo test` failure means `git reset --hard` in `scripts/evolve.sh`, so the gate's real price was never the sentence it asked for):
+  + 
+  + 1. **Un-grandfathered module over `MAX_MODULE_LINES` → fatal.** The actual invariant; a new module going oversized is a design event worth stopping the task for. Unchanged.
+  + 2. **Grandfathered module *above* its recorded lines → warning, run stays green.** Growth of an already-capped module is information, not an emergency. The warning names the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back, so the register is still updated on purpose rather than absorbed.
+  + 3. **Grandfathered module *below* its recorded lines → fatal**, as is a listed file that dropped under the cap or vanished. This is the ratchet: an exception list only pays itself down if improving is *also* a failure, otherwise a shrink leaves silent headroom nobody granted. Fatal on purpose and the cheap direction — the message states the smaller number verbatim. (Landing this found one live instance: `src/dispatch.rs` was recorded at 2307 against an actual 2296.)
+  + 
+  + The branch-2 warning is written through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what branch 2 now produces. **Verified by running it** (a grandfathered entry temporarily lowered by 4 lines, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+  2 tools completed in 1m 5s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+

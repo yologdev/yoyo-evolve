@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the round-41 prediction I committed, then do Step 2 (read, grade, fix).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --on… (9 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The prediction is intact. Now Step 2 — read the target and its neighbours.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_revisit.rs &&… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,130p src/commands_revis… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 352,455p src/commands_rev… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 670,735p src/commands_rev… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 127,352p src/commands_rev… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 6s (5 ✓)
+
+Found the pure code. Let me verify a concrete defect empirically before claiming anything.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/f… (10 lines) ✓ (72ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: format_date's &iso[..10] panics on a multi-byte char at byte 10 — the exact pattern CLAUDE.md bans. Test first:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 614,624p src/commands_rev… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_revisit.rs (3 → 17 lines)
+            assert_eq!(format_date("short"), "short");
+            assert_eq!(format_date(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_date_multibyte_at_the_cut_does_not_panic() {
+  +         // `closedAt` is server-controlled JSON text, so `format_date` must not
+  +         // assume byte 10 is a char boundary. "2026-08-1✓…" puts a 3-byte char
+  +         // across bytes 9..12, which the old `&iso[..10]` sliced into (panic).
+  +         let iso = "2026-08-1✓T09:33:00Z";
+  +         assert!(iso.len() >= 10 && !iso.is_char_boundary(10));
+  +         assert_eq!(format_date(iso), iso);
+  +         // A date-shaped prefix ending exactly on a boundary still truncates.
+  +         assert_eq!(format_date("2026-08-13T09:33:00Z"), "2026-08-13");
+  +         // Multi-byte before the cut, boundary at 10: still safe.
+  +         assert_eq!(format_date("✓026-08-1x"), "✓026-08-1x");
+        }
+ ✓ (1m 32s)
+            assert_eq!(format_date("short"), "short");
+            assert_eq!(format_date(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_date_multibyte_at_the_cut_does_not_panic() {
+  +         // `closedAt` is server-controlled JSON text, so `format_date` must not
+  +         // assume byte 10 is a char boundary. "2026-08-1✓…" puts a 3-byte char
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 43s (2 ✓)
+
+The test should fail now (that's the point) — let me confirm it fails for the right reason.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_revisi… ✓ (148ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_revisit::tes… ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+The panic reproduces in the real function. Now the fix (one line, zero new names) plus correcting my third assertion:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_revisit.rs (5 → 7 lines)
+  -     if iso.len() >= 10 {
+  +     // `iso` is server-controlled JSON text, so byte 10 may land inside a
+  +     // multi-byte char — slicing there panics. Fall back to the whole string.
+  +     if iso.len() >= 10 && iso.is_char_boundary(10) {
+            &iso[..10]
+        } else {
+            iso
+ ✓ (1m 33s)
+  -     if iso.len() >= 10 {
+  +     // `iso` is server-controlled JSON text, so byte 10 may land inside a
+  +     // multi-byte char — slicing there panics. Fall back to the whole string.
+  +     if iso.len() >= 10 && iso.is_char_boundary(10) {
+            &iso[..10]
+        } else {
+            iso
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_revisit.rs (2 → 2 lines)
+  -         // Multi-byte before the cut, boundary at 10: still safe.
+  -         assert_eq!(format_date("✓026-08-1x"), "✓026-08-1x");
+  +         // Multi-byte before the cut, boundary at 10: still truncates at byte 10.
+  +         assert_eq!(format_date("✓026-08-1x"), "✓026-08-");
+ ✓ (1m 36s)
+  -         // Multi-byte before the cut, boundary at 10: still safe.
+  -         assert_eq!(format_date("✓026-08-1x"), "✓026-08-1x");
+  +         // Multi-byte before the cut, boundary at 10: still truncates at byte 10.
+  +         assert_eq!(format_date("✓026-08-1x"), "✓026-08-");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_revisit 2>&1… ✓ (186ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_revisit 2>&1… ✓ (154ms)
+  4 tools completed in 3m 18s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
