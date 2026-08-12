@@ -200,7 +200,22 @@ pub fn handle_lint(input: &str) -> Option<String> {
     let strictness = match arg {
         "pedantic" => LintStrictness::Pedantic,
         "strict" => LintStrictness::Strict,
-        _ => LintStrictness::Default,
+        "" => LintStrictness::Default,
+        // Day 165 (blind round 40, h5): an unrecognised token used to fall through
+        // to `LintStrictness::Default`, so `/lint pedntic` ran a plain lint and
+        // reported "Lint passed" — the user's request silently became a different
+        // operation. Name what was not recognised instead, as /risk and /fork do.
+        _ => {
+            println!("{YELLOW}  Unknown /lint subcommand: {arg}{RESET}");
+            println!(
+                "{DIM}  Available: {}{RESET}\n",
+                LINT_SUBCOMMANDS.join(" | ")
+            );
+            return Some(format!(
+                "Unknown /lint subcommand: {arg} (available: {})",
+                LINT_SUBCOMMANDS.join(" | ")
+            ));
+        }
     };
 
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
@@ -846,6 +861,29 @@ mod tests {
         assert!(!arg_is_fix_subcommand(""));
         assert!(!arg_is_fix_subcommand("pedantic"));
         // handle_lint returns early for it — no linter process is spawned.
+        assert_eq!(handle_lint("/lint fix"), None);
+    }
+
+    #[test]
+    fn unknown_lint_subcommand_is_named_not_silently_defaulted() {
+        // Round 40 (h5): `/lint pedntic` used to fall through to
+        // LintStrictness::Default and report "Lint passed", so a typo silently
+        // became a different operation. This branch returns before project
+        // detection, so no linter process is spawned and the assertion holds in
+        // any working directory.
+        let summary =
+            handle_lint("/lint pedntic").expect("an unknown subcommand is reported, not ignored");
+        assert!(
+            summary.contains("Unknown /lint subcommand"),
+            "got: {summary}"
+        );
+        assert!(summary.contains("pedntic"), "got: {summary}");
+        // The message lists the real table, so it cannot drift from dispatch.
+        for sub in LINT_SUBCOMMANDS {
+            assert!(summary.contains(sub), "{sub} missing from: {summary}");
+        }
+        // Documented subcommands are still routed, not refused: `fix` returns
+        // early with its own message (None), never the unknown-subcommand text.
         assert_eq!(handle_lint("/lint fix"), None);
     }
 
