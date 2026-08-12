@@ -604,7 +604,9 @@ async fn dispatch_session_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Changes => {
-            if commands::wants_summary(ctx.input) {
+            if let Some(msg) = commands::changes_conflict_message(ctx.input) {
+                eprintln!("{msg}");
+            } else if commands::wants_summary(ctx.input) {
                 commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
             } else {
                 commands::handle_changes(ctx.session_changes, ctx.input);

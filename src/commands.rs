@@ -26,8 +26,10 @@ pub(crate) use crate::commands_risk::handle_risk;
 
 // Re-export /retry and /changes handlers extracted to commands_retry.rs
 // (issue #260 slice). Same stability contract as commands_info above.
+pub(crate) use crate::commands_retry::{
+    changes_conflict_message, handle_changes_summary, wants_summary,
+};
 pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
-pub(crate) use crate::commands_retry::{handle_changes_summary, wants_summary};
 
 // Re-export /revisit handler for shelved-issue review.
 pub use crate::commands_revisit::handle_revisit;

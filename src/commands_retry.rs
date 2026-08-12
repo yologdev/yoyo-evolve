@@ -325,12 +325,44 @@ fn wants_diff(input: &str) -> bool {
         .any(|arg| arg == "--diff")
 }
 
-/// Returns `true` if the raw `/changes` input contains the `summary` subcommand.
-pub(crate) fn wants_summary(input: &str) -> bool {
+/// The first non-flag argument of a `/changes` invocation, if any.
+///
+/// Skips the `/changes` token itself and every argument starting with `-`, so
+/// `/changes --diff summary` yields `Some("summary")` and `/changes --diff`
+/// yields `None`.
+fn first_non_flag_arg(input: &str) -> Option<&str> {
     input
         .split_whitespace()
         .skip(1) // skip "/changes" itself
-        .any(|arg| arg == "summary")
+        .find(|arg| !arg.starts_with('-'))
+}
+
+/// Returns `true` if `/changes` was invoked with the `summary` subcommand.
+///
+/// The subcommand is decided by the FIRST non-flag argument, not by any
+/// argument anywhere in the line: `summary` routes to a paid side-agent call,
+/// so `/changes somefile.rs summary` must not spend tokens just because a
+/// later token happens to read `summary`.
+pub(crate) fn wants_summary(input: &str) -> bool {
+    first_non_flag_arg(input) == Some("summary")
+}
+
+/// An honest refusal when `--diff` and `summary` are combined.
+///
+/// The two ask for different things — `--diff` prints the raw diff locally and
+/// for free, `summary` asks a model to describe it — and the summary branch has
+/// no way to honour `--diff`. Rather than silently dropping the flag (and still
+/// spending tokens), we refuse and name both options. Returns `None` when there
+/// is no conflict, so the caller routes as usual.
+pub(crate) fn changes_conflict_message(input: &str) -> Option<String> {
+    if wants_summary(input) && wants_diff(input) {
+        Some(format!(
+            "{DIM}  --diff shows the raw diff, summary asks a model to describe it — pick one: \
+             /changes --diff or /changes summary{RESET}\n"
+        ))
+    } else {
+        None
+    }
 }
 
 /// Collect colorized git diffs for the given file paths.
@@ -579,6 +611,11 @@ mod tests {
         assert!(wants_diff("/changes   --diff"));
         assert!(!wants_diff("/changes --dif"));
         assert!(!wants_diff("/changes --verbose"));
+        // --diff is a flag: position doesn't matter, and it is still seen when
+        // combined with the summary subcommand (which is why they conflict).
+        assert!(wants_diff("/changes summary --diff"));
+        assert!(wants_diff("/changes --diff summary"));
+        assert!(!wants_diff("/changes summary"));
     }
 
     #[test]
@@ -590,6 +627,52 @@ mod tests {
         // summary is a subcommand, not a flag — "summari" shouldn't match
         assert!(!wants_summary("/changes summari"));
         assert!(!wants_summary("/changes --summary"));
+    }
+
+    /// The `summary` subcommand routes to a PAID side-agent call, so it is
+    /// decided by the first non-flag argument only. A token named `summary`
+    /// sitting after a positional argument used to spend money (#743).
+    #[test]
+    fn test_wants_summary_is_positional() {
+        // (input, expected)
+        let cases: &[(&str, bool)] = &[
+            ("/changes summary", true),
+            ("/changes   summary", true),
+            // flags are skipped when looking for the first non-flag arg
+            ("/changes --diff summary", true),
+            // ...but the combination is refused before any model call runs
+            ("/changes somefile.rs summary", false),
+            ("/changes src/main.rs summary --diff", false),
+            ("/changes summary extra", true),
+            ("/changes", false),
+            ("/changes summari", false),
+            ("/changes --summary", false),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                wants_summary(input),
+                *expected,
+                "wants_summary({input:?}) should be {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_changes_diff_and_summary_conflict_is_refused() {
+        // The conflict is named, not silently resolved — and no model call runs.
+        let msg = changes_conflict_message("/changes --diff summary")
+            .expect("--diff + summary should conflict");
+        assert!(msg.contains("--diff"), "message must name --diff: {msg}");
+        assert!(msg.contains("summary"), "message must name summary: {msg}");
+
+        // Order doesn't matter — the flag can trail the subcommand.
+        assert!(changes_conflict_message("/changes summary --diff").is_some());
+
+        // No conflict for either alone, or for a non-summary positional.
+        assert!(changes_conflict_message("/changes").is_none());
+        assert!(changes_conflict_message("/changes --diff").is_none());
+        assert!(changes_conflict_message("/changes summary").is_none());
+        assert!(changes_conflict_message("/changes somefile.rs summary --diff").is_none());
     }
 
     #[test]
