@@ -1,0 +1,212 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code and finding every caller.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_revisit_list\|save…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/commands_rev… ✓ (13ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_revisit_list" src… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_revisit_list" src… ✓ (11ms)
+  ▶ search 'load_revisit_list' in src ✓ (12ms)
+  ▶ read src/commands_revisit.rs:330..490 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "revisit" tests/module_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat Cargo.toml && grep -n "tempf… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 30.5s (8 ✓)
+
+Now the tests, first:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,751p' src/commands_r… ✓ (4ms)
+  ▶ edit src/commands_revisit.rs (6 → 158 lines)
+            let filtered: Vec<RevisitCandidate> =
+                loaded.into_iter().filter(|c| c.number != 99).collect();
+            assert!(filtered.is_empty());
+  +     }
+  + 
+  +     // --- #740: a corrupt revisit file is its own state, not "empty" ---
+  + 
+  +     #[test]
+  +     fn test_parse_revisit_file_valid() {
+  +         let json = r#"[{"number":42,"title":"T","reason":"R","added_day":7}]"#;
+  +         let parsed = parse_revisit_file(json).expect("valid JSON should parse");
+  +         assert_eq!(parsed.len(), 1);
+  +         assert_eq!(parsed[0].number, 42);
+  +         assert_eq!(parsed[0].reason, "R");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_revisit_file_truncated_is_error() {
+  +         // A write interrupted halfway leaves exactly this shape.
+  +         let truncated = r#"[{"number":42,"title":"T","reason":"R","added_"#;
+  ... (137 more lines)
+ ✓ (14.8s)
+            let filtered: Vec<RevisitCandidate> =
+                loaded.into_iter().filter(|c| c.number != 99).collect();
+            assert!(filtered.is_empty());
+  +     }
+  + 
+  +     // --- #740: a corrupt revisit file is its own state, not "empty" ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_revisit.rs (16 → 43 lines)
+  - /// Load revisit candidates from disk.
+  - pub fn load_revisit_list() -> Vec<RevisitCandidate> {
+  -     let path = Path::new(REVISIT_FILE);
+  -     if !path.exists() {
+  -         return Vec::new();
+  + /// Parse the contents of a revisit file.
+  + ///
+  + /// Pure: no I/O, so the three states are testable without touching disk.
+  + /// An empty (or whitespace-only) file is `Ok(vec![])` — a zero-byte file has no
+  + /// surviving entries to lose. Anything else that isn't a valid candidate list is
+  + /// an `Err` carrying the serde message, never a silent empty list (#740).
+  + fn parse_revisit_file(content: &str) -> Result<Vec<RevisitCandidate>, String> {
+  +     if content.trim().is_empty() {
+  +         return Ok(Vec::new());
+        }
+  -     match fs::read_to_string(path) {
+  -         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+  -         Err(_) => Vec::new(),
+  +     serde_json::from_str(content).map_err(|e| e.to_string())
+  + }
+  ... (34 more lines)
+ ✓ (13.7s)
+  - /// Load revisit candidates from disk.
+  - pub fn load_revisit_list() -> Vec<RevisitCandidate> {
+  -     let path = Path::new(REVISIT_FILE);
+  -     if !path.exists() {
+  -         return Vec::new();
+  + /// Parse the contents of a revisit file.
+  + ///
+  + /// Pure: no I/O, so the three states are testable without touching disk.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 8s (3 ✓)
+
+Now the callers — all three branches, path-taking so they're testable:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_revisit.rs (75 → 109 lines)
+  -         "list" => {
+  -             let candidates = load_revisit_list();
+  -             format_revisit_list(&candidates)
+  -         }
+  +         "list" => revisit_list_at(Path::new(REVISIT_FILE)),
+            "add" => {
+                // Parse: add #N reason text
+                let (num_part, reason) = match args.split_once(char::is_whitespace) {
+  ···
+                    return format!(
+                        "{YELLOW}  Please provide a reason: /revisit add #{number} <reason>{RESET}"
+                    );
+  -             }
+  - 
+  -             let mut candidates = load_revisit_list();
+  - 
+  -             // Check for duplicates
+  -             if candidates.iter().any(|c| c.number == number) {
+  -                 return format!("{YELLOW}  Issue #{number} is already on the revisit list.{RESET}");
+                }
+  ... (114 more lines)
+ ✓ (21.3s)
+  -         "list" => {
+  -             let candidates = load_revisit_list();
+  -             format_revisit_list(&candidates)
+  -         }
+  +         "list" => revisit_list_at(Path::new(REVISIT_FILE)),
+            "add" => {
+                // Parse: add #N reason text
+                let (num_part, reason) = match args.split_once(char::is_whitespace) {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_revisit.rs (4 → 4 lines)
+    /// Load revisit candidates from disk (`.yoyo/revisit.json`).
+  - pub fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+  + fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+        load_revisit_list_from(Path::new(REVISIT_FILE))
+    }
+ ✓ (21.3s)
+    /// Load revisit candidates from disk (`.yoyo/revisit.json`).
+  - pub fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+  + fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+        load_revisit_list_from(Path::new(REVISIT_FILE))
+    }
+  2 tools completed in 51.1s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `load_revisit_list` is never used[0m
+  [1m[94m--> [0msrc/commands_revisit.rs:84:4
+   [1m[94m|[0m
+[1m[94m84[0m [1m[94m|[0m fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+   [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,90p' src/commands_rev… ✓ (3ms)
+  ▶ edit src/commands_revisit.rs (6 → 1 lines)
+  - /// Load revisit candidates from disk (`.yoyo/revisit.json`).
+  - fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+  -     load_revisit_list_from(Path::new(REVISIT_FILE))
+  - }
+  - 
+    /// Save revisit candidates to a specific path, creating the directory if needed.
+ ✓ (1m 55s)
+  - /// Load revisit candidates from disk (`.yoyo/revisit.json`).
+  - fn load_revisit_list() -> Result<Vec<RevisitCandidate>, String> {
+  -     load_revisit_list_from(Path::new(REVISIT_FILE))
+  - }
+  - 
+    /// Save revisit candidates to a specific path, creating the directory if needed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 22s (3 ✓)
+
+Clippy green. Now the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 33s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_revisit 2>&1… ✓ (268ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "save_revisit_list\|loa… ✓ (12ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
+  + - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`. Day 165 (#740): the file's three states are kept distinct instead of collapsing into `Vec::new()` — `parse_revisit_file` (pure, `&str` → `Result`) and `load_revisit_list_from(path)` return `Ok(vec![])` only for a **missing** file (and for a zero-byte/whitespace-only one, which has no surviving entries to lose), and `Err(msg)` naming the path for an unreadable or unparseable one. The old `unwrap_or_default()` made a truncated file read as "empty", so `/revisit list` printed `No revisit candidates` and — the reason this mattered — the next `/revisit add` loaded `[]`, pushed one entry, and `fs::write` **destroyed every surviving candidate** under a green `✓ Added #N` line. The write now refuses: `revisit_add_at` / `revisit_remove_at` (path-taking, so tests never touch the real `.yoyo/revisit.json`) return `corrupt_file_message` — what broke, where the file is, and that nothing was changed — **before** reaching `save_revisit_list_to`. Read paths (`scan`, `check`) never load the file. The sibling `/revisit add` defect (placeholder title `(issue #N)`, issue number never verified against GitHub) is **not** fixed here and stays open as #741.
+ ✓ (1m 10s)
+  - - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
+  + - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`. Day 165 (#740): the file's three states are kept distinct instead of collapsing into `Vec::new()` — `parse_revisit_file` (pure, `&str` → `Result`) and `load_revisit_list_from(path)` return `Ok(vec![])` only for a **missing** file (and for a zero-byte/whitespace-only one, which has no surviving entries to lose), and `Err(msg)` naming the path for an unreadable or unparseable one. The old `unwrap_or_default()` made a truncated file read as "empty", so `/revisit list` printed `No revisit candidates` and — the reason this mattered — the next `/revisit add` loaded `[]`, pushed one entry, and `fs::write` **destroyed every surviving candidate** under a green `✓ Added #N` line. The write now refuses: `revisit_add_at` / `revisit_remove_at` (path-taking, so tests never touch the real `.yoyo/revisit.json`) return `corrupt_file_message` — what broke, where the file is, and that nothing was changed — **before** reaching `save_revisit_list_to`. Read paths (`scan`, `check`) never load the file. The sibling `/revisit add` defect (placeholder title `(issue #N)`, issue number never verified against GitHub) is **not** fixed here and stays open as #741.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,670p' docs/src/usage… ✓ (3ms)
+  ▶ edit docs/src/usage/commands.md (1 → 5 lines)
+    Revisit candidates are stored in `.yoyo/revisit.json` and persist across sessions.
+  + If that file is damaged (a truncated write, hand-editing gone wrong), yoyo says so
+  + and names the path instead of reporting an empty list — and `/revisit add` /
+  + `/revisit remove` refuse to write, so the entries still in the file are never
+  + overwritten. Fix or delete the file, then try again.
+ ✓ (1m 10s)
+    Revisit candidates are stored in `.yoyo/revisit.json` and persist across sessions.
+  + If that file is damaged (a truncated write, hand-editing gone wrong), yoyo says so
+  + and names the path instead of reporting an empty list — and `/revisit add` /
+  + `/revisit remove` refuse to write, so the entries still in the file are never
+  + overwritten. Fix or delete the file, then try again.
+  7 tools completed in 5m 31s (7 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_revisit.rs
+
