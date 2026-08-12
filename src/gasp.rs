@@ -1,13 +1,21 @@
-//! GASP recorder wiring — **build layer only** (issue #683, step 1).
+//! GASP recorder wiring (issue #683, steps 1–2).
 //!
-//! What exists here: a default-off `gasp` cargo feature and an env-gated open
-//! of `yoagent::gasp::GaspRecorder`. What does **not** exist yet: any recording.
-//! yoyo's prompt path calls `agent.prompt()`, which owns the event receiver;
-//! feeding the recorder needs `agent.prompt_with_sender(...)` threaded through
-//! that hot path, and that is a later task. So a session with the feature on
-//! and the env set opens a recorder, reports it under `--verbose`, and records
-//! **zero run/tool events**. Do not read this module as instrumentation that
-//! works; read it as the socket instrumentation will later plug into.
+//! What exists here: a default-off `gasp` cargo feature, an env-gated open of
+//! `yoagent::gasp::GaspRecorder`, a process-global holder installed once at
+//! startup, and two tee helpers that route a prompt through
+//! `Agent::prompt_with_sender` so run/tool events are actually recorded. All
+//! four agent-start call sites in `src/prompt.rs` go through those helpers.
+//!
+//! Redaction is not optional here: recorded summaries land in a *shareable*
+//! git repo, so the recorder is opened with `with_summarizer(redact_secrets)`
+//! and every persisted tool-arg/output summary passes through it first.
+//!
+//! Two things that remain true and should not be overstated:
+//! * CI does not build `--features gasp`, so nothing in this module (including
+//!   `redact_secrets` and its tests) is exercised by the default test run —
+//!   `cargo test --features gasp` has to be run by hand.
+//! * Recording failures are logged by yoagent via `tracing` and the event
+//!   stream keeps flowing; yoyo's UI does not surface them.
 //!
 //! Everything is behind `#[cfg(feature = "gasp")]` (the whole module is
 //! declared under that cfg in `main.rs`), so a plain `cargo build` / `cargo
@@ -15,8 +23,12 @@
 //! `yoagent-state`.
 
 use std::path::PathBuf;
+use std::sync::{LazyLock, OnceLock};
 
+use regex::Regex;
+use tokio::sync::mpsc;
 use yoagent::gasp::{GaspRecorder, GoalId, GoalRef};
+use yoagent::{Agent, AgentEvent, AgentMessage, Content, Message};
 
 /// Env var naming the GASP agent-repo root to record into.
 pub(crate) const STATE_DIR_ENV: &str = "YOYO_GASP_STATE_DIR";
