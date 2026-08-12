@@ -30,6 +30,10 @@ use tokio::sync::mpsc;
 use yoagent::gasp::{GaspRecorder, GoalId, GoalRef};
 use yoagent::{Agent, AgentEvent, AgentMessage, Content, Message};
 
+/// Longest task label we stamp onto a recorded run. Display-only: the label is
+/// a human handle for the run, not the run's content.
+const TASK_LABEL_MAX_BYTES: usize = 120;
+
 /// Env var naming the GASP agent-repo root to record into.
 pub(crate) const STATE_DIR_ENV: &str = "YOYO_GASP_STATE_DIR";
 /// Env var naming the existing goal id runs are chained to.
@@ -103,7 +107,9 @@ pub(crate) async fn open_recorder(plan: RecorderPlan) -> Option<GaspRecorder> {
     )
     .await
     {
-        Ok(recorder) => Some(recorder),
+        // Redaction is applied at open, not at each call site, so there is no
+        // path that persists a summary without passing through it.
+        Ok(recorder) => Some(recorder.with_summarizer(redact_secrets)),
         Err(e) => {
             eprintln!(
                 "gasp: recording disabled — opening store at {} failed: {e}",
@@ -119,6 +125,137 @@ pub(crate) async fn open_recorder_from_env() -> Option<GaspRecorder> {
     let root = std::env::var(STATE_DIR_ENV).ok();
     let goal = std::env::var(GOAL_ID_ENV).ok();
     open_recorder(plan_from_env_values(root.as_deref(), goal.as_deref())).await
+}
+
+// ---------------------------------------------------------------------------
+// Process-global holder
+// ---------------------------------------------------------------------------
+
+/// The recorder installed at startup, if any. `OnceLock` because a session
+/// opens at most one store: a second install is a bug, not a reconfiguration,
+/// so it is ignored rather than silently swapping the store mid-session.
+static RECORDER: OnceLock<GaspRecorder> = OnceLock::new();
+
+/// Install the process recorder. Called once, from `main`, after a successful
+/// open. A second call is a no-op.
+pub(crate) fn install(recorder: GaspRecorder) {
+    let _ = RECORDER.set(recorder);
+}
+
+/// The installed recorder, or `None` when recording was never enabled — which
+/// is the normal case on every machine that isn't the evolve runner.
+fn recorder() -> Option<&'static GaspRecorder> {
+    RECORDER.get()
+}
+
+/// A short, human-readable handle for a run, derived from the prompt.
+///
+/// Char-boundary safe via `format::safe_truncate` — never byte-indexed.
+fn task_label(input: &str) -> String {
+    let flat = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::format::safe_truncate(&flat, TASK_LABEL_MAX_BYTES).to_string()
+}
+
+/// Best-effort text of a prompt built from messages, for the task label only.
+/// Non-text content (images, tool calls) contributes nothing.
+fn messages_label(messages: &[AgentMessage]) -> String {
+    let mut out = String::new();
+    for msg in messages {
+        if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+            for c in content {
+                if let Content::Text { text } = c {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(text);
+                }
+            }
+        }
+    }
+    task_label(&out)
+}
+
+/// Start a text prompt through the recorder, returning the *forwarded* event
+/// stream so the caller sees exactly what it would have seen from
+/// `agent.prompt`.
+///
+/// Returns `None` when no recorder is installed — the caller then falls back to
+/// the plain `agent.prompt` path.
+///
+/// The recording `JoinHandle` is deliberately dropped (detached): the recording
+/// task ends when yoagent drops the sender at loop end, and yoagent already
+/// logs recording failures via `tracing` while continuing to forward events. A
+/// recorder failure must never break the session, so there is nothing here to
+/// await or propagate.
+pub(crate) async fn tee_prompt(
+    agent: &mut Agent,
+    input: String,
+) -> Option<mpsc::UnboundedReceiver<AgentEvent>> {
+    let recorder = recorder()?;
+    let (forward_tx, forward_rx) = mpsc::unbounded_channel();
+    let (tx, _handle) = recorder.recording_sender(task_label(&input), Some(forward_tx));
+    agent.prompt_with_sender(input, tx).await;
+    Some(forward_rx)
+}
+
+/// Messages sibling of [`tee_prompt`] — same contract, same detached handle.
+pub(crate) async fn tee_prompt_messages(
+    agent: &mut Agent,
+    messages: Vec<AgentMessage>,
+) -> Option<mpsc::UnboundedReceiver<AgentEvent>> {
+    let recorder = recorder()?;
+    let (forward_tx, forward_rx) = mpsc::unbounded_channel();
+    let (tx, _handle) = recorder.recording_sender(messages_label(&messages), Some(forward_tx));
+    agent.prompt_messages_with_sender(messages, tx).await;
+    Some(forward_rx)
+}
+
+// ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
+/// What a masked credential is replaced with.
+const REDACTED: &str = "[redacted]";
+
+/// Credential shapes we mask before anything is persisted.
+///
+/// Deliberately small and obvious rather than exhaustive: this catches the
+/// common provider/CI key shapes yoyo actually handles. It is a mask, not a
+/// guarantee — a novel secret shape will pass through, which is why the module
+/// docs say what this does and does not cover.
+static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    [
+        // Anthropic / OpenAI style: sk-..., sk-ant-...
+        r"\bsk-[A-Za-z0-9_-]{8,}",
+        // GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
+        r"\bgh[pousr]_[A-Za-z0-9]{8,}",
+        r"\bgithub_pat_[A-Za-z0-9_]{8,}",
+        // AWS access key ids.
+        r"\bAKIA[A-Z0-9]{12,}",
+        // KEY=/TOKEN=/SECRET=/PASSWORD= style assignments (also `: value`).
+        r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*[=:]\s*[^\s'\x22]+",
+    ]
+    .iter()
+    .filter_map(|p| Regex::new(p).ok())
+    .collect()
+});
+
+/// Mask common credential shapes. Pure; safe on any UTF-8 input (regex crate
+/// operates on chars, never raw byte offsets we choose ourselves).
+pub(crate) fn redact_secrets(s: &str) -> String {
+    let mut out = s.to_string();
+    for (i, re) in SECRET_PATTERNS.iter().enumerate() {
+        // The assignment pattern is last: keep the variable name, mask only the
+        // value, so a redacted log still says *which* credential appeared.
+        let is_assignment = i + 1 == SECRET_PATTERNS.len();
+        out = if is_assignment {
+            re.replace_all(&out, format!("${{1}}={REDACTED}").as_str())
+                .into_owned()
+        } else {
+            re.replace_all(&out, REDACTED).into_owned()
+        };
+    }
+    out
 }
 
 #[cfg(test)]
@@ -187,5 +324,99 @@ mod tests {
     #[tokio::test]
     async fn disabled_plan_opens_nothing() {
         assert!(open_recorder(RecorderPlan::Disabled).await.is_none());
+    }
+
+    #[test]
+    fn redact_secrets_masks_known_shapes_and_leaves_innocent_text_alone() {
+        // (input, must_not_contain, must_contain)
+        let cases: &[(&str, Option<&str>, &str)] = &[
+            (
+                "export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop",
+                Some("abcdefghijklmnop"),
+                REDACTED,
+            ),
+            (
+                "token is ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123",
+                Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"),
+                REDACTED,
+            ),
+            (
+                "github_pat_11ABCDEFG0abcdefghij_KLMNOP",
+                Some("11ABCDEFG0abcdefghij"),
+                REDACTED,
+            ),
+            ("AKIAIOSFODNN7EXAMPLE", Some("IOSFODNN7EXAMPLE"), REDACTED),
+            (
+                "GITHUB_TOKEN=abc123def456",
+                Some("abc123def456"),
+                "GITHUB_TOKEN=[redacted]",
+            ),
+            (
+                "password: hunter2hunter2",
+                Some("hunter2hunter2"),
+                REDACTED,
+            ),
+            // NEGATIVE: an innocent sentence must pass through byte-identical.
+            (
+                "the sky is blue and cargo test passed in 0.42s",
+                None,
+                "the sky is blue and cargo test passed in 0.42s",
+            ),
+            // NEGATIVE + multi-byte: emoji/CJK must survive untouched.
+            (
+                "✓ 通过 — no secrets here, just a ✨ summary",
+                None,
+                "✓ 通过 — no secrets here, just a ✨ summary",
+            ),
+        ];
+
+        for (input, forbidden, expected_substr) in cases {
+            let out = redact_secrets(input);
+            if let Some(f) = forbidden {
+                assert!(!out.contains(f), "{input:?} leaked {f:?} -> {out:?}");
+            } else {
+                assert_eq!(&out, input, "innocent input must pass through unchanged");
+            }
+            assert!(
+                out.contains(expected_substr),
+                "{input:?} -> {out:?} missing {expected_substr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn redact_secrets_keeps_multibyte_text_around_a_masked_secret() {
+        let out = redact_secrets("キー sk-ant-abcdefgh1234 ✓ done");
+        assert!(out.contains("キー"), "prefix preserved: {out:?}");
+        assert!(out.contains("✓ done"), "suffix preserved: {out:?}");
+        assert!(!out.contains("abcdefgh1234"), "secret masked: {out:?}");
+    }
+
+    #[test]
+    fn task_label_truncates_on_a_char_boundary() {
+        let long = "✓".repeat(500);
+        let label = task_label(&long);
+        assert!(label.len() <= TASK_LABEL_MAX_BYTES);
+        // Would have panicked already if a byte index split the multi-byte char.
+        assert!(label.chars().all(|c| c == '✓'));
+        assert_eq!(task_label("  hello   world \n"), "hello world");
+    }
+
+    #[test]
+    fn messages_label_reads_user_text_only() {
+        let messages = vec![AgentMessage::Llm(Message::User {
+            content: vec![
+                Content::Image {
+                    data: "ignored".into(),
+                    mime_type: "image/png".into(),
+                },
+                Content::Text {
+                    text: "fix the parser".into(),
+                },
+            ],
+            timestamp: 0,
+        })];
+        assert_eq!(messages_label(&messages), "fix the parser");
+        assert_eq!(messages_label(&[]), "");
     }
 }
