@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2400,2480p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2590,2660p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let snapshot" src/comma… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2528,2545p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn auto_validate_after_… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 29.9s (7 ✓)
+
+Now the two commands_risk.rs call sites:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2660,2680p src/commands_r… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 2 lines)
+  -             None, // red-path event — the green dedup key does not apply
+  +             Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
+                Some(run.run_id),
+ ✓ (1m 35s)
+  -             None, // red-path event — the green dedup key does not apply
+  +             Some(&snapshot.git_hash), // the snapshot this event graded — auditability (#723), not a dedup key
+                Some(run.run_id),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 3 lines)
+                None, // CLI manual grading — untagged severity
+  -             None, // red-path event — no green dedup key
+  +             (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
+                None, // not a CI-harvest event
+ ✓ (1m 34s)
+                None, // CLI manual grading — untagged severity
+  -             None, // red-path event — no green dedup key
+  +             (git_hash != "unknown").then_some(git_hash.as_str()), // graded snapshot — auditability (#723); sentinel stays absent
+                None, // not a CI-harvest event
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk.rs ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 22s (5 ✓)
+
+Now the two tests in commands_risk_snapshots.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green_event_exists_for\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1880,1951p src/commands_r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_validate_after_fai… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1340p src/commands_r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.9s (4 ✓)
+
+Now add the two tests, compactly:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (8 → 62 lines)
+            assert!(
+                stats.failure_hit_rate_pct.is_some(),
+                "harvested CI failures are exactly the failure-day evidence the meter was starving for"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_green_dedup_ignores_red_event_with_same_snapshot_hash() {
+  +         // #723: failure-day events now also carry `snapshot_git_hash` (for
+  +         // auditability). The green dedup must therefore key on the SEVERITY
+  +         // marker, not the hash alone — otherwise a red event would silently
+  +         // suppress the legitimate green grade of the same snapshot.
+  +         let red = concat!(
+  +             r#"{"ts":"2026-08-12T00:00:00Z","day":165,"trigger":"ci_harvest","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"ci_failure","snapshot_git_hash":"deadbee"}"#,
+  +             "\n",
+  +             r#"{"ts":"2026-08-12T01:00:00Z","day":165,"trigger":"cli","hits":[],"surprises":["src/b.rs"],"accuracy_pct":0.0,"snapshot_git_hash":"deadbee"}"#,
+  +             "\n"
+  +         );
+  +         assert!(
+  +             !green_event_exists_for(red, "deadbee"),
+  ... (40 more lines)
+ ✓ (1m 37s)
+            assert!(
+                stats.failure_hit_rate_pct.is_some(),
+                "harvested CI failures are exactly the failure-day evidence the meter was starving for"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_green_dedup_ignores_red_event_with_same_snapshot_hash() {
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4782 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ......
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1946,2005p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.8s (3 ✓)
+
+Now CLAUDE.md docs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_validate_after_fai… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_risk_snap… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 51s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…

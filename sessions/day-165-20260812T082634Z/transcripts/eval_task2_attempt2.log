@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the key claims in the diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn is_green_… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2400,2480p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_hash" src/commands_… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2530,2545p' src/commands… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --lib com… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --lib com… ✓ (144ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo test commands_… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo test commands_… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head ✓ (6ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 49s (11 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Key evidence:
+• Hazard handled first: green_event_exists_for gained a .filter(is_green_json_event), and that predicate delegates to commands_risk_accuracy::is_green_event (severity == "watch_success") instead of re-typing the marker. A new test pins that a red/untagged event carrying the same hash does not dedup a green grade.
+• Three call sites verified in-scope, not assumed: snapshot.git_hash (CI harvest), last.git_hash (auto_validate_after_failure_to), and in handle_risk_validate the parsed git_hash guarded by `(git_hash != "unknown").then_some(...) — correct, since line 2536 uses unwrap_or("unknown")`, so the sentinel stays absent rather than being stamped as a fake hash.
+• Size gate respected: `commands_risk.rs is still exactly 5350 (its recorded ceiling — net-zero, modifications only); commands_risk_snapshots.rs` is 1998 against the 2000 cap. No ceiling was raised.
+• No back-fill; working tree clean (no ledger churn from the change).
+• `cargo test commands_risk_snapshots::tests` → 52 passed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

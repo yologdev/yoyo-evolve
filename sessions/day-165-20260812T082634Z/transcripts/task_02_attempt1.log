@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the hazard site — green_event_exists_for — before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk*.rs && g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,240p src/commands_ris… ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Hazard confirmed: green_event_exists_for matches on hash alone. Must guard before stamping.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,335p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ci_event_exists_for" -A… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_green_event" -B 1…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2440,2480p src/commands_r… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 670,700p src/commands_ris… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2380,2410p src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ValidationEvent"… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 35.1s (7 ✓)
+
+Hazard confirmed. Fixing the guard first, delegating the severity test to the authoritative predicate rather than re-typing the marker.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 326,340p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 320,329p src/commands_ris… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 6 lines)
+  - /// Return true if a validation event referencing this snapshot's git hash
+  - /// already exists in the validations JSONL content. Only green-outcome events
+  - /// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+  + /// Return true if a **green** validation event referencing this snapshot's git
+  + /// hash already exists in the validations JSONL content. Since Day 165 (#723)
+  + /// failure-day events carry `snapshot_git_hash` too — for *auditability*, not
+  + /// as a dedup key — so the severity filter below is load-bearing: without it a
+  + /// red event would silently suppress a legitimate green grade for the same
+  + /// snapshot. This is exactly the "was this snapshot
+ ✓ (1m 34s)
+  - /// Return true if a validation event referencing this snapshot's git hash
+  - /// already exists in the validations JSONL content. Only green-outcome events
+  - /// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+  + /// Return true if a **green** validation event referencing this snapshot's git
+  + /// hash already exists in the validations JSONL content. Since Day 165 (#723)
+  + /// failure-day events carry `snapshot_git_hash` too — for *auditability*, not
+  + /// as a dedup key — so the severity filter below is load-bearing: without it a
+  + /// red event would silently suppress a legitimate green grade for the same
+  + /// snapshot. This is exactly the "was this snapshot
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 23 lines)
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+  +         .filter(is_green_json_event)
+            .any(|v| v.get("snapshot_git_hash").and_then(|h| h.as_str()) == Some(snapshot_git_hash))
+  + }
+  + 
+  + /// Green-day predicate over a raw JSONL value. Delegates the severity test to
+  + /// `commands_risk_accuracy::is_green_event` — the authoritative definition —
+  + /// instead of re-typing the marker string here (Day 140: never hand-copy a
+  + /// predicate the code already owns). Only `severity` is read, so the other
+  + /// fields are filler.
+  + fn is_green_json_event(v: &serde_json::Value) -> bool {
+  +     crate::commands_risk_accuracy::is_green_event(&ValidationEvent {
+  +         day: 0,
+  +         hit_count: 0,
+  +         total_changed: 0,
+  +         accuracy_pct: 0.0,
+  +         emerging_accuracy_pct: None,
+  +         severity: v
+  +             .get("severity")
+  +             .and_then(|s| s.as_str())
+  ... (3 more lines)
+ ✓ (1m 34s)
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+  +         .filter(is_green_json_event)
+            .any(|v| v.get("snapshot_git_hash").and_then(|h| h.as_str()) == Some(snapshot_git_hash))
+  + }
+  + 
+  + /// Green-day predicate over a raw JSONL value. Delegates the severity test to
+  + /// `commands_risk_accuracy::is_green_event` — the authoritative definition —
+  + /// instead of re-typing the marker string here (Day 140: never hand-copy a
+  ... (13 more lines)
+  4 tools completed in 3m 22s (4 ✓)
+
+Now the writer's now-false comment, and the three call sites.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 5 lines)
+  -     // Snapshot hash is optional — only green-outcome events carry it (it's
+  -     // the dedup key for "grade each snapshot at most once").
+  +     // Snapshot hash is optional. Green events use it as their dedup key
+  +     // ("grade each snapshot at most once"); failure-day events carry it purely
+  +     // for auditability (#723) — so recall can be traced back to the exact
+  +     // prediction list it graded instead of paired by timestamp guess.
+        if let Some(hash) = snapshot_git_hash {
+ ✓ (1m 34s)
+  -     // Snapshot hash is optional — only green-outcome events carry it (it's
+  -     // the dedup key for "grade each snapshot at most once").
+  +     // Snapshot hash is optional. Green events use it as their dedup key
+  +     // ("grade each snapshot at most once"); failure-day events carry it purely
+  +     // for auditability (#723) — so recall can be traced back to the exact
+  +     // prediction list it graded instead of paired by timestamp guess.
+        if let Some(hash) = snapshot_git_hash {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (3 → 3 lines)
+            Some(severity),
+  -         None, // not a green-grade event — no snapshot dedup key
+  -         None, // not a CI-harvested event — no run id
+  +         Some(&last.git_hash), // the snapshot this event graded — auditability, not a dedup key
+  +         None,                 // not a CI-harvested event — no run id
+ ✓ (1m 34s)
+            Some(severity),
+  -         None, // not a green-grade event — no snapshot dedup key
+  -         None, // not a CI-harvested event — no run id
+  +         Some(&last.git_hash), // the snapshot this event graded — auditability, not a dedup key
+  +         None,                 // not a CI-harvested event — no run id
+  2 tools completed in 3m 12s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
