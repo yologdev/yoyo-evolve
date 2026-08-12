@@ -1818,3 +1818,18 @@ mod tests {
         assert!(output_str.contains("eu-west-1"));
     }
 }
+
+#[cfg(test)]
+mod scratch_probe {
+    use super::*;
+    use std::io::Cursor;
+    #[test]
+    fn probe_half_credentials() {
+        let input = "12\nAKIATEST123\n\n\n\nn\n";
+        let mut reader = Cursor::new(input.as_bytes());
+        let mut out = Vec::new();
+        let r = run_wizard_interactive(&mut reader, &mut out);
+        eprintln!("RESULT: {r:?}");
+        eprintln!("OUT: {}", String::from_utf8_lossy(&out));
+    }
+}
