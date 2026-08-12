@@ -669,6 +669,19 @@ async fn main() {
 
     apply_cli_flags(&args);
 
+    // Near-miss guard on the bare-word path: `yoyo tokens` / `yoyo statsu` used to
+    // fall through to the single-prompt path and be answered by the model — a paid
+    // API call with write-capable tools attached, for a typo. This runs before any
+    // agent is built and spends zero tokens. It fires only on `yoyo <single-word>`
+    // where the word is a near miss; anything else (including a single word that
+    // resembles nothing) still becomes a prompt.
+    if let Some(word) = dispatch_sub::bare_word_arg(&args) {
+        if let Some(msg) = dispatch_sub::bare_word_near_miss(word) {
+            eprintln!("{msg}");
+            std::process::exit(2);
+        }
+    }
+
     let Some(config) = parse_args(&args) else {
         return; // --help or --version was handled
     };
