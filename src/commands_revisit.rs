@@ -48,21 +48,40 @@ pub struct ClosedIssue {
     pub closed_at: String,
 }
 
-/// Load revisit candidates from disk.
-pub fn load_revisit_list() -> Vec<RevisitCandidate> {
-    let path = Path::new(REVISIT_FILE);
-    if !path.exists() {
-        return Vec::new();
+/// Parse the contents of a revisit file.
+///
+/// Pure: no I/O, so the three states are testable without touching disk.
+/// An empty (or whitespace-only) file is `Ok(vec![])` — a zero-byte file has no
+/// surviving entries to lose. Anything else that isn't a valid candidate list is
+/// an `Err` carrying the serde message, never a silent empty list (#740).
+fn parse_revisit_file(content: &str) -> Result<Vec<RevisitCandidate>, String> {
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
     }
-    match fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+    serde_json::from_str(content).map_err(|e| e.to_string())
 }
 
-/// Save revisit candidates to disk, creating the directory if needed.
-fn save_revisit_list(candidates: &[RevisitCandidate]) -> Result<(), String> {
-    let path = Path::new(REVISIT_FILE);
+/// Load revisit candidates from a specific path.
+///
+/// Three distinct states, kept distinct: a missing file is `Ok(vec![])`
+/// (genuinely empty is not an error), while an unreadable or unparseable file is
+/// an `Err` naming the path and what went wrong. Callers that write must refuse
+/// to write on `Err` — the old `unwrap_or_default()` turned a damaged file into
+/// an empty list, and the next `/revisit add` overwrote every surviving entry
+/// under a green success message (#740).
+fn load_revisit_list_from(path: &Path) -> Result<Vec<RevisitCandidate>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let display = path.display();
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Could not read revisit file {display}: {e}"))?;
+    parse_revisit_file(&content)
+        .map_err(|e| format!("Revisit file {display} is not valid revisit JSON: {e}"))
+}
+
+/// Save revisit candidates to a specific path, creating the directory if needed.
+fn save_revisit_list_to(path: &Path, candidates: &[RevisitCandidate]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
@@ -371,10 +390,7 @@ pub fn handle_revisit(input: &str) -> String {
                 Err(e) => format!("{RED}  Error: {e}{RESET}"),
             }
         }
-        "list" => {
-            let candidates = load_revisit_list();
-            format_revisit_list(&candidates)
-        }
+        "list" => revisit_list_at(Path::new(REVISIT_FILE)),
         "add" => {
             // Parse: add #N reason text
             let (num_part, reason) = match args.split_once(char::is_whitespace) {
@@ -395,27 +411,7 @@ pub fn handle_revisit(input: &str) -> String {
                 );
             }
 
-            let mut candidates = load_revisit_list();
-
-            // Check for duplicates
-            if candidates.iter().any(|c| c.number == number) {
-                return format!("{YELLOW}  Issue #{number} is already on the revisit list.{RESET}");
-            }
-
-            candidates.push(RevisitCandidate {
-                number,
-                title: format!("(issue #{number})"),
-                reason: reason.to_string(),
-                added_day: current_day(),
-            });
-
-            match save_revisit_list(&candidates) {
-                Ok(()) => format!(
-                    "{GREEN}  ✓ Added #{number} to revisit list.{RESET}\n  \
-                     {DIM}Reason: {reason}{RESET}"
-                ),
-                Err(e) => format!("{RED}  Error saving: {e}{RESET}"),
-            }
+            revisit_add_at(Path::new(REVISIT_FILE), number, reason, current_day())
         }
         "remove" => {
             let Some(number) = parse_issue_number(args) else {
@@ -425,18 +421,7 @@ pub fn handle_revisit(input: &str) -> String {
                 );
             };
 
-            let mut candidates = load_revisit_list();
-            let before = candidates.len();
-            candidates.retain(|c| c.number != number);
-
-            if candidates.len() == before {
-                return format!("{YELLOW}  Issue #{number} was not on the revisit list.{RESET}");
-            }
-
-            match save_revisit_list(&candidates) {
-                Ok(()) => format!("{GREEN}  ✓ Removed #{number} from revisit list.{RESET}"),
-                Err(e) => format!("{RED}  Error saving: {e}{RESET}"),
-            }
+            revisit_remove_at(Path::new(REVISIT_FILE), number)
         }
         _ => {
             format!(
@@ -444,6 +429,74 @@ pub fn handle_revisit(input: &str) -> String {
                  Usage: /revisit [scan | check #N | list | add #N <reason> | remove #N]"
             )
         }
+    }
+}
+
+/// Render a damaged revisit file honestly: what broke, where it lives, and what
+/// the user can do about it. Never the `No revisit candidates` line — a corrupt
+/// file and an empty one are different facts (#740).
+fn corrupt_file_message(err: &str, path: &Path) -> String {
+    let display = path.display();
+    format!(
+        "{RED}  Error: {err}{RESET}\n  \
+         {DIM}Nothing was changed. Inspect {display} and fix or delete it, \
+         then try again.{RESET}"
+    )
+}
+
+/// `/revisit list` against a specific file.
+fn revisit_list_at(path: &Path) -> String {
+    match load_revisit_list_from(path) {
+        Ok(candidates) => format_revisit_list(&candidates),
+        Err(e) => corrupt_file_message(&e, path),
+    }
+}
+
+/// `/revisit add` against a specific file. Refuses to write when the existing
+/// file can't be read — overwriting it would destroy every surviving entry.
+fn revisit_add_at(path: &Path, number: u64, reason: &str, day: u64) -> String {
+    let mut candidates = match load_revisit_list_from(path) {
+        Ok(c) => c,
+        Err(e) => return corrupt_file_message(&e, path),
+    };
+
+    // Check for duplicates
+    if candidates.iter().any(|c| c.number == number) {
+        return format!("{YELLOW}  Issue #{number} is already on the revisit list.{RESET}");
+    }
+
+    candidates.push(RevisitCandidate {
+        number,
+        title: format!("(issue #{number})"),
+        reason: reason.to_string(),
+        added_day: day,
+    });
+
+    match save_revisit_list_to(path, &candidates) {
+        Ok(()) => format!(
+            "{GREEN}  ✓ Added #{number} to revisit list.{RESET}\n  \
+             {DIM}Reason: {reason}{RESET}"
+        ),
+        Err(e) => format!("{RED}  Error saving: {e}{RESET}"),
+    }
+}
+
+/// `/revisit remove` against a specific file. Same refusal as `add`.
+fn revisit_remove_at(path: &Path, number: u64) -> String {
+    let mut candidates = match load_revisit_list_from(path) {
+        Ok(c) => c,
+        Err(e) => return corrupt_file_message(&e, path),
+    };
+    let before = candidates.len();
+    candidates.retain(|c| c.number != number);
+
+    if candidates.len() == before {
+        return format!("{YELLOW}  Issue #{number} was not on the revisit list.{RESET}");
+    }
+
+    match save_revisit_list_to(path, &candidates) {
+        Ok(()) => format!("{GREEN}  ✓ Removed #{number} from revisit list.{RESET}"),
+        Err(e) => format!("{RED}  Error saving: {e}{RESET}"),
     }
 }
 
@@ -747,5 +800,158 @@ mod tests {
         let filtered: Vec<RevisitCandidate> =
             loaded.into_iter().filter(|c| c.number != 99).collect();
         assert!(filtered.is_empty());
+    }
+
+    // --- #740: a corrupt revisit file is its own state, not "empty" ---
+
+    #[test]
+    fn test_parse_revisit_file_valid() {
+        let json = r#"[{"number":42,"title":"T","reason":"R","added_day":7}]"#;
+        let parsed = parse_revisit_file(json).expect("valid JSON should parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].number, 42);
+        assert_eq!(parsed[0].reason, "R");
+    }
+
+    #[test]
+    fn test_parse_revisit_file_truncated_is_error() {
+        // A write interrupted halfway leaves exactly this shape.
+        let truncated = r#"[{"number":42,"title":"T","reason":"R","added_"#;
+        let err =
+            parse_revisit_file(truncated).expect_err("truncated JSON must not parse as empty");
+        assert!(
+            !err.is_empty(),
+            "the error must carry the serde message, got an empty string"
+        );
+    }
+
+    #[test]
+    fn test_parse_revisit_file_wrong_shape_is_error() {
+        // Valid JSON, wrong type — still not an empty list.
+        assert!(parse_revisit_file("{\"number\": 1}").is_err());
+        assert!(parse_revisit_file("not json at all").is_err());
+    }
+
+    #[test]
+    fn test_parse_revisit_file_empty_content_is_ok_empty() {
+        // A zero-byte file has no surviving entries to destroy, so it is
+        // genuinely empty rather than corrupt.
+        assert_eq!(parse_revisit_file("").unwrap(), Vec::new());
+        assert_eq!(parse_revisit_file("   \n\t ").unwrap(), Vec::new());
+        assert_eq!(parse_revisit_file("[]").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn test_load_revisit_list_from_missing_file_is_ok_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope").join("revisit.json");
+        assert_eq!(load_revisit_list_from(&path).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn test_load_revisit_list_from_corrupt_file_names_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        std::fs::write(&path, r#"[{"number":1,"title":"T","re"#).unwrap();
+        let err = load_revisit_list_from(&path).expect_err("corrupt file must be an error");
+        assert!(
+            err.contains(&path.display().to_string()),
+            "error should name the file so the user can inspect it: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_revisit_list_from_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        let candidates = vec![RevisitCandidate {
+            number: 7,
+            title: "T".to_string(),
+            reason: "R".to_string(),
+            added_day: 1,
+        }];
+        std::fs::write(&path, serde_json::to_string_pretty(&candidates).unwrap()).unwrap();
+        assert_eq!(load_revisit_list_from(&path).unwrap(), candidates);
+    }
+
+    #[test]
+    fn test_add_refuses_to_write_over_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        let corrupt = r#"[{"number":1,"title":"T","reason":"R","added_day":1},{"num"#;
+        std::fs::write(&path, corrupt).unwrap();
+
+        let out = revisit_add_at(&path, 42, "now feasible", 165);
+        assert!(
+            !out.contains("✓ Added"),
+            "must not report success over a damaged file: {out}"
+        );
+        assert!(out.contains("Error") || out.contains("refus"), "{out}");
+        // The bytes on disk are untouched — this is the whole point of #740.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn test_add_still_works_on_a_healthy_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        std::fs::write(&path, "[]").unwrap();
+
+        let out = revisit_add_at(&path, 42, "now feasible", 165);
+        assert!(out.contains("✓ Added"), "{out}");
+        let loaded = load_revisit_list_from(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].number, 42);
+        assert_eq!(loaded[0].added_day, 165);
+
+        // Duplicate add is still refused.
+        let dup = revisit_add_at(&path, 42, "again", 165);
+        assert!(dup.contains("already on the revisit list"), "{dup}");
+    }
+
+    #[test]
+    fn test_remove_refuses_to_write_over_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        let corrupt = "[{\"number\": 1, ";
+        std::fs::write(&path, corrupt).unwrap();
+
+        let out = revisit_remove_at(&path, 1);
+        assert!(!out.contains("✓ Removed"), "{out}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn test_remove_still_works_on_a_healthy_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        let candidates = vec![RevisitCandidate {
+            number: 5,
+            title: "T".to_string(),
+            reason: "R".to_string(),
+            added_day: 1,
+        }];
+        std::fs::write(&path, serde_json::to_string_pretty(&candidates).unwrap()).unwrap();
+
+        let out = revisit_remove_at(&path, 5);
+        assert!(out.contains("✓ Removed"), "{out}");
+        assert!(load_revisit_list_from(&path).unwrap().is_empty());
+
+        let missing = revisit_remove_at(&path, 5);
+        assert!(missing.contains("was not on the revisit list"), "{missing}");
+    }
+
+    #[test]
+    fn test_list_reports_corruption_instead_of_no_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        std::fs::write(&path, "{oops").unwrap();
+
+        let out = revisit_list_at(&path);
+        assert!(
+            !out.contains("No revisit candidates"),
+            "a corrupt file must not read as an empty list: {out}"
+        );
+        assert!(out.contains(&path.display().to_string()), "{out}");
     }
 }

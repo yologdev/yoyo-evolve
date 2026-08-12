@@ -653,6 +653,10 @@ degrades gracefully to the "insufficient data" verdict — no setup required.
 The `/revisit` command helps review closed or shelved GitHub issues that may now be feasible given new capabilities. Issues with labels like `wontfix`, `deferred`, or `too-complex` are highlighted as shelved candidates.
 
 Revisit candidates are stored in `.yoyo/revisit.json` and persist across sessions.
+If that file is damaged (a truncated write, hand-editing gone wrong), yoyo says so
+and names the path instead of reporting an empty list — and `/revisit add` /
+`/revisit remove` refuse to write, so the entries still in the file are never
+overwritten. Fix or delete the file, then try again.
 
 ```
 /revisit                    # scan recently closed issues
