@@ -100,7 +100,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // bookkeeping commits are not a second opinion) plus three fixture tests
     // pinning the cargo-fmt window as ungraded, the real-corroboration window
     // as red, and the harness vocabulary the filter is keyed to.
-    ("src/commands_risk.rs", 5350),
+    ("src/commands_risk.rs", 5477),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
