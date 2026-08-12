@@ -1948,4 +1948,51 @@ mod tests {
             "harvested CI failures are exactly the failure-day evidence the meter was starving for"
         );
     }
+
+    #[test]
+    fn test_green_dedup_ignores_red_event_with_same_snapshot_hash() {
+        // #723: failure-day events now carry `snapshot_git_hash` too (for
+        // auditability), so green dedup must key on the SEVERITY marker — else a
+        // red event would silently suppress the same snapshot's green grade.
+        let red = concat!(
+            r#"{"ts":"2026-08-12T00:00:00Z","day":165,"trigger":"ci_harvest","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"ci_failure","snapshot_git_hash":"deadbee"}"#,
+            "\n",
+            r#"{"ts":"2026-08-12T01:00:00Z","day":165,"trigger":"cli","hits":[],"surprises":["src/b.rs"],"accuracy_pct":0.0,"snapshot_git_hash":"deadbee"}"#,
+            "\n"
+        );
+        assert!(
+            !green_event_exists_for(red, "deadbee"),
+            "red/untagged events carrying the hash must not count as a green grade"
+        );
+        let green = format!(
+            "{red}{}\n",
+            r#"{"severity":"watch_success","snapshot_git_hash":"deadbee"}"#
+        );
+        assert!(
+            green_event_exists_for(&green, "deadbee"),
+            "a real green event still dedups"
+        );
+    }
+
+    #[test]
+    fn test_failure_event_records_graded_snapshot_hash() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+        let snapshot = serde_json::json!({
+            "ts": "2026-08-12T00:00:00Z", "day": 165, "git_hash": "feedfac",
+            "top_10": [{"path": "src/main.rs", "score": 0.9, "signals": ["churn"]}],
+        });
+        std::fs::write(&snap_path, serde_json::to_string(&snapshot).unwrap()).expect("write snap");
+        let changed = ["src/main.rs".to_string()];
+        auto_validate_after_failure_to(&changed, "watch_failure", &snap_path, &val_path);
+
+        let contents = std::fs::read_to_string(&val_path).expect("read validation file");
+        assert!(
+            contents.contains(r#""snapshot_git_hash":"feedfac""#),
+            "#723: a failure-day event names the snapshot it graded: {contents}"
+        );
+        // ...and does not thereby masquerade as a green grade.
+        assert!(!green_event_exists_for(&contents, "feedfac"));
+    }
 }
