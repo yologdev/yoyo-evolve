@@ -337,8 +337,12 @@ mod tests {
     fn test_report_never_forecast_section_absent_when_empty() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
-        let report =
-            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
+        let report = format_epistemic_report(
+            &snapshots,
+            &ranking,
+            &NeverForecastGroups::default(),
+            &ExperimentFamilies::default(),
+        );
         assert!(
             !report.contains("never forecast"),
             "no unforecast files → no section, got: {report}"
