@@ -668,7 +668,7 @@ pub fn build_apply_prompt(plan_text: &str, verify_cmd: &str) -> String {
 fn apply_verify_command() -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     let project_type = crate::commands_project::detect_project_type(&cwd);
-    match crate::commands_lint::test_command_for_project(&project_type) {
+    match crate::commands_lint::test_command_for_project(&project_type, std::path::Path::new(".")) {
         Some((label, _)) => label.to_string(),
         None => "your project's build and test commands".to_string(),
     }

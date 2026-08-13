@@ -1545,7 +1545,7 @@ pub fn arm_auto_watch(disable_hint: &str, quiet: bool) -> Option<String> {
 pub fn detect_watch_all_command_for_dir(dir: &std::path::Path) -> Option<String> {
     let project_type = detect_project_type(dir);
     let lint = lint_command_for_project(&project_type, LintStrictness::Default);
-    let test = test_command_for_project(&project_type);
+    let test = test_command_for_project(&project_type, dir);
     match (lint, test) {
         (Some((lint_label, _)), Some((test_label, _))) => {
             Some(format!("{lint_label} && {test_label}"))
@@ -1569,7 +1569,7 @@ pub fn detect_watch_all_command() -> Option<String> {
 pub fn detect_watch_all_phases_for_dir(dir: &std::path::Path) -> Option<Vec<String>> {
     let project_type = detect_project_type(dir);
     let lint = lint_command_for_project(&project_type, LintStrictness::Default);
-    let test = test_command_for_project(&project_type);
+    let test = test_command_for_project(&project_type, dir);
     match (lint, test) {
         (Some((lint_label, _)), Some((test_label, _))) => {
             Some(vec![lint_label.to_string(), test_label.to_string()])

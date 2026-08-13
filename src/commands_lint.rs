@@ -8,9 +8,19 @@ use crate::prompt::run_prompt;
 use yoagent::agent::Agent;
 use yoagent::*;
 
-/// Return the test command for a given project type.
+/// Return the test command for a given project type, resolved against `dir`.
+///
+/// `dir` is only consulted by the `Java` arm, which picks Maven over Gradle by
+/// looking for a `pom.xml`. Before #746 that lookup was `Path::new("pom.xml")`,
+/// i.e. a read of the *process* cwd from a function whose only input was a
+/// `ProjectType` — so `watch.rs`'s directory-parameterised callers
+/// (`detect_watch_all_command_for_dir`, `detect_watch_all_phases_for_dir`) asked
+/// about `dir` and were answered about somewhere else. Callers that genuinely
+/// have no directory pass `Path::new(".")`, which is byte-identical to the old
+/// behaviour.
 pub fn test_command_for_project(
     project_type: &ProjectType,
+    dir: &std::path::Path,
 ) -> Option<(&'static str, Vec<&'static str>)> {
     match project_type {
         ProjectType::Rust => Some(("cargo test", vec!["cargo", "test"])),
@@ -18,7 +28,7 @@ pub fn test_command_for_project(
         ProjectType::Python => Some(("python -m pytest", vec!["python", "-m", "pytest"])),
         ProjectType::Go => Some(("go test ./...", vec!["go", "test", "./..."])),
         ProjectType::Java => {
-            if std::path::Path::new("pom.xml").exists() {
+            if dir.join("pom.xml").exists() {
                 Some(("mvn test", vec!["mvn", "test"]))
             } else {
                 Some(("./gradlew test", vec!["./gradlew", "test"]))
@@ -79,7 +89,7 @@ pub fn handle_test(extra: &[String]) -> Option<String> {
         return None;
     }
 
-    let (label, args) = match test_command_for_project(&project_type) {
+    let (label, args) = match test_command_for_project(&project_type, std::path::Path::new(".")) {
         Some(cmd) => cmd,
         None => {
             println!("{DIM}  No test command configured for {project_type}{RESET}\n");
@@ -893,7 +903,8 @@ mod tests {
             ProjectType::Cpp,
             ProjectType::Make,
         ] {
-            let (label, base) = test_command_for_project(&pt).expect("every listed type has a cmd");
+            let (label, base) = test_command_for_project(&pt, std::path::Path::new("."))
+                .expect("every listed type has a cmd");
             let (display, argv) = build_test_invocation(label, &base, &[]);
             assert_eq!(display, label, "empty args must echo the bare label");
             assert_eq!(
@@ -908,14 +919,16 @@ mod tests {
     fn caller_args_are_appended_in_order_after_the_detected_argv() {
         // #745: `yoyo test --lib` used to silently run the whole suite. Args are
         // forwarded verbatim, in order, after whatever argv was detected.
-        let (label, base) = test_command_for_project(&ProjectType::Rust).unwrap();
+        let (label, base) =
+            test_command_for_project(&ProjectType::Rust, std::path::Path::new(".")).unwrap();
         let extra = vec!["--lib".to_string(), "--".to_string(), "--nocapture".into()];
         let (display, argv) = build_test_invocation(label, &base, &extra);
         assert_eq!(argv, vec!["cargo", "test", "--lib", "--", "--nocapture"]);
         assert_eq!(display, "cargo test --lib -- --nocapture");
 
         // A multi-word base keeps its own argv intact ahead of the caller's.
-        let (rb_label, rb_base) = test_command_for_project(&ProjectType::Ruby).unwrap();
+        let (rb_label, rb_base) =
+            test_command_for_project(&ProjectType::Ruby, std::path::Path::new(".")).unwrap();
         let (_, rb_argv) = build_test_invocation(rb_label, &rb_base, &["TEST=x".to_string()]);
         assert_eq!(rb_argv, vec!["bundle", "exec", "rake", "test", "TEST=x"]);
     }
@@ -961,7 +974,7 @@ mod tests {
 
     #[test]
     fn test_command_rust() {
-        let cmd = test_command_for_project(&ProjectType::Rust);
+        let cmd = test_command_for_project(&ProjectType::Rust, std::path::Path::new("."));
         assert!(cmd.is_some());
         let (label, _) = cmd.unwrap();
         assert_eq!(label, "cargo test");
@@ -969,7 +982,9 @@ mod tests {
 
     #[test]
     fn test_command_unknown() {
-        assert!(test_command_for_project(&ProjectType::Unknown).is_none());
+        assert!(
+            test_command_for_project(&ProjectType::Unknown, std::path::Path::new(".")).is_none()
+        );
     }
 
     #[test]
@@ -1029,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_rust_project() {
-        let cmd = test_command_for_project(&ProjectType::Rust);
+        let cmd = test_command_for_project(&ProjectType::Rust, std::path::Path::new("."));
         assert!(cmd.is_some(), "Rust project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(
@@ -1042,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_node_project() {
-        let cmd = test_command_for_project(&ProjectType::Node);
+        let cmd = test_command_for_project(&ProjectType::Node, std::path::Path::new("."));
         assert!(cmd.is_some(), "Node project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(label.contains("npm"), "Node test label should mention npm");
@@ -1052,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_python_project() {
-        let cmd = test_command_for_project(&ProjectType::Python);
+        let cmd = test_command_for_project(&ProjectType::Python, std::path::Path::new("."));
         assert!(cmd.is_some(), "Python project should have a test command");
         let (label, _args) = cmd.unwrap();
         assert!(
@@ -1063,7 +1078,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_go_project() {
-        let cmd = test_command_for_project(&ProjectType::Go);
+        let cmd = test_command_for_project(&ProjectType::Go, std::path::Path::new("."));
         assert!(cmd.is_some(), "Go project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(label.contains("go"), "Go test label should mention go");
@@ -1073,7 +1088,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_make_project() {
-        let cmd = test_command_for_project(&ProjectType::Make);
+        let cmd = test_command_for_project(&ProjectType::Make, std::path::Path::new("."));
         assert!(cmd.is_some(), "Make project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(
@@ -1086,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_java_project() {
-        let cmd = test_command_for_project(&ProjectType::Java);
+        let cmd = test_command_for_project(&ProjectType::Java, std::path::Path::new("."));
         assert!(cmd.is_some(), "Java project should have a test command");
         let (label, _) = cmd.unwrap();
         // Should be either mvn or gradlew depending on pom.xml presence
@@ -1096,9 +1111,32 @@ mod tests {
         );
     }
 
+    /// #746: the Java arm's Maven-vs-Gradle choice must follow the `dir` argument,
+    /// not the process cwd. Two tempdirs, identical but for `pom.xml`, must give
+    /// different answers — which is impossible if the lookup reads the cwd.
+    #[test]
+    fn java_test_command_follows_the_dir_argument_not_the_cwd() {
+        let maven = tempfile::TempDir::new().unwrap();
+        std::fs::write(maven.path().join("pom.xml"), "<project/>").unwrap();
+        let gradle = tempfile::TempDir::new().unwrap();
+
+        let (maven_label, maven_argv) =
+            test_command_for_project(&ProjectType::Java, maven.path()).unwrap();
+        let (gradle_label, gradle_argv) =
+            test_command_for_project(&ProjectType::Java, gradle.path()).unwrap();
+
+        assert_eq!(maven_label, "mvn test", "a dir holding pom.xml means Maven");
+        assert_eq!(maven_argv, vec!["mvn", "test"]);
+        assert_eq!(
+            gradle_label, "./gradlew test",
+            "a dir with no pom.xml means Gradle"
+        );
+        assert_eq!(gradle_argv, vec!["./gradlew", "test"]);
+    }
+
     #[test]
     fn test_test_command_for_ruby_project() {
-        let cmd = test_command_for_project(&ProjectType::Ruby);
+        let cmd = test_command_for_project(&ProjectType::Ruby, std::path::Path::new("."));
         assert!(cmd.is_some(), "Ruby project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(
@@ -1111,7 +1149,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_cpp_project() {
-        let cmd = test_command_for_project(&ProjectType::Cpp);
+        let cmd = test_command_for_project(&ProjectType::Cpp, std::path::Path::new("."));
         assert!(cmd.is_some(), "Cpp project should have a test command");
         let (label, args) = cmd.unwrap();
         assert!(
@@ -1123,7 +1161,7 @@ mod tests {
 
     #[test]
     fn test_test_command_for_unknown_project() {
-        let cmd = test_command_for_project(&ProjectType::Unknown);
+        let cmd = test_command_for_project(&ProjectType::Unknown, std::path::Path::new("."));
         assert!(
             cmd.is_none(),
             "Unknown project should not have a test command"
