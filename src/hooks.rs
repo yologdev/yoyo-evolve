@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled};
 use yoagent::types::{AgentTool, ToolError, ToolResult};
 use yoagent::Content;
 
@@ -186,14 +185,14 @@ impl Hook for AuditHook {
         params: &serde_json::Value,
         output: &str,
     ) -> Result<PostHookResult, String> {
-        // Only log if audit mode is enabled
-        if is_audit_enabled() {
-            // We don't have precise duration here (the HookedTool wrapper measures it),
-            // but the hook sees the output. Duration is logged separately by HookedTool.
-            // Log with duration=0 — the actual timing is handled by the event stream.
-            audit_log_tool_call(tool_name, params, 0, true);
-        }
-        // AuditHook is observe-only — no feedback
+        // #751: this hook deliberately writes NOTHING. `.yoyo/audit.jsonl` has exactly
+        // one writer — the prompt event-stream handlers in `src/prompt.rs`, which key
+        // in-flight calls by `tool_call_id` and so know the real duration and the real
+        // `is_error` flag. This hook knows neither: it is handed only the output string,
+        // so it cannot tell a failure from a success and used to hardcode
+        // `duration_ms = 0, success = true`, producing a second entry per tool call.
+        // AuditHook stays registered and observe-only — no write, no feedback.
+        let _ = (tool_name, params);
         Ok(PostHookResult::passthrough(output))
     }
 }
@@ -719,7 +718,8 @@ mod tests {
         assert_eq!(pre, Ok(None));
 
         // post_execute should pass through output unchanged
-        // (audit logging won't fire since is_audit_enabled() is false in tests)
+        // (#751: the hook never writes to the audit log at all — the prompt
+        //  event-stream handlers are the single writer)
         let post = hook.post_execute("bash", &params, "file1.rs\nfile2.rs");
         assert_eq!(post, Ok(PostHookResult::passthrough("file1.rs\nfile2.rs")));
     }
