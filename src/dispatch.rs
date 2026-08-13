@@ -215,6 +215,9 @@ fn route_command_prefix(input: &str) -> CommandRoute {
         // Simple prefix commands: "cmd" or "cmd ..."
         let cmd = rest.split_whitespace().next().unwrap_or(rest);
         match cmd {
+            // #745: `/test --lib` used to reach no arm here and be reported as an
+            // unknown command, for a command that plainly exists.
+            "test" => CommandRoute::Test,
             "changelog" => CommandRoute::Changelog,
             "evolution" => CommandRoute::Evolution,
             "model" => CommandRoute::Model,
@@ -652,7 +655,11 @@ async fn dispatch_dev_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Test => {
-            commands::handle_test();
+            // #745: forward everything after `/test` to the detected runner.
+            let extra = crate::commands_search::tokenize_quoted(
+                ctx.input.trim().strip_prefix("/test").unwrap_or("").trim(),
+            );
+            commands::handle_test(&extra);
             Some(CommandResult::Continue)
         }
         CommandRoute::Security => {
@@ -1668,6 +1675,22 @@ mod tests {
         assert_eq!(route_command("/pr create"), CommandRoute::Pr);
         assert_eq!(route_command("/git"), CommandRoute::Git);
         assert_eq!(route_command("/git log"), CommandRoute::Git);
+    }
+
+    #[test]
+    fn test_with_args_routes_to_test_not_unknown() {
+        // #745: the completion table advertises `/test [args...]`, but only the
+        // bare `/test` was an exact match and route_command_prefix had no arm —
+        // so `/test --lib` was reported as an unknown command.
+        for input in ["/test --lib", "/test my_test_name", "/test -- --nocapture"] {
+            assert_eq!(
+                route_command(input),
+                CommandRoute::Test,
+                "{input} must route to Test, not 404"
+            );
+        }
+        // Bare form is unchanged.
+        assert_eq!(route_command("/test"), CommandRoute::Test);
     }
 
     #[test]

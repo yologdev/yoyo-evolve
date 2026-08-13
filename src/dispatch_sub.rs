@@ -193,7 +193,9 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "test" => {
-                crate::commands_lint::handle_test();
+                // #745: args after `yoyo test` used to be silently discarded and
+                // the full suite ran. Forward them verbatim.
+                crate::commands_lint::handle_test(&args[2..]);
                 return Some(None);
             }
             "tree" => {

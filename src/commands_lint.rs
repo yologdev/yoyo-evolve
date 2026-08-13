@@ -37,9 +37,39 @@ pub fn test_command_for_project(
     }
 }
 
+/// Combine a detected test command with caller-supplied args (#745).
+///
+/// Returns `(display, argv)`: the label to echo, and the argv to spawn. Caller
+/// args are appended VERBATIM after the detected command's own argv — they are
+/// never validated or translated per project type, so a flag the runner does
+/// not understand surfaces as that runner's own error, which is what a
+/// `cargo`/`pytest`/`go test` user wants. An empty `extra` returns the detected
+/// argv and label unchanged, byte-identically to the no-arg path.
+pub(crate) fn build_test_invocation(
+    label: &str,
+    base: &[&str],
+    extra: &[String],
+) -> (String, Vec<String>) {
+    let argv: Vec<String> = base
+        .iter()
+        .map(|s| (*s).to_string())
+        .chain(extra.iter().cloned())
+        .collect();
+    let display = if extra.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} {}", extra.join(" "))
+    };
+    (display, argv)
+}
+
 /// Handle the /test command: auto-detect project type and run tests.
+///
+/// `extra` holds args the user typed after `/test` (REPL) or `yoyo test` (CLI);
+/// they are forwarded verbatim to the detected runner. Empty = run the whole
+/// suite, as before.
 /// Returns a summary string suitable for AI context.
-pub fn handle_test() -> Option<String> {
+pub fn handle_test(extra: &[String]) -> Option<String> {
     let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
     println!("{DIM}  Detected project: {project_type}{RESET}");
     if project_type == ProjectType::Unknown {
@@ -57,10 +87,11 @@ pub fn handle_test() -> Option<String> {
         }
     };
 
+    let (label, argv) = build_test_invocation(label, &args, extra);
     println!("{DIM}  Running: {label}...{RESET}");
     let start = std::time::Instant::now();
-    let output = std::process::Command::new(args[0])
-        .args(&args[1..])
+    let output = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
         .output();
     let elapsed = format_duration(start.elapsed());
 
@@ -847,6 +878,47 @@ pub fn handle_security() -> Option<String> {
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+
+    #[test]
+    fn empty_args_leave_the_detected_test_invocation_byte_identical() {
+        // #745: `/test` with no args is the common case, and threading args
+        // through must not disturb it. Pin the argv and the echoed label, not
+        // the side effect — no test here spawns a test runner.
+        for pt in [
+            ProjectType::Rust,
+            ProjectType::Node,
+            ProjectType::Python,
+            ProjectType::Go,
+            ProjectType::Ruby,
+            ProjectType::Cpp,
+            ProjectType::Make,
+        ] {
+            let (label, base) = test_command_for_project(&pt).expect("every listed type has a cmd");
+            let (display, argv) = build_test_invocation(label, &base, &[]);
+            assert_eq!(display, label, "empty args must echo the bare label");
+            assert_eq!(
+                argv,
+                base.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                "empty args must produce the detected argv unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_args_are_appended_in_order_after_the_detected_argv() {
+        // #745: `yoyo test --lib` used to silently run the whole suite. Args are
+        // forwarded verbatim, in order, after whatever argv was detected.
+        let (label, base) = test_command_for_project(&ProjectType::Rust).unwrap();
+        let extra = vec!["--lib".to_string(), "--".to_string(), "--nocapture".into()];
+        let (display, argv) = build_test_invocation(label, &base, &extra);
+        assert_eq!(argv, vec!["cargo", "test", "--lib", "--", "--nocapture"]);
+        assert_eq!(display, "cargo test --lib -- --nocapture");
+
+        // A multi-word base keeps its own argv intact ahead of the caller's.
+        let (rb_label, rb_base) = test_command_for_project(&ProjectType::Ruby).unwrap();
+        let (_, rb_argv) = build_test_invocation(rb_label, &rb_base, &["TEST=x".to_string()]);
+        assert_eq!(rb_argv, vec!["bundle", "exec", "rake", "test", "TEST=x"]);
+    }
 
     #[test]
     fn fix_subcommand_is_recognised_not_swallowed_as_default_strictness() {
