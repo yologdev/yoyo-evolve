@@ -303,12 +303,12 @@ fn date_part(ts: &str) -> String {
 /// Deliberately outside [`forecast_opportunities`] so the classification stays
 /// pure. Any failure — git missing, non-zero exit, empty output (path not in
 /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+/// exactly as before this existed.
 ///
 /// One further `None`: on a **shallow** clone, when the add-commit is a grafted
 /// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
 /// shallow, so without that check every pre-window file reports the boundary's
 /// date and the too-new split would be grading clone depth instead of file age.
-/// exactly as before this existed.
 pub(crate) fn git_added_ts(path: &str) -> Option<String> {
     // One call yields both the add-commit sha and its date, tab-separated.
     let out = crate::git::run_git(&[
@@ -792,5 +792,101 @@ mod tests {
             report.contains("needs ≥5 before absence means anything"),
             "the threshold must be stated in-band, got: {report}"
         );
+    }
+
+    // ---- shallow-clone age suppression (Day 166) ----
+
+    #[test]
+    fn test_shallow_boundary_hides_age_table() {
+        const ROOT: &str = "abc1234def5678901234567890abcdef12345678";
+        const OTHER: &str = "99998888777766665555444433332222111100ff";
+        let roots = vec![ROOT.to_string()];
+        let two_roots = vec![OTHER.to_string(), ROOT.to_string()];
+
+        let cases: &[(bool, &str, &[String], bool, &str)] = &[
+            // The defect this exists for: a shallow clone dates every surviving
+            // pre-window file to the grafted boundary root.
+            (true, ROOT, &roots, true, "shallow + add-sha is the root"),
+            // A real in-window addition (a file created today) is a real
+            // birthday even on a shallow clone.
+            (
+                true,
+                OTHER,
+                &roots,
+                false,
+                "shallow + add-sha is not a root",
+            ),
+            // A full clone's root commit IS the file's real birthday — this
+            // must keep behaving exactly as it did before the helper existed.
+            (
+                false,
+                ROOT,
+                &roots,
+                false,
+                "full clone + add-sha is the root",
+            ),
+            // Either command may abbreviate; a 7-char prefix still matches.
+            (true, "abc1234", &roots, true, "short add-sha prefixes root"),
+            (
+                true,
+                ROOT,
+                &["abc1234".to_string()],
+                true,
+                "short root prefixes add-sha",
+            ),
+            // Below the 7-char floor a lucky prefix must not excuse a
+            // genuinely dark file.
+            (
+                true,
+                "abc",
+                &roots,
+                false,
+                "3-char add-sha is under the floor",
+            ),
+            (
+                true,
+                ROOT,
+                &["abc".to_string()],
+                false,
+                "3-char root is under the floor",
+            ),
+            // Absence and whitespace are never a match, and never a panic.
+            (true, "", &roots, false, "empty add-sha"),
+            (true, ROOT, &[], false, "empty roots"),
+            (true, "   ", &roots, false, "whitespace-only add-sha"),
+            (
+                true,
+                ROOT,
+                &["   ".to_string()],
+                false,
+                "whitespace-only root",
+            ),
+            (true, "", &[String::new()], false, "empty both sides"),
+            // Trimming happens on both sides before comparing.
+            (
+                true,
+                "  abc1234def5678901234567890abcdef12345678\n",
+                &roots,
+                true,
+                "padded add-sha still matches",
+            ),
+            (
+                true,
+                ROOT,
+                &[format!(" {ROOT} ")],
+                true,
+                "padded root still matches",
+            ),
+            // Any entry may match, not just the first.
+            (true, ROOT, &two_roots, true, "matches a later root"),
+        ];
+
+        for (is_shallow, add_sha, graph_roots, want, label) in cases {
+            assert_eq!(
+                shallow_boundary_hides_age(*is_shallow, add_sha, graph_roots),
+                *want,
+                "case: {label}"
+            );
+        }
     }
 }
