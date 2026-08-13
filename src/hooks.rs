@@ -724,6 +724,33 @@ mod tests {
         assert_eq!(post, Ok(PostHookResult::passthrough("file1.rs\nfile2.rs")));
     }
 
+    /// #751: `.yoyo/audit.jsonl` must have exactly ONE writer — the prompt event-stream
+    /// handlers in `src/prompt.rs`, which know the real duration and the real error flag.
+    /// `AuditHook::post_execute` used to write a second entry per tool call with a
+    /// hardcoded `0` duration and a hardcoded `success: true` (it only receives the output
+    /// string, so it cannot know whether the tool errored). That doubled every count read
+    /// off the log, halved every duration average, and would have reported a
+    /// 100%-failure session as 50% success.
+    ///
+    /// This is a source-level check because the defect is "a call site came back", not a
+    /// value a unit test can observe without racing on the process-global cwd. The needle
+    /// is assembled at runtime so this test's own source cannot satisfy it.
+    #[test]
+    fn test_hooks_never_writes_to_the_audit_log() {
+        let src = include_str!("hooks.rs");
+        let needle = format!("{}{}", "audit_log_tool", "_call(");
+        assert!(
+            !src.contains(&needle),
+            "src/hooks.rs calls `{needle})`, reintroducing a second writer for \
+             .yoyo/audit.jsonl. The single writer is the event-stream handler in \
+             src/prompt.rs, which has the real duration and the real `!is_error`; a hook \
+             only sees the output string and would have to fabricate both. The audit log \
+             is pushed to the public audit-log branch and mined by skill-evolve and \
+             scripts/extract_trajectory.py, so a duplicate row is a wrong number, not \
+             noise."
+        );
+    }
+
     #[test]
     fn test_hook_registry_register_increases_len() {
         let mut registry = HookRegistry::new();
