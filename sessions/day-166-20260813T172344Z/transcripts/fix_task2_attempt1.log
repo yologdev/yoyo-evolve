@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to update the CLAUDE.md bullet. Let me look at the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help_data.rs src/help_… ✓ (2ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit CLAUDE.md (1 → 2 lines)
+  - - `help_data.rs` — static command help text and short descriptions: `command_help()`, `command_short_description()` (pure data, extracted from `help.rs`). Two subcommand-drift guards run over the same `subcommand_tables()` fixture
+  + - `help_data.rs` — static command help text and short descriptions: `command_help()`, `command_short_description()` (pure data, extracted from `help.rs`). **Data only** — the drift-guard test suite that used to live at the bottom of this file was moved verbatim to `src/help_data_guards.rs` (Day 166), because the file was 1995 lines against a fatal `MAX_MODULE_LINES = 2000` and the next fix that has to land here (#757, `/pr` number-first vs verb-first) costs more than the 5 lines of headroom that were left.
+  + - `help_data_guards.rs` — `#[cfg(test)]`-only module (declared `#[cfg(test)] mod help_data_guards;` in `main.rs`, so it never reaches a release build) holding the subcommand-drift guard suite moved out of `help_data.rs` on Day 166 — a **pure move**: same tests, same names, same fixture, the only edit being `use super::*;` → `use crate::help_data::*;`. Test paths are now `help_data_guards::tests::…`. Its concern was always different from the data half's: these guards read *other modules'* source text off disk to compare three copies of the subcommand vocabulary. Two subcommand-drift guards run over the same `subcommand_tables()` fixture
+ ✓ (1m 44s)
+  - - `help_data.rs` — static command help text and short descriptions: `command_help()`, `command_short_description()` (pure data, extracted from `help.rs`). Two subcommand-drift guards run over the same `subcommand_tables()` fixture
+  + - `help_data.rs` — static command help text and short descriptions: `command_help()`, `command_short_description()` (pure data, extracted from `help.rs`). **Data only** — the drift-guard test suite that used to live at the bottom of this file was moved verbatim to `src/help_data_guards.rs` (Day 166), because the file was 1995 lines against a fatal `MAX_MODULE_LINES = 2000` and the next fix that has to land here (#757, `/pr` number-first vs verb-first) costs more than the 5 lines of headroom that were left.
+  + - `help_data_guards.rs` — `#[cfg(test)]`-only module (declared `#[cfg(test)] mod help_data_guards;` in `main.rs`, so it never reaches a release build) holding the subcommand-drift guard suite moved out of `help_data.rs` on Day 166 — a **pure move**: same tests, same names, same fixture, the only edit being `use super::*;` → `use crate::help_data::*;`. Test paths are now `help_data_guards::tests::…`. Its concern was always different from the data half's: these guards read *other modules'* source text off disk to compare three copies of the subcommand vocabulary. Two subcommand-drift guards run over the same `subcommand_tables()` fixture
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '73,77p' CLAUDE.md | cut … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=74 && NR<=75' CLAUDE.md… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 4s (5 ✓)
+
+All original claims preserved, just re-homed. Now verify the build chain is still green.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (1m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test h… (21 lines) ✓ (223ms)
+  3 tools completed in 1m 57s (3 ✓)
+
+Fixed and committed.
+
+What was missing: only step 5 — the CLAUDE.md bullet update. The code move itself was already correct and untouched by this fix.
+
+What I changed (`CLAUDE.md` only):
+• The help_data.rs bullet is now data-only, and states *why* the split happened (1995 lines against a fatal MAX_MODULE_LINES = 2000, with #757's fix due to land in that file).
+• A new help_data_guards.rs bullet immediately after it carries every existing claim verbatim — both named guards, the 20-triple subcommand_tables() fixture, dispatcher_source, the `#[cfg(test)] mod tests truncation marker, the *_SUBCOMMANDS` stripping and its "vacuously green" rationale, the "presence check, not a match-arm parse" limitation, the `/checkpoint` shared-dispatcher weakness, and KNOWN_INDIRECT. It also records that the module is #[cfg(test)]-gated in main.rs, that this was a pure move whose only edit was use super::*; → use crate::help_data::*;, and that test paths are now help_data_guards::tests::….
+
+Verified:
+• grep -c help_data_guards CLAUDE.md → 2 (was 0).
+• cargo fmt -- --check, cargo clippy --all-targets -- -D warnings, cargo build — all clean.
+• cargo test → **4840 passed, 0 failed**, unchanged from the previous commit's total.
+• cargo test help_data_guards → 18 passed, confirming the guards still run from the new module.
+• wc -l: `src/help_data.rs 1467, src/help_data_guards.rs` 536 — both under 2000, neither grandfathered.
+
+Nothing touching /pr, PR_SUBCOMMANDS or #757 was modified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only the Step-1 prediction half landed — the diff adds a single round-49 `experiment` line (commit 0bef8bae) and the mirror comment is on issue #738 (2026-08-13T16:26:26Z), but there is no round-49 `experiment_result` line, no `hypothesis_grades`, and no stated early stop, which is precisely the deferred-grade failure this task's "schedule fix" section was written to prevent.
+Checked: intent_alignment: FAIL: tail of dreams/experiments.jsonl parsed with json.loads shows the last line is `experiment` round 49 with no following `experiment_result`; git log shows one commit titled "Blind round 49 prediction" and nothing after it, so Steps 2 and 3 (grade each bet as it settles, close the record, file defects) were never performed.
+Checked: forgotten_touchpoints: PASS: the diff is one appended JSONL line with no new fn, const, enum variant or rename; existing readers (parse_experiment_visits, tally_hypothesis_families) accept `type:"experiment"` with a `hypotheses` array, and the line parses cleanly with the expected id/claim/evidence/provenance keys.
+Checked: doc_sync: N/A: no source or behavior changed — the diff touches only the append-only experiment ledger.
+Checked: product_surface: N/A: no config defaults, CLI flags, wizard or startup behavior touched; dreams/experiments.jsonl is a data ledger.

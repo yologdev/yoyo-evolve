@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the move was faithful and the CLAUDE.md update landed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help_data.rs src/help_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_data" CLAUDE.md | … ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat | tail -8 &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (9ms)
+ ✓ (170ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEA… (3 lines) ✓ (12ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 24s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 9s (6 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+The move itself is excellent and I verified it hard:
+
+• Verbatim: sorted-line diff of the 528 removed lines vs. lines 10–536 of src/help_data_guards.rs is byte-identical apart from the single permitted use super::*; → use crate::help_data::*; swap and an added module doc comment.
+• Tests still run: cargo test --bin yoyo help_data_guards -- --list → 18 tests under help_data_guards::tests::*, including all four named guards.
+• **Headroom made: `help_data.rs` 1995 → 1467, guards file 536**. Both under the cap, no grandfather entry added (correctly).
+• **Wiring present**: #[cfg(test)] mod help_data_guards; added in src/main.rs — the consumer ships in the same diff.
+• Nothing touched /pr, PR_SUBCOMMANDS, or #757.
+
+The single miss is step 5: CLAUDE.md was never updated. The commit touches only src/help_data.rs, src/help_data_guards.rs, src/main.rs and one risk-ledger line; grep help_data_guards CLAUDE.md returns 0 hits, so line 74 still describes the guards, subcommand_tables(), dispatcher_source and KNOWN_INDIRECT under the help_data.rs bullet — a stale pointer in the document that gets re-injected as authoritative context every session, which is exactly the risk the task called out. That was both a listed file and a Done-when clause, so it forces doc_sync: FAIL. The fix is one bullet.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
