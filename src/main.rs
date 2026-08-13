@@ -93,6 +93,8 @@ mod gasp;
 mod git;
 mod help;
 mod help_data;
+#[cfg(test)]
+mod help_data_guards;
 mod hooks;
 mod memory;
 mod prompt;
