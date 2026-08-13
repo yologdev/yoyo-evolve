@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by picking one concrete item. #755 looks well-scoped: the goal is injected into every system prompt uncapped while both neighbours at the same call site are bounded. Let me verify the claim against the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_goal.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1340,1380p src/cli.rs ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+Claim verified — load_goal is uncapped and lands in the system prompt at cli.rs:1361. Let me enumerate all its call sites so I cap the prompt paths, not just the one the issue observed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_goal()" src/ | gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_truncate\b\|fn saf… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_goal()" src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,260p src/commands_goa… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 262,330p src/commands_goa… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REPO_MAX_CHARS" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "MAX_CHARS\|max_chars" … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 21.6s (7 ✓)
+
+Verified. Now the test first, then the implementation.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/commands_goal.r… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (2 → 47 lines)
+    /// Maximum characters of verify output to include in prompts.
+    const VERIFY_OUTPUT_MAX: usize = 2000;
+  + 
+  + /// Maximum bytes of the goal text that reach a *prompt*.
+  + ///
+  + /// A judgment threshold, not a measurement: 4 KB is roughly 1k tokens, generous
+  + /// for a sentence-or-checklist goal and far under the 60 KB a pasted spec can
+  + /// reach. It exists because the goal is appended to the **system prompt**
+  + /// (`src/cli.rs`, beside `load_project_context` and `generate_repo_map_for_prompt`,
+  + /// which are bounded by `MAX_PROJECT_FILES` and `REPO_MAP_MAX_CHARS`) and so is
+  + /// paid on **every turn of every session** until cleared, not once (#755).
+  + /// Deliberately smaller than the repo map's 16 KB: a goal is a statement of
+  + /// intent, not a structural index.
+  + const GOAL_PROMPT_MAX_BYTES: usize = 4000;
+  + 
+  + /// Cap the goal text for prompt use, marking the cut in-band.
+  + ///
+  + /// Pure — no I/O. Display paths (`/goal show`, `/status`, `yoyo goal show`) keep
+  + /// the **full** text; only prompt paths pass through here, so nothing a user
+  + /// reads about their own goal is silently shortened. Under budget the return
+  ... (27 more lines)
+ ✓ (14.9s)
+    /// Maximum characters of verify output to include in prompts.
+    const VERIFY_OUTPUT_MAX: usize = 2000;
+  + 
+  + /// Maximum bytes of the goal text that reach a *prompt*.
+  + ///
+  + /// A judgment threshold, not a measurement: 4 KB is roughly 1k tokens, generous
+  + /// for a sentence-or-checklist goal and far under the 60 KB a pasted spec can
+  + /// reach. It exists because the goal is appended to the **system prompt**
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.5s (2 ✓)
+
+Expected — definitions without consumers. Wiring both prompt call sites now (same edit, per my own rule).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 3 lines)
+  -     if let Some(goal) = crate::commands_goal::load_goal() {
+  +     // Capped: this lands in the system prompt, so it is paid on every turn of
+  +     // every session until cleared (#755). Display paths keep the full text.
+  +     if let Some(goal) = crate::commands_goal::goal_for_prompt() {
+ ✓ (1m 24s)
+  -     if let Some(goal) = crate::commands_goal::load_goal() {
+  +     // Capped: this lands in the system prompt, so it is paid on every turn of
+  +     // every session until cleared (#755). Display paths keep the full text.
+  +     if let Some(goal) = crate::commands_goal::goal_for_prompt() {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (2 → 2 lines)
+        } else if arg == "check" {
+  -         match load_goal() {
+  +         match goal_for_prompt() {
+ ✓ (1m 24s)
+        } else if arg == "check" {
+  -         match load_goal() {
+  +         match goal_for_prompt() {
+  2 tools completed in 2m 53s (2 ✓)
+
+Now the tests — including one at the emission point (the system-prompt string a user actually gets), not just the helper.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 585,615p src/commands_goa… ✓ (2ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
