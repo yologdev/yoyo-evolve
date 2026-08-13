@@ -65,6 +65,7 @@ mod commands_risk;
 mod commands_risk_accuracy;
 mod commands_risk_emerging;
 mod commands_risk_epistemic;
+mod commands_risk_neverforecast;
 mod commands_risk_report;
 mod commands_risk_snapshots;
 mod commands_risk_weights;
