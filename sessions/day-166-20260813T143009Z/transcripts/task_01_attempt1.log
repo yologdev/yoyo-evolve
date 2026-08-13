@@ -1,0 +1,262 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file and the release workflow.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_update.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo-" .github/workflow… ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,400p' src/commands_u…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,100p' .github/workflow… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn find_asset_url" -A 2… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,728p' src/commands_u… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '276,345p' src/commands_u… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 51.3s (7 ✓)
+
+Now I have the full picture. Let me make the source changes.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (18 → 18 lines)
+        // Step 2: Detect platform and find the right asset
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+  -     let asset_name = match platform_asset_name(os, arch) {
+  -         Some(name) => name,
+  +     let (triple, ext) = match platform_target(os, arch) {
+  +         Some(t) => t,
+            None => {
+                return Err(format!("Unsupported platform: {} {}", os, arch));
+            }
+  ···
+            .and_then(|v| v.as_array())
+            .unwrap_or(&empty_assets);
+    
+  -     let download_url = match find_asset_url(assets, asset_name) {
+  -         Some(url) => url,
+  +     let (asset_name, download_url) = match find_asset(assets, triple, ext) {
+  +         Some(found) => found,
+            None => {
+ ✓ (13.3s)
+        // Step 2: Detect platform and find the right asset
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+  -     let asset_name = match platform_asset_name(os, arch) {
+  -         Some(name) => name,
+  +     let (triple, ext) = match platform_target(os, arch) {
+  +         Some(t) => t,
+            None => {
+                return Err(format!("Unsupported platform: {} {}", os, arch));
+  ... (10 more lines)
+
+Expected — the consumers land next.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (13 → 46 lines)
+  - /// Map OS/ARCH to the expected GitHub release asset name.
+  + /// Map OS/ARCH to the release asset's target triple and archive extension.
+    /// Returns None for unsupported platforms.
+  - fn platform_asset_name(os: &str, arch: &str) -> Option<&'static str> {
+  + ///
+  + /// The full asset name is NOT constructed here: `release.yml` embeds the tag
+  + /// (`yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz`), so any constructed name
+  + /// would need to know the version. Selection happens by suffix instead —
+  + /// see `asset_matches`.
+  + fn platform_target(os: &str, arch: &str) -> Option<(&'static str, &'static str)> {
+        match (os, arch) {
+  -         ("linux", "x86_64") => Some("yoyo-x86_64-unknown-linux-gnu.tar.gz"),
+  -         ("macos", "x86_64") => Some("yoyo-x86_64-apple-darwin.tar.gz"),
+  -         ("macos", "aarch64") => Some("yoyo-aarch64-apple-darwin.tar.gz"),
+  -         ("windows", "x86_64") => Some("yoyo-x86_64-pc-windows-msvc.zip"),
+  +         ("linux", "x86_64") => Some(("x86_64-unknown-linux-gnu", "tar.gz")),
+  +         ("macos", "x86_64") => Some(("x86_64-apple-darwin", "tar.gz")),
+  +         ("macos", "aarch64") => Some(("aarch64-apple-darwin", "tar.gz")),
+  +         ("windows", "x86_64") => Some(("x86_64-pc-windows-msvc", "zip")),
+            _ => None,
+  ... (32 more lines)
+ ✓ (13.7s)
+  - /// Map OS/ARCH to the expected GitHub release asset name.
+  + /// Map OS/ARCH to the release asset's target triple and archive extension.
+    /// Returns None for unsupported platforms.
+  - fn platform_asset_name(os: &str, arch: &str) -> Option<&'static str> {
+  + ///
+  + /// The full asset name is NOT constructed here: `release.yml` embeds the tag
+  + /// (`yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz`), so any constructed name
+  + /// would need to know the version. Selection happens by suffix instead —
+  ... (13 more lines)
+
+Now find_asset replaces find_asset_url:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (14 → 18 lines)
+  - fn find_asset_url(assets: &[serde_json::Value], asset_name: &str) -> Option<String> {
+  -     assets
+  -         .iter()
+  -         .find(|asset| {
+  -             asset
+  -                 .get("name")
+  -                 .and_then(|name| name.as_str())
+  -                 .map(|name| name == asset_name)
+  -                 .unwrap_or(false)
+  -         })
+  -         .and_then(|asset| asset.get("browser_download_url"))
+  -         .and_then(|url| url.as_str())
+  -         .map(|url| url.to_string())
+  + /// Find the release asset for `triple` + `ext`, returning `(name, download_url)`.
+  + ///
+  + /// Selection is by suffix rather than exact-string equality, so it survives the
+  + /// tag being embedded in the asset name. If several assets match, the first wins
+  + /// — the release workflow publishes exactly one archive per target, so there is
+  + /// no meaningful tie-break to invent.
+  + fn find_asset(assets: &[serde_json::Value], triple: &str, ext: &str) -> Option<(String, String)> {
+  ... (11 more lines)
+ ✓ (14.1s)
+  - fn find_asset_url(assets: &[serde_json::Value], asset_name: &str) -> Option<String> {
+  -     assets
+  -         .iter()
+  -         .find(|asset| {
+  -             asset
+  -                 .get("name")
+  -                 .and_then(|name| name.as_str())
+  -                 .map(|name| name == asset_name)
+  ... (13 more lines)
+
+Now the remaining call sites in handle_update (temp path, success line) and the Windows binary name:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (10 → 2 lines)
+        // Step 4: Download
+  -     let temp_path = format!(
+  -         "/tmp/yoyo-update-{}.{}",
+  -         latest_version,
+  -         if asset_name.ends_with(".zip") {
+  -             "zip"
+  -         } else {
+  -             "tar.gz"
+  -         }
+  -     );
+  +     let temp_path = format!("/tmp/yoyo-update-{}.{}", latest_version, ext);
+ ✓ (14.4s)
+        // Step 4: Download
+  -     let temp_path = format!(
+  -         "/tmp/yoyo-update-{}.{}",
+  -         latest_version,
+  -         if asset_name.ends_with(".zip") {
+  -             "zip"
+  -         } else {
+  -             "tar.gz"
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (4 → 1 lines)
+  -             println!(
+  -                 "✓ Updated to v{}! Please restart yoyo to use the new version.",
+  -                 latest_version
+  -             );
+  +             println!("{}", update_success_message(latest_version));
+ ✓ (13.9s)
+  -             println!(
+  -                 "✓ Updated to v{}! Please restart yoyo to use the new version.",
+  -                 latest_version
+  -             );
+  +             println!("{}", update_success_message(latest_version));
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.5s (2 ✓)
+
+Binary compiles. Now the Windows extraction fix (step 2):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (32 → 37 lines)
+  -     // Find the yoyo binary in the extracted directory
+  +     // Find the yoyo binary in the extracted directory.
+  +     // The Windows zip packs `yoyo.exe` (see release.yml's Package (Windows) step),
+  +     // Unix tarballs pack `yoyo` — accept either.
+  +     let binary_names = ["yoyo", "yoyo.exe"];
+        let entries = std::fs::read_dir(extract_dir)
+            .map_err(|e| format!("Failed to read extract directory: {}", e))?;
+    
+  ···
+    
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+  -                 if filename == "yoyo" {
+  +                 if binary_names.contains(&filename) {
+                        return Ok(path.to_string_lossy().to_string());
+                    }
+                }
+  ···
+            let path = entry.path();
+    
+  ... (12 more lines)
+ ✓ (13.6s)
+  -     // Find the yoyo binary in the extracted directory
+  +     // Find the yoyo binary in the extracted directory.
+  +     // The Windows zip packs `yoyo.exe` (see release.yml's Package (Windows) step),
+  +     // Unix tarballs pack `yoyo` — accept either.
+  +     let binary_names = ["yoyo", "yoyo.exe"];
+        let entries = std::fs::read_dir(extract_dir)
+            .map_err(|e| format!("Failed to read extract directory: {}", e))?;
+    
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   [1m[94m--> [0msrc/commands_update.rs:381:20
+    [1m[94m|[0m
+[1m[94m381[0m [1m[94m|[0m         let name = platform_asset_name("linux", "x86_64");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   [1m[94m--> [0msrc/commands_update.rs:387:20
+    [1m[94m|[0m
+[1m[94m387[0m [1m[94m|[0m         let name = platform_asset_name("macos", "x86_64");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   [1m[94m--> [0msrc/commands_update.rs:393:20
+    [1m[94m|[0m
+[1m[94m393[0m [1m[94m|[0m         let name = platform_asset_name("macos", "aarch64");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   [1m[94m--> [0msrc/commands_update.rs:399:20
+    [1m[94m|[0m
+[1m[94m399[0m [1m[94m|[0m         let name = platform_asset_name("windows", "x86_64");
+    [1m[94m|[0m                    [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   [1m[94m--> [0msrc/commands_update.rs:405:17
+    [1m[94m|[0m
+[1m[94m405[0m [1m[94m|[0m         assert!(platform_asset_name("freebsd", "x86_64").is_none());
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `platform_asset_name` in this scope[0m
+   ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The source is done; now the test module — which is the part the task says must be rewritten, not patched.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "platform_asset_name\|fi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '376,412p;462,470p;520,53… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '409,446p' src/commands_u… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 38.0s (3 ✓)
+
+Now I'll replace the whole first block of self-agreeing tests with selection-from-a-realistic-list plus the workflow pin.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (270 lines) ✓ (27ms)
+
+Now the remaining stale tests further down:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "platform_asset_name\|fi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '655,715p' src/commands_u… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (57 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn update_find_asset_ur… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (69 lines) ✓ (27ms)
+  5 tools completed in 29.9s (5 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
