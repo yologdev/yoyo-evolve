@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:99..259 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 258,300p src/commands_ris… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7.9s (4 ✓)
+
+Now the epistemic module's renderer and the caller:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never_forecast\|NeverFo… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,900p src/commands_ris… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -c 400 .yoyo/risk_snapshots… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git\|fn run_… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,160p tests/module_size… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 55.5s (7 ✓)
+
+Now let me implement. First the pure core + git helper in commands_risk_neverforecast.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (4 → 16 lines)
+    /// otherwise wrap the one-line-per-file shape this section depends on. The
+    /// cut is marked in-band by `truncate_reason`'s ellipsis (Day 162).
+    const STUDY_NOTE_MAX_CHARS: usize = 100;
+  + 
+  + /// How many snapshots must have been taken **after** a file first existed
+  + /// before "never forecast" is evidence about the model rather than evidence
+  + /// about the file's age.
+  + ///
+  + /// This is a **judgment threshold, not a measurement**. Nothing was graded to
+  + /// pick 5; it is simply a number large enough that a column had real chances
+  + /// to name the file and small enough that a file survives one quiet day
+  + /// without being excused forever. Below it, absence from every prediction
+  + /// column carries no information — no snapshot could have named a path that
+  + /// did not exist yet.
+  + pub(crate) const MIN_FORECAST_OPPORTUNITIES: usize = 5;
+ ✓ (19.7s)
+    /// otherwise wrap the one-line-per-file shape this section depends on. The
+    /// cut is marked in-band by `truncate_reason`'s ellipsis (Day 162).
+    const STUDY_NOTE_MAX_CHARS: usize = 100;
+  + 
+  + /// How many snapshots must have been taken **after** a file first existed
+  + /// before "never forecast" is evidence about the model rather than evidence
+  + /// about the file's age.
+  + ///
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (10 → 36 lines)
+  - /// The never-forecast set, split into its two honest halves.
+  + /// A file no column ever forecast **but** that is younger than most of the
+  + /// prediction history — a room I built this afternoon.
+  + ///
+  + /// Kept apart from [`NeverForecast`] for the same reason [`StudiedNeverForecast`]
+  + /// is (Day 144: absence gets its own name), one layer over. There are two
+  + /// different absences here: "the columns had many chances to name this file and
+  + /// never did" is evidence about the model, while "the file did not exist when
+  + /// the snapshots were written" is no evidence at all — no snapshot *could* have
+  + /// named a path that did not exist. Today's trajectory handed the planner
+  + /// `src/commands_risk_parse.rs` and `src/help_data_guards.rs` as the two darkest
+  + /// rooms in the building; both were authored hours earlier as pure extractions.
+  + pub(crate) struct TooNewNeverForecast {
+  +     pub(crate) path: String,
+  +     pub(crate) risk_score: f64,
+  +     /// The `YYYY-MM-DD` the file was added, for display. Derived from the
+  +     /// resolved add-timestamp, never invented.
+  +     pub(crate) added: String,
+  +     /// How many snapshots were taken *after* the file existed. Always below
+  +     /// [`MIN_FORECAST_OPPORTUNITIES`] for a file in this group.
+  ... (19 more lines)
+ ✓ (12.6s)
+  - /// The never-forecast set, split into its two honest halves.
+  + /// A file no column ever forecast **but** that is younger than most of the
+  + /// prediction history — a room I built this afternoon.
+  + ///
+  + /// Kept apart from [`NeverForecast`] for the same reason [`StudiedNeverForecast`]
+  + /// is (Day 144: absence gets its own name), one layer over. There are two
+  + /// different absences here: "the columns had many chances to name this file and
+  + /// never did" is evidence about the model, while "the file did not exist when
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.5s (2 ✓)
+
+Now the classification function and the timestamp core:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:108..170 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0063][0m[1m: missing field `too_new` in initializer of `commands_risk_neverforecast::NeverForecastGroups`[0m
+   [1m[94m--> [0msrc/commands_risk_neverforecast.rs:168:5
+    [1m[94m|[0m
+[1m[94m168[0m [1m[94m|[0m     NeverForecastGroups { dark, studied }
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mmissing `too_new`[0m
+
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (44 → 200 lines)
+    pub(crate) fn never_forecast_files(
+  +     snapshots: &[ParsedSnapshot],
+  +     risk_scores: &[(String, f64)],
+  +     experiments: &[ExperimentVisit],
+  + ) -> NeverForecastGroups {
+  +     // No add-date resolver: every candidate's age is unknown, and an unknown
+  +     // age is *not* too-new (it stays dark). So this is byte-identical to the
+  +     // pre-Day-166 two-group behaviour.
+  +     never_forecast_files_with(snapshots, risk_scores, experiments, &|_| None)
+  + }
+  + 
+  + /// Same as [`never_forecast_files`], plus the third state: a file younger than
+  + /// the prediction history.
+  + ///
+  + /// `added_ts` resolves a path's first-seen timestamp. It is a parameter rather
+  + /// than a direct git call so the classification stays pure and testable — the
+  + /// only I/O implementation is [`git_added_ts`], and it is invoked **only** for
+  + /// the never-forecast candidate set (already a short list), never once per
+  + /// scored file.
+  + ///
+  ... (178 more lines)
+ ✓ (19.6s)
+    pub(crate) fn never_forecast_files(
+  +     snapshots: &[ParsedSnapshot],
+  +     risk_scores: &[(String, f64)],
+  +     experiments: &[ExperimentVisit],
+  + ) -> NeverForecastGroups {
+  +     // No add-date resolver: every candidate's age is unknown, and an unknown
+  +     // age is *not* too-new (it stays dark). So this is byte-identical to the
+  +     // pre-Day-166 two-group behaviour.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Good — remaining errors are exactly the missing consumers. Now the renderer and the wiring in commands_risk_epistemic.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 43 lines)
+            out.push_str(&format!(
+                "    {DIM}these are lit rooms: an experiment already opened them, so they are not the dark set.{RESET}\n"
+  +         ));
+  +     }
+  + 
+  +     // Fourth state, third group (sibling of #744, one layer over): never
+  +     // forecast, but the file is younger than most of the prediction history.
+  +     // No snapshot *could* have named a path that did not exist, so its absence
+  +     // from every column carries zero information — reporting it as dark points
+  +     // the exploration budget at the brightest room in the building.
+  +     //
+  +     // The shape here is load-bearing for `scripts/extract_trajectory.py`:
+  +     // the header must not contain the substring "never forecast"
+  +     // (EPISTEMIC_NEVER_FORECAST_RE hard-stops collecting on it) and the rows
+  +     // must not start with `◦` (EPISTEMIC_NEVER_FORECAST_ROW_RE) nor with the
+  +     // studied group's `▪`. Hence `▫`.
+  +     if !never.too_new.is_empty() {
+  +         out.push_str(&format!(
+  +             "\n  {DIM}too young to judge: {} scored file{} newer than most of the prediction history{RESET}\n",
+  +             never.too_new.len(),
+  ... (23 more lines)
+ ✓ (12.7s)
+            out.push_str(&format!(
+                "    {DIM}these are lit rooms: an experiment already opened them, so they are not the dark set.{RESET}\n"
+  +         ));
+  +     }
+  + 
+  +     // Fourth state, third group (sibling of #744, one layer over): never
+  +     // forecast, but the file is younger than most of the prediction history.
+  +     // No snapshot *could* have named a path that did not exist, so its absence
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 24,32p src/commands_risk_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 4 lines)
+    pub(crate) use crate::commands_risk_neverforecast::{
+  -     never_forecast_files, NeverForecastGroups, NEVER_FORECAST_SAMPLE,
+  +     git_added_ts, never_forecast_files, never_forecast_files_with, NeverForecastGroups,
+  +     MIN_FORECAST_OPPORTUNITIES, NEVER_FORECAST_SAMPLE,
+    };
+ ✓ (19.7s)
+    pub(crate) use crate::commands_risk_neverforecast::{
+  -     never_forecast_files, NeverForecastGroups, NEVER_FORECAST_SAMPLE,
+  +     git_added_ts, never_forecast_files, never_forecast_files_with, NeverForecastGroups,
+  +     MIN_FORECAST_OPPORTUNITIES, NEVER_FORECAST_SAMPLE,
+    };
+  3 tools completed in 38.5s (3 ✓)
+
+Now wire the handler to use the git resolver:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 3 lines)
+  -     let never = never_forecast_files(&snapshots, &risk_scores, &experiments);
+  +     let never = never_forecast_files_with(&snapshots, &risk_scores, &experiments, &|path| {
+  +         git_added_ts(path)
+  +     });
+ ✓ (20.0s)
+  -     let never = never_forecast_files(&snapshots, &risk_scores, &experiments);
+  +     let never = never_forecast_files_with(&snapshots, &risk_scores, &experiments, &|path| {
+  +         git_added_ts(path)
+  +     });
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "never_forecast_files" … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "never_forecast_files(" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 106,150p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 48.7s (6 ✓)
+
+Now update the existing test call sites in the neverforecast module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (25ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 390,418p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (9.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 35.2s (3 ✓)
+
+Green. Now step 4 — tests over the pure core plus the rendering guard:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,370p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n "$(grep -n 'pub(crate) st… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (185 lines) ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_neverfo… ✓ (23.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 2s (4 ✓)
+
+All 17 pass. Now the full gate plus the trajectory-parser self-test (step 3, run not asserted):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && NO_COLOR=1 cargo run --quiet -- … ✓ (846ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_neverfore… ✓ (4ms)
+  3 tools completed in 1m 24s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+

@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PR_SUBCOMMANDS" -A 5 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_pr_args\|enum PrS… ✓ (4ms)
+ ✓ (13ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs:30..210 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/pr"' -A 30 src/help_d… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pr" src/help_data.rs | … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 30.5s (5 ✓)
+
+Help prose already documents verb-first; the parser is the liar. Writing the behavioural test first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs:370..410 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs (5 → 69 lines)
+        fn parse_pr_args_empty_is_list() {
+            assert_eq!(parse_pr_args(""), PrSubcommand::List);
+            assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+  +     }
+  + 
+  +     /// A representative verb-first invocation for every token in
+  +     /// `commands::PR_SUBCOMMANDS`. The fixture is a *total* match over that table
+  +     /// (see the drift test below), so a new completion token cannot be added
+  +     /// without stating what it parses to.
+  +     fn verb_first_fixture(token: &str) -> &'static str {
+  +         match token {
+  +             "list" => "list",
+  +             "view" => "view 42",
+  +             "diff" => "diff 42",
+  +             "review" => "review 42",
+  +             "comment" => "comment 42 looks good",
+  +             "create" => "create",
+  +             "checkout" => "checkout 42",
+  +             other => panic!(
+  +                 "PR_SUBCOMMANDS advertises `{other}` with no fixture — add one here \
+  ... (48 more lines)
+ ✓ (1m 36s)
+        fn parse_pr_args_empty_is_list() {
+            assert_eq!(parse_pr_args(""), PrSubcommand::List);
+            assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+  +     }
+  + 
+  +     /// A representative verb-first invocation for every token in
+  +     /// `commands::PR_SUBCOMMANDS`. The fixture is a *total* match over that table
+  +     /// (see the drift test below), so a new completion token cannot be added
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_git_pr… ✓ (148ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_git_pr 2>&1 … ✓ (159ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_git_pr 2>&1 … ✓ (152ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 0s (5 ✓)
+
+Tests fail exactly as expected; the 34 existing (number-first) tests stay green. Now the parser fix.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs (26 → 54 lines)
+        let parts: Vec<&str> = arg.splitn(3, char::is_whitespace).collect();
+    
+  -     // Check for "review" subcommand first (before trying to parse as number)
+  -     if parts[0].eq_ignore_ascii_case("review") {
+  -         if let Some(num_str) = parts.get(1) {
+  -             if let Ok(n) = num_str.parse::<u32>() {
+  -                 let post = parts
+  -                     .get(2)
+  -                     .map(|s| s.eq_ignore_ascii_case("--post"))
+  -                     .unwrap_or(false);
+  -                 return PrSubcommand::Review(n, post);
+  +     // Verb-first forms — the vocabulary `commands::PR_SUBCOMMANDS` offers at the
+  +     // completion prompt and `help_data.rs` documents. Before #757 only `review`
+  +     // and `create` were routed here and the other five fell through to the
+  +     // number parse below, i.e. straight to Help. Verbs are checked before the
+  +     // number parse; no verb is a decimal number, so there is no ambiguity and
+  +     // every number-first form below is untouched.
+  +     match parts[0].to_lowercase().as_str() {
+  +         "list" => return PrSubcommand::List,
+  +         "review" => {
+  ... (53 more lines)
+ ✓ (1m 39s)
+        let parts: Vec<&str> = arg.splitn(3, char::is_whitespace).collect();
+    
+  -     // Check for "review" subcommand first (before trying to parse as number)
+  -     if parts[0].eq_ignore_ascii_case("review") {
+  -         if let Some(num_str) = parts.get(1) {
+  -             if let Ok(n) = num_str.parse::<u32>() {
+  -                 let post = parts
+  -                     .get(2)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test commands… ✓ (1.2s)
+  2 tools completed in 1m 43s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

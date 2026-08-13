@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this diff focused on the actual behavior change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PR_SUBCOMMANDS" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/commands_git… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/"pr" =>/,/^    }/p' src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/"pr" => Some\(/,/^        … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "x20 /pr" src/help_data.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for c in "/pr 42" "/pr view 42" … ✓ (3.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"pr"' src/dispatch_sub.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 printf '/pr view 9999… ✓ (1m 2s)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (54.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 52s (10 ✓)
+
+Verdict: PASS
+
+• All 7 advertised tokens now route; verbs are matched before the number parse, so /pr 42, /pr, and `/pr 42 diff|review|comment|checkout` are unchanged (pinned by existing + new tests).
+• Live check: /pr view 99999 in the REPL hit the real View arm (gh GraphQL error about PR 99999) rather than the help screen — the previously-broken half genuinely works.
+• Behavioural drift test iterates commands::PR_SUBCOMMANDS and asserts non-Help, with a total fixture match that panics on an unknown token — exactly the guard the presence-check couldn't give.
+• No new enum variants or dangling definitions; help prose already stated the verb-first grammar, so all three copies now agree.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

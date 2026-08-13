@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The task diff is empty — nothing was implemented or committed. `git log` shows the newest commits are the prior session's wrap-up plus skill-evolve counter bumps, the working tree is clean, and none of the required symbols exist anywhere in src/.
+Checked: intent_alignment: FAIL: grepped src/ for MIN_FORECAST_OPPORTUNITIES, forecast_opportunities, too_new and TooNew — zero matches; `git log -- src/commands_risk_neverforecast.rs` shows no commit for this task, and `git status` is clean, so steps 1-5 (pure core, git add-date helper, third render block, tests, CLAUDE.md) are all absent.
+Checked: forgotten_touchpoints: FAIL: there are no new definitions at all — the diff contains no code, so neither the NeverForecastGroups third field nor its renderer/consumer in format_epistemic_report was added; build/test passing merely reflects the unchanged tree.
+Checked: doc_sync: FAIL: the task required rewriting the commands_risk_neverforecast.rs bullet in CLAUDE.md to describe three groups; CLAUDE.md is untouched in this session's commits (last change was the prior session's help_data_guards bullet).
+Checked: product_surface: N/A: no diff exists, so no config default, CLI flag, wizard or startup behavior was touched.
