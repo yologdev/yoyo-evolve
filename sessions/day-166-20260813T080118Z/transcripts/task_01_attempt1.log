@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code at the seams named in the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1120,1200p src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 840,900p src/cli.rs ✓ (13ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CONFIG_FILE_NAMES\|fn h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_continue_on_silence… ✓ (8ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1090,1160p src/cli.rs; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1040,1075p src/config.rs;… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|is_safe_mode… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub const \(DIM\|RESET… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,300p src/format/mod.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 2s (9 ✓)
+
+Now the config-provenance half:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_config_file()" sr… ✓ (8ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (30 → 122 lines)
+                if !is_quiet() {
+                    eprintln!("{DIM}  config: {name}{RESET}");
+                }
+  +             record_loaded_config_path(std::path::PathBuf::from(name));
+                return (parse_config_file(&content), content);
+            }
+        }
+  ···
+                if !is_quiet() {
+                    eprintln!("{DIM}  config: {}{RESET}", path.display());
+                }
+  +             record_loaded_config_path(path);
+                return (parse_config_file(&content), content);
+            }
+        }
+  ···
+                if !is_quiet() {
+                    eprintln!("{DIM}  config: {}{RESET}", path.display());
+                }
+  +             record_loaded_config_path(path);
+  ... (94 more lines)
+ ✓ (19.8s)
+                if !is_quiet() {
+                    eprintln!("{DIM}  config: {name}{RESET}");
+                }
+  +             record_loaded_config_path(std::path::PathBuf::from(name));
+                return (parse_config_file(&content), content);
+            }
+        }
+  ···
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 49.2s (2 ✓)
+
+Expected — now the consumer, in cli.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 97 lines)
+        mcp_servers: Vec<String>,
+        mcp_server_configs: Vec<McpServerConfig>,
+        openapi_specs: Vec<String>,
+  + }
+  + 
+  + /// Outcome of the project-local MCP trust gate (#748).
+  + ///
+  + /// `refused` holds the *resolved command string* of every entry that was
+  + /// dropped, so the refusal message can show the user exactly what a repository
+  + /// they cloned was proposing to run.
+  + #[derive(Debug, Default, PartialEq)]
+  + struct McpGateOutcome {
+  +     servers: Vec<String>,
+  +     server_configs: Vec<McpServerConfig>,
+  +     refused: Vec<String>,
+  + }
+  + 
+  + /// Render a structured `[mcp_servers.*]` entry as the command line it would run.
+  + fn mcp_server_config_command(cfg: &McpServerConfig) -> String {
+  +     let mut s = cfg.command.clone();
+  ... (75 more lines)
+ ✓ (12.4s)
+        mcp_servers: Vec<String>,
+        mcp_server_configs: Vec<McpServerConfig>,
+        openapi_specs: Vec<String>,
+  + }
+  + 
+  + /// Outcome of the project-local MCP trust gate (#748).
+  + ///
+  + /// `refused` holds the *resolved command string* of every entry that was
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 2 lines)
+  - #[derive(Debug, Default, PartialEq)]
+  + #[derive(Debug)]
+    struct McpGateOutcome {
+ ✓ (19.3s)
+  - #[derive(Debug, Default, PartialEq)]
+  + #[derive(Debug)]
+    struct McpGateOutcome {
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 38.2s (2 ✓)
+
+Now wiring it into parse_mcp_and_openapi_config and adding the flag:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (31 → 47 lines)
+    /// Parse MCP servers and OpenAPI specs from CLI args and config.
+  + ///
+  + /// `project_local` says whether the config file that won the search is a
+  + /// `./.yoyo.toml` owned by the project rather than the user, and `trusted`
+  + /// whether `--trust-project` was passed. Both are read by the caller and passed
+  + /// in so the gating decision itself stays pure (`gate_mcp_sources`).
+    fn parse_mcp_and_openapi_config(
+        args: &[String],
+        file_config: &HashMap<String, String>,
+        raw_config_content: &str,
+  +     project_local: bool,
+  +     trusted: bool,
+    ) -> McpConfig {
+        // --mcp <command> flags: collect all MCP server commands (repeatable)
+  -     let mut mcp_servers = collect_repeatable_flag(args, "--mcp");
+  +     let cli_servers = collect_repeatable_flag(args, "--mcp");
+    
+  -     // Merge MCP servers from config file (config servers added first, CLI servers override/add)
+  -     if let Some(mcp_config) = file_config.get("mcp") {
+  -         let config_mcps = parse_toml_array(mcp_config);
+  ... (40 more lines)
+ ✓ (12.5s)
+    /// Parse MCP servers and OpenAPI specs from CLI args and config.
+  + ///
+  + /// `project_local` says whether the config file that won the search is a
+  + /// `./.yoyo.toml` owned by the project rather than the user, and `trusted`
+  + /// whether `--trust-project` was passed. Both are read by the caller and passed
+  + /// in so the gating decision itself stays pure (`gate_mcp_sources`).
+    fn parse_mcp_and_openapi_config(
+        args: &[String],
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 5 arguments but 3 arguments were supplied[0m
+    [1m[94m--> [0msrc/cli.rs:1310:15
+     [1m[94m|[0m
+[1m[94m1310[0m [1m[94m|[0m     let mcp = parse_mcp_and_openapi_config(args, &file_config, &raw_config_content);
+     [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m-----------------------------------------[0m [1m[94mtwo arguments of type `bool` and `bool` are missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/cli.rs:952:4
+     [1m[94m|[0m
+[1m[94m 952[0m [1m[94m|[0m fn parse_mcp_and_openapi_config(
+     [1m[94m|[0m    [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m 956[0m [1m[94m|[0m     project_local: bool,
+     [1m[94m|[0m     [1m[94m-------------------[0m
+[1m[94m 957[0m [1m[94m|[0m     trusted: bool,
+     [1m[94m|[0m     [1m[94m-------------[0m
+[1m[96mhelp[0m: provide the arguments
+     [1m[94m|[0m
+[1m[94m1310[0m [1m[94m| [0m    let mcp = parse_mcp_and_openapi_config(args, &file_config, &raw_config_content[92m, /* bool */, /* bool */[0m);
+     [1m[94m|[0m                                                                                   [92m++++++++++++++++++++++++[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 9 lines)
+  -     let mcp = parse_mcp_and_openapi_config(args, &file_config, &raw_config_content);
+  +     // #748: a `./.yoyo.toml` is controlled by whoever wrote the repository, so
+  +     // the MCP servers it declares are not started unless --trust-project says so.
+  +     let mcp = parse_mcp_and_openapi_config(
+  +         args,
+  +         &file_config,
+  +         &raw_config_content,
+  +         crate::config::loaded_config_is_project_local(),
+  +         is_trust_project(),
+  +     );
+ ✓ (12.9s)
+  -     let mcp = parse_mcp_and_openapi_config(args, &file_config, &raw_config_content);
+  +     // #748: a `./.yoyo.toml` is controlled by whoever wrote the repository, so
+  +     // the MCP servers it declares are not started unless --trust-project says so.
+  +     let mcp = parse_mcp_and_openapi_config(
+  +         args,
+  +         &file_config,
+  +         &raw_config_content,
+  +         crate::config::loaded_config_is_project_local(),
+  +         is_trust_project(),
+  +     );
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the flag state, parse, and KNOWN_FLAGS entry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 20 lines)
+  + /// Whether `--trust-project` was passed. Default **off** (issue #748).
+  + ///
+  + /// A project-local `./.yoyo.toml` is written by whoever wrote the repository,
+  + /// not necessarily by the person running yoyo. When off, the MCP servers such a
+  + /// config declares are refused (with their resolved command lines printed)
+  + /// instead of being started silently at startup. `--mcp` flags and
+  + /// home/XDG configs are never affected.
+  + static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  + 
+  + /// Enable the opt-in project-config trust (`--trust-project`).
+  + pub fn set_trust_project() {
+  +     let _ = TRUST_PROJECT.set(true);
+  + }
+  + 
+  + /// Whether project-local config execution is trusted (default false).
+  + pub fn is_trust_project() -> bool {
+  +     *TRUST_PROJECT.get_or_init(|| false)
+  + }
+  + 
+    /// The provider the session was actually configured with (e.g. "openrouter").
+ ✓ (19.6s)
+  + /// Whether `--trust-project` was passed. Default **off** (issue #748).
+  + ///
+  + /// A project-local `./.yoyo.toml` is written by whoever wrote the repository,
+  + /// not necessarily by the person running yoyo. When off, the MCP servers such a
+  + /// config declares are refused (with their resolved command lines printed)
+  + /// instead of being started silently at startup. `--mcp` flags and
+  + /// home/XDG configs are never affected.
+  + static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  ... (12 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 11 lines)
+        if args.iter().any(|a| a == "--continue-on-silence") {
+            set_continue_on_silence();
+  +     }
+  + 
+  +     // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
+  +     // to start the MCP servers it declares. Off by default — that file ships
+  +     // with the repository, so starting the commands it names is execution the
+  +     // user never approved.
+  +     if args.iter().any(|a| a == "--trust-project") {
+  +         set_trust_project();
+        }
+ ✓ (1m 36s)
+        if args.iter().any(|a| a == "--continue-on-silence") {
+            set_continue_on_silence();
+  +     }
+  + 
+  +     // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
+  +     // to start the MCP servers it declares. Off by default — that file ships
+  +     // with the repository, so starting the commands it names is execution the
+  +     // user never approved.
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 9s (3 ✓)
+
+Now the tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (121 lines) ✓ (14.1s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 2 lines)
+  -         assert!(check_flag_values(&args).is_empty());
+  +         let value_taking = ["--model", "--mcp", "--provider"];
+  +         assert!(check_flag_values(&args, &value_taking).is_empty());
+ ✓ (1m 43s)
+  -         assert!(check_flag_values(&args).is_empty());
+  +         let value_taking = ["--model", "--mcp", "--provider"];
+  +         assert!(check_flag_values(&args, &value_taking).is_empty());
+  3 tools completed in 2m 19s (3 ✓)
+
+Now the config-provenance tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (68 lines) ✓ (20.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | tail -… ✓ (1m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | grep -… ✓ (54.2s)
+  3 tools completed in 2m 39s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+

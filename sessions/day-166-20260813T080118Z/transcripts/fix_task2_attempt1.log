@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs ✓ (8ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StudyState\|parse_exper… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,200p src/commands_risk… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 570,700p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,840p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_NEVER_FORECAS… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,800p scripts/extract_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_epistemic_repor… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_epistemic_repor… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1310,1400p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn truncate_reason\|REA… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 28s (12 ✓)
+
+Now let me implement. First the never-forecast module:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (5 → 11 lines)
+  + use crate::commands_risk_epistemic::{latest_study_state_by_path, ExperimentVisit, StudyState};
+    use crate::commands_risk_snapshots::ParsedSnapshot;
+    
+    /// How many never-forecast files are listed as a sample. The honest *total*
+    /// is always printed alongside — the cap is a display budget, not a claim.
+    pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+  + 
+  + /// Display cap for a study annotation, in chars. Long grade summaries would
+  + /// otherwise wrap the one-line-per-file shape this section depends on. The
+  + /// cut is marked in-band by `truncate_reason`'s ellipsis (Day 162).
+  + const STUDY_NOTE_MAX_CHARS: usize = 100;
+ ✓ (12.2s)
+  + use crate::commands_risk_epistemic::{latest_study_state_by_path, ExperimentVisit, StudyState};
+    use crate::commands_risk_snapshots::ParsedSnapshot;
+    
+    /// How many never-forecast files are listed as a sample. The honest *total*
+    /// is always printed alongside — the cap is a display budget, not a claim.
+    pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+  + 
+  + /// Display cap for a study annotation, in chars. Long grade summaries would
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (55 → 119 lines)
+    pub(crate) struct NeverForecast {
+  +     pub(crate) path: String,
+  +     pub(crate) risk_score: f64,
+  + }
+  + 
+  + /// A file no column ever forecast **but** that an experiment round has already
+  + /// opened on purpose — the room I lit myself.
+  + ///
+  + /// Kept apart from [`NeverForecast`] rather than silently subtracted from it
+  + /// (Day 144: absence gets its own name). "No column ever guessed about it" and
+  + /// "I once studied it" are two different facts; collapsing them destroys the
+  + /// first, and dropping these files outright would hide the second. So they are
+  + /// surfaced separately, annotated with when the visit happened and whether it
+  + /// graded anything — never presented as unexplored (#744: round 43 was handed
+  + /// `src/commands_lint.rs` as a dark room ~4.5h after round 40 studied it).
+  + pub(crate) struct StudiedNeverForecast {
+        pub(crate) path: String,
+        pub(crate) risk_score: f64,
+  +     /// Human-readable study annotation. Uses the ranked half's vocabulary —
+  +     /// `studied by graded experiment (day N, …)` for a graded round,
+  ... (123 more lines)
+ ✓ (12.4s)
+    pub(crate) struct NeverForecast {
+  +     pub(crate) path: String,
+  +     pub(crate) risk_score: f64,
+  + }
+  + 
+  + /// A file no column ever forecast **but** that an experiment round has already
+  + /// opened on purpose — the room I lit myself.
+  + ///
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 55.1s (2 ✓)
+
+Now the epistemic module — extract the shared merge helper:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,600p src/commands_ris… ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0432][0m[1m: unresolved import `crate::commands_risk_epistemic::latest_study_state_by_path`[0m
+  [1m[94m--> [0msrc/commands_risk_neverforecast.rs:12:38
+   [1m[94m|[0m
+[1m[94m12[0m [1m[94m|[0m use crate::commands_risk_epistemic::{latest_study_state_by_path, ExperimentVisit, StudyState};
+   [1m[94m|[0m                                      [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mno `latest_study_state_by_path` in `commands_risk_epistemic`[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:820:17
+    [1m[94m|[0m
+[1m[94m820[0m [1m[94m|[0m     let never = never_forecast_files(&snapshots, &risk_scores);
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^[0m[1m[94m--------------------------[0m [1m[94margument #3 of type `&[commands_risk_epistemic::ExperimentVisit]` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_risk_neverforecast.rs:88:15
+    [1m[94m|[0m
+[1m[94m 88[0m [1m[94m|[0m pub(crate) fn never_forecast_files(
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m 91[0m [1m[94m|[0m     experiments: &[ExperimentVisit],
+    [1m[94m|[0m     [1m[94m-------------------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m820[0m [1m[94m| [0m    let never = never_forecast_files(&snapshots, &risk_scores[92m, /* &[commands_risk_epistemic::ExperimentVisit] */[0m);
+    [1m[94m|[0m                                                              [92m+++++++++++++++++++++++++++++++++++++++++++++++++++[0m
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:826:55
+    [1m[94m|[0m
+[1m[94m826[0m [1m[94m|[0m         ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 574,596p src/commands_ris… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=574… (8 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (59 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,530p src/commands_ris… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (4.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 27.5s (5 ✓)
+
+Now update format_epistemic_report to render both groups:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 694,704p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (52 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 806,820p src/commands_ris… ✓ (3ms)
+  3 tools completed in 12.0s (3 ✓)
+
+Now add the studied-group rendering block after the dark section:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 38 lines)
+                "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
+  +         ));
+  +     }
+  + 
+  +     // Third state (#744): never forecast, but *already studied*. Surfaced
+  +     // separately and annotated — never silently subtracted from the dark set
+  +     // above (that would destroy the "no column ever named it" fact) and never
+  +     // presented as unexplored (that spends the exploration budget re-lighting
+  +     // a room I lit myself). The rows deliberately use the `▪ path — note`
+  +     // shape, which matches neither `EPISTEMIC_NEVER_FORECAST_ROW_RE`
+  +     // (`^\s*◦\s+(\S+)\s+\(risk\s`) nor `EPISTEMIC_ENTRY_RE` in
+  +     // scripts/extract_trajectory.py, so the planner's dark-room list keeps
+  +     // meaning exactly what it meant before.
+  +     if !never.studied.is_empty() {
+  +         out.push_str(&format!(
+  +             "\n  {DIM}already studied, though no column ever named {}: {} scored file{}{RESET}\n",
+  +             if never.studied.len() == 1 { "it" } else { "them" },
+  +             never.studied.len(),
+  +             if never.studied.len() == 1 { "" } else { "s" },
+  +         ));
+  ... (17 more lines)
+ ✓ (12.7s)
+                "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
+  +         ));
+  +     }
+  + 
+  +     // Third state (#744): never forecast, but *already studied*. Surfaced
+  +     // separately and annotated — never silently subtracted from the dark set
+  +     // above (that would destroy the "no column ever named it" fact) and never
+  +     // presented as unexplored (that spends the exploration budget re-lighting
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (9.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (141ms)
+  3 tools completed in 28.2s (3 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (13.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (12.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 43.0s (3 ✓)
+
+Now update the never-forecast module's own tests (adding the empty visit map, expectations unchanged):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 210,232p src/commands_ris… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (13.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let never = never_fore… ✓ (22.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 19s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 24s (6 ✓)
+
+All existing tests pass. Now add the new tests required by the task:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 182,200p src/commands_ris… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 2)
+

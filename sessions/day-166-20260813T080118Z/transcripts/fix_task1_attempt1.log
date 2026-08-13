@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the two missing deliverables: docs updates and the follow-up issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "trust_project\|trust-pr… ✓ (10ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 890,1010p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/config.rs… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/help.rs |… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 228,245p src/help.rs && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "mcp\|safe-mode\|safe… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l docs/src/configuration/per… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,207p docs/src/configu… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 18.6s (9 ✓)
+
+Now I'll add the docs section and update CLAUDE.md.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 193,207p docs/src/configu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/permissions.md (3 → 45 lines)
+  + ## Project-local config is not trusted to start processes
+  + 
+  + A `.yoyo.toml` sitting in the directory you launch yoyo from ships with the *repository*, not
+  + with you. It can name arbitrary local commands under `mcp = [...]` or `[mcp_servers.*]`, and
+  + before yoyo would start them during normal startup — no prompt, no display of what was about
+  + to run.
+  + 
+  + Since issue #748, **MCP servers declared by a project-local `.yoyo.toml` are not started by
+  + default.** When yoyo drops them it prints one block on stderr naming the resolved command of
+  + each server it refused, so you can see exactly what the repo proposed:
+  + 
+  + ```
+  + ⚠ A project-local .yoyo.toml asked to start 1 MCP server. yoyo did not start it:
+  +     npx -y @some/mcp-server
+  +   This config came with the project, not from you. Re-run with --trust-project to start them,
+  +   or use --safe-mode to disable all project customizations.
+  + ```
+  + 
+  + To opt in for that run:
+  + 
+  ... (25 more lines)
+ ✓ (53.8s)
+  + ## Project-local config is not trusted to start processes
+  + 
+  + A `.yoyo.toml` sitting in the directory you launch yoyo from ships with the *repository*, not
+  + with you. It can name arbitrary local commands under `mcp = [...]` or `[mcp_servers.*]`, and
+  + before yoyo would start them during normal startup — no prompt, no display of what was about
+  + to run.
+  + 
+  + Since issue #748, **MCP servers declared by a project-local `.yoyo.toml` are not started by
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 235,250p docs/src/configu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/permissions.md (1 → 2 lines)
+    | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
+  + | Project-config trust | MCP servers from `./.yoyo.toml` | Not started unless `--trust-project` |
+ ✓ (53.6s)
+    | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
+  + | Project-config trust | MCP servers from `./.yoyo.toml` | Not started unless `--trust-project` |
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 5s (4 ✓)
+
+Now CLAUDE.md bullets:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '75p' CLAUDE.md ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `config.rs` — permission config, directory restrictions, MCP server config, TOML parsing helpers
+  + - `config.rs` — permission config, directory restrictions, MCP server config, TOML parsing helpers. Day 166 (#748) added **config provenance**: `load_config_file`'s first-wins chain (`./.yoyo.toml` → `~/.yoyo.toml` → XDG) records the winning path in a `OnceLock` at each of its three return rungs (`record_loaded_config_path`), and `loaded_config_is_project_local()` answers "did the *project* supply this config?" from that recorded winner — there is exactly one statement of the search order, never a second precedence ladder to drift against it. The decision half is the pure, table-tested `config_path_is_project_local(path, cwd, home)`: the file must be one of `CONFIG_FILE_NAMES`, resolve (relative paths against `cwd`) to a file whose parent *is* `cwd`, and — pinned explicitly, not left accidental — `cwd == home` returns **false**, because `~/.yoyo.toml` reached as `./.yoyo.toml` is still the user's own config. The `OnceLock` is deliberately write-once: a later `cd` must not retroactively change the provenance the session already acted on. Provenance is only *reported* here; the gate that consumes it lives in `cli.rs`.
+ ✓ (53.5s)
+  - - `config.rs` — permission config, directory restrictions, MCP server config, TOML parsing helpers
+  + - `config.rs` — permission config, directory restrictions, MCP server config, TOML parsing helpers. Day 166 (#748) added **config provenance**: `load_config_file`'s first-wins chain (`./.yoyo.toml` → `~/.yoyo.toml` → XDG) records the winning path in a `OnceLock` at each of its three return rungs (`record_loaded_config_path`), and `loaded_config_is_project_local()` answers "did the *project* supply this config?" from that recorded winner — there is exactly one statement of the search order, never a second precedence ladder to drift against it. The decision half is the pure, table-tested `config_path_is_project_local(path, cwd, home)`: the file must be one of `CONFIG_FILE_NAMES`, resolve (relative paths against `cwd`) to a file whose parent *is* `cwd`, and — pinned explicitly, not left accidental — `cwd == home` returns **false**, because `~/.yoyo.toml` reached as `./.yoyo.toml` is still the user's own config. The `OnceLock` is deliberately write-once: a later `cd` must not retroactively change the provenance the session already acted on. Provenance is only *reported* here; the gate that consumes it lives in `cli.rs`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --limit 3 --state … ✓ (279ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (22 lines) ✓ (888ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/permissions.md (2 → 3 lines)
+    applied without a trust gate — only process-starting MCP entries are gated today. Use
+  - `--safe-mode` if you want none of a project's config applied.
+  + `--safe-mode` if you want none of a project's config applied. The remainder is tracked in
+  + issue #749.
+ ✓ (53.7s)
+    applied without a trust gate — only process-starting MCP entries are gated today. Use
+  - `--safe-mode` if you want none of a project's config applied.
+  + `--safe-mode` if you want none of a project's config applied. The remainder is tracked in
+  + issue #749.
+  6 tools completed in 2m 28s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
