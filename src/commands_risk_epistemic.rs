@@ -25,7 +25,8 @@ use crate::format::{BOLD, CYAN, DIM, RESET, YELLOW};
 // Re-exported here so every existing call site — including the
 // `commands_risk` chain — is unchanged.
 pub(crate) use crate::commands_risk_neverforecast::{
-    never_forecast_files, NeverForecastGroups, NEVER_FORECAST_SAMPLE,
+    git_added_ts, never_forecast_files, NeverForecastGroups, MIN_FORECAST_OPPORTUNITIES,
+    NEVER_FORECAST_SAMPLE,
 };
 
 /// Weight for "predicted but never graded" — the strongest blindness signal:
@@ -844,6 +845,45 @@ pub(crate) fn format_epistemic_report(
         ));
     }
 
+    // Fourth state, third group (sibling of #744, one layer over): never
+    // forecast, but the file is younger than most of the prediction history.
+    // No snapshot *could* have named a path that did not exist, so its absence
+    // from every column carries zero information — reporting it as dark points
+    // the exploration budget at the brightest room in the building.
+    //
+    // The shape here is load-bearing for `scripts/extract_trajectory.py`:
+    // the header must not contain the substring "never forecast"
+    // (EPISTEMIC_NEVER_FORECAST_RE hard-stops collecting on it) and the rows
+    // must not start with `◦` (EPISTEMIC_NEVER_FORECAST_ROW_RE) nor with the
+    // studied group's `▪`. Hence `▫`.
+    if !never.too_new.is_empty() {
+        out.push_str(&format!(
+            "\n  {DIM}too young to judge: {} scored file{} newer than most of the prediction history{RESET}\n",
+            never.too_new.len(),
+            if never.too_new.len() == 1 { "" } else { "s" },
+        ));
+        for t in never.too_new.iter().take(NEVER_FORECAST_SAMPLE) {
+            out.push_str(&format!(
+                "  ▫ {}{RESET} {DIM}(risk {:.1}) — added {}, {} snapshot{} since (needs ≥{} before absence means anything){RESET}\n",
+                t.path,
+                t.risk_score,
+                t.added,
+                t.opportunities,
+                if t.opportunities == 1 { "" } else { "s" },
+                MIN_FORECAST_OPPORTUNITIES,
+            ));
+        }
+        if never.too_new.len() > NEVER_FORECAST_SAMPLE {
+            out.push_str(&format!(
+                "    {DIM}... (+{} more too young){RESET}\n",
+                never.too_new.len() - NEVER_FORECAST_SAMPLE
+            ));
+        }
+        out.push_str(&format!(
+            "    {DIM}the threshold is a judgment call, not a measurement: below it, absence is about the file's age.{RESET}\n"
+        ));
+    }
+
     // Rendered last, below the never-forecast header, so the trajectory
     // extractor (which hard-stops collecting there) can never absorb it.
     out.push_str(&format_experiment_families(families));
@@ -871,7 +911,11 @@ pub(crate) fn handle_risk_epistemic() {
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
-    let never = never_forecast_files(&snapshots, &risk_scores, &experiments);
+    // The add-date resolver is git, and it is consulted only for the
+    // never-forecast candidates — never once per scored file.
+    let never = never_forecast_files(&snapshots, &risk_scores, &experiments, &|path| {
+        git_added_ts(path)
+    });
     // Same ledger text, read once: study history for the ranking, per-hypothesis
     // provenance for the guess-first scoreboard.
     let families = tally_hypothesis_families(&experiment_content);
@@ -1413,7 +1457,7 @@ mod tests {
         ];
         let events = vec![graded(101, &["src/a.rs"])];
         let risk = vec![("src/a.rs".to_string(), 3.0), ("src/b.rs".to_string(), 1.0)];
-        let never = never_forecast_files(&snapshots, &risk, &[]);
+        let never = never_forecast_files(&snapshots, &risk, &[], &|_| None);
         let with_empty = compute_epistemic_ranking(&snapshots, &events, &risk, &[]);
         let report = format_epistemic_report(
             &snapshots,

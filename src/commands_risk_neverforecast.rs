@@ -21,6 +21,18 @@ pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
 /// cut is marked in-band by `truncate_reason`'s ellipsis (Day 162).
 const STUDY_NOTE_MAX_CHARS: usize = 100;
 
+/// How many snapshots must have been taken **after** a file first existed
+/// before "never forecast" is evidence about the model rather than evidence
+/// about the file's age.
+///
+/// This is a **judgment threshold, not a measurement**. Nothing was graded to
+/// pick 5; it is simply a number large enough that a column had real chances
+/// to name the file and small enough that a file survives one quiet day
+/// without being excused forever. Below it, absence from every prediction
+/// column carries no information — no snapshot could have named a path that
+/// did not exist yet.
+pub(crate) const MIN_FORECAST_OPPORTUNITIES: usize = 5;
+
 /// A file the risk model scores but that has **never once** been forecast —
 /// absent from every snapshot's reactive (`predicted`) and anticipatory
 /// (`emerging`) column alike.
@@ -56,15 +68,41 @@ pub(crate) struct StudiedNeverForecast {
     pub(crate) note: String,
 }
 
-/// The never-forecast set, split into its two honest halves.
+/// A file no column ever forecast **but** that is younger than most of the
+/// prediction history — a room I built this afternoon.
+///
+/// Kept apart from [`NeverForecast`] for the same reason [`StudiedNeverForecast`]
+/// is (Day 144: absence gets its own name), one layer over. There are two
+/// different absences here: "the columns had many chances to name this file and
+/// never did" is evidence about the model, while "the file did not exist when
+/// the snapshots were written" is no evidence at all — no snapshot *could* have
+/// named a path that did not exist. Today's trajectory handed the planner
+/// `src/commands_risk_parse.rs` and `src/help_data_guards.rs` as the two darkest
+/// rooms in the building; both were authored hours earlier as pure extractions.
+pub(crate) struct TooNewNeverForecast {
+    pub(crate) path: String,
+    pub(crate) risk_score: f64,
+    /// The `YYYY-MM-DD` the file was added, for display. Derived from the
+    /// resolved add-timestamp, never invented.
+    pub(crate) added: String,
+    /// How many snapshots were taken *after* the file existed. Always below
+    /// [`MIN_FORECAST_OPPORTUNITIES`] for a file in this group.
+    pub(crate) opportunities: usize,
+}
+
+/// The never-forecast set, split into its three honest states.
 #[derive(Default)]
 pub(crate) struct NeverForecastGroups {
-    /// Never forecast **and** never studied — the actually-dark set. This is
-    /// what the report leads with and what the exploration budget is for.
+    /// Never forecast **and** never studied **and** old enough that the
+    /// columns had real chances — the actually-dark set. This is what the
+    /// report leads with and what the exploration budget is for.
     pub(crate) dark: Vec<NeverForecast>,
     /// Never forecast but studied/visited on some day — lit rooms that no
     /// prediction column has ever named.
     pub(crate) studied: Vec<StudiedNeverForecast>,
+    /// Never forecast but younger than the prediction history — absence here
+    /// says nothing about the model.
+    pub(crate) too_new: Vec<TooNewNeverForecast>,
 }
 
 /// Every scored path that appears in **no** snapshot's `predicted` column and
@@ -85,10 +123,26 @@ pub(crate) struct NeverForecastGroups {
 /// Honest limitation (stated in the report too): the universe here is only
 /// what the risk model scores. A file with no recent churn has no risk score
 /// and is invisible to both views.
+/// `added_ts` resolves a path's first-seen timestamp. It is a parameter rather
+/// than a direct git call so the classification stays pure and testable — the
+/// only I/O implementation is [`git_added_ts`], and it is invoked **only** for
+/// the never-forecast candidate set (already a short list), never once per
+/// scored file.
+///
+/// Classification order, and it is deliberate:
+///   1. **studied** — if an experiment round opened the file, that fact is both
+///      true and stronger, so it wins even for a file authored this afternoon.
+///      This keeps the studied group byte-identical to #744.
+///   2. **too new** — a known add-date with fewer than
+///      [`MIN_FORECAST_OPPORTUNITIES`] snapshots taken after it.
+///   3. **dark** — everything else, *including unknown age*. An unknown must
+///      never be quietly promoted into the comfortable bucket (Day 144); if I
+///      cannot date the file, I have not earned the right to excuse it.
 pub(crate) fn never_forecast_files(
     snapshots: &[ParsedSnapshot],
     risk_scores: &[(String, f64)],
     experiments: &[ExperimentVisit],
+    added_ts: &dyn Fn(&str) -> Option<String>,
 ) -> NeverForecastGroups {
     use std::collections::HashSet;
 
@@ -106,28 +160,161 @@ pub(crate) fn never_forecast_files(
     // Same precedence the ranked half uses (graded outranks a bare visit,
     // latest day wins within a state) — shared helper, never a second copy.
     let studied_states = latest_study_state_by_path(experiments);
+    let snapshot_ts: Vec<String> = snapshots.iter().map(|s| s.ts.clone()).collect();
 
     let mut dark: Vec<NeverForecast> = Vec::new();
     let mut studied: Vec<StudiedNeverForecast> = Vec::new();
+    let mut too_new: Vec<TooNewNeverForecast> = Vec::new();
     for (path, score) in risk_scores.iter() {
         if forecast.contains(path.as_str()) {
             continue;
         }
-        match studied_states.get(path.as_str()) {
-            Some((state, day)) => studied.push(StudiedNeverForecast {
+        // 1. studied wins outright.
+        if let Some((state, day)) = studied_states.get(path.as_str()) {
+            studied.push(StudiedNeverForecast {
                 path: path.clone(),
                 risk_score: *score,
                 note: study_note(state, *day),
-            }),
-            None => dark.push(NeverForecast {
-                path: path.clone(),
-                risk_score: *score,
-            }),
+            });
+            continue;
         }
+        // 2. too new to have been forecast.
+        let added = added_ts(path);
+        if let Some(n) = forecast_opportunities(added.as_deref(), &snapshot_ts) {
+            if n < MIN_FORECAST_OPPORTUNITIES {
+                too_new.push(TooNewNeverForecast {
+                    path: path.clone(),
+                    risk_score: *score,
+                    added: date_part(added.as_deref().unwrap_or_default()),
+                    opportunities: n,
+                });
+                continue;
+            }
+        }
+        // 3. dark — including unknown age.
+        dark.push(NeverForecast {
+            path: path.clone(),
+            risk_score: *score,
+        });
     }
     dark.sort_by(|a, b| risk_then_path(a.risk_score, &a.path, b.risk_score, &b.path));
     studied.sort_by(|a, b| risk_then_path(a.risk_score, &a.path, b.risk_score, &b.path));
-    NeverForecastGroups { dark, studied }
+    too_new.sort_by(|a, b| risk_then_path(a.risk_score, &a.path, b.risk_score, &b.path));
+    NeverForecastGroups {
+        dark,
+        studied,
+        too_new,
+    }
+}
+
+/// How many snapshots were taken **strictly after** a file first existed.
+///
+/// Pure. `None` means "unknown age" — either `added_ts` is `None` (no resolver
+/// answer) or the value does not parse as an ISO-8601 instant. An unknown is
+/// never a zero: a zero would say "this file had no chances", which is the
+/// too-new verdict, and inventing that from a parse failure is exactly the
+/// absorbed-absence bug this whole section exists to avoid.
+///
+/// Snapshot timestamps that do not parse are **not** counted: a timestamp I
+/// cannot read is not one I can show to postdate the file.
+pub(crate) fn forecast_opportunities(
+    added_ts: Option<&str>,
+    snapshot_timestamps: &[String],
+) -> Option<usize> {
+    let added = iso8601_sort_key(added_ts?)?;
+    Some(
+        snapshot_timestamps
+            .iter()
+            .filter_map(|ts| iso8601_sort_key(ts))
+            .filter(|k| *k > added)
+            .count(),
+    )
+}
+
+/// Normalise an ISO-8601 instant to comparable seconds-from-a-fixed-epoch.
+///
+/// Lexicographic comparison would be enough *if* both sides always used the
+/// same shape, but they come from two different producers: snapshot `ts` is
+/// written by yoyo (`...Z`) and the add-date comes from `git log --format=%aI`
+/// (which can carry a `+hh:mm` offset). So the offset is applied rather than
+/// assumed away. Anything unparseable returns `None` — never a panic, never a
+/// guessed value.
+fn iso8601_sort_key(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let b = s.as_bytes();
+    // Minimum shape: YYYY-MM-DDTHH:MM:SS
+    if b.len() < 19 {
+        return None;
+    }
+    let num = |from: usize, to: usize| -> Option<i64> { s.get(from..to)?.parse::<i64>().ok() };
+    if b[4] != b'-' || b[7] != b'-' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    if b[10] != b'T' && b[10] != b' ' {
+        return None;
+    }
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Days from a civil date (Howard Hinnant's algorithm), epoch-shifted to
+    // 0000-03-01; only differences matter here, so the epoch is arbitrary.
+    let yy = if mo <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe;
+    let mut secs = days * 86400 + h * 3600 + mi * 60 + sec;
+
+    // Offset suffix: Z / +hh:mm / -hh:mm / +hhmm. Absent → treat as UTC.
+    let rest = s.get(19..).unwrap_or("");
+    let rest = rest.trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    if let Some(sign_at) = rest.find(['+', '-']) {
+        let sign = if rest.as_bytes()[sign_at] == b'+' {
+            1
+        } else {
+            -1
+        };
+        let off = &rest[sign_at + 1..];
+        let digits: String = off.chars().filter(|c| c.is_ascii_digit()).collect();
+        if digits.len() >= 2 {
+            let oh: i64 = digits.get(0..2)?.parse().ok()?;
+            let om: i64 = digits.get(2..4).and_then(|m| m.parse().ok()).unwrap_or(0);
+            secs -= sign * (oh * 3600 + om * 60);
+        }
+    }
+    Some(secs)
+}
+
+/// The `YYYY-MM-DD` prefix of an ISO-8601 instant, for display. Returns the
+/// input trimmed when it is shorter than a date — never slices blindly.
+fn date_part(ts: &str) -> String {
+    let ts = ts.trim();
+    match ts.get(0..10) {
+        Some(d) if d.as_bytes()[4] == b'-' => d.to_string(),
+        _ => ts.to_string(),
+    }
+}
+
+/// I/O half: resolve when a path was first added, via git.
+///
+/// Deliberately outside [`forecast_opportunities`] so the classification stays
+/// pure. Any failure — git missing, non-zero exit, empty output (path not in
+/// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+/// exactly as before this existed.
+pub(crate) fn git_added_ts(path: &str) -> Option<String> {
+    let out = crate::git::run_git(&["log", "--diff-filter=A", "--format=%aI", "-1", "--", path])
+        .ok()?
+        .trim()
+        .to_string();
+    // `git log` on an unknown path exits 0 with empty stdout — an absence, not
+    // a date.
+    out.lines()
+        .next()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
 }
 
 /// Shared ordering: risk score descending, path ascending.
@@ -186,7 +373,7 @@ mod tests {
     #[test]
     fn test_predicted_file_is_not_never_forecast() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[]);
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[], &|_| None);
         assert!(
             never.dark.is_empty(),
             "a file in the reactive column has been forecast: {:?}",
@@ -197,7 +384,7 @@ mod tests {
     #[test]
     fn test_emerging_only_file_is_not_never_forecast() {
         let snapshots = vec![snap(100, &[], &["src/a.rs"])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[]);
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[], &|_| None);
         assert!(
             never.dark.is_empty(),
             "a file in the anticipatory column has been forecast"
@@ -213,6 +400,7 @@ mod tests {
             &snapshots,
             &scores(&[("src/a.rs", 5.0), ("src/update.rs", 3.2)]),
             &[],
+            &|_| None,
         );
         assert_eq!(never.dark.len(), 1, "exactly the unforecast file");
         assert_eq!(never.dark[0].path, "src/update.rs");
@@ -231,6 +419,7 @@ mod tests {
                 ("src/high.rs", 9.0),
             ]),
             &[],
+            &|_| None,
         );
         let paths: Vec<&str> = never.dark.iter().map(|n| n.path.as_str()).collect();
         assert_eq!(
@@ -245,7 +434,7 @@ mod tests {
         // No snapshots = nothing to be blind *relative to*. Claiming every
         // scored file is unforecast here would be a false "everything is
         // blind" verdict, not an honest observation.
-        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]), &[]);
+        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]), &[], &|_| None);
         assert!(never.dark.is_empty(), "empty snapshots → no claim");
     }
 
@@ -256,7 +445,7 @@ mod tests {
         for i in 0..12 {
             pairs.push((format!("src/f{i:02}.rs"), 12.0 - i as f64));
         }
-        let never = never_forecast_files(&snapshots, &pairs, &[]);
+        let never = never_forecast_files(&snapshots, &pairs, &[], &|_| None);
         assert_eq!(never.dark.len(), 12);
         let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
         let report =
@@ -298,7 +487,10 @@ mod tests {
         let events = vec![graded(100, &["src/a.rs"])];
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         assert!(ranking.is_empty(), "fixture must produce an empty ranking");
-        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[]);
+        let never =
+            never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[], &|_| {
+                None
+            });
         let report =
             format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
         assert!(
@@ -318,7 +510,10 @@ mod tests {
         // absorbed as ranked entries and push real ones out of the top-N
         // budget (Day 141). Pin the distinct bullet shape.
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[]);
+        let never =
+            never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[], &|_| {
+                None
+            });
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report =
             format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
@@ -346,6 +541,190 @@ mod tests {
         assert!(
             !report.contains("never forecast"),
             "no unforecast files → no section, got: {report}"
+        );
+    }
+
+    // ---- too-new state (sibling of #744, one layer over) ----
+
+    /// Snapshot timestamps in ascending order, one per day of July 2026.
+    fn ts_list(days: &[u32]) -> Vec<String> {
+        days.iter()
+            .map(|d| format!("2026-07-{d:02}T00:00:00Z"))
+            .collect()
+    }
+
+    #[test]
+    fn test_forecast_opportunities_table() {
+        let snaps = ts_list(&[1, 5, 10, 20]);
+        let cases: &[(Option<&str>, Option<usize>, &str)] = &[
+            // Older than every snapshot → every snapshot was a chance.
+            (Some("2026-06-01T00:00:00Z"), Some(4), "older than all"),
+            // Added after all but the last → exactly one chance.
+            (Some("2026-07-15T00:00:00Z"), Some(1), "added late"),
+            // Added after the last snapshot → no chance at all.
+            (Some("2026-07-25T00:00:00Z"), Some(0), "newer than all"),
+            // Strictly greater: a snapshot at the same instant is not a chance.
+            (
+                Some("2026-07-20T00:00:00Z"),
+                Some(0),
+                "equal ts is not after",
+            ),
+            // git's %aI shape with an offset, not a Z — same instant as 10:00Z
+            // on the 15th, so still exactly one later snapshot.
+            (Some("2026-07-15T12:00:00+02:00"), Some(1), "offset shape"),
+            // Unknown age stays unknown — never a zero.
+            (None, None, "no add-date"),
+            (Some(""), None, "empty add-date"),
+            (Some("not a date"), None, "unparseable add-date"),
+        ];
+        for (added, want, label) in cases {
+            assert_eq!(
+                forecast_opportunities(*added, &snaps),
+                *want,
+                "case: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_forecast_opportunities_ignores_unreadable_snapshot_ts() {
+        // A timestamp I cannot read is not one I can show to postdate the file.
+        let snaps = vec![
+            "2026-07-10T00:00:00Z".to_string(),
+            "garbage".to_string(),
+            String::new(),
+        ];
+        assert_eq!(
+            forecast_opportunities(Some("2026-07-01T00:00:00Z"), &snaps),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_old_file_with_many_later_snapshots_stays_dark() {
+        let snapshots: Vec<ParsedSnapshot> =
+            (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+        let never = never_forecast_files(&snapshots, &scores(&[("src/old.rs", 4.0)]), &[], &|_| {
+            Some("2020-01-01T00:00:00Z".to_string())
+        });
+        assert_eq!(never.dark.len(), 1, "the columns had six real chances");
+        assert_eq!(never.dark[0].path, "src/old.rs");
+        assert!(never.too_new.is_empty());
+    }
+
+    #[test]
+    fn test_file_added_after_all_but_one_snapshot_is_too_new() {
+        let snapshots: Vec<ParsedSnapshot> =
+            (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+        // snap(d) carries ts 2026-07-{d+1}; added just before the last one.
+        let last = snapshots.last().unwrap().ts.clone();
+        let added = "2026-07-06T12:00:00Z".to_string();
+        assert!(added < last, "fixture: one snapshot must postdate the add");
+        let never =
+            never_forecast_files(&snapshots, &scores(&[("src/fresh.rs", 4.0)]), &[], &|_| {
+                Some(added.clone())
+            });
+        assert!(never.dark.is_empty(), "a file this young is not evidence");
+        assert_eq!(never.too_new.len(), 1);
+        assert_eq!(never.too_new[0].path, "src/fresh.rs");
+        assert_eq!(never.too_new[0].opportunities, 1);
+        assert_eq!(
+            never.too_new[0].added, "2026-07-06",
+            "date part for display"
+        );
+    }
+
+    #[test]
+    fn test_unknown_add_date_is_dark_not_too_new() {
+        // An unknown must never be quietly promoted into the comfortable
+        // bucket (Day 144). No resolver answer → unchanged behaviour.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let never = never_forecast_files(&snapshots, &scores(&[("src/x.rs", 4.0)]), &[], &|_| None);
+        assert_eq!(never.dark.len(), 1, "unknown age stays dark");
+        assert!(never.too_new.is_empty(), "unknown age is not too-new");
+    }
+
+    #[test]
+    fn test_studied_wins_over_too_new() {
+        // Precedence pin: studied is checked first, so a file that is both
+        // studied and brand new keeps the stronger, truer annotation.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let visits = vec![crate::commands_risk_epistemic::ExperimentVisit {
+            path: "src/both.rs".to_string(),
+            day: 166,
+            state: StudyState::Graded("hit".to_string()),
+        }];
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[("src/both.rs", 4.0)]),
+            &visits,
+            &|_| Some("2026-07-28T00:00:00Z".to_string()),
+        );
+        assert_eq!(never.studied.len(), 1, "studied group wins");
+        assert!(never.too_new.is_empty());
+        assert!(never.dark.is_empty());
+        assert!(never.studied[0]
+            .note
+            .starts_with("studied by graded experiment"));
+    }
+
+    #[test]
+    fn test_empty_snapshots_manufacture_no_too_new_group() {
+        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]), &[], &|_| {
+            Some("2026-07-28T00:00:00Z".to_string())
+        });
+        assert!(never.dark.is_empty());
+        assert!(never.studied.is_empty());
+        assert!(
+            never.too_new.is_empty(),
+            "no snapshots → no claim of any kind"
+        );
+    }
+
+    #[test]
+    fn test_too_new_block_does_not_collide_with_the_trajectory_parser() {
+        // scripts/extract_trajectory.py hard-stops collecting on the substring
+        // "never forecast" and matches dark rows with `^\s*◦\s+(\S+)\s+\(risk`.
+        // The too-new block must be invisible to both, and must not wear the
+        // studied group's ▪ either.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let never =
+            never_forecast_files(&snapshots, &scores(&[("src/fresh.rs", 4.0)]), &[], &|_| {
+                Some("2026-07-28T00:00:00Z".to_string())
+            });
+        assert_eq!(never.too_new.len(), 1, "fixture must produce the group");
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
+        let header = report
+            .lines()
+            .map(|l| {
+                l.replace(RESET.0, "")
+                    .replace(DIM.0, "")
+                    .replace(YELLOW.0, "")
+            })
+            .find(|l| l.contains("too young to judge"))
+            .expect("too-new header must render");
+        assert!(
+            !header.contains("never forecast"),
+            "header must not trip EPISTEMIC_NEVER_FORECAST_RE: {header:?}"
+        );
+        for line in report.lines() {
+            let plain = line
+                .replace(RESET.0, "")
+                .replace(DIM.0, "")
+                .replace(YELLOW.0, "");
+            if plain.contains("src/fresh.rs") {
+                let t = plain.trim_start();
+                assert!(
+                    t.starts_with('▫'),
+                    "too-new rows use ▫, never ◦ or ▪: {plain:?}"
+                );
+            }
+        }
+        assert!(
+            report.contains("needs ≥5 before absence means anything"),
+            "the threshold must be stated in-band, got: {report}"
         );
     }
 }
