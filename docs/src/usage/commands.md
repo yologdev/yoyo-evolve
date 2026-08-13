@@ -422,7 +422,7 @@ Replay re-launches the same task list as a fresh parallel fan-out (which records
 | `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
 | `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
 | `/health` | Run project health checks — auto-detects project type, reports pass/fail with timing |
-| `/test` | Auto-detect and run project tests — shows output with timing |
+| `/test [args...]` | Auto-detect and run project tests — shows output with timing; extra args are forwarded verbatim to the runner |
 | `/lint` | Auto-detect and run project linter — shows output with timing, feeds failures to agent context |
 | `/lint pedantic` | Run with pedantic clippy lints (Rust only) |
 | `/lint strict` | Run with pedantic + nursery clippy lints (Rust only) |
@@ -478,6 +478,16 @@ The `/health` command auto-detects your project type by looking for marker files
 If no recognized project type is found, it shows a helpful message listing the marker files it looked for.
 
 The `/test` command is a focused shortcut that only runs the test suite for your project (e.g., `cargo test`, `npm test`, `python -m pytest`, `go test ./...`, `make test`). It auto-detects the project type the same way `/health` does, but runs just the tests — with full output and timing. This is handy for a quick test run without the full suite of lint/build checks that `/health` performs.
+
+**Forwarding arguments.** Anything you type after `/test` is appended to the detected command and passed to the runner, at both entry points — the REPL (`/test --lib`) and the CLI (`yoyo test --lib`):
+
+```
+> /test --lib
+  Detected project: Rust
+  Running: cargo test --lib...
+```
+
+The echoed `Running:` line always shows the full command, so you can see that your arguments reached the runner. Arguments are **forwarded verbatim** — yoyo does not validate them and does not translate them between project types, so `--lib` means whatever `cargo test` says it means and a flag the runner rejects surfaces as that runner's own error, not a yoyo error. With no arguments, `/test` behaves exactly as before.
 
 The `/lint` command is similar to `/test` but runs only the linter for your project. It auto-detects the project type and runs the appropriate linter:
 
