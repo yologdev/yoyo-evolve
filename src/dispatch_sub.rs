@@ -107,6 +107,23 @@ fn join_args_as_command(args: &[String]) -> String {
     format!("/{}", args[1..].join(" "))
 }
 
+/// True when this `yoyo goal …` invocation is the `check` subcommand, which
+/// `handle_goal` answers by running the project-local verify command
+/// (`.yoyo/goal_verify.md`) and returning a prompt for the agent. A
+/// non-interactive caller must refuse *before* that runs (#754), otherwise the
+/// refusal is printed after the side effect it appears to be declining.
+///
+/// This mirrors `commands_goal::handle_goal` exactly, not approximately: it
+/// rebuilds the same input string, strips the same `/goal` prefix and trims the
+/// same way (`commands_goal.rs`, the `let arg = input.strip_prefix("/goal")…`
+/// line), then compares against the check arm's own condition, which is the
+/// exact equality `arg == "check"`. So `goal checkpoint` and `goal check foo`
+/// are false here for the same reason they miss the check arm there.
+fn goal_args_need_session(args: &[String]) -> bool {
+    let input = join_args_as_command(args);
+    input.strip_prefix("/goal").unwrap_or("").trim() == "check"
+}
+
 /// `--version`/`-V` — both print and bail out before any config is built.
 /// This helper is the first slice of the parse_args refactor (#261); it
 /// exists so the "did I handle this?" decision can be unit-tested in
@@ -409,10 +426,20 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 // verbatim (strip_prefix("set").trim(), no tokenize_quoted in
                 // commands_goal.rs), so re-quoting a multi-word goal would
                 // store literal `"` chars — same shape as #679 finding 2.
+                // #754: refuse `check` BEFORE dispatch. handle_goal's check arm
+                // runs the project-local verify command while building the prompt,
+                // so refusing afterwards printed "requires an interactive session"
+                // *after* executing the very thing the message implies never ran.
+                if goal_args_need_session(args) {
+                    eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+                    eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
+                    eprintln!("{DIM}  Nothing ran: the verify command was not executed.{RESET}\n");
+                    return Some(None);
+                }
                 let input = join_args_as_command(args);
                 let result = crate::commands_goal::handle_goal(&input);
-                // /goal check sends to agent which requires a session — just print
-                // the goal info for shell usage.
+                // Belt and braces: if a future handler change starts returning
+                // SendToAgent for some other verb, report it rather than swallow it.
                 if let crate::dispatch::CommandResult::SendToAgent(_) = result {
                     eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
                     eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
@@ -1488,6 +1515,34 @@ mod tests {
             .map(String::from)
             .collect();
         assert_eq!(join_args_as_command(&args), "/todo add refactor");
+    }
+
+    #[test]
+    fn goal_args_need_session_is_true_only_for_the_check_verb() {
+        // Mirrors handle_goal's parse: `arg == "check"` and nothing else.
+        // A false positive here would refuse a working command; a false
+        // negative would let the verify command run behind a refusal (#754).
+        let cases: &[(&[&str], bool)] = &[
+            (&["yoyo", "goal", "check"], true),
+            (&["yoyo", "goal", "set", "ship the thing"], false),
+            (&["yoyo", "goal", "show"], false),
+            (&["yoyo", "goal", "clear"], false),
+            (&["yoyo", "goal", "verify", "cargo test"], false),
+            (&["yoyo", "goal"], false),
+            // Prefix must not match a longer word.
+            (&["yoyo", "goal", "checkpoint"], false),
+            // handle_goal's check arm is exact equality, so trailing text falls
+            // through to its unknown-subcommand branch, which runs nothing.
+            (&["yoyo", "goal", "check", "now"], false),
+        ];
+        for (argv, expected) in cases {
+            let args: Vec<String> = argv.iter().map(|s| String::from(*s)).collect();
+            assert_eq!(
+                goal_args_need_session(&args),
+                *expected,
+                "goal_args_need_session({argv:?}) should be {expected}"
+            );
+        }
     }
 
     #[test]
