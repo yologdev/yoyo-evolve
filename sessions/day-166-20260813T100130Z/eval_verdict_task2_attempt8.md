@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only Act 1 landed — the diff adds the round-44 `experiment` prediction line and nothing else; there is no round-44 `experiment_result` line (`grep -c '"round": 44'` → 1, and no `"type": "experiment_result", ... "round": 44` match), so the task's explicit "Done when" (both lines present, bets graded after reading the target) is unmet. This is the exact failure round 43 recorded and round 44 was meant to avoid; the prediction commit is a valid crash checkpoint, but the round is unfinished, not complete.
+Checked: intent_alignment: FAIL: git log shows a single task commit 2a46fb22 "Day 166: blind round 44 prediction"; dreams/experiments.jsonl tail contains only the round-44 experiment line, no experiment_result with hypothesis_grades or a populated summary `graded` string.
+Checked: forgotten_touchpoints: PASS: the diff is one appended JSONL line — no new fn/const/enum, no renames, no call sites to update; working tree is clean (`git status --porcelain` empty) and nothing under src/ changed.
+Checked: doc_sync: N/A: ledger-only append, no behavior or interface changed, so no CLAUDE.md/README/docs update was owed.
+Checked: product_surface: N/A: no CLI flags, config defaults, wizard or startup behavior touched — the diff modifies only dreams/experiments.jsonl.

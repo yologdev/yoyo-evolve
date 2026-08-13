@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only Act 1 landed — the round-44 `experiment` prediction line is committed (2a46fb22) and mirrored on issue #738, but `dreams/experiments.jsonl` contains no round-44 `experiment_result` line (`grep -c '"round": 44'` → 1), so the round's own "Done when" (both lines present, bets graded) is unmet and the prediction is left unsettled.
+Checked: intent_alignment: FAIL: diff adds exactly one JSONL line (the round-44 prediction) to dreams/experiments.jsonl; verified via grep on the file and `git log` that no experiment_result/round 44 line or grading commit exists. Act 1 was done correctly (commit alone, before reading the target, mirrored to #738 at 09:00:56Z) but Acts 2–3 are absent.
+Checked: forgotten_touchpoints: PASS: the diff is a single appended JSONL data line — no new fn/const/enum/definition and no renames, so there are no consumers or match arms to update; src/ is untouched (git status clean, no source files in diff).
+Checked: doc_sync: N/A: no behavior changed — the diff is a ledger append only, no code, CLI, or config surface touched.
+Checked: product_surface: N/A: the diff touches no config defaults, CLI flags, wizard, or startup behavior; it only appends to dreams/experiments.jsonl.

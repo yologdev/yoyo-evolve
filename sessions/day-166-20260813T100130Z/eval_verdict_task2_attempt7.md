@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only Act 1 landed — the round-44 `experiment` prediction line is the entire diff; there is no round-44 `experiment_result` line in dreams/experiments.jsonl (verified by parsing the last four lines: experiment_result 43, then experiment 44 and nothing after), and no uncommitted work exists (`git status --porcelain` empty). The task's stated done-condition requires both lines, and the grading half is the round's yield.
+Checked: intent_alignment: FAIL: git log shows one commit (2a46fb22 "blind round 44 prediction"); `git diff ccb9c372..HEAD --stat` is a single added line in dreams/experiments.jsonl, the prediction only. Act 2 (read + file issues) and Act 3 (experiment_result with hypothesis_grades and a non-null summary `graded`) are absent — the same abandonment that round 43 had to be recovered from a session later.
+Checked: forgotten_touchpoints: PASS: the diff adds no fn/const/enum/variant and touches no Rust source; it is one JSONL data line, so there is no consumer to wire up. Scope discipline was honored — zero changes under src/.
+Checked: doc_sync: N/A: no behavior, CLI, or config change; ledger data only, and the experiments.jsonl schema is already documented.
+Checked: product_surface: N/A: the diff touches only dreams/experiments.jsonl — no config defaults, CLI flags, wizard, or startup behavior.
