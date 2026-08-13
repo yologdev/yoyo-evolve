@@ -409,7 +409,10 @@ mod tests {
     fn update_selects_linux_x86_64_from_published_assets() {
         let (name, url) = select_for("linux", "x86_64", &realistic_assets("v0.1.16")).unwrap();
         assert_eq!(name, "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz");
-        assert_eq!(url, "https://example.com/yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz");
+        assert_eq!(
+            url,
+            "https://example.com/yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz"
+        );
     }
 
     #[test]
@@ -436,7 +439,10 @@ mod tests {
         // untagged naming both resolve.
         for tag in ["v0.1.16", "v9.9.9", "v10.0.0-rc.1"] {
             let (name, _) = select_for("linux", "x86_64", &realistic_assets(tag)).unwrap();
-            assert_eq!(name, format!("yoyo-{}-x86_64-unknown-linux-gnu.tar.gz", tag));
+            assert_eq!(
+                name,
+                format!("yoyo-{}-x86_64-unknown-linux-gnu.tar.gz", tag)
+            );
         }
         let untagged = vec![serde_json::json!({
             "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz",
@@ -467,7 +473,11 @@ mod tests {
             select_for("linux", "x86_64", &realistic_assets("v0.1.16")).unwrap(),
             select_for("windows", "x86_64", &realistic_assets("v0.1.16")).unwrap(),
         ] {
-            assert!(!name.ends_with(".sha256"), "picked a checksum file: {}", name);
+            assert!(
+                !name.ends_with(".sha256"),
+                "picked a checksum file: {}",
+                name
+            );
         }
     }
 
@@ -552,10 +562,12 @@ mod tests {
             ("windows", "x86_64"),
         ];
         let ext_for = |triple: &str| -> Option<&'static str> {
-            supported.iter().find_map(|(os, arch)| match platform_target(os, arch) {
-                Some((t, e)) if t == triple => Some(e),
-                _ => None,
-            })
+            supported
+                .iter()
+                .find_map(|(os, arch)| match platform_target(os, arch) {
+                    Some((t, e)) if t == triple => Some(e),
+                    _ => None,
+                })
         };
 
         // Reconstruct what a real release publishes, from the workflow's own data.
@@ -698,7 +710,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(platform_target("windows", "x86_64").map(|(_, e)| e), Some("zip"));
+        assert_eq!(
+            platform_target("windows", "x86_64").map(|(_, e)| e),
+            Some("zip")
+        );
     }
 
     #[test]
