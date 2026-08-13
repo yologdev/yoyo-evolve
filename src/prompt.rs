@@ -9,7 +9,7 @@ use yoagent::agent::Agent;
 use yoagent::context::total_tokens;
 use yoagent::*;
 
-use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
+use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
 /// Prepend the effort-level hint to user input when the effort level is not Medium.
@@ -1406,6 +1406,13 @@ async fn handle_stream_json_events(
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut last_api_error: Option<String> = None;
+    // #751: JSON stream mode is the second of the two display paths, and it is
+    // the audit log's writer while it is running. `AuditHook` no longer writes
+    // (it cannot know duration or success), so if this handler did not record
+    // completed tool calls, `--audit --output-format json` would produce an
+    // empty audit log. Keyed by tool_call_id, same shape as the display path's
+    // `PromptEventState::audit_inflight`.
+    let mut audit_inflight: HashMap<String, (String, serde_json::Value, Instant)> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -1416,9 +1423,30 @@ async fn handle_stream_json_events(
                 // bookkeeping match below (AgentEvent's serde shape is the source of truth).
                 emit_agent_event(&event);
                 match &event {
+                    AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+                        // Only pay the clone when audit logging is actually on.
+                        if is_audit_enabled() {
+                            audit_inflight.insert(
+                                tool_call_id.clone(),
+                                (tool_name.clone(), args.clone(), Instant::now()),
+                            );
+                        }
+                    }
                     AgentEvent::ToolExecutionEnd {
-                        tool_name, is_error, result, ..
+                        tool_call_id, tool_name, is_error, result,
                     } => {
+                        // Audit log: record the completed tool call with its real
+                        // duration and its real success flag (#751).
+                        if let Some((audit_tool, audit_args, started)) =
+                            audit_inflight.remove(tool_call_id)
+                        {
+                            audit_log_tool_call(
+                                &audit_tool,
+                                &audit_args,
+                                started.elapsed().as_millis() as u64,
+                                !*is_error,
+                            );
+                        }
                         // Extract text from tool result for internal error tracking.
                         let output = result
                             .content

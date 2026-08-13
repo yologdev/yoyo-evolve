@@ -49,6 +49,16 @@ pub fn is_audit_enabled() -> bool {
 /// Write a tool execution record to `.yoyo/audit.jsonl`.
 /// Each line is a JSON object: `{"ts":"...","tool":"...","args":{...},"duration_ms":N,"success":bool}`
 /// Silently does nothing if audit is disabled or writing fails.
+///
+/// **Invariant (#751): one entry per completed tool call, single writer.** The only
+/// caller is the prompt event-stream handler in `src/prompt.rs` — the display path
+/// (`PromptEventState::handle_tool_execution_end`) and the JSON-stream path
+/// (`handle_stream_json_events`), which are mutually exclusive for a given run — and it
+/// passes the call's real elapsed duration and its real `is_error` flag. Nothing else may
+/// call this: `AuditHook` sees only a tool's output string, so it can know neither
+/// duration nor success, and a second writer both doubles every count read off the file
+/// (it is pushed to the public `audit-log` branch and mined by skill-evolve and
+/// `scripts/extract_trajectory.py`) and dilutes failures with fabricated successes.
 pub fn audit_log_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
