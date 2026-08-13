@@ -56,6 +56,25 @@ pub fn is_continue_on_silence() -> bool {
     *CONTINUE_ON_SILENCE.get_or_init(|| false)
 }
 
+/// Whether `--trust-project` was passed. Default **off** (issue #748).
+///
+/// A project-local `./.yoyo.toml` is written by whoever wrote the repository,
+/// not necessarily by the person running yoyo. When off, the MCP servers such a
+/// config declares are refused (with their resolved command lines printed)
+/// instead of being started silently at startup. `--mcp` flags and
+/// home/XDG configs are never affected.
+static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable the opt-in project-config trust (`--trust-project`).
+pub fn set_trust_project() {
+    let _ = TRUST_PROJECT.set(true);
+}
+
+/// Whether project-local config execution is trusted (default false).
+pub fn is_trust_project() -> bool {
+    *TRUST_PROJECT.get_or_init(|| false)
+}
+
 /// The provider the session was actually configured with (e.g. "openrouter").
 /// Set once during startup (after the setup wizard resolves the provider); read
 /// by error diagnosis so auth-failure messages name the *configured* provider and
@@ -348,6 +367,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--no-tools",
     "--lite",
     "--safe-mode",
+    "--trust-project",
     "--help",
     "-h",
     "--version",
@@ -852,34 +872,141 @@ struct McpConfig {
     openapi_specs: Vec<String>,
 }
 
+/// Outcome of the project-local MCP trust gate (#748).
+///
+/// `refused` holds the *resolved command string* of every entry that was
+/// dropped, so the refusal message can show the user exactly what a repository
+/// they cloned was proposing to run.
+#[derive(Debug)]
+struct McpGateOutcome {
+    servers: Vec<String>,
+    server_configs: Vec<McpServerConfig>,
+    refused: Vec<String>,
+}
+
+/// Render a structured `[mcp_servers.*]` entry as the command line it would run.
+fn mcp_server_config_command(cfg: &McpServerConfig) -> String {
+    let mut s = cfg.command.clone();
+    for arg in &cfg.args {
+        s.push(' ');
+        s.push_str(arg);
+    }
+    format!("{}: {}", cfg.name, s)
+}
+
+/// Merge MCP servers from the command line and the config file, applying the
+/// project-local trust boundary (#748).
+///
+/// Pure — every input is a parameter, so the decision is testable without
+/// touching process globals.
+///
+/// The boundary, stated once:
+/// - `--mcp` entries came from the person at the keyboard → always kept.
+/// - config entries from `~/.yoyo.toml` or the XDG config were authored by the
+///   user → always kept (`project_local == false`).
+/// - config entries from a `./.yoyo.toml` are controlled by whoever wrote the
+///   repository → dropped unless `trusted` (`--trust-project`).
+fn gate_mcp_sources(
+    cli_servers: Vec<String>,
+    config_servers: Vec<String>,
+    config_server_configs: Vec<McpServerConfig>,
+    project_local: bool,
+    trusted: bool,
+) -> McpGateOutcome {
+    let mut servers = cli_servers;
+
+    if project_local && !trusted {
+        let mut refused: Vec<String> = config_servers;
+        refused.extend(config_server_configs.iter().map(mcp_server_config_command));
+        return McpGateOutcome {
+            servers,
+            server_configs: Vec::new(),
+            refused,
+        };
+    }
+
+    // Config servers are added first (CLI servers override/extend), preserving
+    // the pre-#748 merge order exactly.
+    for server in config_servers.into_iter().rev() {
+        if !servers.contains(&server) {
+            servers.insert(0, server);
+        }
+    }
+
+    McpGateOutcome {
+        servers,
+        server_configs: config_server_configs,
+        refused: Vec::new(),
+    }
+}
+
+/// The stderr block shown when a project-local config's MCP servers are refused.
+///
+/// Pure and ANSI-free (the caller applies color), so the promise a user actually
+/// reads is pinned by a test rather than only the filtered vector underneath it.
+/// `plain` drops the glyph for screen-reader / `--screen-reader` output.
+fn project_mcp_refusal_message(refused: &[String], plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let plural = if refused.len() == 1 { "" } else { "s" };
+    let mut msg = format!(
+        "{marker}A project-local .yoyo.toml asked to start {} MCP server{plural}. yoyo did not start {}:",
+        refused.len(),
+        if refused.len() == 1 { "it" } else { "them" }
+    );
+    for cmd in refused {
+        msg.push_str("\n    ");
+        msg.push_str(cmd);
+    }
+    msg.push_str(
+        "\n  This config came with the project, not from you. Re-run with --trust-project to start them,\n  or use --safe-mode to disable all project customizations.",
+    );
+    msg
+}
+
 /// Parse MCP servers and OpenAPI specs from CLI args and config.
+///
+/// `project_local` says whether the config file that won the search is a
+/// `./.yoyo.toml` owned by the project rather than the user, and `trusted`
+/// whether `--trust-project` was passed. Both are read by the caller and passed
+/// in so the gating decision itself stays pure (`gate_mcp_sources`).
 fn parse_mcp_and_openapi_config(
     args: &[String],
     file_config: &HashMap<String, String>,
     raw_config_content: &str,
+    project_local: bool,
+    trusted: bool,
 ) -> McpConfig {
     // --mcp <command> flags: collect all MCP server commands (repeatable)
-    let mut mcp_servers = collect_repeatable_flag(args, "--mcp");
+    let cli_servers = collect_repeatable_flag(args, "--mcp");
 
-    // Merge MCP servers from config file (config servers added first, CLI servers override/add)
-    if let Some(mcp_config) = file_config.get("mcp") {
-        let config_mcps = parse_toml_array(mcp_config);
-        for server in config_mcps.into_iter().rev() {
-            if !mcp_servers.contains(&server) {
-                mcp_servers.insert(0, server);
-            }
-        }
-    }
+    // MCP servers declared by the config file (`mcp = [...]`)
+    let config_servers = file_config
+        .get("mcp")
+        .map(|raw| parse_toml_array(raw))
+        .unwrap_or_default();
 
     // Parse structured [mcp_servers.*] sections from config file
-    let mcp_server_configs = parse_mcp_servers_from_config(raw_config_content);
+    let config_server_configs = parse_mcp_servers_from_config(raw_config_content);
+
+    let gated = gate_mcp_sources(
+        cli_servers,
+        config_servers,
+        config_server_configs,
+        project_local,
+        trusted,
+    );
+
+    if !gated.refused.is_empty() && !is_quiet() {
+        let msg = project_mcp_refusal_message(&gated.refused, crate::format::is_plain_output());
+        eprintln!("{YELLOW}{msg}{RESET}");
+    }
 
     // --openapi <spec-path> flags: collect all OpenAPI spec paths (repeatable)
     let openapi_specs = collect_repeatable_flag(args, "--openapi");
 
     McpConfig {
-        mcp_servers,
-        mcp_server_configs,
+        mcp_servers: gated.servers,
+        mcp_server_configs: gated.server_configs,
         openapi_specs,
     }
 }
@@ -950,6 +1077,14 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // default that loops on them would be worse than the ambiguity it fixes.
     if args.iter().any(|a| a == "--continue-on-silence") {
         set_continue_on_silence();
+    }
+
+    // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
+    // to start the MCP servers it declares. Off by default — that file ships
+    // with the repository, so starting the commands it names is execution the
+    // user never approved.
+    if args.iter().any(|a| a == "--trust-project") {
+        set_trust_project();
     }
 
     // Validate that flags requiring values actually have them
@@ -1200,7 +1335,15 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     };
 
     // Parse MCP servers and OpenAPI specs
-    let mcp = parse_mcp_and_openapi_config(args, &file_config, &raw_config_content);
+    // #748: a `./.yoyo.toml` is controlled by whoever wrote the repository, so
+    // the MCP servers it declares are not started unless --trust-project says so.
+    let mcp = parse_mcp_and_openapi_config(
+        args,
+        &file_config,
+        &raw_config_content,
+        crate::config::loaded_config_is_project_local(),
+        is_trust_project(),
+    );
 
     // Parse shell hooks from config file
     let shell_hooks = crate::hooks::parse_hooks_from_config(&file_config);
@@ -3841,5 +3984,117 @@ command = "server-two"
         let config2 = parse_args(&args2).expect("should parse");
         assert!(config2.auto_edit);
         assert!(!config2.auto_approve, "--auto-edit should not imply --yes");
+    }
+
+    // --- #748: project-local config MCP trust boundary -------------------
+
+    fn srv(name: &str, command: &str, args: &[&str]) -> McpServerConfig {
+        McpServerConfig {
+            name: name.to_string(),
+            command: command.to_string(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_project_local_untrusted_drops_only_config_mcp() {
+        let out = gate_mcp_sources(
+            vec!["my-server --stdio".to_string()],
+            vec!["evil --write-marker".to_string()],
+            vec![srv("fs", "npx", &["-y", "server-filesystem", "/"])],
+            true,
+            false,
+        );
+        // Only the --mcp flag entry survives.
+        assert_eq!(out.servers, vec!["my-server --stdio".to_string()]);
+        assert!(out.server_configs.is_empty());
+        assert_eq!(
+            out.refused,
+            vec![
+                "evil --write-marker".to_string(),
+                "fs: npx -y server-filesystem /".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_project_local_trusted_keeps_everything() {
+        let out = gate_mcp_sources(
+            vec!["my-server --stdio".to_string()],
+            vec!["evil --write-marker".to_string()],
+            vec![srv("fs", "npx", &["-y", "server-filesystem"])],
+            true,
+            true,
+        );
+        assert_eq!(
+            out.servers,
+            vec![
+                "evil --write-marker".to_string(),
+                "my-server --stdio".to_string()
+            ],
+            "config entries stay ahead of CLI entries, as before #748"
+        );
+        assert_eq!(out.server_configs.len(), 1);
+        assert!(out.refused.is_empty());
+    }
+
+    #[test]
+    fn test_non_project_config_is_never_gated() {
+        // A home/XDG config was authored by the user — trust flag irrelevant.
+        let out = gate_mcp_sources(
+            vec!["cli-server".to_string()],
+            vec!["home-server".to_string()],
+            vec![srv("fs", "npx", &[])],
+            false,
+            false,
+        );
+        assert_eq!(
+            out.servers,
+            vec!["home-server".to_string(), "cli-server".to_string()]
+        );
+        assert_eq!(out.server_configs.len(), 1);
+        assert!(out.refused.is_empty());
+    }
+
+    #[test]
+    fn test_refusal_message_shows_resolved_commands_and_escape_hatch() {
+        let msg = project_mcp_refusal_message(
+            &[
+                "evil --write-marker".to_string(),
+                "fs: npx -y server-filesystem /".to_string(),
+            ],
+            false,
+        );
+        assert!(msg.contains("project-local .yoyo.toml"), "{msg}");
+        assert!(msg.contains("2 MCP servers"), "{msg}");
+        assert!(msg.contains("did not start them"), "{msg}");
+        // The whole point: the user sees exactly what was proposed.
+        assert!(msg.contains("evil --write-marker"), "{msg}");
+        assert!(msg.contains("fs: npx -y server-filesystem /"), "{msg}");
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("--safe-mode"), "{msg}");
+        assert!(msg.starts_with('\u{26a0}'), "{msg}");
+    }
+
+    #[test]
+    fn test_refusal_message_singular_and_plain_mode() {
+        let msg = project_mcp_refusal_message(&["only --one".to_string()], true);
+        assert!(msg.contains("1 MCP server."), "{msg}");
+        assert!(msg.contains("did not start it"), "{msg}");
+        assert!(
+            !msg.contains('\u{26a0}'),
+            "plain output must be glyph-free: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_trust_project_in_known_flags_and_takes_no_value() {
+        assert!(KNOWN_FLAGS.contains(&"--trust-project"));
+        // It takes no value, so a bare occurrence must not be reported as a
+        // flag missing its value.
+        let args = vec!["yoyo".to_string(), "--trust-project".to_string()];
+        let value_taking = ["--model", "--mcp", "--provider"];
+        assert!(check_flag_values(&args, &value_taking).is_empty());
     }
 }

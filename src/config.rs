@@ -1148,6 +1148,7 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
             if !is_quiet() {
                 eprintln!("{DIM}  config: {name}{RESET}");
             }
+            record_loaded_config_path(std::path::PathBuf::from(name));
             return (parse_config_file(&content), content);
         }
     }
@@ -1157,6 +1158,7 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
             if !is_quiet() {
                 eprintln!("{DIM}  config: {}{RESET}", path.display());
             }
+            record_loaded_config_path(path);
             return (parse_config_file(&content), content);
         }
     }
@@ -1166,10 +1168,100 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
             if !is_quiet() {
                 eprintln!("{DIM}  config: {}{RESET}", path.display());
             }
+            record_loaded_config_path(path);
             return (parse_config_file(&content), content);
         }
     }
     (HashMap::new(), String::new())
+}
+
+// ---------------------------------------------------------------------------
+// Config provenance (#748)
+// ---------------------------------------------------------------------------
+//
+// A project-local `.yoyo.toml` is written by whoever wrote the repository — not
+// necessarily by the person running yoyo. Anything in it that *executes* a
+// command (today: `mcp = [...]` and `[mcp_servers.*]`) therefore needs a trust
+// boundary. Answering "which rung of the search won?" is what this section is
+// for; the gate itself lives at the single MCP merge seam in `cli.rs`.
+//
+// The search order is stated exactly once — in `load_config_file` above. This
+// records the winner rather than re-walking a second, drift-prone ladder.
+
+/// Path of the config file that actually won `load_config_file`'s search.
+///
+/// Written by `load_config_file` (first call wins — a session loads one config;
+/// later calls from `/config`-style helpers re-read the same chain and must not
+/// be able to change the provenance the session already acted on).
+static LOADED_CONFIG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Record which config file won the search. First writer wins.
+fn record_loaded_config_path(path: std::path::PathBuf) {
+    let _ = LOADED_CONFIG_PATH.set(path);
+}
+
+/// Is `path` — the config file that won the search — the *project-local* one,
+/// i.e. a `.yoyo.toml` sitting in the current working directory?
+///
+/// Pure: takes the cwd and the home directory as parameters so it can be tested
+/// without touching process state.
+///
+/// Deliberate decisions:
+/// - Only a file whose name is in `CONFIG_FILE_NAMES` can be project-local; the
+///   XDG path (`config.toml`) never counts even if the user is sitting in that
+///   directory.
+/// - When the cwd **is** the home directory, `./.yoyo.toml` and `~/.yoyo.toml`
+///   are the same file. It is the user's own home config, reached by a shorter
+///   path, so it is **not** treated as project-local. The threat this guards is
+///   "I cloned someone's repo and cd'd into it", not "I am in my own home dir".
+pub fn config_path_is_project_local(
+    path: &std::path::Path,
+    cwd: &std::path::Path,
+    home: Option<&std::path::Path>,
+) -> bool {
+    let name_matches = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| CONFIG_FILE_NAMES.contains(&n))
+        .unwrap_or(false);
+    if !name_matches {
+        return false;
+    }
+    // Resolve a relative path (`.yoyo.toml`, as read by `load_config_file`)
+    // against the cwd it was read from.
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let Some(dir) = absolute.parent() else {
+        return false;
+    };
+    if dir != cwd {
+        return false;
+    }
+    // cwd == home: this is the user's own ~/.yoyo.toml. Not a project config.
+    if let Some(home) = home {
+        if dir == home {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether the config file this session actually loaded is project-local.
+///
+/// `false` when no config file was found, when the winner was `~/.yoyo.toml`
+/// or the XDG config, or when the cwd cannot be read.
+pub fn loaded_config_is_project_local() -> bool {
+    let Some(path) = LOADED_CONFIG_PATH.get() else {
+        return false;
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    let home = std::env::var("HOME").ok().map(std::path::PathBuf::from);
+    config_path_is_project_local(path, &cwd, home.as_deref())
 }
 
 #[cfg(test)]
@@ -2409,5 +2501,64 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
         assert_eq!(perms.check("npm run test"), None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- #748: config provenance ----------------------------------------
+
+    #[test]
+    fn test_config_path_is_project_local_table() {
+        use std::path::Path;
+        let cwd = Path::new("/work/repo");
+        let home = Path::new("/home/u");
+        let cases: &[(&str, bool, &str)] = &[
+            // path, expected, why
+            (".yoyo.toml", true, "relative project config, read from cwd"),
+            ("/work/repo/.yoyo.toml", true, "same file, absolute"),
+            ("/home/u/.yoyo.toml", false, "home config"),
+            (
+                "/home/u/.config/yoyo/config.toml",
+                false,
+                "XDG config (name not in CONFIG_FILE_NAMES)",
+            ),
+            ("/work/other/.yoyo.toml", false, "some other directory"),
+            (
+                "/work/repo/sub/.yoyo.toml",
+                false,
+                "not the cwd we resolved against",
+            ),
+        ];
+        for (path, expected, why) in cases {
+            assert_eq!(
+                config_path_is_project_local(Path::new(path), cwd, Some(home)),
+                *expected,
+                "{path}: {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_in_home_dir_is_not_project_local() {
+        use std::path::Path;
+        // cwd IS the home directory: ./.yoyo.toml and ~/.yoyo.toml are the same
+        // file, and the user authored it. Pinned deliberately as NOT project-
+        // local — the boundary guards "I cd'd into a repo someone else wrote",
+        // not "I am sitting in my own home directory".
+        let home = Path::new("/home/u");
+        assert!(!config_path_is_project_local(
+            Path::new(".yoyo.toml"),
+            home,
+            Some(home)
+        ));
+        assert!(!config_path_is_project_local(
+            Path::new("/home/u/.yoyo.toml"),
+            home,
+            Some(home)
+        ));
+        // With no HOME known, the same path is project-local (fail safe: gate it).
+        assert!(config_path_is_project_local(
+            Path::new(".yoyo.toml"),
+            home,
+            None
+        ));
     }
 }

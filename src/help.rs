@@ -233,6 +233,14 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(s, "                    permissions) for troubleshooting");
     let _ = writeln!(
         s,
+        "  --trust-project   Start MCP servers declared by a project-local .yoyo.toml"
+    );
+    let _ = writeln!(
+        s,
+        "                    (off by default — that file ships with the repo, not you)"
+    );
+    let _ = writeln!(
+        s,
         "  --context-strategy <s>  Context management: compaction (default) or checkpoint"
     );
     let _ = writeln!(
