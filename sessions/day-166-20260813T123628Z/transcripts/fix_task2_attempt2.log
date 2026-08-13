@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "audit_log_tool_call" s… ✓ (7ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_inflight\|audit_l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,80p src/prompt_budget.… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 340,370p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1364,1480p src/prompt.rs ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1397 && NR<=1560' src/p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1440,1470p src/prompt.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1416..1456 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ | gr… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml; gr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn -A16 "    ToolExecution… ✓ (5ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16.2/src/types.rs:565..605 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 44.0s (13 ✓)
+
+Confirmed: the JSON-stream path handles ToolExecutionEnd but never writes an audit entry — a real coverage gap. Closing it with real duration/success.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1397..1417 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (4 → 11 lines)
+        let mut last_tool_name: Option<String> = None;
+        let mut last_api_error: Option<String> = None;
+  +     // #751: JSON stream mode is the second of the two display paths, and it is
+  +     // the audit log's writer while it is running. `AuditHook` no longer writes
+  +     // (it cannot know duration or success), so if this handler did not record
+  +     // completed tool calls, `--audit --output-format json` would produce an
+  +     // empty audit log. Keyed by tool_call_id, same shape as the display path's
+  +     // `PromptEventState::audit_inflight`.
+  +     let mut audit_inflight: HashMap<String, (String, serde_json::Value, Instant)> = HashMap::new();
+    
+        loop {
+ ✓ (20.1s)
+        let mut last_tool_name: Option<String> = None;
+        let mut last_api_error: Option<String> = None;
+  +     // #751: JSON stream mode is the second of the two display paths, and it is
+  +     // the audit log's writer while it is running. `AuditHook` no longer writes
+  +     // (it cannot know duration or success), so if this handler did not record
+  +     // completed tool calls, `--audit --output-format json` would produce an
+  +     // empty audit log. Keyed by tool_call_id, same shape as the display path's
+  +     // `PromptEventState::audit_inflight`.
+  ... (3 more lines)
+  2 tools completed in 26.4s (2 ✓)
+
+Now the consumers (definition + consumer in the same edit):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 26 lines)
+                    match &event {
+  +                     AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+  +                         // Only pay the clone when audit logging is actually on.
+  +                         if is_audit_enabled() {
+  +                             audit_inflight.insert(
+  +                                 tool_call_id.clone(),
+  +                                 (tool_name.clone(), args.clone(), Instant::now()),
+  +                             );
+  +                         }
+  +                     }
+                        AgentEvent::ToolExecutionEnd {
+  -                         tool_name, is_error, result, ..
+  +                         tool_call_id, tool_name, is_error, result,
+                        } => {
+  +                         // Audit log: record the completed tool call with its real
+  +                         // duration and its real success flag (#751).
+  +                         if let Some((audit_tool, audit_args, started)) =
+  +                             audit_inflight.remove(tool_call_id)
+  +                         {
+  +                             audit_log_tool_call(
+  ... (7 more lines)
+ ✓ (12.9s)
+                    match &event {
+  +                     AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+  +                         // Only pay the clone when audit logging is actually on.
+  +                         if is_audit_enabled() {
+  +                             audit_inflight.insert(
+  +                                 tool_call_id.clone(),
+  +                                 (tool_name.clone(), args.clone(), Instant::now()),
+  +                             );
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 1 lines)
+  - use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
+  + use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
+ ✓ (1m 37s)
+  - use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
+  + use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled, session_budget_exhausted};
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (179ms)
+  3 tools completed in 1m 56s (3 ✓)
+
+Now the invariant doc line on audit_log_tool_call:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_budget.rs (4 → 14 lines)
+    /// Write a tool execution record to `.yoyo/audit.jsonl`.
+    /// Each line is a JSON object: `{"ts":"...","tool":"...","args":{...},"duration_ms":N,"success":bool}`
+    /// Silently does nothing if audit is disabled or writing fails.
+  + ///
+  + /// **Invariant (#751): one entry per completed tool call, single writer.** The only
+  + /// caller is the prompt event-stream handler in `src/prompt.rs` — the display path
+  + /// (`PromptEventState::handle_tool_execution_end`) and the JSON-stream path
+  + /// (`handle_stream_json_events`), which are mutually exclusive for a given run — and it
+  + /// passes the call's real elapsed duration and its real `is_error` flag. Nothing else may
+  + /// call this: `AuditHook` sees only a tool's output string, so it can know neither
+  + /// duration nor success, and a second writer both doubles every count read off the file
+  + /// (it is pushed to the public `audit-log` branch and mined by skill-evolve and
+  + /// `scripts/extract_trajectory.py`) and dilutes failures with fabricated successes.
+    pub fn audit_log_tool_call(
+ ✓ (1m 38s)
+    /// Write a tool execution record to `.yoyo/audit.jsonl`.
+    /// Each line is a JSON object: `{"ts":"...","tool":"...","args":{...},"duration_ms":N,"success":bool}`
+    /// Silently does nothing if audit is disabled or writing fails.
+  + ///
+  + /// **Invariant (#751): one entry per completed tool call, single writer.** The only
+  + /// caller is the prompt event-stream handler in `src/prompt.rs` — the display path
+  + /// (`PromptEventState::handle_tool_execution_end`) and the JSON-stream path
+  + /// (`handle_stream_json_events`), which are mutually exclusive for a given run — and it
+  ... (6 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

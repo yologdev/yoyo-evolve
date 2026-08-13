@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the two missing items: the regression test and the CLAUDE.md docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,230p' src/hooks.rs ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+Core fix is intact. Now the two missing items. Let me look at the source-level test pattern in main.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CARGO_MANIFEST_DIR" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -60 src/hooks.rs && echo "=… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "manifest\|include_str\|… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1470,1540p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_log_tool" src/hoo… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "audit" src/hooks.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '705,740p' src/hooks.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 18.2s (7 ✓)
+
+Now I'll add the regression test:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (2 → 29 lines)
+  +     /// #751: `.yoyo/audit.jsonl` must have exactly ONE writer — the prompt event-stream
+  +     /// handlers in `src/prompt.rs`, which know the real duration and the real error flag.
+  +     /// `AuditHook::post_execute` used to write a second entry per tool call with a
+  +     /// hardcoded `0` duration and a hardcoded `success: true` (it only receives the output
+  +     /// string, so it cannot know whether the tool errored). That doubled every count read
+  +     /// off the log, halved every duration average, and would have reported a
+  +     /// 100%-failure session as 50% success.
+  +     ///
+  +     /// This is a source-level check because the defect is "a call site came back", not a
+  +     /// value a unit test can observe without racing on the process-global cwd. The needle
+  +     /// is assembled at runtime so this test's own source cannot satisfy it.
+  +     #[test]
+  +     fn test_hooks_never_writes_to_the_audit_log() {
+  +         let src = include_str!("hooks.rs");
+  +         let needle = format!("{}{}", "audit_log_tool", "_call(");
+  +         assert!(
+  +             !src.contains(&needle),
+  +             "src/hooks.rs calls `{needle})`, reintroducing a second writer for \
+  +              .yoyo/audit.jsonl. The single writer is the event-stream handler in \
+  +              src/prompt.rs, which has the real duration and the real `!is_error`; a hook \
+  ... (9 more lines)
+ ✓ (1m 37s)
+  +     /// #751: `.yoyo/audit.jsonl` must have exactly ONE writer — the prompt event-stream
+  +     /// handlers in `src/prompt.rs`, which know the real duration and the real error flag.
+  +     /// `AuditHook::post_execute` used to write a second entry per tool call with a
+  +     /// hardcoded `0` duration and a hardcoded `success: true` (it only receives the output
+  +     /// string, so it cannot know whether the tool errored). That doubled every count read
+  +     /// off the log, halved every duration average, and would have reported a
+  +     /// 100%-failure session as 50% success.
+  +     ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hooks.rs\|write_audit_e… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,455p' src/prompt.rs … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1399,1470p' src/prompt.r… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
+  + - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper. Day 166 (#751): `.yoyo/audit.jsonl` has exactly **one** writer per completed tool call — the prompt event-stream tool-end handlers in `src/prompt.rs` (`PromptEventState::handle_tool_end` for the display path, `handle_stream_json_events` for `--output-format json`), each keyed by `tool_call_id` and each recording the **real** elapsed duration and the real `!is_error`. `AuditHook` stays registered but is deliberately observe-only and writes nothing: `post_execute` receives only the tool name, params and output string, so the second entry it used to write had to fabricate `duration_ms: 0` and `success: true` — doubling every count mined off the log and reporting failed tool calls as successes (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`).
+ ✓ (1m 7s)
+  - - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
+  + - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper. Day 166 (#751): `.yoyo/audit.jsonl` has exactly **one** writer per completed tool call — the prompt event-stream tool-end handlers in `src/prompt.rs` (`PromptEventState::handle_tool_end` for the display path, `handle_stream_json_events` for `--output-format json`), each keyed by `tool_call_id` and each recording the **real** elapsed duration and the real `!is_error`. `AuditHook` stays registered but is deliberately observe-only and writes nothing: `post_execute` receives only the tool name, params and output string, so the second entry it used to write had to fabricate `duration_ms: 0` and `success: true` — doubling every count mined off the log and reporting failed tool calls as successes (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '410,425p' src/prompt.rs … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 7s (6 ✓)
+
+The function is handle_tool_execution_end, not handle_tool_end. Fixing that:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/`PromptEventState::han… ✓ (6ms)
+
+Now verify the test actually fails if the hook write returns:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib hooks::tests::t… ✓ (142ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/hooks.rs
+

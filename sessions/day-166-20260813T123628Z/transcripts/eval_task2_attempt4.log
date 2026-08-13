@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_log_tool_call\|au…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "audit_log_tool_call" s… ✓ (6ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,370p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show… ✓ (7ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format=%B -1 $(git log…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib hooks:: 2>&1 | … ✓ (9ms)
+ ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test hooks::te… ✓ (310ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test hooks::te… ✓ (309ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test hooks::te… ✓ (514ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_stream_json_even… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo clippy --all-t… ✓ (208ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 56s (12 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Key evidence:
+• audit_log_tool_call now appears only in src/prompt.rs (2 call sites) and its definition in prompt_budget.rs; src/hooks.rs has none.
+• The two prompt.rs writers are mutually exclusive paths (display drain via `PromptEventState at line 773 vs handle_stream_json_events used only by the two run_prompt_stream_json*` entry points), so still one entry per completed tool call — and the JSON-stream path now records the real elapsed duration and real !is_error, closing the coverage gap the deletion would otherwise have created.
+• Regression test `hooks::tests::test_hooks_never_writes_to_the_audit_log` passes; needle built at runtime so it can't self-match; 32 hooks tests green; `cargo clippy --all-targets -- -D warnings` clean.
+• Minor shortfall (not failing): the path enumeration step 1 asked for lives in code comments/CLAUDE.md/doc comment rather than the commit message.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

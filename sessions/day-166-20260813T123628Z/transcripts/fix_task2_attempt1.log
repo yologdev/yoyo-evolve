@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state and doing the step-1 enumeration.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,220p src/hooks.rs && … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,300p src/prompt.rs &&… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_prompt_once\|fn … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,235p src/prompt.rs &&… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1420,1520p src/prompt.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1396 && NR<=1470' src/p… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=775 && NR<=795' src/pro… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '775,… (5 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AuditHook\|audit" src/h… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (4 lines) ✓ (21ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 41.4s (11 ✓)
+
+Now making the edits. First src/hooks.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (9 → 9 lines)
+  -         // Only log if audit mode is enabled
+  -         if is_audit_enabled() {
+  -             // We don't have precise duration here (the HookedTool wrapper measures it),
+  -             // but the hook sees the output. Duration is logged separately by HookedTool.
+  -             // Log with duration=0 — the actual timing is handled by the event stream.
+  -             audit_log_tool_call(tool_name, params, 0, true);
+  -         }
+  -         // AuditHook is observe-only — no feedback
+  +         // #751: this hook deliberately writes NOTHING. `.yoyo/audit.jsonl` has exactly
+  +         // one writer — the prompt event-stream handlers in `src/prompt.rs`, which key
+  +         // in-flight calls by `tool_call_id` and so know the real duration and the real
+  +         // `is_error` flag. This hook knows neither: it is handed only the output string,
+  +         // so it cannot tell a failure from a success and used to hardcode
+  +         // `duration_ms = 0, success = true`, producing a second entry per tool call.
+  +         // AuditHook stays registered and observe-only — no write, no feedback.
+  +         let _ = (tool_name, params);
+            Ok(PostHookResult::passthrough(output))
+ ✓ (20.2s)
+  -         // Only log if audit mode is enabled
+  -         if is_audit_enabled() {
+  -             // We don't have precise duration here (the HookedTool wrapper measures it),
+  -             // but the hook sees the output. Duration is logged separately by HookedTool.
+  -             // Log with duration=0 — the actual timing is handled by the event stream.
+  -             audit_log_tool_call(tool_name, params, 0, true);
+  -         }
+  -         // AuditHook is observe-only — no feedback
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (4 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_audit_enabled" src/h… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (26ms)
+  4 tools completed in 28.4s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/hooks.rs
+
