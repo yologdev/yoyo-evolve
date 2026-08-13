@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The diff is empty — `git log` shows the newest commits are Task 1's extraction (28afa528/73004279) with no Day 166 commit for round-43 grading or #746, and the working tree is clean. Neither step landed: `dreams/experiments.jsonl` still ends with the ungraded `{"type": "experiment", "round": 43, ...}` line (no `experiment_result` for round 43), and `test_command_for_project` in src/commands_lint.rs still has signature `(project_type: &ProjectType)` with the Java arm calling `std::path::Path::new("pom.xml").exists()` against the process cwd.
+Checked: intent_alignment: FAIL: read git log/status (clean tree, no task-2 commit), tailed dreams/experiments.jsonl (round 43 result absent), and grepped src/commands_lint.rs lines 12-22 — signature has no `dir: &Path` and the cwd-relative `pom.xml` check is unchanged.
+Checked: forgotten_touchpoints: FAIL: no definitions, parameters or call sites were added or changed at all — the required signature change and its four call sites (handle_test, commands_plan.rs, watch.rs x2) plus the new tempdir test are all missing, so nothing was wired anywhere.
+Checked: doc_sync: N/A: the task correctly specified no docs change was needed, and no behavior changed because no code changed.
+Checked: product_surface: N/A: the diff is empty, so no config defaults, CLI flags, wizard or startup behavior were touched.
