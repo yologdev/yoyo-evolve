@@ -1,0 +1,143 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code in both files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"goal"' src/dispatch_su…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,320p' src/commands_g… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,270p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,430p' src/dispatch_s… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '122,150p' src/dispatch_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1485,1530p' src/dispatch… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 16.2s (6 ✓)
+
+Now the edit — a pure helper mirroring handle_goal's own parse:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (9 → 21 lines)
+  +                 // #754: refuse `check` BEFORE dispatch. handle_goal's check arm
+  +                 // runs the project-local verify command while building the prompt,
+  +                 // so refusing afterwards printed "requires an interactive session"
+  +                 // *after* executing the very thing the message implies never ran.
+  +                 if goal_args_need_session(args) {
+  +                     eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+  +                     eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
+  +                     eprintln!(
+  +                         "{DIM}  Nothing ran: the verify command was not executed.{RESET}\n"
+  +                     );
+  +                     return Some(None);
+  +                 }
+                    let input = join_args_as_command(args);
+                    let result = crate::commands_goal::handle_goal(&input);
+  -                 // /goal check sends to agent which requires a session — just print
+  -                 // the goal info for shell usage.
+  +                 // Belt and braces: if a future handler change starts returning
+  +                 // SendToAgent for some other verb, report it rather than swallow it.
+                    if let crate::dispatch::CommandResult::SendToAgent(_) = result {
+                        eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+  ... (1 more lines)
+ ✓ (14.2s)
+  +                 // #754: refuse `check` BEFORE dispatch. handle_goal's check arm
+  +                 // runs the project-local verify command while building the prompt,
+  +                 // so refusing afterwards printed "requires an interactive session"
+  +                 // *after* executing the very thing the message implies never ran.
+  +                 if goal_args_need_session(args) {
+  +                     eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+  +                     eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
+  +                     eprintln!(
+  ... (13 more lines)
+
+Expected — now the helper (definition + consumer in the same edit):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (3 → 20 lines)
+    fn join_args_as_command(args: &[String]) -> String {
+        format!("/{}", args[1..].join(" "))
+  + }
+  + 
+  + /// True when this `yoyo goal …` invocation is the `check` subcommand, which
+  + /// `handle_goal` answers by running the project-local verify command
+  + /// (`.yoyo/goal_verify.md`) and returning a prompt for the agent. A
+  + /// non-interactive caller must refuse *before* that runs (#754), otherwise the
+  + /// refusal is printed after the side effect it appears to be declining.
+  + ///
+  + /// This mirrors `commands_goal::handle_goal` exactly, not approximately: it
+  + /// rebuilds the same input string, strips the same `/goal` prefix and trims the
+  + /// same way (`commands_goal.rs`, the `let arg = input.strip_prefix("/goal")…`
+  + /// line), then compares against the check arm's own condition, which is the
+  + /// exact equality `arg == "check"`. So `goal checkpoint` and `goal check foo`
+  + /// are false here for the same reason they miss the check arm there.
+  + fn goal_args_need_session(args: &[String]) -> bool {
+  +     let input = join_args_as_command(args);
+  +     input.strip_prefix("/goal").unwrap_or("").trim() == "check"
+    }
+ ✓ (1m 56s)
+    fn join_args_as_command(args: &[String]) -> String {
+        format!("/{}", args[1..].join(" "))
+  + }
+  + 
+  + /// True when this `yoyo goal …` invocation is the `check` subcommand, which
+  + /// `handle_goal` answers by running the project-local verify command
+  + /// (`.yoyo/goal_verify.md`) and returning a prompt for the agent. A
+  + /// non-interactive caller must refuse *before* that runs (#754), otherwise the
+  ... (12 more lines)
+
+Now the table-driven test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (3 → 2 lines)
+        #[test]
+        fn join_args_goal_set_multi_word() {
+  -         // Helper-level check for the goal arm's input shape; the routing-level
+ ✓ (1m 54s)
+        #[test]
+        fn join_args_goal_set_multi_word() {
+  -         // Helper-level check for the goal arm's input shape; the routing-level
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/dispatch_sub.rs (2 → 31 lines)
+  +     #[test]
+  +     fn goal_args_need_session_is_true_only_for_the_check_verb() {
+  +         // Mirrors handle_goal's parse: `arg == "check"` and nothing else.
+  +         // A false positive here would refuse a working command; a false
+  +         // negative would let the verify command run behind a refusal (#754).
+  +         let cases: &[(&[&str], bool)] = &[
+  +             (&["yoyo", "goal", "check"], true),
+  +             (&["yoyo", "goal", "set", "ship the thing"], false),
+  +             (&["yoyo", "goal", "show"], false),
+  +             (&["yoyo", "goal", "clear"], false),
+  +             (&["yoyo", "goal", "verify", "cargo test"], false),
+  +             (&["yoyo", "goal"], false),
+  +             // Prefix must not match a longer word.
+  +             (&["yoyo", "goal", "checkpoint"], false),
+  +             // handle_goal's check arm is exact equality, so trailing text falls
+  +             // through to its unknown-subcommand branch, which runs nothing.
+  +             (&["yoyo", "goal", "check", "now"], false),
+  +         ];
+  +         for (argv, expected) in cases {
+  +             let args: Vec<String> = argv.iter().map(|s| String::from(*s)).collect();
+  ... (11 more lines)
+ ✓ (1m 53s)
+  +     #[test]
+  +     fn goal_args_need_session_is_true_only_for_the_check_verb() {
+  +         // Mirrors handle_goal's parse: `arg == "check"` and nothing else.
+  +         // A false positive here would refuse a working command; a false
+  +         // negative would let the verify command run behind a refusal (#754).
+  +         let cases: &[(&[&str], bool)] = &[
+  +             (&["yoyo", "goal", "check"], true),
+  +             (&["yoyo", "goal", "set", "ship the thing"], false),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1510,1520p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1521,1545p' src/dispatch… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 59s (4 ✓)
+
+Structure is intact (the earlier comment line is restored). Running the full gate:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (54.1s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/dispatch_sub.rs
+

@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --is-shallow-repos… ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced exactly: shallow clone, 58 commits, and src/prompt_utils.rs (extracted Day 64) reports the boundary's timestamp.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_added_ts" -A 40 src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,320p src/commands_ris… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.9s (3 ✓)
+
+Now the pure helper plus tests.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (1 → 37 lines)
+  + /// Minimum characters a sha must have before a prefix comparison is allowed.
+  + /// Below this a short string could prefix an unrelated commit by luck, and the
+  + /// cost of a false match is a genuinely dark file silently excused.
+  + const MIN_SHA_PREFIX: usize = 7;
+  + 
+  + /// A shallow clone's grafted boundary commit presents every surviving file
+  + /// as an addition, so `git log --diff-filter=A` on such a repo dates old
+  + /// files to the boundary. That is a fact about clone depth, not the file:
+  + /// treat it as unknown age rather than a recent one.
+  + ///
+  + /// `false` whenever the repo is not shallow — a full clone's root commit is a
+  + /// real birthday and keeps its existing behaviour — and whenever either side of
+  + /// the comparison is empty or shorter than [`MIN_SHA_PREFIX`].
+  + pub(crate) fn shallow_boundary_hides_age(
+  +     is_shallow: bool,
+  +     add_sha: &str,
+  +     graph_roots: &[String],
+  + ) -> bool {
+  +     if !is_shallow {
+  +         return false;
+  ... (17 more lines)
+ ✓ (20.0s)
+  + /// Minimum characters a sha must have before a prefix comparison is allowed.
+  + /// Below this a short string could prefix an unrelated commit by luck, and the
+  + /// cost of a false match is a genuinely dark file silently excused.
+  + const MIN_SHA_PREFIX: usize = 7;
+  + 
+  + /// A shallow clone's grafted boundary commit presents every surviving file
+  + /// as an addition, so `git log --diff-filter=A` on such a repo dates old
+  + /// files to the boundary. That is a fact about clone depth, not the file:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's my own "no definition without its consumer" rule firing. Wiring the consumer now.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (12 → 37 lines)
+    pub(crate) fn git_added_ts(path: &str) -> Option<String> {
+  -     let out = crate::git::run_git(&["log", "--diff-filter=A", "--format=%aI", "-1", "--", path])
+  -         .ok()?
+  -         .trim()
+  -         .to_string();
+  +     // One call yields both the add-commit sha and its date, tab-separated.
+  +     let out = crate::git::run_git(&[
+  +         "log",
+  +         "--diff-filter=A",
+  +         "--format=%H%x09%aI",
+  +         "-1",
+  +         "--",
+  +         path,
+  +     ])
+  +     .ok()?
+  +     .trim()
+  +     .to_string();
+        // `git log` on an unknown path exits 0 with empty stdout — an absence, not
+        // a date.
+  -     out.lines()
+  ... (25 more lines)
+ ✓ (1m 52s)
+    pub(crate) fn git_added_ts(path: &str) -> Option<String> {
+  -     let out = crate::git::run_git(&["log", "--diff-filter=A", "--format=%aI", "-1", "--", path])
+  -         .ok()?
+  -         .trim()
+  -         .to_string();
+  +     // One call yields both the add-commit sha and its date, tab-separated.
+  +     let out = crate::git::run_git(&[
+  +         "log",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 298,312p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 301,306p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '295,305p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (1 → 6 lines)
+    /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+  + ///
+  + /// One further `None`: on a **shallow** clone, when the add-commit is a grafted
+  + /// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
+  + /// shallow, so without that check every pre-window file reports the boundary's
+  + /// date and the too-new split would be grading clone depth instead of file age.
+ ✓ (1m 56s)
+    /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+  + ///
+  + /// One further `None`: on a **shallow** clone, when the add-commit is a grafted
+  + /// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
+  + /// shallow, so without that check every pre-window file reports the boundary's
+  + /// date and the too-new split would be grading clone depth instead of file age.
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 0s (5 ✓)
+
+Now the tests.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_risk_never… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

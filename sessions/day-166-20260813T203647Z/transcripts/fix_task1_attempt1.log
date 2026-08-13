@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shallow_boundary_hides_… ✓ (10ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 290,470p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:296..346 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7.3s (4 ✓)
+
+Fixing the orphaned doc sentence first:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (7 → 7 lines)
+    /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+  + /// exactly as before this existed.
+    ///
+    /// One further `None`: on a **shallow** clone, when the add-commit is a grafted
+    /// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
+    /// shallow, so without that check every pre-window file reports the boundary's
+    /// date and the too-new split would be grading clone depth instead of file age.
+  - /// exactly as before this existed.
+ ✓ (1m 58s)
+    /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+  + /// exactly as before this existed.
+    ///
+    /// One further `None`: on a **shallow** clone, when the add-commit is a grafted
+    /// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
+    /// shallow, so without that check every pre-window file reports the boundary's
+    /// date and the too-new split would be grading clone depth instead of file age.
+  - /// exactly as before this existed.
+
+Now let me find where the forecast_opportunities tests live so I add the new table-driven tests beside their neighbours.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|// ---- " src… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:613..663 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:748..798 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.1s (3 ✓)
+
+Now adding the test block for the helper:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (6 → 90 lines)
+                report.contains("needs ≥5 before absence means anything"),
+                "the threshold must be stated in-band, got: {report}"
+            );
+  +     }
+  + 
+  +     // ---- shallow-clone age suppression (Day 166) ----
+  + 
+  +     #[test]
+  +     fn test_shallow_boundary_hides_age_table() {
+  +         const ROOT: &str = "abc1234def5678901234567890abcdef12345678";
+  +         const OTHER: &str = "99998888777766665555444433332222111100ff";
+  +         let roots = vec![ROOT.to_string()];
+  +         let two_roots = vec![OTHER.to_string(), ROOT.to_string()];
+  + 
+  +         let cases: &[(bool, &str, &[String], bool, &str)] = &[
+  +             // The defect this exists for: a shallow clone dates every surviving
+  +             // pre-window file to the grafted boundary root.
+  +             (true, ROOT, &roots, true, "shallow + add-sha is the root"),
+  +             // A real in-window addition (a file created today) is a real
+  +             // birthday even on a shallow clone.
+  ... (69 more lines)
+ ✓ (1m 53s)
+                report.contains("needs ≥5 before absence means anything"),
+                "the threshold must be stated in-band, got: {report}"
+            );
+  +     }
+  + 
+  +     // ---- shallow-clone age suppression (Day 166) ----
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --lib co… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_neverfo… ✓ (23.6s)
+  3 tools completed in 2m 22s (3 ✓)
+
+Tests pass. Now the CLAUDE.md docs half. Let me find the relevant bullet:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_added_ts" CLAUDE.md ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the measured facts before writing them into the docs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "shallow: $(git rev-parse -… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: shallow clone, 59 commits, and src/prompt_utils.rs reports the grafted root 2a46fb22 (dated today) as its add-commit. Now the CLAUDE.md bullet:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The I/O half is kept out of the pure function and out of the hot path: `git_added_ts` shells `git log --diff-filter=A --format=%aI -1 -- <path>` and is passed in as the `added_ts` closure by `handle_risk_epistemic`, called **only** for the never-forecast candidate set (already a short list), never once per scored file; git missing, non-zero exit, or the empty stdout git returns for an unknown path all yield `None` → dark set, unchanged behaviour.
+  + The I/O half is kept out of the pure function and out of the hot path: `git_added_ts` shells `git log --diff-filter=A --format=%H%x09%aI -1 -- <path>` (one call, sha and date tab-separated) and is passed in as the `added_ts` closure by `handle_risk_epistemic`, called **only** for the never-forecast candidate set (already a short list), never once per scored file; git missing, non-zero exit, or the empty stdout git returns for an unknown path all yield `None` → dark set, unchanged behaviour. **A fourth `None`, added Day 166 the same day the too-new split landed: a shallow clone's grafted boundary commit presents every surviving file as an addition**, so `git log --diff-filter=A` on such a repo dates every pre-window file to the boundary. `git_added_ts` therefore also returns `None` when the add-commit is a graph root of a shallow repo — decided by the pure `shallow_boundary_hides_age(is_shallow, add_sha, graph_roots)` (no I/O; all three git invocations — the `log`, `rev-parse --is-shallow-repository`, and `rev-list --max-parents=0 HEAD` — stay in `git_added_ts`, and an error from either extra call degrades to `false`/empty, i.e. today's behaviour). It compares trimmed and accepts a prefix match in either direction (one command may abbreviate where the other does not) but only when **both** sides are ≥ `MIN_SHA_PREFIX = 7` chars, so a short lucky prefix cannot excuse a genuinely dark file; `is_shallow == false` always returns false, because a full clone's root commit is a real birthday. Why it matters: the existing `None → dark set` fallback was built for *unknown* age, and a grafted date is *confidently wrong* age, which walks straight past it — `MIN_FORECAST_OPPORTUNITIES = 5` would then be asking "have ≥5 snapshots been recorded since the clone boundary?", a fact about clone depth, not about the file, and old dark rooms would silently be relabelled `too young to judge` and drop out of the exact set the exploration budget is aimed at. **Stated plainly: the harness checkout *is* shallow** (measured Day 166: `git rev-parse --is-shallow-repository` → `true`, 59 commits, and `src/prompt_utils.rs` — extracted on Day 64 — reports the grafted root `2a46fb22`, dated today, as its add-commit), so in the evolve environment this check makes the too-new split **a no-op for every file older than the clone window**: those files resolve to unknown age and stay dark. That is the honest state of the instrument, not a limitation to hide — the split only discriminates for files genuinely added inside the clone window, and the alternative (deepening the clone to go get the history) was deliberately not taken, since the fix is to stop asserting an age that cannot be observed.
+ ✓ (1m 30s)
+  - The I/O half is kept out of the pure function and out of the hot path: `git_added_ts` shells `git log --diff-filter=A --format=%aI -1 -- <path>` and is passed in as the `added_ts` closure by `handle_risk_epistemic`, called **only** for the never-forecast candidate set (already a short list), never once per scored file; git missing, non-zero exit, or the empty stdout git returns for an unknown path all yield `None` → dark set, unchanged behaviour.
+  + The I/O half is kept out of the pure function and out of the hot path: `git_added_ts` shells `git log --diff-filter=A --format=%H%x09%aI -1 -- <path>` (one call, sha and date tab-separated) and is passed in as the `added_ts` closure by `handle_risk_epistemic`, called **only** for the never-forecast candidate set (already a short list), never once per scored file; git missing, non-zero exit, or the empty stdout git returns for an unknown path all yield `None` → dark set, unchanged behaviour. **A fourth `None`, added Day 166 the same day the too-new split landed: a shallow clone's grafted boundary commit presents every surviving file as an addition**, so `git log --diff-filter=A` on such a repo dates every pre-window file to the boundary. `git_added_ts` therefore also returns `None` when the add-commit is a graph root of a shallow repo — decided by the pure `shallow_boundary_hides_age(is_shallow, add_sha, graph_roots)` (no I/O; all three git invocations — the `log`, `rev-parse --is-shallow-repository`, and `rev-list --max-parents=0 HEAD` — stay in `git_added_ts`, and an error from either extra call degrades to `false`/empty, i.e. today's behaviour). It compares trimmed and accepts a prefix match in either direction (one command may abbreviate where the other does not) but only when **both** sides are ≥ `MIN_SHA_PREFIX = 7` chars, so a short lucky prefix cannot excuse a genuinely dark file; `is_shallow == false` always returns false, because a full clone's root commit is a real birthday. Why it matters: the existing `None → dark set` fallback was built for *unknown* age, and a grafted date is *confidently wrong* age, which walks straight past it — `MIN_FORECAST_OPPORTUNITIES = 5` would then be asking "have ≥5 snapshots been recorded since the clone boundary?", a fact about clone depth, not about the file, and old dark rooms would silently be relabelled `too young to judge` and drop out of the exact set the exploration budget is aimed at. **Stated plainly: the harness checkout *is* shallow** (measured Day 166: `git rev-parse --is-shallow-repository` → `true`, 59 commits, and `src/prompt_utils.rs` — extracted on Day 64 — reports the grafted root `2a46fb22`, dated today, as its add-commit), so in the evolve environment this check makes the too-new split **a no-op for every file older than the clone window**: those files resolve to unknown age and stay dark. That is the honest state of the instrument, not a limitation to hide — the split only discriminates for files genuinely added inside the clone window, and the alternative (deepening the clone to go get the history) was deliberately not taken, since the fix is to stop asserting an age that cannot be observed.
+
+Also updating the exported-symbol list at the head of the bullet so the new helper is named:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `MIN_FORECAST_OPPORTUNITIES`, `git_added_ts`; re-exported via
+  + `MIN_FORECAST_OPPORTUNITIES`, `git_added_ts`, `shallow_boundary_hides_age`; re-exported via
+ ✓ (1m 31s)
+  - `MIN_FORECAST_OPPORTUNITIES`, `git_added_ts`; re-exported via
+  + `MIN_FORECAST_OPPORTUNITIES`, `git_added_ts`, `shallow_boundary_hides_age`; re-exported via
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

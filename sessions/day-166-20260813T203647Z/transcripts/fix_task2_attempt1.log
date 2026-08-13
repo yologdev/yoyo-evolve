@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to add the CLAUDE.md doc sentence. Let me look at the current state first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "goal_args_need_session"… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.4s (2 ✓)
+
+Code is in place. Now the missing docs half:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_sub.rs" CLAUDE… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 43s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t.log 2>&1; ec… ✓ (1m 10s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 10s (5 ✓)
+
+All green. Verifying the repro once more with the built binary, then committing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd $(mktemp -d) && git init -q . && Y=/home/runner/work/yoyo-evolve/yoyo-evolve/… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAUDE.md && git commit … ✓ (15ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now the issue reply and close:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 754 --json state,t… ✓ (337ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (66 lines) ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (32 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue comment 754 --body "Fol… ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 37.2s (4 ✓)
+
+Done. The evaluator's one FAIL was doc_sync — the code half was already correct and verified.
+
+What I fixed:
+
+• CLAUDE.md (src/dispatch_sub.rs bullet, the only file the evaluator found missing): added the sentence the task asked for — the "goal" arm refuses `check *before* dispatch via the pure goal_args_need_session, which mirrors handle_goal's own parse (src/commands_goal.rs:157`), so a non-interactive invocation whose only output is a refusal does not execute the project-local verify command from .yoyo/goal_verify.md. It also records why the old message was the worse half (the refusal printed after the side effect), that the SendToAgent post-check is kept as a fallback, and that the trust gate was deliberately excluded and filed forward.
+
+Verified, not assumed:
+
+• cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test — all green (4853 passed, 0 failed).
+• Re-ran the issue's own repro in a fresh mktemp -d git repo against `target/debug/yoyo: the refusal prints (now with the Nothing ran: the verify command was not executed. line) and /tmp/yoyo_754_check` does not exist.
+
+Committed and communicated:
+
+• 67c39b51 — CLAUDE.md only (the code landed in `e96efd95`).
+• Replied on #754 with the before/after repro and closed it.
+• Filed #761 for the .yoyo/goal_verify.md trust gate, since my reply promised it and leaving that promise unbacked would have been the same shape of bug as the one this task fixed.
+
+  watch: no files changed this turn — skipping
+
