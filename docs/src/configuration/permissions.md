@@ -190,12 +190,12 @@ When a dangerous pattern is detected, yoyo shows a warning explaining **why** th
 
 Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through without triggering any warnings.
 
-## Project-local config is not trusted to start processes
+## Project-local config is not trusted to start processes or grant approval
 
 A `.yoyo.toml` sitting in the directory you launch yoyo from ships with the *repository*, not
 with you. It can name arbitrary local commands under `mcp = [...]` or `[mcp_servers.*]`, and
 before yoyo would start them during normal startup — no prompt, no display of what was about
-to run.
+to run. It can also widen what bash commands run without asking, via `[permissions] allow`.
 
 Since issue #748, **MCP servers declared by a project-local `.yoyo.toml` are not started by
 default.** When yoyo drops them it prints one block on stderr naming the resolved command of
@@ -208,30 +208,60 @@ each server it refused, so you can see exactly what the repo proposed:
   or use --safe-mode to disable all project customizations.
 ```
 
+Since issue #749, **`[permissions] allow` patterns declared by a project-local `.yoyo.toml`
+are not applied either.** Those patterns *grant* auto-approval — a repo shipping
+`allow = ["curl *"]` would otherwise make those commands run without ever asking you, and the
+effect is invisible until a command silently executes. The refusal is announced the same way,
+naming every pattern it dropped:
+
+```
+⚠ A project-local .yoyo.toml asked to auto-approve 2 bash command patterns. yoyo did not apply them:
+    curl *
+    rm *
+  This config came with the project, not from you. Re-run with --trust-project to apply them,
+  or use --safe-mode to disable all project customizations.
+  Its deny patterns and directory restrictions are still in force — those only reduce access.
+```
+
 To opt in for that run:
 
 ```bash
 yoyo --trust-project
 ```
 
+### Only privilege-*granting* fields are gated
+
+The gate is not a symmetric distrust of everything the project says about permissions. Each
+field is sorted by which direction it moves privilege, and only the granting one is refused:
+
+| Field from a project-local config | Direction | Decision |
+|---|---|---|
+| `[permissions] allow` | **Grants** privilege — auto-approves bash commands | **Refused** unless `--trust-project` |
+| `[permissions] deny` | Reduces privilege — always blocks | Kept verbatim |
+| `[directories] allow` (`dir_restrictions.allow`) | Reduces privilege — the default is unrestricted, so an allow-list can only narrow | Kept verbatim |
+| `[directories] deny` (`dir_restrictions.deny`) | Reduces privilege | Kept verbatim |
+
+Refusing a project's `deny` or directory restrictions would make yoyo **less** confined than
+the repo asked for — that would be a regression dressed as a security fix. A repo is always
+allowed to restrict yoyo further; it is not allowed to loosen it.
+
 The boundary is deliberately narrow:
 
-| Source | Started by default? |
+| Source | Started / applied by default? |
 |---|---|
-| `--mcp <command>` typed on the command line | Yes — you typed it |
+| `--mcp <command>`, `--allow`, `--deny` typed on the command line | Yes — you typed it |
 | `~/.yoyo.toml` or the XDG config | Yes — you authored it |
-| `./.yoyo.toml` in the working directory | **No** — needs `--trust-project` |
+| `./.yoyo.toml` in the working directory — MCP servers and `[permissions] allow` | **No** — needs `--trust-project` |
+| `./.yoyo.toml` — `[permissions] deny` and `[directories]` | Yes — they only reduce access |
 | Any of the above under `--safe-mode` | No — safe mode disables all customizations |
 
 If your cwd *is* your home directory, `~/.yoyo.toml` reached as `./.yoyo.toml` still counts as
 your own config and is not gated.
 
 **What this does not cover yet.** There is no persisted per-directory trust decision (the flag
-applies to one run) and no interactive "do you trust this folder?" prompt. `[permissions]`,
-`allow`/`deny` patterns and `dir_restrictions` coming from a project-local config are still
-applied without a trust gate — only process-starting MCP entries are gated today. Use
-`--safe-mode` if you want none of a project's config applied. The remainder is tracked in
-issue #749.
+applies to one run) and no interactive "do you trust this folder?" prompt — you re-pass
+`--trust-project` every time. Use `--safe-mode` if you want none of a project's config
+applied. Those two remaining items are tracked in issue #749.
 
 ## Summary
 
@@ -243,9 +273,9 @@ issue #749.
 | `--deny <pattern>` | Bash commands | Auto-reject matching commands |
 | `--allow-dir <dir>` | File tools | Only allow paths under these dirs |
 | `--deny-dir <dir>` | File tools | Block paths under these dirs |
-| `[permissions]` in config | Bash commands | Same as `--allow`/`--deny` |
+| `[permissions]` in config | Bash commands | Same as `--allow`/`--deny` (project-local `allow` needs `--trust-project`) |
 | `[directories]` in config | File tools | Same as `--allow-dir`/`--deny-dir` |
 | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
-| Project-config trust | MCP servers from `./.yoyo.toml` | Not started unless `--trust-project` |
+| Project-config trust | MCP servers and `[permissions] allow` from `./.yoyo.toml` | Not started/applied unless `--trust-project` |
 
 > **Tip:** Use `/permissions` during a session to see the full security posture — auto-approve status, command patterns, and directory restrictions all in one view.

@@ -361,11 +361,18 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 // this view shows what is in force rather than what the project
                 // config asked for. Displaying refused patterns as active would
                 // be a lie in the one place a user goes to check.
+                // `--trust-project` is read straight off `args` here as well:
+                // this dispatcher runs *before* `parse_args` calls
+                // `set_trust_project`, so consulting only the global would make
+                // `yoyo permissions --trust-project` understate what a real
+                // session would apply.
+                let trusted =
+                    crate::cli::is_trust_project() || args.iter().any(|a| a == "--trust-project");
                 let gated = crate::cli::gate_project_permissions(
                     raw_permissions,
                     false,
                     crate::config::loaded_config_is_project_local(),
-                    crate::cli::is_trust_project(),
+                    trusted,
                 );
                 if !gated.refused_allow.is_empty() && !crate::format::is_quiet() {
                     let msg = crate::cli::project_permission_refusal_message(
@@ -1409,11 +1416,9 @@ mod tests {
         // user goes to check what is in force; showing a refused `allow`
         // pattern as active would be a lie exactly there. Source-level pin so
         // a later refactor of the arm cannot silently drop the gate.
-        let src = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/dispatch_sub.rs"
-        ))
-        .expect("read own source");
+        let src =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/dispatch_sub.rs"))
+                .expect("read own source");
         let marker = "\"permissions\" =>";
         let arm_start = src.find(marker).expect("permissions arm exists");
         // Bound the search to this arm, not the whole file.

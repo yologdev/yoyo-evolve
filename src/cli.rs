@@ -4202,12 +4202,8 @@ command = "server-two"
 
     #[test]
     fn test_project_local_untrusted_refuses_allow_but_keeps_deny() {
-        let out = gate_project_permissions(
-            perms(&["*", "curl *"], &["rm -rf *"]),
-            false,
-            true,
-            false,
-        );
+        let out =
+            gate_project_permissions(perms(&["*", "curl *"], &["rm -rf *"]), false, true, false);
         assert!(
             out.permissions.allow.is_empty(),
             "a project config must not grant bash auto-approval"
