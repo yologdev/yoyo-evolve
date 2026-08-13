@@ -824,6 +824,90 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
     }
 }
 
+/// Outcome of the project-local `[permissions]` trust gate (#749 item 3).
+///
+/// `permissions` is what is actually in force; `refused_allow` holds the
+/// `allow` patterns a project-local config asked for and did not get, so the
+/// refusal can be announced instead of happening silently.
+#[derive(Debug)]
+pub(crate) struct PermissionGateOutcome {
+    pub permissions: PermissionConfig,
+    pub refused_allow: Vec<String>,
+}
+
+/// Gate the *granting* half of a project-local config's permission settings.
+///
+/// The four permission-ish fields are deliberately **not** treated
+/// symmetrically, because they do not move privilege in the same direction:
+///
+/// | field | direction | decision |
+/// |---|---|---|
+/// | `[permissions] allow` | **grants** privilege (auto-approves bash commands) | refused when project-local and untrusted |
+/// | `[permissions] deny` | reduces privilege (always blocks) | kept verbatim |
+/// | `dir_restrictions.allow` | reduces privilege — the default is *unrestricted*, so an allow-list can only narrow what file tools may touch | kept verbatim |
+/// | `dir_restrictions.deny` | reduces privilege | kept verbatim |
+///
+/// A naive mirror of [`gate_mcp_sources`] that refused everything a project
+/// config said would drop `deny` patterns and `dir_restrictions.allow` too —
+/// making yoyo **less** confined than the repo asked for, i.e. a regression
+/// dressed as a security fix. Only the granting field is gated.
+///
+/// Pure: no I/O, no printing, no exit — every input is a parameter.
+///
+/// - `from_cli_flags`: the user typed `--allow`/`--deny`, so the patterns are
+///   their own word and pass through untouched.
+/// - `project_local`: the loaded config came from `./.yoyo.toml` in the working
+///   directory rather than from home/XDG.
+/// - `trusted`: `--trust-project` was passed.
+pub(crate) fn gate_project_permissions(
+    permissions: PermissionConfig,
+    from_cli_flags: bool,
+    project_local: bool,
+    trusted: bool,
+) -> PermissionGateOutcome {
+    if from_cli_flags || !project_local || trusted {
+        return PermissionGateOutcome {
+            permissions,
+            refused_allow: Vec::new(),
+        };
+    }
+
+    let PermissionConfig { allow, deny } = permissions;
+    PermissionGateOutcome {
+        // `deny` survives verbatim: it only ever reduces privilege.
+        permissions: PermissionConfig {
+            allow: Vec::new(),
+            deny,
+        },
+        refused_allow: allow,
+    }
+}
+
+/// The stderr block shown when a project-local config's `allow` patterns are
+/// refused (#749 item 3).
+///
+/// Names every refused pattern verbatim — the effect of a silent grant is
+/// invisible until a command runs without asking, so the refusal must be the
+/// loud half. `plain` drops the glyph for screen-reader / `--screen-reader`
+/// output.
+pub(crate) fn project_permission_refusal_message(refused: &[String], plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let plural = if refused.len() == 1 { "" } else { "s" };
+    let mut msg = format!(
+        "{marker}A project-local .yoyo.toml asked to auto-approve {} bash command pattern{plural}. yoyo did not apply {}:",
+        refused.len(),
+        if refused.len() == 1 { "it" } else { "them" }
+    );
+    for pattern in refused {
+        msg.push_str("\n    ");
+        msg.push_str(pattern);
+    }
+    msg.push_str(
+        "\n  This config came with the project, not from you. Re-run with --trust-project to apply them,\n  or use --safe-mode to disable all project customizations.\n  Its deny patterns and directory restrictions are still in force — those only reduce access.",
+    );
+    msg
+}
+
 /// Parse permission and directory restriction config from CLI args and config file content.
 fn parse_permission_and_dir_config(
     args: &[String],
@@ -836,15 +920,34 @@ fn parse_permission_and_dir_config(
     let cli_deny = collect_repeatable_flag(args, "--deny");
 
     // Build permission config: CLI flags override config file
-    let permissions = if cli_allow.is_empty() && cli_deny.is_empty() {
-        // No CLI flags — parse from already-loaded config content
-        parse_permissions_from_config(raw_config_content)
-    } else {
+    let from_cli_flags = !(cli_allow.is_empty() && cli_deny.is_empty());
+    let raw_permissions = if from_cli_flags {
         PermissionConfig {
             allow: cli_allow,
             deny: cli_deny,
         }
+    } else {
+        // No CLI flags — parse from already-loaded config content
+        parse_permissions_from_config(raw_config_content)
     };
+
+    // #749 item 3: a repo's ./.yoyo.toml must not silently grant bash
+    // auto-approval. Provenance is read from the single place that records it
+    // (`config::loaded_config_is_project_local`), never re-derived here.
+    let gated = gate_project_permissions(
+        raw_permissions,
+        from_cli_flags,
+        crate::config::loaded_config_is_project_local(),
+        is_trust_project(),
+    );
+    if !gated.refused_allow.is_empty() && !is_quiet() {
+        let msg = project_permission_refusal_message(
+            &gated.refused_allow,
+            crate::format::is_plain_output(),
+        );
+        eprintln!("{YELLOW}{msg}{RESET}");
+    }
+    let permissions = gated.permissions;
 
     // --allow-dir <dir> flags: collect all allowed directories (repeatable)
     let cli_allow_dirs = collect_repeatable_flag(args, "--allow-dir");
@@ -4086,6 +4189,121 @@ command = "server-two"
             !msg.contains('\u{26a0}'),
             "plain output must be glyph-free: {msg}"
         );
+    }
+
+    // --- #749 item 3: project-local `[permissions] allow` trust boundary ----
+
+    fn perms(allow: &[&str], deny: &[&str]) -> PermissionConfig {
+        PermissionConfig {
+            allow: allow.iter().map(|s| s.to_string()).collect(),
+            deny: deny.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_project_local_untrusted_refuses_allow_but_keeps_deny() {
+        let out = gate_project_permissions(
+            perms(&["*", "curl *"], &["rm -rf *"]),
+            false,
+            true,
+            false,
+        );
+        assert!(
+            out.permissions.allow.is_empty(),
+            "a project config must not grant bash auto-approval"
+        );
+        assert_eq!(
+            out.permissions.deny,
+            vec!["rm -rf *".to_string()],
+            "deny only reduces privilege — it must survive verbatim"
+        );
+        assert_eq!(
+            out.refused_allow,
+            vec!["*".to_string(), "curl *".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_project_local_trusted_is_byte_identical_passthrough() {
+        let input = perms(&["cargo *", "git status"], &["rm *"]);
+        let out = gate_project_permissions(input.clone(), false, true, true);
+        assert_eq!(out.permissions.allow, input.allow);
+        assert_eq!(out.permissions.deny, input.deny);
+        assert!(out.refused_allow.is_empty());
+    }
+
+    #[test]
+    fn test_non_project_local_permissions_are_never_gated() {
+        // A home/XDG config was authored by the user — trust flag irrelevant.
+        let input = perms(&["cargo *"], &["rm *"]);
+        let out = gate_project_permissions(input.clone(), false, false, false);
+        assert_eq!(out.permissions.allow, input.allow);
+        assert_eq!(out.permissions.deny, input.deny);
+        assert!(out.refused_allow.is_empty());
+    }
+
+    #[test]
+    fn test_cli_flag_permissions_are_never_gated() {
+        // The user typed --allow/--deny: their own word, even inside a repo
+        // that ships a project-local config.
+        let input = perms(&["curl *"], &[]);
+        let out = gate_project_permissions(input.clone(), true, true, false);
+        assert_eq!(out.permissions.allow, input.allow);
+        assert!(out.refused_allow.is_empty());
+    }
+
+    #[test]
+    fn test_permission_refusal_message_names_patterns_and_both_hatches() {
+        let msg =
+            project_permission_refusal_message(&["*".to_string(), "curl *".to_string()], false);
+        assert!(msg.contains("project-local .yoyo.toml"), "{msg}");
+        assert!(msg.contains("2 bash command patterns"), "{msg}");
+        // The whole point: the user sees exactly what was proposed.
+        assert!(msg.contains("\n    *"), "{msg}");
+        assert!(msg.contains("curl *"), "{msg}");
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("--safe-mode"), "{msg}");
+        assert!(msg.starts_with('\u{26a0}'), "{msg}");
+
+        let singular = project_permission_refusal_message(&["rm *".to_string()], true);
+        assert!(singular.contains("1 bash command pattern."), "{singular}");
+        assert!(singular.contains("did not apply it"), "{singular}");
+        assert!(
+            !singular.contains('\u{26a0}'),
+            "plain output must be glyph-free: {singular}"
+        );
+    }
+
+    #[test]
+    fn test_dir_restrictions_are_untouched_by_the_permission_gate() {
+        // The non-symmetry, pinned so a later "tidy-up" can't mirror the MCP
+        // gate and quietly widen file access: dir_restrictions only ever
+        // narrow, so a project config's copy is honoured in every case.
+        // The gate's type cannot even see them — it takes a PermissionConfig.
+        let dirs = DirectoryRestrictions {
+            allow: vec!["src".to_string()],
+            deny: vec!["/etc".to_string()],
+        };
+        for (from_cli, project_local, trusted) in [
+            (false, true, false),
+            (false, true, true),
+            (false, false, false),
+            (true, true, false),
+        ] {
+            let out = gate_project_permissions(
+                perms(&["curl *"], &["rm *"]),
+                from_cli,
+                project_local,
+                trusted,
+            );
+            // deny survives in every case, allow only when not gated.
+            assert_eq!(out.permissions.deny, vec!["rm *".to_string()]);
+            let gated = project_local && !trusted && !from_cli;
+            assert_eq!(out.permissions.allow.is_empty(), gated);
+            // dir_restrictions pass through the caller untouched.
+            assert_eq!(dirs.allow, vec!["src".to_string()]);
+            assert_eq!(dirs.deny, vec!["/etc".to_string()]);
+        }
     }
 
     #[test]

@@ -356,7 +356,25 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 // Load permission config from config file (same as parse_args does)
                 // so the user can inspect their effective permissions from the shell.
                 let (_, raw_config) = load_config_file();
-                let permissions = crate::config::parse_permissions_from_config(&raw_config);
+                let raw_permissions = crate::config::parse_permissions_from_config(&raw_config);
+                // #749 item 3: route through the same gate parse_args uses, so
+                // this view shows what is in force rather than what the project
+                // config asked for. Displaying refused patterns as active would
+                // be a lie in the one place a user goes to check.
+                let gated = crate::cli::gate_project_permissions(
+                    raw_permissions,
+                    false,
+                    crate::config::loaded_config_is_project_local(),
+                    crate::cli::is_trust_project(),
+                );
+                if !gated.refused_allow.is_empty() && !crate::format::is_quiet() {
+                    let msg = crate::cli::project_permission_refusal_message(
+                        &gated.refused_allow,
+                        crate::format::is_plain_output(),
+                    );
+                    eprintln!("{YELLOW}{msg}{RESET}");
+                }
+                let permissions = gated.permissions;
                 let dir_restrictions = crate::config::parse_directories_from_config(&raw_config);
                 let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
                 crate::commands_config::handle_permissions(
@@ -1380,6 +1398,35 @@ mod tests {
         assert!(
             matches!(result, Some(None)),
             "expected Some(None) for `permissions` subcommand"
+        );
+    }
+
+    #[test]
+    fn test_permissions_subcommand_routes_through_the_project_gate() {
+        // #749 item 3: `yoyo permissions` parses the raw config independently,
+        // so it is a *second* entry point that must apply the same gate — a
+        // per-token pass is not a per-entry-point pass. This view is where a
+        // user goes to check what is in force; showing a refused `allow`
+        // pattern as active would be a lie exactly there. Source-level pin so
+        // a later refactor of the arm cannot silently drop the gate.
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/dispatch_sub.rs"
+        ))
+        .expect("read own source");
+        let marker = "\"permissions\" =>";
+        let arm_start = src.find(marker).expect("permissions arm exists");
+        // Bound the search to this arm, not the whole file.
+        let arm = &src[arm_start..];
+        let arm_end = arm.find("\"todo\" =>").unwrap_or(arm.len());
+        let arm = &arm[..arm_end];
+        assert!(
+            arm.contains("gate_project_permissions"),
+            "the `permissions` arm must route through cli::gate_project_permissions"
+        );
+        assert!(
+            arm.contains("project_permission_refusal_message"),
+            "a refusal in this arm must be announced, never silent"
         );
     }
 
