@@ -190,6 +190,49 @@ When a dangerous pattern is detected, yoyo shows a warning explaining **why** th
 
 Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through without triggering any warnings.
 
+## Project-local config is not trusted to start processes
+
+A `.yoyo.toml` sitting in the directory you launch yoyo from ships with the *repository*, not
+with you. It can name arbitrary local commands under `mcp = [...]` or `[mcp_servers.*]`, and
+before yoyo would start them during normal startup — no prompt, no display of what was about
+to run.
+
+Since issue #748, **MCP servers declared by a project-local `.yoyo.toml` are not started by
+default.** When yoyo drops them it prints one block on stderr naming the resolved command of
+each server it refused, so you can see exactly what the repo proposed:
+
+```
+⚠ A project-local .yoyo.toml asked to start 1 MCP server. yoyo did not start it:
+    npx -y @some/mcp-server
+  This config came with the project, not from you. Re-run with --trust-project to start them,
+  or use --safe-mode to disable all project customizations.
+```
+
+To opt in for that run:
+
+```bash
+yoyo --trust-project
+```
+
+The boundary is deliberately narrow:
+
+| Source | Started by default? |
+|---|---|
+| `--mcp <command>` typed on the command line | Yes — you typed it |
+| `~/.yoyo.toml` or the XDG config | Yes — you authored it |
+| `./.yoyo.toml` in the working directory | **No** — needs `--trust-project` |
+| Any of the above under `--safe-mode` | No — safe mode disables all customizations |
+
+If your cwd *is* your home directory, `~/.yoyo.toml` reached as `./.yoyo.toml` still counts as
+your own config and is not gated.
+
+**What this does not cover yet.** There is no persisted per-directory trust decision (the flag
+applies to one run) and no interactive "do you trust this folder?" prompt. `[permissions]`,
+`allow`/`deny` patterns and `dir_restrictions` coming from a project-local config are still
+applied without a trust gate — only process-starting MCP entries are gated today. Use
+`--safe-mode` if you want none of a project's config applied. The remainder is tracked in
+issue #749.
+
 ## Summary
 
 | Mechanism | Scope | Effect |
@@ -203,5 +246,6 @@ Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through wit
 | `[permissions]` in config | Bash commands | Same as `--allow`/`--deny` |
 | `[directories]` in config | File tools | Same as `--allow-dir`/`--deny-dir` |
 | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
+| Project-config trust | MCP servers from `./.yoyo.toml` | Not started unless `--trust-project` |
 
 > **Tip:** Use `/permissions` during a session to see the full security posture — auto-approve status, command patterns, and directory restrictions all in one view.
