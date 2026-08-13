@@ -55,27 +55,55 @@ pub fn parse_pr_args(arg: &str) -> PrSubcommand {
 
     let parts: Vec<&str> = arg.splitn(3, char::is_whitespace).collect();
 
-    // Check for "review" subcommand first (before trying to parse as number)
-    if parts[0].eq_ignore_ascii_case("review") {
-        if let Some(num_str) = parts.get(1) {
-            if let Ok(n) = num_str.parse::<u32>() {
-                let post = parts
-                    .get(2)
-                    .map(|s| s.eq_ignore_ascii_case("--post"))
-                    .unwrap_or(false);
-                return PrSubcommand::Review(n, post);
+    // Verb-first forms — the vocabulary `commands::PR_SUBCOMMANDS` offers at the
+    // completion prompt and `help_data.rs` documents. Before #757 only `review`
+    // and `create` were routed here and the other five fell through to the
+    // number parse below, i.e. straight to Help. Verbs are checked before the
+    // number parse; no verb is a decimal number, so there is no ambiguity and
+    // every number-first form below is untouched.
+    match parts[0].to_lowercase().as_str() {
+        "list" => return PrSubcommand::List,
+        "review" => {
+            if let Some(num_str) = parts.get(1) {
+                if let Ok(n) = num_str.parse::<u32>() {
+                    let post = parts
+                        .get(2)
+                        .map(|s| s.eq_ignore_ascii_case("--post"))
+                        .unwrap_or(false);
+                    return PrSubcommand::Review(n, post);
+                }
             }
+            return PrSubcommand::Help;
         }
-        return PrSubcommand::Help;
-    }
-
-    // Check for "create" subcommand first (before trying to parse as number)
-    if parts[0].eq_ignore_ascii_case("create") {
-        let draft = parts
-            .get(1)
-            .map(|s| s.trim_start_matches('-').eq_ignore_ascii_case("draft"))
-            .unwrap_or(false);
-        return PrSubcommand::Create { draft };
+        "create" => {
+            let draft = parts
+                .get(1)
+                .map(|s| s.trim_start_matches('-').eq_ignore_ascii_case("draft"))
+                .unwrap_or(false);
+            return PrSubcommand::Create { draft };
+        }
+        verb @ ("view" | "diff" | "checkout" | "comment") => {
+            // These need a PR number; without a parseable one, say so via Help
+            // rather than guessing which PR the user meant.
+            let number = match parts.get(1).and_then(|s| s.parse::<u32>().ok()) {
+                Some(n) => n,
+                None => return PrSubcommand::Help,
+            };
+            return match verb {
+                "view" => PrSubcommand::View(number),
+                "diff" => PrSubcommand::Diff(number),
+                "checkout" => PrSubcommand::Checkout(number),
+                _ => {
+                    let text = parts.get(2).map(|s| s.trim()).unwrap_or("");
+                    if text.is_empty() {
+                        PrSubcommand::Help
+                    } else {
+                        PrSubcommand::Comment(number, text.to_string())
+                    }
+                }
+            };
+        }
+        _ => {}
     }
 
     let number = match parts[0].parse::<u32>() {
@@ -380,6 +408,70 @@ mod tests {
     fn parse_pr_args_empty_is_list() {
         assert_eq!(parse_pr_args(""), PrSubcommand::List);
         assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+    }
+
+    /// A representative verb-first invocation for every token in
+    /// `commands::PR_SUBCOMMANDS`. The fixture is a *total* match over that table
+    /// (see the drift test below), so a new completion token cannot be added
+    /// without stating what it parses to.
+    fn verb_first_fixture(token: &str) -> &'static str {
+        match token {
+            "list" => "list",
+            "view" => "view 42",
+            "diff" => "diff 42",
+            "review" => "review 42",
+            "comment" => "comment 42 looks good",
+            "create" => "create",
+            "checkout" => "checkout 42",
+            other => panic!(
+                "PR_SUBCOMMANDS advertises `{other}` with no fixture — add one here \
+                 (and make sure the parser routes it) or drop the token from the table"
+            ),
+        }
+    }
+
+    /// Behavioural drift guard (#757): every verb `/pr <Tab>` offers must actually
+    /// PARSE to a real subcommand. The sibling guard in `help_data_guards.rs` is a
+    /// *presence* check — it stayed green while 5 of these 7 tokens fell through to
+    /// Help — so this one asserts the parse result, not the existence of a literal.
+    #[test]
+    fn every_advertised_pr_subcommand_parses_to_a_real_variant() {
+        for token in crate::commands::PR_SUBCOMMANDS {
+            let arg = verb_first_fixture(token);
+            let parsed = parse_pr_args(arg);
+            assert_ne!(
+                parsed,
+                PrSubcommand::Help,
+                "`/pr {arg}` is advertised by PR_SUBCOMMANDS but parses to Help"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_pr_args_verb_first_forms() {
+        assert_eq!(parse_pr_args("list"), PrSubcommand::List);
+        assert_eq!(parse_pr_args("LIST"), PrSubcommand::List);
+        assert_eq!(parse_pr_args("view 42"), PrSubcommand::View(42));
+        assert_eq!(parse_pr_args("diff 42"), PrSubcommand::Diff(42));
+        assert_eq!(parse_pr_args("checkout 7"), PrSubcommand::Checkout(7));
+        assert_eq!(
+            parse_pr_args("comment 5 looks good!"),
+            PrSubcommand::Comment(5, "looks good!".to_string())
+        );
+        assert_eq!(parse_pr_args("View 42"), PrSubcommand::View(42));
+        assert_eq!(parse_pr_args("DIFF 42"), PrSubcommand::Diff(42));
+    }
+
+    #[test]
+    fn parse_pr_args_verb_first_without_number_is_help() {
+        // An honest Help beats guessing a PR number.
+        assert_eq!(parse_pr_args("view"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("diff"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("checkout"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("comment"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("view abc"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("comment 5"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("comment abc text"), PrSubcommand::Help);
     }
 
     #[test]
