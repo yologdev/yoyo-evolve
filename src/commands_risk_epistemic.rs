@@ -25,7 +25,7 @@ use crate::format::{BOLD, CYAN, DIM, RESET, YELLOW};
 // Re-exported here so every existing call site — including the
 // `commands_risk` chain — is unchanged.
 pub(crate) use crate::commands_risk_neverforecast::{
-    never_forecast_files, NeverForecast, NEVER_FORECAST_SAMPLE,
+    never_forecast_files, NeverForecastGroups, NEVER_FORECAST_SAMPLE,
 };
 
 /// Weight for "predicted but never graded" — the strongest blindness signal:
@@ -515,6 +515,42 @@ struct FileStats {
     last_seen_day: u64,
 }
 
+/// Latest experiment visit per file, by the one precedence rule both halves of
+/// this view share: a **graded** round outranks a bare visit whatever the days
+/// say (a grade once earned is not erased by a later expedition that recorded
+/// nothing), and within the same state the latest day wins.
+///
+/// Extracted Day 166 (#744) so the ranked half and the never-forecast half can
+/// never disagree about what "already studied" means — one statement of the
+/// rule, two consumers.
+pub(crate) fn latest_study_state_by_path(
+    experiments: &[ExperimentVisit],
+) -> std::collections::HashMap<&str, (&StudyState, u32)> {
+    use std::collections::HashMap;
+    let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+    for visit in experiments {
+        let candidate = (&visit.state, visit.day);
+        match studied.get(visit.path.as_str()) {
+            None => {
+                studied.insert(visit.path.as_str(), candidate);
+            }
+            Some((state, day)) => {
+                let held_is_graded = matches!(state, StudyState::Graded(_));
+                let new_is_graded = matches!(visit.state, StudyState::Graded(_));
+                let replace = match (held_is_graded, new_is_graded) {
+                    (false, true) => true,
+                    (true, false) => false,
+                    _ => visit.day >= *day,
+                };
+                if replace {
+                    studied.insert(visit.path.as_str(), candidate);
+                }
+            }
+        }
+    }
+    studied
+}
+
 /// Rank files by epistemic value — how little the graded outcomes have
 /// taught the model about them. Pure: reads only its arguments.
 /// `risk_scores` (path → current risk score, as returned by
@@ -581,27 +617,7 @@ pub(crate) fn compute_epistemic_ranking(
     // whatever the days say — a grade once earned is not erased by a later
     // expedition that recorded nothing. Within the same state, the latest day
     // wins.
-    let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
-    for visit in experiments {
-        let candidate = (&visit.state, visit.day);
-        match studied.get(visit.path.as_str()) {
-            None => {
-                studied.insert(visit.path.as_str(), candidate);
-            }
-            Some((state, day)) => {
-                let held_is_graded = matches!(state, StudyState::Graded(_));
-                let new_is_graded = matches!(visit.state, StudyState::Graded(_));
-                let replace = match (held_is_graded, new_is_graded) {
-                    (false, true) => true,
-                    (true, false) => false,
-                    _ => visit.day >= *day,
-                };
-                if replace {
-                    studied.insert(visit.path.as_str(), candidate);
-                }
-            }
-        }
-    }
+    let studied = latest_study_state_by_path(experiments);
 
     let mut entries: Vec<EpistemicEntry> = Vec::new();
     for (path, s) in &stats {
@@ -683,7 +699,7 @@ pub(crate) fn compute_epistemic_ranking(
 pub(crate) fn format_epistemic_report(
     snapshots: &[ParsedSnapshot],
     entries: &[EpistemicEntry],
-    never: &[NeverForecast],
+    never: &NeverForecastGroups,
     families: &ExperimentFamilies,
 ) -> String {
     let mut out = String::new();
@@ -760,23 +776,24 @@ pub(crate) fn format_epistemic_report(
     // side: it stops collecting at the "never forecast" header line (see
     // `EPISTEMIC_NEVER_FORECAST_RE` there). The distinct glyph is belt-and-
     // braces for any other reader.
-    if !never.is_empty() {
+    let dark = &never.dark;
+    if !dark.is_empty() {
         out.push_str(&format!(
             "\n  {YELLOW}⚠ never forecast{RESET} {DIM}— {} scored file{} {} never appeared in any prediction{RESET}\n",
-            never.len(),
-            if never.len() == 1 { "" } else { "s" },
-            if never.len() == 1 { "has" } else { "have" },
+            dark.len(),
+            if dark.len() == 1 { "" } else { "s" },
+            if dark.len() == 1 { "has" } else { "have" },
         ));
-        for n in never.iter().take(NEVER_FORECAST_SAMPLE) {
+        for n in dark.iter().take(NEVER_FORECAST_SAMPLE) {
             out.push_str(&format!(
                 "  ◦ {YELLOW}{}{RESET} {DIM}(risk {:.1}){RESET}\n",
                 n.path, n.risk_score
             ));
         }
-        if never.len() > NEVER_FORECAST_SAMPLE {
+        if dark.len() > NEVER_FORECAST_SAMPLE {
             out.push_str(&format!(
                 "    {DIM}... (+{} more){RESET}\n",
-                never.len() - NEVER_FORECAST_SAMPLE
+                dark.len() - NEVER_FORECAST_SAMPLE
             ));
         }
         // Keep each sentence on one line: the caveat is the honest part of this
@@ -787,6 +804,39 @@ pub(crate) fn format_epistemic_report(
         ));
         out.push_str(&format!(
             "    {DIM}Files with no recent churn have no risk score and are invisible to both views.{RESET}\n"
+        ));
+    }
+
+    // Third state (#744): never forecast, but *already studied*. Surfaced
+    // separately and annotated — never silently subtracted from the dark set
+    // above (that would destroy the "no column ever named it" fact) and never
+    // presented as unexplored (that spends the exploration budget re-lighting
+    // a room I lit myself). The rows deliberately use the `▪ path — note`
+    // shape, which matches neither `EPISTEMIC_NEVER_FORECAST_ROW_RE`
+    // (`^\s*◦\s+(\S+)\s+\(risk\s`) nor `EPISTEMIC_ENTRY_RE` in
+    // scripts/extract_trajectory.py, so the planner's dark-room list keeps
+    // meaning exactly what it meant before.
+    if !never.studied.is_empty() {
+        out.push_str(&format!(
+            "\n  {DIM}already studied, though no column ever named {}: {} scored file{}{RESET}\n",
+            if never.studied.len() == 1 { "it" } else { "them" },
+            never.studied.len(),
+            if never.studied.len() == 1 { "" } else { "s" },
+        ));
+        for s in never.studied.iter().take(NEVER_FORECAST_SAMPLE) {
+            out.push_str(&format!(
+                "  ▪ {}{RESET} {DIM}(risk {:.1}) — {}{RESET}\n",
+                s.path, s.risk_score, s.note
+            ));
+        }
+        if never.studied.len() > NEVER_FORECAST_SAMPLE {
+            out.push_str(&format!(
+                "    {DIM}... (+{} more studied){RESET}\n",
+                never.studied.len() - NEVER_FORECAST_SAMPLE
+            ));
+        }
+        out.push_str(&format!(
+            "    {DIM}these are lit rooms: an experiment already opened them, so they are not the dark set.{RESET}\n"
         ));
     }
 
@@ -817,7 +867,7 @@ pub(crate) fn handle_risk_epistemic() {
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
-    let never = never_forecast_files(&snapshots, &risk_scores);
+    let never = never_forecast_files(&snapshots, &risk_scores, &experiments);
     // Same ledger text, read once: study history for the ranking, per-hypothesis
     // provenance for the guess-first scoreboard.
     let families = tally_hypothesis_families(&experiment_content);
@@ -885,7 +935,7 @@ mod tests {
     fn test_empty_snapshots_honest_message() {
         let ranking = compute_epistemic_ranking(&[], &[], &[], &[]);
         assert!(ranking.is_empty());
-        let report = format_epistemic_report(&[], &ranking, &[], &ExperimentFamilies::default());
+        let report = format_epistemic_report(&[], &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             report.contains("no snapshots yet"),
             "empty state must be honest, got: {report}"
@@ -898,7 +948,7 @@ mod tests {
         let events = vec![graded(100, &["src/a.rs"])];
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         let report =
-            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             report.contains("no ungraded predictions"),
             "all-graded state must be honest, got: {report}"
@@ -954,7 +1004,7 @@ mod tests {
         let snapshots = vec![snap(100, &["src/b.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report =
-            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(report.contains("src/b.rs"));
         assert!(report.contains("never graded"));
     }
@@ -1014,7 +1064,7 @@ mod tests {
             "fixture must tie"
         );
         let report =
-            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             report.contains("ordered by current risk score"),
             "report must note the tie-break honestly, got: {report}"
@@ -1036,7 +1086,7 @@ mod tests {
             ranking.iter().map(|e| e.score).collect::<Vec<_>>()
         );
         let report =
-            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             !report.contains("ordered by current risk score"),
             "no tie → no tie note, got: {report}"
@@ -1338,7 +1388,7 @@ mod tests {
         ];
         let events = vec![graded(101, &["src/a.rs"])];
         let risk = vec![("src/a.rs".to_string(), 3.0), ("src/b.rs".to_string(), 1.0)];
-        let never = never_forecast_files(&snapshots, &risk);
+        let never = never_forecast_files(&snapshots, &risk, &[]);
         let with_empty = compute_epistemic_ranking(&snapshots, &events, &risk, &[]);
         let report = format_epistemic_report(
             &snapshots,
@@ -1408,7 +1458,7 @@ mod tests {
         assert_eq!(fam.unknown, FamilyTally::default());
         assert_eq!(fam.experiments_without_hypotheses, 2);
 
-        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &NeverForecastGroups::default(), &fam);
         assert!(
             report.contains("2 earlier experiment(s) predate per-hypothesis provenance"),
             "predating experiments are named: {report}"
@@ -1444,7 +1494,7 @@ mod tests {
         // This result carried per-hypothesis records, so it does not predate them.
         assert_eq!(fam.experiments_without_hypotheses, 0);
 
-        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &NeverForecastGroups::default(), &fam);
         assert!(report.contains("file-specific"), "{report}");
         assert!(report.contains("archive"), "{report}");
         assert!(
@@ -1476,7 +1526,7 @@ mod tests {
         // The header count must agree with the rows.
         assert_eq!(fam.total_graded(), 2);
 
-        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &NeverForecastGroups::default(), &fam);
         assert!(
             report.contains("genre-prior"),
             "genre-prior row is rendered: {report}"
@@ -1513,7 +1563,7 @@ mod tests {
         );
         let fam = tally_hypothesis_families(ledger);
         assert_eq!(fam.genre_prior, FamilyTally::default());
-        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &NeverForecastGroups::default(), &fam);
         assert!(
             report.contains("chosen-experiment record"),
             "block still renders: {report}"
@@ -1577,8 +1627,8 @@ mod tests {
         let fam = tally_hypothesis_families("");
         assert!(fam.is_empty());
         let snapshots = vec![snap(1, &["src/a.rs"], &[])];
-        let with = format_epistemic_report(&snapshots, &[], &[], &fam);
-        let without = format_epistemic_report(&snapshots, &[], &[], &ExperimentFamilies::default());
+        let with = format_epistemic_report(&snapshots, &[], &NeverForecastGroups::default(), &fam);
+        let without = format_epistemic_report(&snapshots, &[], &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert_eq!(with, without);
         assert!(
             !with.contains("chosen-experiment record"),
@@ -1595,7 +1645,7 @@ mod tests {
             "\n",
         );
         let fam = tally_hypothesis_families(ledger);
-        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &[], &fam);
+        let report = format_epistemic_report(&[snap(1, &["src/a.rs"], &[])], &[], &NeverForecastGroups::default(), &fam);
         let block: Vec<&str> = report
             .lines()
             .skip_while(|l| !l.contains("chosen-experiment record"))
@@ -1735,7 +1785,7 @@ mod reason_truncation_tests {
             risk_score: Some(1.0),
         }];
         let report =
-            format_epistemic_report(&snapshots, &entries, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &entries, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         for line in report.lines() {
             assert!(
                 line.chars().count() < 400,
@@ -1762,7 +1812,7 @@ mod reason_truncation_tests {
             risk_score: Some(1.0),
         }];
         let report =
-            format_epistemic_report(&snapshots, &entries, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &entries, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             !report.contains("shortened for display"),
             "silence is correct when nothing was cut:\n{report}"

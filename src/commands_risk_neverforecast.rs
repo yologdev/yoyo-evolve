@@ -9,11 +9,17 @@
 //! that was never guessed about gets no entry at all. This module names that
 //! blind spot explicitly rather than letting absence be absorbed by silence.
 
+use crate::commands_risk_epistemic::{latest_study_state_by_path, ExperimentVisit, StudyState};
 use crate::commands_risk_snapshots::ParsedSnapshot;
 
 /// How many never-forecast files are listed as a sample. The honest *total*
 /// is always printed alongside — the cap is a display budget, not a claim.
 pub(crate) const NEVER_FORECAST_SAMPLE: usize = 5;
+
+/// Display cap for a study annotation, in chars. Long grade summaries would
+/// otherwise wrap the one-line-per-file shape this section depends on. The
+/// cut is marked in-band by `truncate_reason`'s ellipsis (Day 162).
+const STUDY_NOTE_MAX_CHARS: usize = 100;
 
 /// A file the risk model scores but that has **never once** been forecast —
 /// absent from every snapshot's reactive (`predicted`) and anticipatory
@@ -30,18 +36,51 @@ pub(crate) struct NeverForecast {
     pub(crate) risk_score: f64,
 }
 
+/// A file no column ever forecast **but** that an experiment round has already
+/// opened on purpose — the room I lit myself.
+///
+/// Kept apart from [`NeverForecast`] rather than silently subtracted from it
+/// (Day 144: absence gets its own name). "No column ever guessed about it" and
+/// "I once studied it" are two different facts; collapsing them destroys the
+/// first, and dropping these files outright would hide the second. So they are
+/// surfaced separately, annotated with when the visit happened and whether it
+/// graded anything — never presented as unexplored (#744: round 43 was handed
+/// `src/commands_lint.rs` as a dark room ~4.5h after round 40 studied it).
+pub(crate) struct StudiedNeverForecast {
+    pub(crate) path: String,
+    pub(crate) risk_score: f64,
+    /// Human-readable study annotation. Uses the ranked half's vocabulary —
+    /// `studied by graded experiment (day N, …)` for a graded round,
+    /// `visited by ungraded experiment (day N)` for one that scored nothing.
+    /// A visit must never wear the word "graded".
+    pub(crate) note: String,
+}
+
+/// The never-forecast set, split into its two honest halves.
+#[derive(Default)]
+pub(crate) struct NeverForecastGroups {
+    /// Never forecast **and** never studied — the actually-dark set. This is
+    /// what the report leads with and what the exploration budget is for.
+    pub(crate) dark: Vec<NeverForecast>,
+    /// Never forecast but studied/visited on some day — lit rooms that no
+    /// prediction column has ever named.
+    pub(crate) studied: Vec<StudiedNeverForecast>,
+}
+
 /// Every scored path that appears in **no** snapshot's `predicted` column and
 /// **no** snapshot's `emerging` column, across all snapshots — the files the
-/// epistemic ranking structurally cannot see.
+/// epistemic ranking structurally cannot see — split by whether an experiment
+/// round has already visited them (`experiments`, the same ledger the ranked
+/// half reads).
 ///
-/// Ordering: current risk score descending, then path ascending (fully
-/// deterministic). Rationale — a file that *changes* (it has a risk score at
-/// all) yet has never once been forecast is the most consequential blind spot,
-/// so churny-but-unforecast files come first.
+/// Ordering within each group: current risk score descending, then path
+/// ascending (fully deterministic). Rationale — a file that *changes* (it has
+/// a risk score at all) yet has never once been forecast is the most
+/// consequential blind spot, so churny-but-unforecast files come first.
 ///
-/// Returns empty when `snapshots` is empty: with no predictions on record
-/// there is nothing to be blind *relative to*, and claiming every scored file
-/// is unforecast would be a false "everything is blind" verdict.
+/// Returns empty groups when `snapshots` is empty: with no predictions on
+/// record there is nothing to be blind *relative to*, and claiming every
+/// scored file is unforecast would be a false "everything is blind" verdict.
 ///
 /// Honest limitation (stated in the report too): the universe here is only
 /// what the risk model scores. A file with no recent churn has no risk score
@@ -49,11 +88,12 @@ pub(crate) struct NeverForecast {
 pub(crate) fn never_forecast_files(
     snapshots: &[ParsedSnapshot],
     risk_scores: &[(String, f64)],
-) -> Vec<NeverForecast> {
+    experiments: &[ExperimentVisit],
+) -> NeverForecastGroups {
     use std::collections::HashSet;
 
     if snapshots.is_empty() {
-        return Vec::new();
+        return NeverForecastGroups::default();
     }
 
     let mut forecast: HashSet<&str> = HashSet::new();
@@ -63,22 +103,52 @@ pub(crate) fn never_forecast_files(
         }
     }
 
-    let mut out: Vec<NeverForecast> = risk_scores
-        .iter()
-        .filter(|(p, _)| !forecast.contains(p.as_str()))
-        .map(|(p, s)| NeverForecast {
-            path: p.clone(),
-            risk_score: *s,
-        })
-        .collect();
-    out.sort_by(|a, b| {
-        use std::cmp::Ordering;
-        b.risk_score
-            .partial_cmp(&a.risk_score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    out
+    // Same precedence the ranked half uses (graded outranks a bare visit,
+    // latest day wins within a state) — shared helper, never a second copy.
+    let studied_states = latest_study_state_by_path(experiments);
+
+    let mut dark: Vec<NeverForecast> = Vec::new();
+    let mut studied: Vec<StudiedNeverForecast> = Vec::new();
+    for (path, score) in risk_scores.iter() {
+        if forecast.contains(path.as_str()) {
+            continue;
+        }
+        match studied_states.get(path.as_str()) {
+            Some((state, day)) => studied.push(StudiedNeverForecast {
+                path: path.clone(),
+                risk_score: *score,
+                note: study_note(state, *day),
+            }),
+            None => dark.push(NeverForecast {
+                path: path.clone(),
+                risk_score: *score,
+            }),
+        }
+    }
+    dark.sort_by(|a, b| risk_then_path(a.risk_score, &a.path, b.risk_score, &b.path));
+    studied.sort_by(|a, b| risk_then_path(a.risk_score, &a.path, b.risk_score, &b.path));
+    NeverForecastGroups { dark, studied }
+}
+
+/// Shared ordering: risk score descending, path ascending.
+fn risk_then_path(a_score: f64, a_path: &str, b_score: f64, b_path: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    b_score
+        .partial_cmp(&a_score)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| a_path.cmp(b_path))
+}
+
+/// Render one study annotation. Deliberately the ranked half's vocabulary so
+/// the two views can't drift apart, and deliberately *different* per state:
+/// a round that graded nothing must never be described as graded.
+fn study_note(state: &StudyState, day: u32) -> String {
+    let text = match state {
+        StudyState::Graded(grade) => format!("studied by graded experiment (day {day}, {grade})"),
+        StudyState::VisitedUngraded => format!("visited by ungraded experiment (day {day})"),
+    };
+    // Char-boundary-safe, and the ellipsis marks the cut in-band.
+    crate::commands_risk_epistemic::truncate_reason(&text, STUDY_NOTE_MAX_CHARS).0
 }
 
 #[cfg(test)]
@@ -116,20 +186,20 @@ mod tests {
     #[test]
     fn test_predicted_file_is_not_never_forecast() {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]));
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[]);
         assert!(
-            never.is_empty(),
+            never.dark.is_empty(),
             "a file in the reactive column has been forecast: {:?}",
-            never.iter().map(|n| &n.path).collect::<Vec<_>>()
+            never.dark.iter().map(|n| &n.path).collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn test_emerging_only_file_is_not_never_forecast() {
         let snapshots = vec![snap(100, &[], &["src/a.rs"])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]));
+        let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]), &[]);
         assert!(
-            never.is_empty(),
+            never.dark.is_empty(),
             "a file in the anticipatory column has been forecast"
         );
     }
@@ -142,10 +212,11 @@ mod tests {
         let never = never_forecast_files(
             &snapshots,
             &scores(&[("src/a.rs", 5.0), ("src/update.rs", 3.2)]),
+            &[],
         );
-        assert_eq!(never.len(), 1, "exactly the unforecast file");
-        assert_eq!(never[0].path, "src/update.rs");
-        assert!((never[0].risk_score - 3.2).abs() < 1e-9);
+        assert_eq!(never.dark.len(), 1, "exactly the unforecast file");
+        assert_eq!(never.dark[0].path, "src/update.rs");
+        assert!((never.dark[0].risk_score - 3.2).abs() < 1e-9);
     }
 
     #[test]
@@ -159,8 +230,9 @@ mod tests {
                 ("src/alpha.rs", 4.0),
                 ("src/high.rs", 9.0),
             ]),
+            &[],
         );
-        let paths: Vec<&str> = never.iter().map(|n| n.path.as_str()).collect();
+        let paths: Vec<&str> = never.dark.iter().map(|n| n.path.as_str()).collect();
         assert_eq!(
             paths,
             vec!["src/high.rs", "src/alpha.rs", "src/zeta.rs", "src/low.rs"],
@@ -173,8 +245,8 @@ mod tests {
         // No snapshots = nothing to be blind *relative to*. Claiming every
         // scored file is unforecast here would be a false "everything is
         // blind" verdict, not an honest observation.
-        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]));
-        assert!(never.is_empty(), "empty snapshots → no claim");
+        let never = never_forecast_files(&[], &scores(&[("src/a.rs", 5.0)]), &[]);
+        assert!(never.dark.is_empty(), "empty snapshots → no claim");
     }
 
     #[test]
@@ -184,8 +256,8 @@ mod tests {
         for i in 0..12 {
             pairs.push((format!("src/f{i:02}.rs"), 12.0 - i as f64));
         }
-        let never = never_forecast_files(&snapshots, &pairs);
-        assert_eq!(never.len(), 12);
+        let never = never_forecast_files(&snapshots, &pairs, &[]);
+        assert_eq!(never.dark.len(), 12);
         let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
         let report =
             format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
@@ -226,7 +298,7 @@ mod tests {
         let events = vec![graded(100, &["src/a.rs"])];
         let ranking = compute_epistemic_ranking(&snapshots, &events, &[], &[]);
         assert!(ranking.is_empty(), "fixture must produce an empty ranking");
-        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
+        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[]);
         let report =
             format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
         assert!(
@@ -246,7 +318,7 @@ mod tests {
         // absorbed as ranked entries and push real ones out of the top-N
         // budget (Day 141). Pin the distinct bullet shape.
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
-        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]));
+        let never = never_forecast_files(&snapshots, &scores(&[("src/update.rs", 2.0)]), &[]);
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report =
             format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
@@ -266,7 +338,7 @@ mod tests {
         let snapshots = vec![snap(100, &["src/a.rs"], &[])];
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
         let report =
-            format_epistemic_report(&snapshots, &ranking, &[], &ExperimentFamilies::default());
+            format_epistemic_report(&snapshots, &ranking, &NeverForecastGroups::default(), &ExperimentFamilies::default());
         assert!(
             !report.contains("never forecast"),
             "no unforecast files → no section, got: {report}"
