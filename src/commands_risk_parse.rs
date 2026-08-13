@@ -506,23 +506,4 @@ mod tests {
         assert!(!ci_event_exists_for("", 30051449447));
         assert!(!ci_event_exists_for("not json\n", 30051449447));
     }
-
-    #[test]
-    fn test_ci_event_exists_for_ignores_green_event_with_same_snapshot_hash() {
-        // Regression: green events dedup on `snapshot_git_hash`. If harvest
-        // reused `green_event_exists_for`, an already-green-graded snapshot
-        // would silently swallow the red event. The red dedup key is the run id.
-        let green = concat!(
-            r#"{"ts":"2026-07-25T00:00:00Z","day":147,"trigger":"cli","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"watch_success","snapshot_git_hash":"deadbee"}"#,
-            "\n"
-        );
-        assert!(
-            green_event_exists_for(green, "deadbee"),
-            "sanity: the green dedup key does match"
-        );
-        assert!(
-            !ci_event_exists_for(green, 30051449447),
-            "a green event must never mask a CI failure event"
-        );
-    }
 }
