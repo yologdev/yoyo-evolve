@@ -1,0 +1,265 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the four line references against the actual files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,295p' src/commands.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_test" -r src/ &&… ✓ (15ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+All four references verified. Now the routing structure:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "route_command_prefix\|C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,200p' src/dispatch_s… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,45p' src/dispatch.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '645,665p' src/dispatch.r… ✓ (6ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn tokenize_quoted" sr… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,84p' src/dispatch_sub.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn try_dispatch_subcomm… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '9,40p' src/commands_lint… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 36.7s (8 ✓)
+
+Now let me write the tests first (they should fail).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_command_for_pro… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '843,870p' src/commands_l… ✓ (3ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Adding the tests first:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (2 → 43 lines)
+  +     #[test]
+  +     fn empty_args_leave_the_detected_test_invocation_byte_identical() {
+  +         // #745: `/test` with no args is the common case, and threading args
+  +         // through must not disturb it. Pin the argv and the echoed label, not
+  +         // the side effect — no test here spawns a test runner.
+  +         for pt in [
+  +             ProjectType::Rust,
+  +             ProjectType::Node,
+  +             ProjectType::Python,
+  +             ProjectType::Go,
+  +             ProjectType::Ruby,
+  +             ProjectType::Cpp,
+  +             ProjectType::Make,
+  +         ] {
+  +             let (label, base) = test_command_for_project(&pt).expect("every listed type has a cmd");
+  +             let (display, argv) = build_test_invocation(label, &base, &[]);
+  +             assert_eq!(display, label, "empty args must echo the bare label");
+  +             assert_eq!(
+  +                 argv,
+  +                 base.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+  ... (23 more lines)
+ ✓ (12.9s)
+  +     #[test]
+  +     fn empty_args_leave_the_detected_test_invocation_byte_identical() {
+  +         // #745: `/test` with no args is the common case, and threading args
+  +         // through must not disturb it. Pin the argv and the echoed label, not
+  +         // the side effect — no test here spawns a test runner.
+  +         for pt in [
+  +             ProjectType::Rust,
+  +             ProjectType::Node,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing as expected. Now the routing test:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2055,2070p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1670,1682p' src/dispatch… ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `build_test_invocation` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:866:35
+    [1m[94m|[0m
+[1m[94m866[0m [1m[94m|[0m             let (display, argv) = build_test_invocation(label, &base, &[]);
+    [1m[94m|[0m                                   [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `build_test_invocation` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:882:31
+    [1m[94m|[0m
+[1m[94m882[0m [1m[94m|[0m         let (display, argv) = build_test_invocation(label, &base, &extra);
+    [1m[94m|[0m                               [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `build_test_invocation` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:888:28
+    [1m[94m|[0m
+[1m[94m888[0m [1m[94m|[0m         let (_, rb_argv) = build_test_invocation(rb_label, &rb_base, &["TEST=x".to_string()]);
+    [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 3 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The failure is expected — I wrote the tests first. Now let me implement the missing function and thread args through both doors.
+  ▶ edit src/commands_lint.rs (3 → 33 lines)
+  + /// Combine a detected test command with caller-supplied args (#745).
+  + ///
+  + /// Returns `(display, argv)`: the label to echo, and the argv to spawn. Caller
+  + /// args are appended VERBATIM after the detected command's own argv — they are
+  + /// never validated or translated per project type, so a flag the runner does
+  + /// not understand surfaces as that runner's own error, which is what a
+  + /// `cargo`/`pytest`/`go test` user wants. An empty `extra` returns the detected
+  + /// argv and label unchanged, byte-identically to the no-arg path.
+  + pub(crate) fn build_test_invocation(
+  +     label: &str,
+  +     base: &[&str],
+  +     extra: &[String],
+  + ) -> (String, Vec<String>) {
+  +     let argv: Vec<String> = base
+  +         .iter()
+  +         .map(|s| (*s).to_string())
+  +         .chain(extra.iter().cloned())
+  +         .collect();
+  +     let display = if extra.is_empty() {
+  +         label.to_string()
+  ... (14 more lines)
+ ✓ (12.1s)
+  + /// Combine a detected test command with caller-supplied args (#745).
+  + ///
+  + /// Returns `(display, argv)`: the label to echo, and the argv to spawn. Caller
+  + /// args are appended VERBATIM after the detected command's own argv — they are
+  + /// never validated or translated per project type, so a flag the runner does
+  + /// not understand surfaces as that runner's own error, which is what a
+  + /// `cargo`/`pytest`/`go test` user wants. An empty `extra` returns the detected
+  + /// argv and label unchanged, byte-identically to the no-arg path.
+  ... (13 more lines)
+
+Now the body of handle_test must use the new invocation, then both call sites:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (5 → 4 lines)
+  +     let (label, argv) = build_test_invocation(label, &args, extra);
+        println!("{DIM}  Running: {label}...{RESET}");
+        let start = std::time::Instant::now();
+  -     let output = std::process::Command::new(args[0])
+  -         .args(&args[1..])
+  -         .output();
+  +     let output = std::process::Command::new(&argv[0]).args(&argv[1..]).output();
+ ✓ (12.1s)
+  +     let (label, argv) = build_test_invocation(label, &args, extra);
+        println!("{DIM}  Running: {label}...{RESET}");
+        let start = std::time::Instant::now();
+  -     let output = std::process::Command::new(args[0])
+  -         .args(&args[1..])
+  -         .output();
+  +     let output = std::process::Command::new(&argv[0]).args(&argv[1..]).output();
+
+Now both doors — REPL router (including the prefix arm so /test --lib stops 404-ing) and CLI dispatcher:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Test => {
+  -             commands::handle_test();
+  +             // #745: forward everything after `/test` to the detected runner.
+  +             let extra = crate::commands_search::tokenize_quoted(
+  +                 ctx.input.trim().strip_prefix("/test").unwrap_or("").trim(),
+  +             );
+  +             commands::handle_test(&extra);
+                Some(CommandResult::Continue)
+            }
+ ✓ (12.3s)
+            CommandRoute::Test => {
+  -             commands::handle_test();
+  +             // #745: forward everything after `/test` to the detected runner.
+  +             let extra = crate::commands_search::tokenize_quoted(
+  +                 ctx.input.trim().strip_prefix("/test").unwrap_or("").trim(),
+  +             );
+  +             commands::handle_test(&extra);
+                Some(CommandResult::Continue)
+            }
+  ▶ edit src/dispatch_sub.rs (4 → 6 lines)
+                "test" => {
+  -                 crate::commands_lint::handle_test();
+  +                 // #745: args after `yoyo test` used to be silently discarded and
+  +                 // the full suite ran. Forward them verbatim.
+  +                 crate::commands_lint::handle_test(&args[2..]);
+                    return Some(None);
+                }
+ ✓ (1m 38s)
+                "test" => {
+  -                 crate::commands_lint::handle_test();
+  +                 // #745: args after `yoyo test` used to be silently discarded and
+  +                 // the full suite ran. Forward them verbatim.
+  +                 crate::commands_lint::handle_test(&args[2..]);
+                    return Some(None);
+                }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 58s (2 ✓)
+
+Now the prefix arm so /test --lib routes instead of 404-ing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 1 lines) ✓ (1m 39s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"lint" || rest.starts_w… ✓ (3ms)
+  ▶ edit src/dispatch.rs (3 → 6 lines)
+            // Simple prefix commands: "cmd" or "cmd ..."
+            let cmd = rest.split_whitespace().next().unwrap_or(rest);
+            match cmd {
+  +             // #745: `/test --lib` used to reach no arm here and be reported as an
+  +             // unknown command, for a command that plainly exists.
+  +             "test" => CommandRoute::Test,
+ ✓ (1m 38s)
+            // Simple prefix commands: "cmd" or "cmd ..."
+            let cmd = rest.split_whitespace().next().unwrap_or(rest);
+            match cmd {
+  +             // #745: `/test --lib` used to reach no arm here and be reported as an
+  +             // unknown command, for a command that plainly exists.
+  +             "test" => CommandRoute::Test,
+  3 tools completed in 3m 24s (3 ✓)
+
+Now the routing regression test:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (3 → 3 lines) ✓ (1m 39s)
+  ▶ edit src/dispatch.rs (2 → 18 lines)
+  +     #[test]
+  +     fn test_with_args_routes_to_test_not_unknown() {
+  +         // #745: the completion table advertises `/test [args...]`, but only the
+  +         // bare `/test` was an exact match and route_command_prefix had no arm —
+  +         // so `/test --lib` was reported as an unknown command.
+  +         for input in ["/test --lib", "/test my_test_name", "/test -- --nocapture"] {
+  +             assert_eq!(
+  +                 route_command(input),
+  +                 CommandRoute::Test,
+  +                 "{input} must route to Test, not 404"
+  +             );
+  +         }
+  +         // Bare form is unchanged.
+  +         assert_eq!(route_command("/test"), CommandRoute::Test);
+  +     }
+  + 
+        #[test]
+        fn test_route_lint_and_test() {
+ ✓ (1m 48s)
+  +     #[test]
+  +     fn test_with_args_routes_to_test_not_unknown() {
+  +         // #745: the completion table advertises `/test [args...]`, but only the
+  +         // bare `/test` was an exact match and route_command_prefix had no arm —
+  +         // so `/test --lib` was reported as an unknown command.
+  +         for input in ["/test --lib", "/test my_test_name", "/test -- --nocapture"] {
+  +             assert_eq!(
+  +                 route_command(input),
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.3s)
+  3 tools completed in 3m 55s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  📊 Risk validation: 2/3 changed files were in top-10 predictions (66.7% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/3 (33.3%) — reactive was 66.7%
+     Predicted correctly: src/dispatch.rs, src/dispatch_sub.rs
+     Surprises (not predicted): src/commands_lint.rs
+

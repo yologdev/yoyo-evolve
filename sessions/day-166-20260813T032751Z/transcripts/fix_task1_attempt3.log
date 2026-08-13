@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement step 2 now. Let me start by understanding the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never_forecast_files\|N… ✓ (10ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,200p src/commands_risk… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480,520p src/commands_ris… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 696,900p src/commands_ris… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEVER_FORECAST" scripts… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 705,790p scripts/extract_… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 486,502p src/commands_ris… ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:486..506  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:585..615 ✓ (1ms)
+ ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 39 lines)
+  + /// Collapse the per-line visits into the *latest meaningful* study state per
+  + /// path, keyed by path.
+  + ///
+  + /// Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+  + /// whatever the days say — a grade once earned is not erased by a later
+  + /// expedition that recorded nothing. Within the same state, the latest day
+  + /// wins.
+  + ///
+  + /// Shared by both halves of the epistemic view (the ranked list and the
+  + /// never-forecast section) so the two can never disagree about whether a file
+  + /// has been studied.
+  + pub(crate) fn latest_visit_by_path(
+  +     experiments: &[ExperimentVisit],
+  + ) -> HashMap<&str, (&StudyState, u32)> {
+  +     let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+  +     for visit in experiments {
+  +         let candidate = (&visit.state, visit.day);
+  +         match studied.get(visit.path.as_str()) {
+  +             None => {
+  +                 studied.insert(visit.path.as_str(), candidate);
+  ... (19 more lines)
+ ✓ (12.4s)
+  + /// Collapse the per-line visits into the *latest meaningful* study state per
+  + /// path, keyed by path.
+  + ///
+  + /// Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+  + /// whatever the days say — a grade once earned is not erased by a later
+  + /// expedition that recorded nothing. Within the same state, the latest day
+  + /// wins.
+  + ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HashMap" src/commands_r… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 5 lines)
+    pub(crate) fn latest_visit_by_path(
+        experiments: &[ExperimentVisit],
+  - ) -> HashMap<&str, (&StudyState, u32)> {
+  -     let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+  + ) -> std::collections::HashMap<&str, (&StudyState, u32)> {
+  +     let mut studied: std::collections::HashMap<&str, (&StudyState, u32)> =
+  +         std::collections::HashMap::new();
+ ✓ (19.6s)
+    pub(crate) fn latest_visit_by_path(
+        experiments: &[ExperimentVisit],
+  - ) -> HashMap<&str, (&StudyState, u32)> {
+  -     let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+  + ) -> std::collections::HashMap<&str, (&StudyState, u32)> {
+  +     let mut studied: std::collections::HashMap<&str, (&StudyState, u32)> =
+  +         std::collections::HashMap::new();
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 1m 44s (13 ✓)
+
+Now wire the consumers.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (31 → 8 lines)
+        // Latest experiment visit per file. This is study history, NOT grading
+        // history: it says "I read this file on purpose", never "the risk model
+        // was measured on it". Kept in its own map and rendered as its own reason
+  -     // so the two can never be conflated.
+  -     //
+  -     // Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+  -     // whatever the days say — a grade once earned is not erased by a later
+  -     // expedition that recorded nothing. Within the same state, the latest day
+  -     // wins.
+  -     let mut studied: HashMap<&str, (&StudyState, u32)> = HashMap::new();
+  -     for visit in experiments {
+  -         let candidate = (&visit.state, visit.day);
+  -         match studied.get(visit.path.as_str()) {
+  -             None => {
+  -                 studied.insert(visit.path.as_str(), candidate);
+  -             }
+  -             Some((state, day)) => {
+  -                 let held_is_graded = matches!(state, StudyState::Graded(_));
+  -                 let new_is_graded = matches!(visit.state, StudyState::Graded(_));
+  -                 let replace = match (held_is_graded, new_is_graded) {
+  ... (14 more lines)
+ ✓ (1m 37s)
+        // Latest experiment visit per file. This is study history, NOT grading
+        // history: it says "I read this file on purpose", never "the risk model
+        // was measured on it". Kept in its own map and rendered as its own reason
+  -     // so the two can never be conflated.
+  -     //
+  -     // Merge rule (#711): a *graded* round outranks a *visited-ungraded* one
+  -     // whatever the days say — a grade once earned is not erased by a later
+  -     // expedition that recorded nothing. Within the same state, the latest day
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (6 → 17 lines)
+    /// Rather than blend these into the score (a list where everything is equally
+    /// unknown ranks nothing), they are an explicit third value.
+  + ///
+  + /// Day 166 (#744): the section itself carries **three** states, not two.
+  + /// "No column ever guessed about it" and "I once read it on purpose" are
+  + /// different facts, so a studied file is neither dropped from the list nor
+  + /// presented as unexplored — it is listed with its study annotation. The
+  + /// dark set (`study == None`) is what the planner should be pointed at.
+    pub(crate) struct NeverForecast {
+        pub(crate) path: String,
+        pub(crate) risk_score: f64,
+  +     /// Latest experiment-ledger visit to this file, if any. `None` is the
+  +     /// genuinely-dark case: never forecast *and* never studied. `Some` keeps
+  +     /// the day and the [`StudyState`]'s own two shapes (`Graded` vs
+  +     /// `VisitedUngraded`) so a visit never wears the word "graded".
+  +     pub(crate) study: Option<(u32, StudyState)>,
+    }
+ ✓ (12.0s)
+    /// Rather than blend these into the score (a list where everything is equally
+    /// unknown ranks nothing), they are an explicit third value.
+  + ///
+  + /// Day 166 (#744): the section itself carries **three** states, not two.
+  + /// "No column ever guessed about it" and "I once read it on purpose" are
+  + /// different facts, so a studied file is neither dropped from the list nor
+  + /// presented as unexplored — it is listed with its study annotation. The
+  + /// dark set (`study == None`) is what the planner should be pointed at.
+  ... (9 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:692..772 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (28 → 40 lines)
+    /// Honest limitation (stated in the report too): the universe here is only
+    /// what the risk model scores. A file with no recent churn has no risk score
+    /// and is invisible to both views.
+  + ///
+  + /// Day 166 (#744): `experiments` is the **same** visit slice the ranked half
+  + /// consumes — one reader, one parse, merged by the shared
+  + /// [`latest_visit_by_path`]. A studied file is annotated, never subtracted:
+  + /// "no column ever guessed about it" survives being read on purpose, and
+  + /// filtering the list would destroy that fact to record the other one.
+    pub(crate) fn never_forecast_files(
+        snapshots: &[ParsedSnapshot],
+        risk_scores: &[(String, f64)],
+  +     experiments: &[ExperimentVisit],
+    ) -> Vec<NeverForecast> {
+        use std::collections::HashSet;
+    
+  ···
+                forecast.insert(p.as_str());
+            }
+        }
+  ... (14 more lines)
+ ✓ (11.8s)
+    /// Honest limitation (stated in the report too): the universe here is only
+    /// what the risk model scores. A file with no recent churn has no risk score
+    /// and is invisible to both views.
+  + ///
+  + /// Day 166 (#744): `experiments` is the **same** visit slice the ranked half
+  + /// consumes — one reader, one parse, merged by the shared
+  + /// [`latest_visit_by_path`]. A studied file is annotated, never subtracted:
+  + /// "no column ever guessed about it" survives being read on purpose, and
+  ... (13 more lines)
+  4 tools completed in 2m 21s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:921:17
+    [1m[94m|[0m
+[1m[94m921[0m [1m[94m|[0m     let never = never_forecast_files(&snapshots, &risk_scores);
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^[0m[1m[94m--------------------------[0m [1m[94margument #3 of type `&[commands_risk_epistemic::ExperimentVisit]` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:741:15
+    [1m[94m|[0m
+[1m[94m741[0m [1m[94m|[0m pub(crate) fn never_forecast_files(
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m744[0m [1m[94m|[0m     experiments: &[ExperimentVisit],
+    [1m[94m|[0m     [1m[94m-------------------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m921[0m [1m[94m| [0m    let never = never_forecast_files(&snapshots, &risk_scores[92m, /* &[commands_risk_epistemic::ExperimentVisit] */[0m);
+    [1m[94m|[0m                                                              [92m+++++++++++++++++++++++++++++++++++++++++++++++++++[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 2 arguments were supplied[0m
+    [1m[94m--> [0msrc/commands_risk_epistemic.rs:1156:21
+     [1m[94m|[0m
+[1m[94m1156[0m [1m[94m|[0m         let never = never_forecast_files(&snapshots, &scores(&[("src/a.rs", 5.0)]));
+     [1m[94m|[0m                     [1m[91m^^^^^^^^^^^^^^^^^^^^[0m[1m[94m-------------------------------------------[0m...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never_forecast_files(" … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1189,1200p src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 4 lines)
+                    ("src/high.rs", 9.0),
+                ]),
+  +             &[],
+            );
+ ✓ (19.2s)
+                    ("src/high.rs", 9.0),
+                ]),
+  +             &[],
+            );
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 29.1s (4 ✓)
+
+Now the renderer — the actual consumer.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (29 → 76 lines)
+        if !never.is_empty() {
+  +         // Three states (#744), not two: the dark set is what the planner should
+  +         // be pointed at; a studied file is still listed (no column ever guessed
+  +         // about it — that fact survives being read on purpose) but is never
+  +         // offered as unexplored.
+  +         let (dark, studied): (Vec<&NeverForecast>, Vec<&NeverForecast>) =
+  +             never.iter().partition(|n| n.study.is_none());
+            out.push_str(&format!(
+                "\n  {YELLOW}⚠ never forecast{RESET} {DIM}— {} scored file{} {} never appeared in any prediction{RESET}\n",
+                never.len(),
+                if never.len() == 1 { "" } else { "s" },
+                if never.len() == 1 { "has" } else { "have" },
+            ));
+  -         for n in never.iter().take(NEVER_FORECAST_SAMPLE) {
+  +         // Both totals, stated only when there is a split to state. An empty
+  +         // studied group prints nothing rather than a 0, so the no-study case
+  +         // is byte-identical to the pre-Day-166 report.
+  +         if !studied.is_empty() {
+  +             out.push_str(&format!(
+  +                 "    {DIM}{} never studied either (the dark set), {} already studied at least once{RESET}\n",
+  ... (55 more lines)
+ ✓ (1m 37s)
+        if !never.is_empty() {
+  +         // Three states (#744), not two: the dark set is what the planner should
+  +         // be pointed at; a studied file is still listed (no column ever guessed
+  +         // about it — that fact survives being read on purpose) but is never
+  +         // offered as unexplored.
+  +         let (dark, studied): (Vec<&NeverForecast>, Vec<&NeverForecast>) =
+  +             never.iter().partition(|n| n.study.is_none());
+            out.push_str(&format!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test 2>&1 | g… ✓ (1m 33s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A25 "^fa… ✓ (56.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1340p src/commands_r… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 4m 22s (4 ✓)
+
+Now add tests for the three states.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 2 lines)
+        #[test]
+        fn test_report_renders_never_forecast_even_with_no_ranked_entries() {
+  -         // The ranked list can be empty (everything predicted was graded)
