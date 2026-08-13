@@ -22,6 +22,120 @@ pub struct RunResult {
     pub success: bool,
 }
 
+/// Bytes of the *head* of a captured stream kept in [`RunResult`].
+///
+/// Head + tail is 8 KB, deliberately the same budget as
+/// `BANG_CAPTURE_MAX_BYTES` in `src/repl.rs` (the `!` shell-passthrough
+/// capture). This comment is the only link between the two numbers — if one
+/// moves, the other deserves a look.
+///
+/// Split head/tail rather than tail-only (the bang path's choice) because
+/// compiler errors lead and test summaries trail: a tail-only cap throws away
+/// the first `error[E0308]`, which is the most useful line for `/fix`.
+const CAPTURE_HEAD_BYTES: usize = 4096;
+/// Bytes of the *tail* of a captured stream kept in [`RunResult`]. See
+/// [`CAPTURE_HEAD_BYTES`].
+const CAPTURE_TAIL_BYTES: usize = 4096;
+
+/// A bounded line collector for captured process output.
+///
+/// Live streaming is unaffected — the echo loops still print every line as it
+/// arrives. Only the *stored* copy is bounded, so a `cargo test` that emits
+/// 347 KB (or a `seq 1 500000` that emits 3.4 MB) can neither pin that much
+/// memory in the `LAST_FAILED_RUN` global nor be pasted verbatim into a `/fix`
+/// prompt. Every consumer of [`RunResult`] inherits the bound.
+///
+/// Under budget, [`CappedCapture::finish`] returns exactly what
+/// `lines.join("\n")` returned before. Over budget, the cut is marked in-band:
+/// a silent elision is the bug.
+#[derive(Debug, Default)]
+struct CappedCapture {
+    head: Vec<String>,
+    head_bytes: usize,
+    tail: std::collections::VecDeque<String>,
+    tail_bytes: usize,
+    dropped_lines: usize,
+    dropped_bytes: usize,
+}
+
+impl CappedCapture {
+    fn push_line(&mut self, line: &str) {
+        let total_budget = CAPTURE_HEAD_BYTES + CAPTURE_TAIL_BYTES;
+        // A single line longer than the whole budget is truncated on a char
+        // boundary — never a byte index, which panics inside a multi-byte char.
+        let stored = if line.len() > total_budget {
+            let mut b = total_budget;
+            while b > 0 && !line.is_char_boundary(b) {
+                b -= 1;
+            }
+            self.dropped_bytes += line.len() - b;
+            line[..b].to_string()
+        } else {
+            line.to_string()
+        };
+
+        // A line costs its bytes plus the '\n' that will rejoin it, so the
+        // budget describes the rendered string rather than the raw lines.
+        let cost = stored.len() + 1;
+        if self.head_bytes < CAPTURE_HEAD_BYTES {
+            self.head_bytes += cost;
+            self.head.push(stored);
+            return;
+        }
+
+        self.tail_bytes += cost;
+        self.tail.push_back(stored);
+        // Keep at least one line so a single over-long line still shows.
+        while self.tail_bytes > CAPTURE_TAIL_BYTES && self.tail.len() > 1 {
+            if let Some(front) = self.tail.pop_front() {
+                self.tail_bytes -= front.len() + 1;
+                self.dropped_bytes += front.len();
+                self.dropped_lines += 1;
+            }
+        }
+    }
+
+    fn elided(&self) -> bool {
+        self.dropped_lines > 0 || self.dropped_bytes > 0
+    }
+
+    fn marker(&self) -> String {
+        format!(
+            "… [yoyo: {} lines / {} bytes elided — /run keeps the first {} KB and last {} KB]",
+            self.dropped_lines,
+            self.dropped_bytes,
+            CAPTURE_HEAD_BYTES / 1024,
+            CAPTURE_TAIL_BYTES / 1024,
+        )
+    }
+
+    fn finish(self) -> String {
+        if !self.elided() {
+            // Byte-identical to the previous `lines.join("\n")`.
+            let mut all = self.head;
+            all.extend(self.tail);
+            return all.join("\n");
+        }
+        let mut out = self.head.join("\n");
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&self.marker());
+        if !self.tail.is_empty() {
+            out.push('\n');
+            out.push_str(
+                &self
+                    .tail
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+        out
+    }
+}
+
 /// Last failed run result, stored so `/fix` or the agent can reference it.
 static LAST_FAILED_RUN: Mutex<Option<RunResult>> = Mutex::new(None);
 
@@ -71,36 +185,38 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
     let stderr_handle = std::thread::spawn(move || {
         let reader = BufReader::new(stderr_pipe);
-        let mut lines = Vec::new();
+        let mut capture = CappedCapture::default();
         for line in reader.lines() {
             match line {
                 Ok(l) => {
                     eprintln!("{RED}{l}{RESET}");
-                    lines.push(l);
+                    capture.push_line(&l);
                 }
                 Err(_) => break,
             }
         }
-        lines
+        capture.finish()
     });
 
-    // Stream stdout line-by-line on the main thread, collecting into a buffer.
-    let mut stdout_lines = Vec::new();
+    // Stream stdout line-by-line on the main thread, collecting into a
+    // *bounded* buffer — every line is still echoed, only the stored copy caps.
+    let mut stdout_capture = CappedCapture::default();
     if let Some(stdout_pipe) = child.stdout.take() {
         let reader = BufReader::new(stdout_pipe);
         for line in reader.lines() {
             match line {
                 Ok(l) => {
                     println!("{l}");
-                    stdout_lines.push(l);
+                    stdout_capture.push_line(&l);
                 }
                 Err(_) => break,
             }
         }
     }
+    let stdout_text = stdout_capture.finish();
 
     // Wait for stderr thread to finish
-    let stderr_lines = stderr_handle.join().unwrap_or_default();
+    let stderr_text: String = stderr_handle.join().unwrap_or_default();
     let elapsed = start.elapsed();
 
     // Collect exit status
@@ -110,8 +226,8 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
             let success = code == 0;
             RunResult {
                 exit_code: code,
-                stdout: stdout_lines.join("\n"),
-                stderr: stderr_lines.join("\n"),
+                stdout: stdout_text,
+                stderr: stderr_text,
                 elapsed,
                 success,
             }
@@ -120,11 +236,8 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
             eprintln!("{RED}  error waiting for command: {e}{RESET}\n");
             RunResult {
                 exit_code: -1,
-                stdout: stdout_lines.join("\n"),
-                stderr: format!(
-                    "{}\nerror waiting for command: {e}",
-                    stderr_lines.join("\n")
-                ),
+                stdout: stdout_text,
+                stderr: format!("{stderr_text}\nerror waiting for command: {e}"),
                 elapsed,
                 success: false,
             }
@@ -382,6 +495,101 @@ mod tests {
     /// Serializes tests that read/write the global `LAST_FAILED_RUN` state
     /// to prevent race conditions when tests run in parallel.
     static FAILED_RUN_LOCK: Mutex<()> = Mutex::new(());
+
+    fn capture_of(lines: &[&str]) -> CappedCapture {
+        let mut c = CappedCapture::default();
+        for l in lines {
+            c.push_line(l);
+        }
+        c
+    }
+
+    /// The regression risk of the whole cap: small output is the common case
+    /// and must not change by a single byte.
+    #[test]
+    fn test_capped_capture_under_budget_is_byte_identical_to_join() {
+        let lines = vec!["error[E0308]: mismatched types", "  --> src/x.rs:1:1", ""];
+        let joined = lines.join("\n");
+        assert_eq!(capture_of(&lines).finish(), joined);
+        // A stream that fills the head but stays under total budget still
+        // round-trips exactly — head + tail rejoin with no marker.
+        let big: Vec<String> = (0..200)
+            .map(|i| format!("line {i} {}", "x".repeat(20)))
+            .collect();
+        let refs: Vec<&str> = big.iter().map(String::as_str).collect();
+        let total: usize = big.iter().map(|l| l.len()).sum();
+        assert!(total < CAPTURE_HEAD_BYTES + CAPTURE_TAIL_BYTES);
+        assert!(total > CAPTURE_HEAD_BYTES, "should overflow the head");
+        assert_eq!(capture_of(&refs).finish(), big.join("\n"));
+    }
+
+    #[test]
+    fn test_capped_capture_empty_output_has_no_marker() {
+        assert_eq!(CappedCapture::default().finish(), "");
+    }
+
+    #[test]
+    fn test_capped_capture_over_budget_keeps_head_and_tail_and_marks_the_cut() {
+        let lines: Vec<String> = (0..20_000).map(|i| format!("line {i}")).collect();
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let cap = capture_of(&refs);
+        let dropped_lines = cap.dropped_lines;
+        let dropped_bytes = cap.dropped_bytes;
+        assert!(dropped_lines > 0, "expected lines to be elided");
+        let out = cap.finish();
+
+        assert!(
+            out.starts_with("line 0\n"),
+            "head must survive: {:?}",
+            &out[..40]
+        );
+        assert!(out.ends_with("line 19999"), "tail must survive");
+        assert!(out.contains(&format!(
+            "{dropped_lines} lines / {dropped_bytes} bytes elided"
+        )));
+        assert!(out.contains("/run keeps the first 4 KB and last 4 KB"));
+        // Bounded: head + tail + one marker line, nowhere near the raw size.
+        assert!(out.len() < CAPTURE_HEAD_BYTES + CAPTURE_TAIL_BYTES + 512);
+        assert!(lines.join("\n").len() > 10 * out.len());
+        // Accounting adds up: what is kept plus what was dropped is the whole.
+        let kept: usize = out
+            .lines()
+            .filter(|l| !l.contains("elided"))
+            .map(str::len)
+            .sum();
+        assert!(kept + dropped_bytes <= lines.iter().map(|l| l.len()).sum::<usize>());
+    }
+
+    #[test]
+    fn test_capped_capture_multibyte_content_across_the_boundary_is_valid_utf8() {
+        // Every line is multi-byte, so any byte-index cut lands mid-character.
+        let lines: Vec<String> = (0..4000).map(|i| format!("✓ 检查 {i} 🐙")).collect();
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let out = capture_of(&refs).finish();
+        assert!(out.contains("elided"));
+        assert!(out.starts_with("✓ 检查 0 🐙"));
+        assert!(out.ends_with("✓ 检查 3999 🐙"));
+        // Valid UTF-8 by construction (it is a String); assert the chars survived.
+        assert!(out.chars().filter(|c| *c == '🐙').count() > 1);
+    }
+
+    #[test]
+    fn test_capped_capture_single_line_longer_than_budget_is_cut_on_a_char_boundary() {
+        // One line, no newlines, longer than head+tail — the only case where a
+        // cut can land inside a character.
+        let huge = "🐙".repeat(CAPTURE_HEAD_BYTES + CAPTURE_TAIL_BYTES);
+        assert!(huge.len() > CAPTURE_HEAD_BYTES + CAPTURE_TAIL_BYTES);
+        let out = capture_of(&[huge.as_str()]).finish();
+        assert!(
+            out.contains("bytes elided"),
+            "cut must be marked: {out:.120}"
+        );
+        assert!(out.len() < huge.len());
+        assert!(out.starts_with('🐙'));
+        // No lone replacement chars / no panic: the kept prefix is whole octopi.
+        let kept = out.lines().next().unwrap_or_default();
+        assert!(kept.chars().all(|c| c == '🐙'), "prefix cut mid-character");
+    }
 
     #[test]
     fn test_run_result_success() {
