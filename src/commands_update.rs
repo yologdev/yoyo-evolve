@@ -55,8 +55,8 @@ pub fn handle_update() -> Result<(), String> {
 
     // Step 2: Detect platform and find the right asset
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
-    let asset_name = match platform_asset_name(os, arch) {
-        Some(name) => name,
+    let (triple, ext) = match platform_target(os, arch) {
+        Some(t) => t,
         None => {
             return Err(format!("Unsupported platform: {} {}", os, arch));
         }
@@ -68,8 +68,8 @@ pub fn handle_update() -> Result<(), String> {
         .and_then(|v| v.as_array())
         .unwrap_or(&empty_assets);
 
-    let download_url = match find_asset_url(assets, asset_name) {
-        Some(url) => url,
+    let (asset_name, download_url) = match find_asset(assets, triple, ext) {
+        Some(found) => found,
         None => {
             let install_cmd = if os == "windows" {
                 "irm https://raw.githubusercontent.com/yologdev/yoyo-evolve/main/install.ps1 | iex"
@@ -99,15 +99,7 @@ pub fn handle_update() -> Result<(), String> {
     }
 
     // Step 4: Download
-    let temp_path = format!(
-        "/tmp/yoyo-update-{}.{}",
-        latest_version,
-        if asset_name.ends_with(".zip") {
-            "zip"
-        } else {
-            "tar.gz"
-        }
-    );
+    let temp_path = format!("/tmp/yoyo-update-{}.{}", latest_version, ext);
 
     println!("Downloading {}...", asset_name);
     match download_file(&download_url, &temp_path) {
@@ -158,10 +150,7 @@ pub fn handle_update() -> Result<(), String> {
             let _ = std::fs::remove_file(&temp_path);
             let _ = std::fs::remove_dir_all(extract_dir);
 
-            println!(
-                "✓ Updated to v{}! Please restart yoyo to use the new version.",
-                latest_version
-            );
+            println!("{}", update_success_message(latest_version));
             Ok(())
         }
         Err(e) => {
@@ -196,16 +185,49 @@ pub fn handle_update() -> Result<(), String> {
     }
 }
 
-/// Map OS/ARCH to the expected GitHub release asset name.
+/// Map OS/ARCH to the release asset's target triple and archive extension.
 /// Returns None for unsupported platforms.
-fn platform_asset_name(os: &str, arch: &str) -> Option<&'static str> {
+///
+/// The full asset name is NOT constructed here: `release.yml` embeds the tag
+/// (`yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz`), so any constructed name
+/// would need to know the version. Selection happens by suffix instead —
+/// see `asset_matches`.
+fn platform_target(os: &str, arch: &str) -> Option<(&'static str, &'static str)> {
     match (os, arch) {
-        ("linux", "x86_64") => Some("yoyo-x86_64-unknown-linux-gnu.tar.gz"),
-        ("macos", "x86_64") => Some("yoyo-x86_64-apple-darwin.tar.gz"),
-        ("macos", "aarch64") => Some("yoyo-aarch64-apple-darwin.tar.gz"),
-        ("windows", "x86_64") => Some("yoyo-x86_64-pc-windows-msvc.zip"),
+        ("linux", "x86_64") => Some(("x86_64-unknown-linux-gnu", "tar.gz")),
+        ("macos", "x86_64") => Some(("x86_64-apple-darwin", "tar.gz")),
+        ("macos", "aarch64") => Some(("aarch64-apple-darwin", "tar.gz")),
+        ("windows", "x86_64") => Some(("x86_64-pc-windows-msvc", "zip")),
         _ => None,
     }
+}
+
+/// Compose the success line printed after a successful update.
+///
+/// `tag` is the raw `tag_name` from the release JSON, which already carries a
+/// leading `v` (`v0.1.16`) — strip it so the message doesn't read `vv0.1.16`.
+fn update_success_message(tag: &str) -> String {
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    format!(
+        "✓ Updated to v{}! Please restart yoyo to use the new version.",
+        version
+    )
+}
+
+/// Does this release asset name belong to `triple` + `ext`?
+///
+/// Version-agnostic by construction: matches on the `-<triple>.<ext>` suffix so
+/// both `yoyo-x86_64-unknown-linux-gnu.tar.gz` and the tagged form
+/// `yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz` are accepted.
+/// `.sha256` sidecars share the prefix, so they are excluded explicitly.
+fn asset_matches(name: &str, triple: &str, ext: &str) -> bool {
+    if name.ends_with(".sha256") {
+        return false;
+    }
+    if !name.starts_with("yoyo-") {
+        return false;
+    }
+    name.ends_with(&format!("-{}.{}", triple, ext))
 }
 
 /// Check if we're running from a cargo build directory (development mode).
@@ -248,19 +270,23 @@ fn fetch_latest_release() -> Result<serde_json::Value, String> {
 }
 
 /// Find the download URL for a specific asset
-fn find_asset_url(assets: &[serde_json::Value], asset_name: &str) -> Option<String> {
-    assets
-        .iter()
-        .find(|asset| {
-            asset
-                .get("name")
-                .and_then(|name| name.as_str())
-                .map(|name| name == asset_name)
-                .unwrap_or(false)
-        })
-        .and_then(|asset| asset.get("browser_download_url"))
-        .and_then(|url| url.as_str())
-        .map(|url| url.to_string())
+/// Find the release asset for `triple` + `ext`, returning `(name, download_url)`.
+///
+/// Selection is by suffix rather than exact-string equality, so it survives the
+/// tag being embedded in the asset name. If several assets match, the first wins
+/// — the release workflow publishes exactly one archive per target, so there is
+/// no meaningful tie-break to invent.
+fn find_asset(assets: &[serde_json::Value], triple: &str, ext: &str) -> Option<(String, String)> {
+    assets.iter().find_map(|asset| {
+        let name = asset.get("name").and_then(|name| name.as_str())?;
+        if !asset_matches(name, triple, ext) {
+            return None;
+        }
+        let url = asset
+            .get("browser_download_url")
+            .and_then(|url| url.as_str())?;
+        Some((name.to_string(), url.to_string()))
+    })
 }
 
 /// Download a file from URL to a path
@@ -305,7 +331,10 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
         return Err("Unsupported archive format".to_string());
     }
 
-    // Find the yoyo binary in the extracted directory
+    // Find the yoyo binary in the extracted directory.
+    // The Windows zip packs `yoyo.exe` (see release.yml's Package (Windows) step),
+    // Unix tarballs pack `yoyo` — accept either.
+    let binary_names = ["yoyo", "yoyo.exe"];
     let entries = std::fs::read_dir(extract_dir)
         .map_err(|e| format!("Failed to read extract directory: {}", e))?;
 
@@ -315,7 +344,7 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
 
         if path.is_file() {
             if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
-                if filename == "yoyo" {
+                if binary_names.contains(&filename) {
                     return Ok(path.to_string_lossy().to_string());
                 }
             }
@@ -331,9 +360,11 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
         let path = entry.path();
 
         if path.is_dir() {
-            let binary_path = path.join("yoyo");
-            if binary_path.exists() {
-                return Ok(binary_path.to_string_lossy().to_string());
+            for name in binary_names {
+                let binary_path = path.join(name);
+                if binary_path.exists() {
+                    return Ok(binary_path.to_string_lossy().to_string());
+                }
             }
         }
     }
@@ -345,71 +376,261 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
 mod tests {
     use super::*;
 
-    #[test]
-    fn update_platform_linux_x86_64() {
-        let name = platform_asset_name("linux", "x86_64");
-        assert_eq!(name, Some("yoyo-x86_64-unknown-linux-gnu.tar.gz"));
+    /// A realistic published asset list: names carry the tag (as `release.yml`
+    /// writes them), every platform is present, and the `.sha256` sidecars —
+    /// which share the `yoyo-` prefix — are included.
+    fn realistic_assets(tag: &str) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        for (triple, ext) in [
+            ("x86_64-unknown-linux-gnu", "tar.gz"),
+            ("x86_64-apple-darwin", "tar.gz"),
+            ("aarch64-apple-darwin", "tar.gz"),
+            ("x86_64-pc-windows-msvc", "zip"),
+        ] {
+            let name = format!("yoyo-{}-{}.{}", tag, triple, ext);
+            out.push(serde_json::json!({
+                "name": name,
+                "browser_download_url": format!("https://example.com/{}", name),
+            }));
+            out.push(serde_json::json!({
+                "name": format!("{}.sha256", name),
+                "browser_download_url": format!("https://example.com/{}.sha256", name),
+            }));
+        }
+        out
+    }
+
+    fn select_for(os: &str, arch: &str, assets: &[serde_json::Value]) -> Option<(String, String)> {
+        let (triple, ext) = platform_target(os, arch)?;
+        find_asset(assets, triple, ext)
     }
 
     #[test]
-    fn update_platform_macos_intel() {
-        let name = platform_asset_name("macos", "x86_64");
-        assert_eq!(name, Some("yoyo-x86_64-apple-darwin.tar.gz"));
+    fn update_selects_linux_x86_64_from_published_assets() {
+        let (name, url) = select_for("linux", "x86_64", &realistic_assets("v0.1.16")).unwrap();
+        assert_eq!(name, "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz");
+        assert_eq!(url, "https://example.com/yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz");
     }
 
     #[test]
-    fn update_platform_macos_arm() {
-        let name = platform_asset_name("macos", "aarch64");
-        assert_eq!(name, Some("yoyo-aarch64-apple-darwin.tar.gz"));
+    fn update_selects_macos_intel_from_published_assets() {
+        let (name, _) = select_for("macos", "x86_64", &realistic_assets("v0.1.16")).unwrap();
+        assert_eq!(name, "yoyo-v0.1.16-x86_64-apple-darwin.tar.gz");
     }
 
     #[test]
-    fn update_platform_windows() {
-        let name = platform_asset_name("windows", "x86_64");
-        assert_eq!(name, Some("yoyo-x86_64-pc-windows-msvc.zip"));
+    fn update_selects_macos_arm_from_published_assets() {
+        let (name, _) = select_for("macos", "aarch64", &realistic_assets("v0.1.16")).unwrap();
+        assert_eq!(name, "yoyo-v0.1.16-aarch64-apple-darwin.tar.gz");
     }
 
     #[test]
-    fn update_platform_unsupported() {
-        assert!(platform_asset_name("freebsd", "x86_64").is_none());
-        assert!(platform_asset_name("linux", "arm").is_none());
-        assert!(platform_asset_name("windows", "aarch64").is_none());
+    fn update_selects_windows_zip_from_published_assets() {
+        let (name, _) = select_for("windows", "x86_64", &realistic_assets("v0.1.16")).unwrap();
+        assert_eq!(name, "yoyo-v0.1.16-x86_64-pc-windows-msvc.zip");
     }
 
     #[test]
-    fn update_find_asset_url_found() {
-        let assets = vec![
-            serde_json::json!({
-                "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz",
-                "browser_download_url": "https://example.com/download/linux.tar.gz"
-            }),
-            serde_json::json!({
-                "name": "yoyo-aarch64-apple-darwin.tar.gz",
-                "browser_download_url": "https://example.com/download/macos-arm.tar.gz"
-            }),
-        ];
-        let url = find_asset_url(&assets, "yoyo-x86_64-unknown-linux-gnu.tar.gz");
+    fn update_selection_is_version_agnostic() {
+        // The tag is not part of the match, so a future release and the old
+        // untagged naming both resolve.
+        for tag in ["v0.1.16", "v9.9.9", "v10.0.0-rc.1"] {
+            let (name, _) = select_for("linux", "x86_64", &realistic_assets(tag)).unwrap();
+            assert_eq!(name, format!("yoyo-{}-x86_64-unknown-linux-gnu.tar.gz", tag));
+        }
+        let untagged = vec![serde_json::json!({
+            "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz",
+            "browser_download_url": "https://example.com/legacy.tar.gz",
+        })];
         assert_eq!(
-            url,
-            Some("https://example.com/download/linux.tar.gz".to_string())
+            select_for("linux", "x86_64", &untagged).map(|(n, _)| n),
+            Some("yoyo-x86_64-unknown-linux-gnu.tar.gz".to_string())
         );
     }
 
     #[test]
-    fn update_find_asset_url_not_found() {
-        let assets = vec![serde_json::json!({
-            "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz",
-            "browser_download_url": "https://example.com/download/linux.tar.gz"
-        })];
-        let url = find_asset_url(&assets, "yoyo-x86_64-pc-windows-msvc.zip");
-        assert!(url.is_none());
+    fn update_never_selects_a_sha256_sidecar() {
+        // The sidecar shares the prefix and the triple; only the suffix differs.
+        let sidecars_only = vec![
+            serde_json::json!({
+                "name": "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz.sha256",
+                "browser_download_url": "https://example.com/sum",
+            }),
+            serde_json::json!({
+                "name": "yoyo-v0.1.16-x86_64-pc-windows-msvc.zip.sha256",
+                "browser_download_url": "https://example.com/sum2",
+            }),
+        ];
+        assert!(select_for("linux", "x86_64", &sidecars_only).is_none());
+        assert!(select_for("windows", "x86_64", &sidecars_only).is_none());
+        for (name, _) in [
+            select_for("linux", "x86_64", &realistic_assets("v0.1.16")).unwrap(),
+            select_for("windows", "x86_64", &realistic_assets("v0.1.16")).unwrap(),
+        ] {
+            assert!(!name.ends_with(".sha256"), "picked a checksum file: {}", name);
+        }
     }
 
     #[test]
-    fn update_find_asset_url_empty() {
-        let assets: Vec<serde_json::Value> = vec![];
-        let url = find_asset_url(&assets, "yoyo-x86_64-unknown-linux-gnu.tar.gz");
-        assert!(url.is_none());
+    fn update_platform_target_unsupported() {
+        assert!(platform_target("freebsd", "x86_64").is_none());
+        assert!(platform_target("linux", "arm").is_none());
+        assert!(platform_target("windows", "aarch64").is_none());
+    }
+
+    /// The one test in this repo that compares the updater against the *authority*
+    /// (`release.yml`) instead of against another copy of the same belief.
+    ///
+    /// What it pins from the workflow: the asset-name shape (prefix, tag position,
+    /// suffix), the `.sha256` sidecars, and the list of built targets. The
+    /// triple→extension pairing still comes from `platform_target` — but the
+    /// workflow's own archive suffixes are asserted to contain it.
+    #[test]
+    fn update_asset_selection_is_pinned_against_release_workflow() {
+        const MARKER: &str = "yoyo-${{ github.ref_name }}-${{ matrix.target }}";
+        const FAKE_TAG: &str = "v9.9.9";
+
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+        let workflow = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {}", path.display(), e));
+
+        // Every suffix the workflow appends to the archive-name marker.
+        let mut suffixes: Vec<String> = Vec::new();
+        let mut rest = workflow.as_str();
+        while let Some(idx) = rest.find(MARKER) {
+            let after = &rest[idx + MARKER.len()..];
+            let end = after
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .unwrap_or(after.len());
+            let suffix = after[..end].to_string();
+            if !suffix.is_empty() && !suffixes.contains(&suffix) {
+                suffixes.push(suffix);
+            }
+            rest = after;
+        }
+        if suffixes.is_empty() {
+            panic!(
+                "no occurrence of `{}` found in {} — the release asset naming changed, \
+                 so the updater's selector must be re-derived rather than silently passing",
+                MARKER,
+                path.display()
+            );
+        }
+        let archive_suffixes: Vec<&String> = suffixes
+            .iter()
+            .filter(|s| !s.ends_with(".sha256"))
+            .collect();
+        assert!(
+            !archive_suffixes.is_empty(),
+            "{} names only .sha256 files after `{}` — no archive to download",
+            path.display(),
+            MARKER
+        );
+
+        // Every target the workflow builds.
+        let mut targets: Vec<String> = Vec::new();
+        for line in workflow.lines() {
+            if let Some(value) = line.trim().strip_prefix("- target:") {
+                let target = value.trim().to_string();
+                if !target.is_empty() && !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+        if targets.is_empty() {
+            panic!(
+                "no `- target: <triple>` entries found in {} — the release matrix changed",
+                path.display()
+            );
+        }
+
+        let supported = [
+            ("linux", "x86_64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+            ("windows", "x86_64"),
+        ];
+        let ext_for = |triple: &str| -> Option<&'static str> {
+            supported.iter().find_map(|(os, arch)| match platform_target(os, arch) {
+                Some((t, e)) if t == triple => Some(e),
+                _ => None,
+            })
+        };
+
+        // Reconstruct what a real release publishes, from the workflow's own data.
+        let mut assets = Vec::new();
+        for target in &targets {
+            let ext = ext_for(target).unwrap_or("tar.gz");
+            let suffix = format!(".{}", ext);
+            assert!(
+                archive_suffixes.iter().any(|s| **s == suffix),
+                "updater expects a `{}` archive for {}, but {} publishes {:?}",
+                suffix,
+                target,
+                path.display(),
+                archive_suffixes
+            );
+            let name = format!("yoyo-{}-{}{}", FAKE_TAG, target, suffix);
+            assets.push(serde_json::json!({
+                "name": name,
+                "browser_download_url": format!("https://example.com/{}", name),
+            }));
+            assets.push(serde_json::json!({
+                "name": format!("{}.sha256", name),
+                "browser_download_url": format!("https://example.com/{}.sha256", name),
+            }));
+        }
+
+        for (os, arch) in supported {
+            let (triple, ext) = platform_target(os, arch)
+                .unwrap_or_else(|| panic!("platform_target lost ({}, {})", os, arch));
+            assert!(
+                targets.contains(&triple.to_string()),
+                "{} no longer builds {} — {} {} users have no asset",
+                path.display(),
+                triple,
+                os,
+                arch
+            );
+            let expected = format!("yoyo-{}-{}.{}", FAKE_TAG, triple, ext);
+            assert_eq!(
+                find_asset(&assets, triple, ext),
+                Some((
+                    expected.clone(),
+                    format!("https://example.com/{}", expected)
+                )),
+                "updater failed to select {} for {} {}",
+                expected,
+                os,
+                arch
+            );
+        }
+    }
+
+    #[test]
+    fn update_success_message_does_not_double_the_v() {
+        assert_eq!(
+            update_success_message("v0.1.16"),
+            "✓ Updated to v0.1.16! Please restart yoyo to use the new version."
+        );
+        // A tag without the prefix still renders exactly one `v`.
+        assert_eq!(
+            update_success_message("0.1.16"),
+            "✓ Updated to v0.1.16! Please restart yoyo to use the new version."
+        );
+        assert!(!update_success_message("v0.1.16").contains("vv"));
+    }
+
+    #[test]
+    fn update_find_asset_no_match_and_empty() {
+        let assets = realistic_assets("v0.1.16");
+        // A triple nobody published.
+        assert!(find_asset(&assets, "riscv64gc-unknown-linux-gnu", "tar.gz").is_none());
+        // Right triple, wrong archive kind.
+        assert!(find_asset(&assets, "x86_64-unknown-linux-gnu", "zip").is_none());
+        let empty: Vec<serde_json::Value> = vec![];
+        assert!(find_asset(&empty, "x86_64-unknown-linux-gnu", "tar.gz").is_none());
     }
 
     #[test]
@@ -434,33 +655,33 @@ mod tests {
     // --- Additional tests for broader coverage ---
 
     #[test]
-    fn update_platform_empty_strings() {
-        assert!(platform_asset_name("", "").is_none());
-        assert!(platform_asset_name("linux", "").is_none());
-        assert!(platform_asset_name("", "x86_64").is_none());
+    fn update_platform_target_empty_strings() {
+        assert!(platform_target("", "").is_none());
+        assert!(platform_target("linux", "").is_none());
+        assert!(platform_target("", "x86_64").is_none());
     }
 
     #[test]
-    fn update_platform_case_sensitivity() {
-        // platform_asset_name should be case-sensitive (OS constants are lowercase)
-        assert!(platform_asset_name("Linux", "x86_64").is_none());
-        assert!(platform_asset_name("MACOS", "aarch64").is_none());
-        assert!(platform_asset_name("Windows", "x86_64").is_none());
+    fn update_platform_target_case_sensitivity() {
+        // platform_target is case-sensitive (std::env::consts are lowercase)
+        assert!(platform_target("Linux", "x86_64").is_none());
+        assert!(platform_target("MACOS", "aarch64").is_none());
+        assert!(platform_target("Windows", "x86_64").is_none());
     }
 
     #[test]
-    fn update_platform_all_supported_return_some() {
-        // Exhaustive: every supported combo returns Some
-        let supported = [
+    fn update_platform_target_all_supported_resolve() {
+        // Exhaustive: every supported combo yields a triple that selects an asset.
+        for (os, arch) in [
             ("linux", "x86_64"),
             ("macos", "x86_64"),
             ("macos", "aarch64"),
             ("windows", "x86_64"),
-        ];
-        for (os, arch) in &supported {
+        ] {
+            let assets = realistic_assets("v0.1.16");
             assert!(
-                platform_asset_name(os, arch).is_some(),
-                "Expected Some for ({}, {})",
+                select_for(os, arch, &assets).is_some(),
+                "no asset selected for ({}, {})",
                 os,
                 arch
             );
@@ -468,84 +689,73 @@ mod tests {
     }
 
     #[test]
-    fn update_platform_tar_gz_vs_zip() {
-        // Linux and macOS should produce .tar.gz, Windows should produce .zip
-        for os in &["linux", "macos"] {
-            for arch in &["x86_64", "aarch64"] {
-                if let Some(name) = platform_asset_name(os, arch) {
-                    assert!(
-                        name.ends_with(".tar.gz"),
-                        "Expected .tar.gz for {} {}, got {}",
-                        os,
-                        arch,
-                        name
-                    );
+    fn update_platform_target_archive_kind() {
+        // Unix targets ship tarballs, Windows ships a zip.
+        for os in ["linux", "macos"] {
+            for arch in ["x86_64", "aarch64"] {
+                if let Some((_, ext)) = platform_target(os, arch) {
+                    assert_eq!(ext, "tar.gz", "expected tar.gz for {} {}", os, arch);
                 }
             }
         }
-        if let Some(name) = platform_asset_name("windows", "x86_64") {
-            assert!(
-                name.ends_with(".zip"),
-                "Expected .zip for windows, got {}",
-                name
-            );
-        }
+        assert_eq!(platform_target("windows", "x86_64").map(|(_, e)| e), Some("zip"));
     }
 
     #[test]
-    fn update_find_asset_url_missing_name_field() {
-        // Asset without a "name" field should not match
-        let assets = vec![serde_json::json!({
-            "browser_download_url": "https://example.com/download/linux.tar.gz"
-        })];
-        let url = find_asset_url(&assets, "yoyo-x86_64-unknown-linux-gnu.tar.gz");
-        assert!(url.is_none());
-    }
-
-    #[test]
-    fn update_find_asset_url_missing_download_url() {
-        // Asset matches name but has no browser_download_url → None
-        let assets = vec![serde_json::json!({
-            "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz"
-        })];
-        let url = find_asset_url(&assets, "yoyo-x86_64-unknown-linux-gnu.tar.gz");
-        assert!(url.is_none());
-    }
-
-    #[test]
-    fn update_find_asset_url_picks_correct_among_many() {
-        // With all 4 platform assets, each one should resolve correctly
+    fn update_find_asset_ignores_malformed_entries() {
+        // Asset without a "name" field, and one matching by name but with no URL:
+        // neither may be selected, and neither may hide a later valid asset.
         let assets = vec![
             serde_json::json!({
-                "name": "yoyo-x86_64-unknown-linux-gnu.tar.gz",
-                "browser_download_url": "https://example.com/linux-x86.tar.gz"
+                "browser_download_url": "https://example.com/nameless.tar.gz"
             }),
             serde_json::json!({
-                "name": "yoyo-x86_64-apple-darwin.tar.gz",
-                "browser_download_url": "https://example.com/macos-x86.tar.gz"
+                "name": "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz"
             }),
             serde_json::json!({
-                "name": "yoyo-aarch64-apple-darwin.tar.gz",
-                "browser_download_url": "https://example.com/macos-arm.tar.gz"
-            }),
-            serde_json::json!({
-                "name": "yoyo-x86_64-pc-windows-msvc.zip",
-                "browser_download_url": "https://example.com/windows.zip"
+                "name": "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz",
+                "browser_download_url": "https://example.com/real.tar.gz"
             }),
         ];
+        assert_eq!(
+            find_asset(&assets, "x86_64-unknown-linux-gnu", "tar.gz"),
+            Some((
+                "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                "https://example.com/real.tar.gz".to_string()
+            ))
+        );
+    }
 
-        assert_eq!(
-            find_asset_url(&assets, "yoyo-x86_64-apple-darwin.tar.gz"),
-            Some("https://example.com/macos-x86.tar.gz".to_string())
-        );
-        assert_eq!(
-            find_asset_url(&assets, "yoyo-aarch64-apple-darwin.tar.gz"),
-            Some("https://example.com/macos-arm.tar.gz".to_string())
-        );
-        assert_eq!(
-            find_asset_url(&assets, "yoyo-x86_64-pc-windows-msvc.zip"),
-            Some("https://example.com/windows.zip".to_string())
-        );
+    #[test]
+    fn update_find_asset_picks_correct_among_many() {
+        // Every platform resolves to its own archive out of the full published set.
+        let assets = realistic_assets("v0.1.16");
+        for (os, arch, expected) in [
+            (
+                "linux",
+                "x86_64",
+                "yoyo-v0.1.16-x86_64-unknown-linux-gnu.tar.gz",
+            ),
+            ("macos", "x86_64", "yoyo-v0.1.16-x86_64-apple-darwin.tar.gz"),
+            (
+                "macos",
+                "aarch64",
+                "yoyo-v0.1.16-aarch64-apple-darwin.tar.gz",
+            ),
+            (
+                "windows",
+                "x86_64",
+                "yoyo-v0.1.16-x86_64-pc-windows-msvc.zip",
+            ),
+        ] {
+            assert_eq!(
+                select_for(os, arch, &assets).map(|(n, _)| n),
+                Some(expected.to_string()),
+                "wrong asset for {} {}",
+                os,
+                arch
+            );
+        }
     }
 
     #[test]
