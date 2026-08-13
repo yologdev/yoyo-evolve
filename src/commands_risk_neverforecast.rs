@@ -303,18 +303,84 @@ fn date_part(ts: &str) -> String {
 /// Deliberately outside [`forecast_opportunities`] so the classification stays
 /// pure. Any failure — git missing, non-zero exit, empty output (path not in
 /// history) — is `None`, i.e. unknown age, i.e. the file stays in the dark set
+///
+/// One further `None`: on a **shallow** clone, when the add-commit is a grafted
+/// boundary root (see [`shallow_boundary_hides_age`]). The harness checkout is
+/// shallow, so without that check every pre-window file reports the boundary's
+/// date and the too-new split would be grading clone depth instead of file age.
 /// exactly as before this existed.
 pub(crate) fn git_added_ts(path: &str) -> Option<String> {
-    let out = crate::git::run_git(&["log", "--diff-filter=A", "--format=%aI", "-1", "--", path])
-        .ok()?
-        .trim()
-        .to_string();
+    // One call yields both the add-commit sha and its date, tab-separated.
+    let out = crate::git::run_git(&[
+        "log",
+        "--diff-filter=A",
+        "--format=%H%x09%aI",
+        "-1",
+        "--",
+        path,
+    ])
+    .ok()?
+    .trim()
+    .to_string();
     // `git log` on an unknown path exits 0 with empty stdout — an absence, not
     // a date.
-    out.lines()
-        .next()
-        .filter(|l| !l.is_empty())
-        .map(String::from)
+    let line = out.lines().next().filter(|l| !l.is_empty())?;
+    let (sha, ts) = line.split_once('\t')?;
+    let ts = ts.trim();
+    if ts.is_empty() {
+        return None;
+    }
+
+    // A shallow clone dates every pre-window file to the grafted boundary. That
+    // is confidently wrong, not unknown, so it walks straight past the
+    // `None → dark set` fallback unless caught here.
+    let is_shallow = crate::git::run_git(&["rev-parse", "--is-shallow-repository"])
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false);
+    let graph_roots: Vec<String> = crate::git::run_git(&["rev-list", "--max-parents=0", "HEAD"])
+        .map(|s| s.lines().map(|l| l.trim().to_string()).collect())
+        .unwrap_or_default();
+    if shallow_boundary_hides_age(is_shallow, sha, &graph_roots) {
+        return None;
+    }
+
+    Some(ts.to_string())
+}
+
+/// Minimum characters a sha must have before a prefix comparison is allowed.
+/// Below this a short string could prefix an unrelated commit by luck, and the
+/// cost of a false match is a genuinely dark file silently excused.
+const MIN_SHA_PREFIX: usize = 7;
+
+/// A shallow clone's grafted boundary commit presents every surviving file
+/// as an addition, so `git log --diff-filter=A` on such a repo dates old
+/// files to the boundary. That is a fact about clone depth, not the file:
+/// treat it as unknown age rather than a recent one.
+///
+/// `false` whenever the repo is not shallow — a full clone's root commit is a
+/// real birthday and keeps its existing behaviour — and whenever either side of
+/// the comparison is empty or shorter than [`MIN_SHA_PREFIX`].
+pub(crate) fn shallow_boundary_hides_age(
+    is_shallow: bool,
+    add_sha: &str,
+    graph_roots: &[String],
+) -> bool {
+    if !is_shallow {
+        return false;
+    }
+    let add = add_sha.trim();
+    if add.len() < MIN_SHA_PREFIX {
+        return false;
+    }
+    graph_roots.iter().any(|root| {
+        let root = root.trim();
+        if root.len() < MIN_SHA_PREFIX {
+            return false;
+        }
+        // Accept a prefix match in either direction: one command may abbreviate
+        // where the other does not. Both sides are already ≥ MIN_SHA_PREFIX.
+        add.starts_with(root) || root.starts_with(add)
+    })
 }
 
 /// Shared ordering: risk score descending, path ascending.
