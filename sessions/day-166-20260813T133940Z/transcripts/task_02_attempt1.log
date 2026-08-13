@@ -1,0 +1,182 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the defect is still present in the actual code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_run.rs && gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_fix_prompt" -A 40… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Defect confirmed on both sides. Now the collector loops:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs:1..141  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BANG_CAPTURE_MAX_BYTES\… ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.4s (2 ✓)
+
+Both halves confirmed live. Writing the collector + tests first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (2 → 113 lines)
+  + /// Bytes of the *head* of a captured stream kept in [`RunResult`].
+  + ///
+  + /// Head + tail is 8 KB, deliberately the same budget as
+  + /// `BANG_CAPTURE_MAX_BYTES` in `src/repl.rs` (the `!` shell-passthrough
+  + /// capture). This comment is the only link between the two numbers — if one
+  + /// moves, the other deserves a look.
+  + ///
+  + /// Split head/tail rather than tail-only (the bang path's choice) because
+  + /// compiler errors lead and test summaries trail: a tail-only cap throws away
+  + /// the first `error[E0308]`, which is the most useful line for `/fix`.
+  + const CAPTURE_HEAD_BYTES: usize = 4096;
+  + /// Bytes of the *tail* of a captured stream kept in [`RunResult`]. See
+  + /// [`CAPTURE_HEAD_BYTES`].
+  + const CAPTURE_TAIL_BYTES: usize = 4096;
+  + 
+  + /// A bounded line collector for captured process output.
+  + ///
+  + /// Live streaming is unaffected — the echo loops still print every line as it
+  + /// arrives. Only the *stored* copy is bounded, so a `cargo test` that emits
+  + /// 347 KB (or a `seq 1 500000` that emits 3.4 MB) can neither pin that much
+  ... (93 more lines)
+ ✓ (17.5s)
+  + /// Bytes of the *head* of a captured stream kept in [`RunResult`].
+  + ///
+  + /// Head + tail is 8 KB, deliberately the same budget as
+  + /// `BANG_CAPTURE_MAX_BYTES` in `src/repl.rs` (the `!` shell-passthrough
+  + /// capture). This comment is the only link between the two numbers — if one
+  + /// moves, the other deserves a look.
+  + ///
+  + /// Split head/tail rather than tail-only (the bang path's choice) because
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected (definition without consumer). Wiring both call sites now:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (30 → 32 lines)
+  -         let mut lines = Vec::new();
+  +         let mut capture = CappedCapture::default();
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => {
+                        eprintln!("{RED}{l}{RESET}");
+  -                     lines.push(l);
+  +                     capture.push_line(&l);
+                    }
+                    Err(_) => break,
+                }
+            }
+  -         lines
+  +         capture.finish()
+        });
+    
+  -     // Stream stdout line-by-line on the main thread, collecting into a buffer.
+  -     let mut stdout_lines = Vec::new();
+  +     // Stream stdout line-by-line on the main thread, collecting into a
+  +     // *bounded* buffer — every line is still echoed, only the stored copy caps.
+  ... (19 more lines)
+ ✓ (12.2s)
+  -         let mut lines = Vec::new();
+  +         let mut capture = CappedCapture::default();
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => {
+                        eprintln!("{RED}{l}{RESET}");
+  -                     lines.push(l);
+  +                     capture.push_line(&l);
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (17 → 14 lines)
+                RunResult {
+                    exit_code: code,
+  -                 stdout: stdout_lines.join("\n"),
+  -                 stderr: stderr_lines.join("\n"),
+  +                 stdout: stdout_text,
+  +                 stderr: stderr_text,
+                    elapsed,
+                    success,
+                }
+  ···
+                eprintln!("{RED}  error waiting for command: {e}{RESET}\n");
+                RunResult {
+                    exit_code: -1,
+  -                 stdout: stdout_lines.join("\n"),
+  -                 stderr: format!(
+  -                     "{}\nerror waiting for command: {e}",
+  -                     stderr_lines.join("\n")
+  -                 ),
+  +                 stdout: stdout_text,
+  +                 stderr: format!("{stderr_text}\nerror waiting for command: {e}"),
+ ✓ (1m 43s)
+                RunResult {
+                    exit_code: code,
+  -                 stdout: stdout_lines.join("\n"),
+  -                 stderr: stderr_lines.join("\n"),
+  +                 stdout: stdout_text,
+  +                 stderr: stderr_text,
+                    elapsed,
+                    success,
+  ... (12 more lines)
+  2 tools completed in 2m 1s (2 ✓)
+
+Now the tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" -A 12 src/co… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (4 → 84 lines)
+        /// Serializes tests that read/write the global `LAST_FAILED_RUN` state
+        /// to prevent race conditions when tests run in parallel.
+        static FAILED_RUN_LOCK: Mutex<()> = Mutex::new(());
+  + 
+  +     fn capture_of(lines: &[&str]) -> CappedCapture {
+  +         let mut c = CappedCapture::default();
+  +         for l in lines {
+  +             c.push_line(l);
+  +         }
+  +         c
+  +     }
+  + 
+  +     /// The regression risk of the whole cap: small output is the common case
+  +     /// and must not change by a single byte.
+  +     #[test]
+  +     fn test_capped_capture_under_budget_is_byte_identical_to_join() {
+  +         let lines = vec!["error[E0308]: mismatched types", "  --> src/x.rs:1:1", ""];
+  +         let joined = lines.join("\n");
+  +         assert_eq!(capture_of(&lines).finish(), joined);
+  +         // A stream that fills the head but stays under total budget still
+  ... (64 more lines)
+ ✓ (1m 39s)
+        /// Serializes tests that read/write the global `LAST_FAILED_RUN` state
+        /// to prevent race conditions when tests run in parallel.
+        static FAILED_RUN_LOCK: Mutex<()> = Mutex::new(());
+  + 
+  +     fn capture_of(lines: &[&str]) -> CappedCapture {
+  +         let mut c = CappedCapture::default();
+  +         for l in lines {
+  +             c.push_line(l);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test commands… ✓ (23.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 36s (3 ✓)
+
+Two test-arithmetic errors of mine — the newline separators aren't counted in the budget. Making the accounting honest:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (42 lines) ✓ (22.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let lines: Vec<String>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_run_shell_command_… ✓ (2ms)
+ ✓ (22.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_run 2>&1 | g… ✓ (145ms)
+  4 tools completed in 55.1s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
