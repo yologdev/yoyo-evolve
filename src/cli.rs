@@ -1358,7 +1358,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     }
 
     // Append current goal for persistent awareness
-    if let Some(goal) = crate::commands_goal::load_goal() {
+    // Capped: this lands in the system prompt, so it is paid on every turn of
+    // every session until cleared (#755). Display paths keep the full text.
+    if let Some(goal) = crate::commands_goal::goal_for_prompt() {
         system_prompt.push_str("\n\n# Current Goal\n\n");
         system_prompt.push_str(&goal);
         system_prompt

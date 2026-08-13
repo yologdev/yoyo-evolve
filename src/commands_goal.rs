@@ -17,6 +17,51 @@ const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
 /// Maximum characters of verify output to include in prompts.
 const VERIFY_OUTPUT_MAX: usize = 2000;
 
+/// Maximum bytes of the goal text that reach a *prompt*.
+///
+/// A judgment threshold, not a measurement: 4 KB is roughly 1k tokens, generous
+/// for a sentence-or-checklist goal and far under the 60 KB a pasted spec can
+/// reach. It exists because the goal is appended to the **system prompt**
+/// (`src/cli.rs`, beside `load_project_context` and `generate_repo_map_for_prompt`,
+/// which are bounded by `MAX_PROJECT_FILES` and `REPO_MAP_MAX_CHARS`) and so is
+/// paid on **every turn of every session** until cleared, not once (#755).
+/// Deliberately smaller than the repo map's 16 KB: a goal is a statement of
+/// intent, not a structural index.
+const GOAL_PROMPT_MAX_BYTES: usize = 4000;
+
+/// Cap the goal text for prompt use, marking the cut in-band.
+///
+/// Pure — no I/O. Display paths (`/goal show`, `/status`, `yoyo goal show`) keep
+/// the **full** text; only prompt paths pass through here, so nothing a user
+/// reads about their own goal is silently shortened. Under budget the return
+/// value is byte-identical to the input, which is the common case.
+///
+/// The cut is announced (repo convention: every elision layer marks its cuts —
+/// a silent elision is the bug) and names the file, so the model is told that a
+/// longer goal exists rather than being handed a sentence that stops mid-word
+/// as if that were the whole intent. Cuts on a char boundary, never a byte index.
+fn truncate_goal_for_prompt(goal: &str) -> String {
+    if goal.len() <= GOAL_PROMPT_MAX_BYTES {
+        return goal.to_string();
+    }
+    let head = crate::format::safe_truncate(goal, GOAL_PROMPT_MAX_BYTES);
+    let elided = goal.len() - head.len();
+    format!(
+        "{head}\n\n… [yoyo: goal truncated for the prompt — {shown} of {total} bytes shown, \
+         {elided} elided. Full text: {GOAL_FILE} (/goal show)]",
+        shown = head.len(),
+        total = goal.len(),
+    )
+}
+
+/// Load the current goal for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
+///
+/// Prompt call sites must use this instead of [`load_goal`]; display call sites
+/// must not.
+pub fn goal_for_prompt() -> Option<String> {
+    load_goal().map(|g| truncate_goal_for_prompt(&g))
+}
+
 /// Load the current goal from `.yoyo/goal.md`, if it exists.
 pub fn load_goal() -> Option<String> {
     let path = Path::new(GOAL_FILE);
@@ -267,7 +312,7 @@ pub fn handle_goal(input: &str) -> CommandResult {
             CommandResult::Continue
         }
     } else if arg == "check" {
-        match load_goal() {
+        match goal_for_prompt() {
             Some(goal) => {
                 let verify_section = if let Some(vcmd) = load_verify_command() {
                     let (code, output) = run_verify_command(&vcmd);
