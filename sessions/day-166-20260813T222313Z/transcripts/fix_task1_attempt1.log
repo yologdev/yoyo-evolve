@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "temp grace-band probe" … ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "temp grace-band probe" … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/dispatch_su… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6.3s (4 ✓)
+
+The probe was a pure append of 60 lines at the end. Restoring it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1947,2006d' src/dispatch… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+src/dispatch_sub.rs is now byte-identical to its pre-task state. Now let me read the implemented gate so the docs describe it accurately.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "OVERSHOOT_GRACE_LINES\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,80p;215,300p;330,360p… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+The implementation is sound. Now the missing docs — let me read the CLAUDE.md section.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Module-size gate" CLAUD… ✓ (5ms)
+
+Now I'll rewrite that section to describe the four outcomes the gate actually has.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 6 lines)
+  - 1. **Un-grandfathered module over `MAX_MODULE_LINES` → fatal.** The actual invariant; a new module going oversized is a design event worth stopping the task for. Unchanged.
+  + 1. **Un-grandfathered module over `MAX_MODULE_LINES` → depends on *how far* over** (Day 166, #762 — this is the reprice; Day 165's three-way split was a taxonomy change that left the penalty untouched and ate a third task the next day). The branch is split by `OVERSHOOT_GRACE_LINES = 50`, a judgment threshold, not a measurement:
+  +    - over the cap by **≤ 50 lines → warning, run stays green** (`UnlistedVerdict::Grace` → `SizeViolation::OverCapWithinGrace`). A fix that adds a handful of lines to an already-large module is not the design event this rule was written for, and reverting the whole task teaches nothing the warning cannot. The message carries the same shape and actionability as branch 2's: file, actual lines, `MAX_MODULE_LINES`, the overshoot, and the literal `("path", N)` register line to paste in.
+  +    - over the cap by **> 50 lines → fatal**, as before (`UnlistedVerdict::Fatal` → `SizeViolation::OverCap`). A module blowing 50+ lines past the cap in one task *is* the design event, and the message names the grace band it exceeded so the reader can tell which of the two branches they hit and why.
+  + 
+  +    The decision half is the pure, table-tested `classify_unlisted(lines, max_lines, grace) -> UnlistedVerdict` (three values — `Ok`/`Grace`/`Fatal`; the boundary is inclusive, `+50` warns and `+51` is fatal) so the I/O stays at the single call site. **The tradeoff is accepted deliberately, not overlooked:** the grace band lets an un-grandfathered module creep up to 2050 lines without stopping a task. What keeps that visible rather than free is the rest of the gate — every grace-band pass prints the register line to paste, and once a file lands in the register the branch-3 ratchet means it can never shrink unnoticed. `MAX_MODULE_LINES` was **not** raised and the invariant was **not** deleted; only the penalty for crossing it by a little was repriced from "revert the entire task" to "say so loudly".
+    2. **Grandfathered module *above* its recorded lines → warning, run stays green.**
+ ✓ (1m 36s)
+  - 1. **Un-grandfathered module over `MAX_MODULE_LINES` → fatal.** The actual invariant; a new module going oversized is a design event worth stopping the task for. Unchanged.
+  + 1. **Un-grandfathered module over `MAX_MODULE_LINES` → depends on *how far* over** (Day 166, #762 — this is the reprice; Day 165's three-way split was a taxonomy change that left the penalty untouched and ate a third task the next day). The branch is split by `OVERSHOOT_GRACE_LINES = 50`, a judgment threshold, not a measurement:
+  +    - over the cap by **≤ 50 lines → warning, run stays green** (`UnlistedVerdict::Grace` → `SizeViolation::OverCapWithinGrace`). A fix that adds a handful of lines to an already-large module is not the design event this rule was written for, and reverting the whole task teaches nothing the warning cannot. The message carries the same shape and actionability as branch 2's: file, actual lines, `MAX_MODULE_LINES`, the overshoot, and the literal `("path", N)` register line to paste in.
+  +    - over the cap by **> 50 lines → fatal**, as before (`UnlistedVerdict::Fatal` → `SizeViolation::OverCap`). A module blowing 50+ lines past the cap in one task *is* the design event, and the message names the grace band it exceeded so the reader can tell which of the two branches they hit and why.
+  + 
+  +    The decision half is the pure, table-tested `classify_unlisted(lines, max_lines, grace) -> UnlistedVerdict` (three values — `Ok`/`Grace`/`Fatal`; the boundary is inclusive, `+50` warns and `+51` is fatal) so the I/O stays at the single call site. **The tradeoff is accepted deliberately, not overlooked:** the grace band lets an un-grandfathered module creep up to 2050 lines without stopping a task. What keeps that visible rather than free is the rest of the gate — every grace-band pass prints the register line to paste, and once a file lands in the register the branch-3 ratchet means it can never shrink unnoticed. `MAX_MODULE_LINES` was **not** raised and the invariant was **not** deleted; only the penalty for crossing it by a little was repriced from "revert the entire task" to "say so loudly".
+    2. **Grandfathered module *above* its recorded lines → warning, run stays green.**
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The branch-2 warning is written through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what branch 2 now produces. **Verified by running it** (a grandfathered entry temporarily lowered by 4 lines, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+  + Both non-fatal branches (1's grace band and 2) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+ ✓ (54.2s)
+  - The branch-2 warning is written through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what branch 2 now produces. **Verified by running it** (a grandfathered entry temporarily lowered by 4 lines, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+  + Both non-fatal branches (1's grace band and 2) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 42s (2 ✓)
+
+Now let me verify the grace-band warning is actually visible, then restore — I won't claim it without running it.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/dispa… (6 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (9.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.7s (2 ✓)
+
+1952 is still under the cap — I need it over 2000. Padding to 2006 (6 past the cap, inside the grace band):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/disp… (6 lines) ✓ (9.2s)
+
+The grace-band warning is visible, and the run stayed green. Now confirming it also surfaces in a plain cargo test (no --nocapture), then restoring:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B1 -A3 "… ✓ (2m 22s)
+
+Verified in both a plain cargo test and cargo test --test module_size, with no --nocapture. Restoring the probe now:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/dispatch_sub.orig src/di… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (29.5s)
+  2 tools completed in 33.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

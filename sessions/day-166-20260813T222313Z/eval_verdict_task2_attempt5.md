@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: No diff exists for this task — the working tree is clean, the newest commit (dcb5a792) is Task 1's module-size gate reprice, and `git log -- src/gasp.rs` shows no commit from this session; `grep -E "record_task|record_run_started|ensure_goal|session_start|task_planned|DEFAULT_GOAL" src/gasp.rs` returns zero hits and the file is unchanged at 307 lines.
+Checked: intent_alignment: FAIL: Ran git status (clean), git log --stat HEAD~1 (only CLAUDE.md + src/dispatch_sub.rs from Task 1), and grepped src/gasp.rs for every symbol the task required — none of ensure_goal, session_start, task_planned, record_run_started or record_task exist.
+Checked: forgotten_touchpoints: FAIL: There are no new definitions or consumers at all; the entire ported half (both commands, their pure id/goal-selection helpers, and the feature-gated tests) is absent, so every touchpoint the task named is unmet.
+Checked: doc_sync: FAIL: CLAUDE.md line 91 still carries the stale claim the task asked to correct — "CI does **not** build `--features gasp` … have to be run by hand" — and there is no mention of a ported half or of task-result/session-end remaining in the sidecar.
+Checked: product_surface: N/A: The diff is empty, so no config defaults, CLI flags, wizard or startup behavior were touched.

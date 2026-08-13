@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: There is no diff for this task at all — the working tree is clean and HEAD (dcb5a792) is Task 1's module-size-gate reprice touching only CLAUDE.md and src/dispatch_sub.rs; `grep -nE "record_task|record_run_started|ensure_goal|session_start|task_planned|DEFAULT_GOAL" src/gasp.rs` returns zero hits and the file is unchanged since d6383b92, so neither `session-start` nor `task` was ported.
+Checked: intent_alignment: FAIL: git log/status show no commit for this task; src/gasp.rs (307 lines) contains none of the required symbols (ensure_goal, session_start, task_planned, record_run_started, record_task, DEFAULT_GOAL consts), and no product-goal reroute or resume_open_run handling exists.
+Checked: forgotten_touchpoints: FAIL: no definitions were added, so no consumers exist either — the whole deliverable (two ported commands plus their unit tests under --features gasp) is missing rather than partially wired.
+Checked: doc_sync: FAIL: CLAUDE.md line 91 still carries the stale claim "CI does **not** build `--features gasp` … have to be run by hand", which the task explicitly required correcting, and no mention of a ported half or of task-result/session-end remaining in the sidecar was added.
+Checked: product_surface: N/A: the diff is empty, so no config defaults, CLI flags, wizard or startup behavior were touched.
