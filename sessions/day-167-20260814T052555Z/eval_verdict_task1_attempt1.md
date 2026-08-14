@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The task produced no diff at all — `git status --porcelain` is clean, HEAD is an unrelated social-session commit, and the newest commits touching `src/gasp.rs` are last session's `cce415aa`/`19e17106` (session-start + task). No `task_result` symbol exists anywhere in `src/gasp.rs`.
+Checked: intent_alignment: FAIL: grepped `task_result` in src/gasp.rs (zero hits) and listed its fn definitions — only the previously landed `ensure_goal`/`session_start_in`/`task_planned_in` and their pure helpers are present; neither `task_result`, `task_result_in`, nor the id/eval-command/PatchStatus helpers were added.
+Checked: forgotten_touchpoints: FAIL: nothing to check because the diff is empty; no new definitions and therefore no consumers were added, so the required `task_result` + `task_result_in` pair and its pure helpers are entirely absent.
+Checked: doc_sync: FAIL: CLAUDE.md and the `src/gasp.rs` module doc comment are unmodified, so both still describe only two of the four sidecar commands as ported — the required "three of four, session-end still only in tools/gasp-emit" update never landed.
+Checked: product_surface: N/A: the diff is empty, so no config defaults, CLI flags, wizard or startup behavior were touched.
