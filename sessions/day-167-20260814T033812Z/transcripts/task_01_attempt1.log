@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the sidecar spec and the current gasp module.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/gasp.rs tools/gasp-emi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' tools/gasp-emit/… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tools/gasp-emit/src/main.rs:100..180  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs ✓ (0ms)
+ ✓ (2ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.3 && sed -n '40,90p' src/gasp.rs && echo…  ▶ $ cd ~/.cargo/registry/src/*/ && ls -d yoagent-state-* 2>/dev/null; grep -rn "pub … ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.4.1/src && grep -n "pub async fn reco… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.4.1/src && ls && grep -rn "impl Goal … ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.4.1/src && grep -n "pub fn open" -A 2…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.3/src && grep -n "enum GoalRef" -A 20 ga… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat Cargo.toml && sed -n '40,60p… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (6 → 228 lines)
+  + // ---------------------------------------------------------------------------
+  + // Session-graph emission — the ported half of `tools/gasp-emit` (#683 item 5)
+  + //
+  + // LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
+  + // share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
+  + // those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
+  + // where the rest of that surface's complexity lives. This half is a prefix of
+  + // the sequence, not a replacement for the sidecar.
+  + //
+  + // Everything below ships DORMANT: nothing calls `session_start` /
+  + // `task_planned` yet. Their consumers are #683 items (3)+(7), the operator-lane
+  + // env bridge, which is deliberately not wired here — wiring it early would
+  + // destroy the sidecar's session record.
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// The standing goal an evolve session serves when none is named. Copied
+  + /// unchanged from `tools/gasp-emit/src/main.rs` — a goal id is a node identity
+  + /// in a shared store, so a "nicer" string is a *different graph*.
+  + const DEFAULT_GOAL: &str = "goal_self_improvement";
+  + /// Title/summary for a session goal created on first reference.
+  ... (205 more lines)
+ ✓ (1m 8s)
+  + // ---------------------------------------------------------------------------
+  + // Session-graph emission — the ported half of `tools/gasp-emit` (#683 item 5)
+  + //
+  + // LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
+  + // share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
+  + // those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
+  + // where the rest of that surface's complexity lives. This half is a prefix of
+  + // the sequence, not a replacement for the sidecar.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 2m 43s (12 ✓)
+
+Now the imports and the module doc header:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (1 → 4 lines)
+  - use yoagent::gasp::{GaspRecorder, GoalId, GoalRef};
+  + use yoagent::gasp::{
+  +     ActorRef, EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, RunId, StateError, Task,
+  +     TaskId, TaskStatus, YoAgentState,
+  + };
+ ✓ (1m 10s)
+  - use yoagent::gasp::{GaspRecorder, GoalId, GoalRef};
+  + use yoagent::gasp::{
+  +     ActorRef, EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, RunId, StateError, Task,
+  +     TaskId, TaskStatus, YoAgentState,
+  + };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (18 → 29 lines)
+  - //! GASP recorder wiring (issue #683, steps 1–2).
+  + //! GASP recorder wiring (issue #683, steps 1–2) plus the *named half* of the
+  + //! session-graph emission ported from the `tools/gasp-emit` sidecar (#683
+  + //! item 5).
+    //!
+    //! What exists here: a default-off `gasp` cargo feature, an env-gated open of
+    //! `yoagent::gasp::GaspRecorder`, a process-global holder installed once at
+    //! startup, and two tee helpers that route a prompt through
+    //! `Agent::prompt_with_sender` so run/tool events are actually recorded. All
+    //! four agent-start call sites in `src/prompt.rs` go through those helpers.
+  + //!
+  + //! Ported from the sidecar, and **only these two**: `session-start`
+  + //! (`session_start`) and `task` (`task_planned`), plus the `ensure_goal` helper
+  + //! they share. `task-result` and `session-end` are **still only in
+  + //! `tools/gasp-emit`** — they need `StatePatch` / `propose_patch` / `link` /
+  + //! `EvalResult`. The ported pair ships **dormant**: nothing calls it yet, since
+  + //! its consumers are #683 items (3)+(7) (the operator-lane env bridge). It
+  + //! compiles, it unit-tests, it records nothing.
+    //!
+    //! Redaction is not optional here: recorded summaries land in a *shareable*
+  ... (13 more lines)
+ ✓ (1m 9s)
+  - //! GASP recorder wiring (issue #683, steps 1–2).
+  + //! GASP recorder wiring (issue #683, steps 1–2) plus the *named half* of the
+  + //! session-graph emission ported from the `tools/gasp-emit` sidecar (#683
+  + //! item 5).
+    //!
+    //! What exists here: a default-off `gasp` cargo feature, an env-gated open of
+    //! `yoagent::gasp::GaspRecorder`, a process-global holder installed once at
+    //! startup, and two tee helpers that route a prompt through
+  ... (13 more lines)
+  2 tools completed in 2m 31s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

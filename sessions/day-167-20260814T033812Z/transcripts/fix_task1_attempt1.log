@@ -1,0 +1,102 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at what actually landed in src/gasp.rs and what the CLAUDE.md bullet currently says.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CI does \*\*not\*\* bui… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Two things are missing: CLAUDE.md edits and table tests. Let me read what landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|^}\|mod tests\|cfg… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 226,300p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,450p src/gasp.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,85p tools/gasp-emit/sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 448,470p src/gasp.rs ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 86,115p tools/gasp-emit/s… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 18.9s (7 ✓)
+
+The port is faithful. Now adding the missing table tests for the six pure helpers, asserting verbatim literals (not the consts — that would be vacuous):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 517,543p src/gasp.rs ✓ (3ms)
+  ▶ edit /home/runml/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (1 → 1 lines) ✗ (0ms)
+    │ Cannot read /home/runml/work/yoyo-evolve/yoyo-evolve/src/gasp.rs: No such file or directory (os error 2). Use write_file to create new files.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (4 → 128 lines)
+            assert_eq!(messages_label(&messages), "fix the parser");
+            assert_eq!(messages_label(&[]), "");
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Pure decision helpers of the ported half (#683 item 5).
+  +     //
+  +     // These assert *verbatim literals*, never the module's own consts: the
+  +     // point is that a node identity in a shared store still matches the
+  +     // sidecar's (`tools/gasp-emit/src/main.rs:66-79,155`). Comparing a helper
+  +     // against the const it returns would pass through any rewording and pin
+  +     // nothing.
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn goal_for_kind_reroutes_only_product() {
+  +         let cases: &[(&str, &str, &str)] = &[
+  +             // (kind, passed goal, expected goal)
+  +             ("product", "goal_self_improvement", "goal_product_value"),
+  +             ("product", "goal_skill_quality", "goal_product_value"),
+  ... (108 more lines)
+ ✓ (1m 8s)
+            assert_eq!(messages_label(&messages), "fix the parser");
+            assert_eq!(messages_label(&[]), "");
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Pure decision helpers of the ported half (#683 item 5).
+  +     //
+  +     // These assert *verbatim literals*, never the module's own consts: the
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 31s (2 ✓, 1 ✗)
+
+Now the featured test run, which is the only one that compiles this module:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --featur… ✓ (28.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+14 gasp tests pass (8 pre-existing + 6 new). Let me verify the tests aren't vacuous by mutating a string:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.rs /tmp/gasp.bak && … ✓ (18.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Sed hit both sides. Let me mutate only the function body, by line number:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Ship value to yoyo's us… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '269s/users/user/' src/ga… ✓ (19.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.7s (2 ✓)
+
+Test genuinely catches drift, and it's restored. Now verifying the CI claim before I rewrite that sentence:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 35,60p .github/workflows/… ✓ (2ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
