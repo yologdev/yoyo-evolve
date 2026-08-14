@@ -1,0 +1,292 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by picking one concrete item. Issue #766 looks small and well-scoped — let me verify its claims against the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/prompt_utils.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,235p' src/main.rs ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Both claims verified. Let me look at callers of emit_output and how exit codes are handled.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_output\|write_outp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,420p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,545p' src/main.rs ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 26.7s (3 ✓)
+
+Both claims confirmed. Let me check the existing tests and the --output help text before editing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,525p' src/prompt_uti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct PromptOutco… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+Claims confirmed. Now implementing. First, the helper returns a Result:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs (9 → 23 lines)
+  - /// Write response text to a file if --output was specified.
+  - pub fn write_output_file(path: &Option<String>, text: &str) {
+  -     if let Some(path) = path {
+  -         match std::fs::write(path, text) {
+  -             Ok(_) => eprintln!("{DIM}  wrote response to {path}{RESET}"),
+  -             Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}"),
+  + /// Write response text to a file if `--output` was specified.
+  + ///
+  + /// Returns `Ok(())` when there was nothing to do (no `--output`) or the write
+  + /// succeeded, and the underlying `io::Error` when it failed. The error is
+  + /// **returned**, not swallowed: `-o` exists for scripts, and a failed write
+  + /// that still exits 0 is invisible to the only audience the flag has (#766).
+  + /// The caller owns the process exit code — a formatting helper must not
+  + /// terminate the process.
+  + pub fn write_output_file(path: &Option<String>, text: &str) -> std::io::Result<()> {
+  +     let Some(path) = path else {
+  +         return Ok(());
+  +     };
+  +     match std::fs::write(path, text) {
+  +         Ok(()) => {
+  ... (9 more lines)
+ ✓ (29.9s)
+  - /// Write response text to a file if --output was specified.
+  - pub fn write_output_file(path: &Option<String>, text: &str) {
+  -     if let Some(path) = path {
+  -         match std::fs::write(path, text) {
+  -             Ok(_) => eprintln!("{DIM}  wrote response to {path}{RESET}"),
+  -             Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}"),
+  + /// Write response text to a file if `--output` was specified.
+  + ///
+  ... (13 more lines)
+
+Now emit_output in main.rs — --output must be honored in every mode, and the failure must reach the shell:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (19 → 23 lines)
+                    num_turns,
+                )
+            );
+  -     } else {
+  -         write_output_file(output_path, &response.text);
+        }
+  +     // `--output` is honored in *every* mode, not just the default one. It and
+  +     // `--print` / `--output-format json` are all scripting flags, so reaching
+  +     // for them together is the natural thing to do — and until #766 the file
+  +     // write was simply skipped under the other two branches, with no file, no
+  +     // error, and nothing on stderr to notice.
+  +     write_output_file(output_path, &response.text).is_err()
+    }
+ ✓ (11.8s)
+                    num_turns,
+                )
+            );
+  -     } else {
+  -         write_output_file(output_path, &response.text);
+        }
+  +     // `--output` is honored in *every* mode, not just the default one. It and
+  +     // `--print` / `--output-format json` are all scripting flags, so reaching
+  ... (5 more lines)
+
+Expected — now the signature and doc comment:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '178,202p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '182,186p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=182 && NR<=186' src/mai… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (5 → 12 lines)
+  - /// Three modes:
+  + /// Three stdout modes:
+    /// - `print_mode`: raw text to stdout (for shell scripting)
+    /// - `json_output`: JSON envelope to stdout (for structured consumers)
+  - /// - otherwise: write to `output_path` file (or print if no path given)
+  + /// - otherwise: nothing extra (the response already streamed to the terminal)
+  + ///
+  + /// `output_path` (`--output`) is independent of all three and is honored in
+  + /// every one of them.
+  + ///
+  + /// Returns `true` when an `--output` write was attempted and **failed**, so the
+  + /// caller can set a non-zero exit code. Scripts are the only audience `-o` has,
+  + /// and exiting 0 after writing no file tells them the opposite of the truth.
+    #[allow(clippy::too_many_arguments)]
+ ✓ (11.8s)
+  - /// Three modes:
+  + /// Three stdout modes:
+    /// - `print_mode`: raw text to stdout (for shell scripting)
+    /// - `json_output`: JSON envelope to stdout (for structured consumers)
+  - /// - otherwise: write to `output_path` file (or print if no path given)
+  + /// - otherwise: nothing extra (the response already streamed to the terminal)
+  + ///
+  + /// `output_path` (`--output`) is independent of all three and is honored in
+  ... (6 more lines)
+  4 tools completed in 21.3s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/main.rs:229:5
+    [1m[94m|[0m
+[1m[94m229[0m [1m[94m|[0m     write_output_file(output_path, &response.text).is_err()
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `()`, found `bool`[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: consider using a semicolon here
+    [1m[94m|[0m
+[1m[94m229[0m [1m[94m| [0m    write_output_file(output_path, &response.text).is_err()[92m;[0m
+    [1m[94m|[0m                                                            [92m+[0m
+[1m[96mhelp[0m: try adding a return type
+    [1m[94m|[0m
+[1m[94m207[0m [1m[94m| [0m)[92m -> bool[0m {
+    [1m[94m|[0m   [92m+++++++[0m
+
+[1mFor more information about this error, try `rustc --explain E0308`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The signature still needs its return type. Let me fix that and the call sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,210p' src/main.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (6 → 6 lines)
+        duration: std::time::Duration,
+        num_turns: usize,
+  - ) {
+  + ) -> bool {
+        if print_mode {
+            print!("{}", response.text);
+        } else if json_output {
+ ✓ (19.3s)
+        duration: std::time::Duration,
+        num_turns: usize,
+  - ) {
+  + ) -> bool {
+        if print_mode {
+            print!("{}", response.text);
+        } else if json_output {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.6s (2 ✓)
+
+The binary compiles. Now the tests — including the failure path that was never asserted:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs (18 → 38 lines)
+        #[test]
+        fn test_write_output_file_none() {
+  -         write_output_file(&None, "test content");
+  -         // No assertion needed — just verify it doesn't panic
+  +         // No `--output` is not a failure: nothing to write, so `Ok`.
+  +         assert!(write_output_file(&None, "test content").is_ok());
+        }
+    
+        #[test]
+  ···
+                .unwrap();
+            let path = tmp_dir.path().join("test_output.txt");
+            let path_str = path.to_string_lossy().to_string();
+  -         write_output_file(&Some(path_str), "hello from yoyo");
+  +         assert!(write_output_file(&Some(path_str), "hello from yoyo").is_ok());
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(content, "hello from yoyo");
+  +     }
+  + 
+  +     /// #766: a failed `--output` write used to return `()`, so the caller had
+  ... (18 more lines)
+ ✓ (1m 39s)
+        #[test]
+        fn test_write_output_file_none() {
+  -         write_output_file(&None, "test content");
+  -         // No assertion needed — just verify it doesn't panic
+  +         // No `--output` is not a failure: nothing to write, so `Ok`.
+  +         assert!(write_output_file(&None, "test content").is_ok());
+        }
+    
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the call sites must act on the returned failure:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_output(" src/main.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,365p' src/main.rs &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '416,436p' src/main.rs &&… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (17 → 21 lines)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     emit_output(
+  +     let output_write_failed = emit_output(
+            &response,
+            &agent_config.model,
+            &session_total,
+  ···
+            prompt_start.elapsed(),
+            count_assistant_turns(agent),
+        );
+  +     // A failed `--output` write is a failed run, whatever the model said (#766).
+  +     if output_write_failed {
+  +         std::process::exit(1);
+  +     }
+        if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
+            std::process::exit(2);
+        }
+ ✓ (1m 37s)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     emit_output(
+  +     let output_write_failed = emit_output(
+            &response,
+            &agent_config.model,
+            &session_total,
+  ···
+            prompt_start.elapsed(),
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (16 → 17 lines)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     emit_output(
+  +     let output_write_failed = emit_output(
+            &response,
+            &agent_config.model,
+            &session_total,
+  ···
+            prompt_start.elapsed(),
+            count_assistant_turns(agent),
+        );
+  -     if should_exit_error {
+  +     // A failed `--output` write is a failed run, whatever the model said (#766).
+  +     if should_exit_error || output_write_failed {
+            std::process::exit(1);
+        }
+ ✓ (1m 36s)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     emit_output(
+  +     let output_write_failed = emit_output(
+            &response,
+            &agent_config.model,
+            &session_total,
+  ···
+            prompt_start.elapsed(),
+  ... (7 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 37s (5 ✓)
+
+Now the two error paths, so the ignored return reads as deliberate rather than overlooked:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (24ms)
+
+All four call sites covered. Now the full check suite:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.4s)
+
+  ✓ Watch passed after fix (attempt 1)
+
