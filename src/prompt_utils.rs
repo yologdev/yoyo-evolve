@@ -28,12 +28,26 @@ pub(crate) fn tool_result_preview(result: &ToolResult, max_chars: usize) -> Stri
     truncate_with_ellipsis(first_line, max_chars)
 }
 
-/// Write response text to a file if --output was specified.
-pub fn write_output_file(path: &Option<String>, text: &str) {
-    if let Some(path) = path {
-        match std::fs::write(path, text) {
-            Ok(_) => eprintln!("{DIM}  wrote response to {path}{RESET}"),
-            Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}"),
+/// Write response text to a file if `--output` was specified.
+///
+/// Returns `Ok(())` when there was nothing to do (no `--output`) or the write
+/// succeeded, and the underlying `io::Error` when it failed. The error is
+/// **returned**, not swallowed: `-o` exists for scripts, and a failed write
+/// that still exits 0 is invisible to the only audience the flag has (#766).
+/// The caller owns the process exit code — a formatting helper must not
+/// terminate the process.
+pub fn write_output_file(path: &Option<String>, text: &str) -> std::io::Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    match std::fs::write(path, text) {
+        Ok(()) => {
+            eprintln!("{DIM}  wrote response to {path}{RESET}");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{RED}  error writing to {path}: {e}{RESET}");
+            Err(e)
         }
     }
 }
@@ -495,8 +509,8 @@ mod tests {
 
     #[test]
     fn test_write_output_file_none() {
-        write_output_file(&None, "test content");
-        // No assertion needed — just verify it doesn't panic
+        // No `--output` is not a failure: nothing to write, so `Ok`.
+        assert!(write_output_file(&None, "test content").is_ok());
     }
 
     #[test]
@@ -507,9 +521,29 @@ mod tests {
             .unwrap();
         let path = tmp_dir.path().join("test_output.txt");
         let path_str = path.to_string_lossy().to_string();
-        write_output_file(&Some(path_str), "hello from yoyo");
+        assert!(write_output_file(&Some(path_str), "hello from yoyo").is_ok());
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "hello from yoyo");
+    }
+
+    /// #766: a failed `--output` write used to return `()`, so the caller had
+    /// no way to know and the process exited 0 with no file on disk. The
+    /// failure must reach the caller — stderr alone is invisible to a script.
+    #[test]
+    fn test_write_output_file_failure_is_reported_to_the_caller() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_output_fail")
+            .tempdir()
+            .unwrap();
+        // A path under a directory that does not exist.
+        let path = tmp_dir.path().join("no_such_dir").join("out.txt");
+        let path_str = path.to_string_lossy().to_string();
+        let result = write_output_file(&Some(path_str), "hello from yoyo");
+        assert!(
+            result.is_err(),
+            "a write to a nonexistent directory must return Err, not be swallowed"
+        );
+        assert!(!path.exists(), "no file should have been created");
     }
 
     #[test]

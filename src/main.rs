@@ -181,10 +181,17 @@ fn count_assistant_turns(agent: &Agent) -> usize {
 
 /// Emit the final response in the appropriate output mode.
 ///
-/// Three modes:
+/// Three stdout modes:
 /// - `print_mode`: raw text to stdout (for shell scripting)
 /// - `json_output`: JSON envelope to stdout (for structured consumers)
-/// - otherwise: write to `output_path` file (or print if no path given)
+/// - otherwise: nothing extra (the response already streamed to the terminal)
+///
+/// `output_path` (`--output`) is independent of all three and is honored in
+/// every one of them.
+///
+/// Returns `true` when an `--output` write was attempted and **failed**, so the
+/// caller can set a non-zero exit code. Scripts are the only audience `-o` has,
+/// and exiting 0 after writing no file tells them the opposite of the truth.
 #[allow(clippy::too_many_arguments)]
 fn emit_output(
     response: &PromptOutcome,
@@ -197,7 +204,7 @@ fn emit_output(
     print_mode: bool,
     duration: std::time::Duration,
     num_turns: usize,
-) {
+) -> bool {
     if print_mode {
         print!("{}", response.text);
     } else if json_output {
@@ -213,9 +220,13 @@ fn emit_output(
                 num_turns,
             )
         );
-    } else {
-        write_output_file(output_path, &response.text);
     }
+    // `--output` is honored in *every* mode, not just the default one. It and
+    // `--print` / `--output-format json` are all scripting flags, so reaching
+    // for them together is the natural thing to do — and until #766 the file
+    // write was simply skipped under the other two branches, with no file, no
+    // error, and nothing on stderr to notice.
+    write_output_file(output_path, &response.text).is_err()
 }
 
 /// Handle `--prompt / -p` single-shot mode: run one prompt (optionally with an
@@ -335,7 +346,8 @@ async fn run_single_prompt(
                 .await;
                 if should_exit_error {
                     format::maybe_ring_bell(prompt_start.elapsed());
-                    emit_output(
+                    // Return ignored on purpose: this branch already exits 1.
+                    let _ = emit_output(
                         &final_response,
                         &agent_config.model,
                         &session_total,
@@ -377,7 +389,8 @@ async fn run_single_prompt(
         .await;
         if should_exit_error {
             format::maybe_ring_bell(prompt_start.elapsed());
-            emit_output(
+            // Return ignored on purpose: this branch already exits 1.
+            let _ = emit_output(
                 &final_response,
                 &agent_config.model,
                 &session_total,
@@ -404,7 +417,7 @@ async fn run_single_prompt(
     .await;
 
     format::maybe_ring_bell(prompt_start.elapsed());
-    emit_output(
+    let output_write_failed = emit_output(
         &response,
         &agent_config.model,
         &session_total,
@@ -416,6 +429,10 @@ async fn run_single_prompt(
         prompt_start.elapsed(),
         count_assistant_turns(agent),
     );
+    // A failed `--output` write is a failed run, whatever the model said (#766).
+    if output_write_failed {
+        std::process::exit(1);
+    }
     if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
         std::process::exit(2);
     }
@@ -520,7 +537,7 @@ async fn run_piped_mode(
     }
 
     format::maybe_ring_bell(prompt_start.elapsed());
-    emit_output(
+    let output_write_failed = emit_output(
         &response,
         &agent_config.model,
         &session_total,
@@ -532,7 +549,8 @@ async fn run_piped_mode(
         prompt_start.elapsed(),
         count_assistant_turns(agent),
     );
-    if should_exit_error {
+    // A failed `--output` write is a failed run, whatever the model said (#766).
+    if should_exit_error || output_write_failed {
         std::process::exit(1);
     }
     if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
