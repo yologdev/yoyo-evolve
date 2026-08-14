@@ -1,4 +1,6 @@
-//! GASP recorder wiring (issue #683, steps 1–2).
+//! GASP recorder wiring (issue #683, steps 1–2) plus the *named half* of the
+//! session-graph emission ported from the `tools/gasp-emit` sidecar (#683
+//! item 5).
 //!
 //! What exists here: a default-off `gasp` cargo feature, an env-gated open of
 //! `yoagent::gasp::GaspRecorder`, a process-global holder installed once at
@@ -6,14 +8,23 @@
 //! `Agent::prompt_with_sender` so run/tool events are actually recorded. All
 //! four agent-start call sites in `src/prompt.rs` go through those helpers.
 //!
+//! Ported from the sidecar, and **only these two**: `session-start`
+//! (`session_start`) and `task` (`task_planned`), plus the `ensure_goal` helper
+//! they share. `task-result` and `session-end` are **still only in
+//! `tools/gasp-emit`** — they need `StatePatch` / `propose_patch` / `link` /
+//! `EvalResult`. The ported pair ships **dormant**: nothing calls it yet, since
+//! its consumers are #683 items (3)+(7) (the operator-lane env bridge). It
+//! compiles, it unit-tests, it records nothing.
+//!
 //! Redaction is not optional here: recorded summaries land in a *shareable*
 //! git repo, so the recorder is opened with `with_summarizer(redact_secrets)`
 //! and every persisted tool-arg/output summary passes through it first.
 //!
 //! Two things that remain true and should not be overstated:
-//! * CI does not build `--features gasp`, so nothing in this module (including
-//!   `redact_secrets` and its tests) is exercised by the default test run —
-//!   `cargo test --features gasp` has to be run by hand.
+//! * The **default** `cargo test` run exercises nothing in this module — the
+//!   feature is off, so it compiles into nothing. CI does run the featured pair
+//!   (`cargo test --features gasp`, `cargo clippy --all-targets --features gasp`),
+//!   but locally those have to be run by hand.
 //! * Recording failures are logged by yoagent via `tracing` and the event
 //!   stream keeps flowing; yoyo's UI does not surface them.
 //!
@@ -26,7 +37,10 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use tokio::sync::mpsc;
-use yoagent::gasp::{GaspRecorder, GoalId, GoalRef};
+use yoagent::gasp::{
+    ActorRef, EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, RunId, StateError, Task,
+    TaskId, TaskStatus, YoAgentState,
+};
 use yoagent::{Agent, AgentEvent, AgentMessage, Content, Message};
 
 /// Longest task label we stamp onto a recorded run. Display-only: the label is
@@ -207,6 +221,228 @@ pub(crate) async fn tee_prompt_messages(
     let (tx, _handle) = recorder.recording_sender(messages_label(&messages), Some(forward_tx));
     agent.prompt_messages_with_sender(messages, tx).await;
     Some(forward_rx)
+}
+
+// ---------------------------------------------------------------------------
+// Session-graph emission — the ported half of `tools/gasp-emit` (#683 item 5)
+//
+// LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
+// share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
+// those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
+// where the rest of that surface's complexity lives. This half is a prefix of
+// the sequence, not a replacement for the sidecar.
+//
+// Everything below ships DORMANT: nothing calls `session_start` /
+// `task_planned` yet. Their consumers are #683 items (3)+(7), the operator-lane
+// env bridge, which is deliberately not wired here — wiring it early would
+// destroy the sidecar's session record.
+// ---------------------------------------------------------------------------
+
+/// The standing goal an evolve session serves when none is named. Copied
+/// unchanged from `tools/gasp-emit/src/main.rs` — a goal id is a node identity
+/// in a shared store, so a "nicer" string is a *different graph*.
+const DEFAULT_GOAL: &str = "goal_self_improvement";
+/// Title/summary for a session goal created on first reference.
+const DEFAULT_GOAL_TITLE: &str = "Evolve: improve yoyo's own code, skills, and reliability";
+const DEFAULT_GOAL_SUMMARY: &str = "the standing goal every evolve session serves; tasks and patches under it are the self-improvement ratchet";
+
+/// The goal `--kind product` work is rerouted to, so the graph separates value
+/// shipped to users from self-investment.
+const PRODUCT_GOAL: &str = "goal_product_value";
+
+/// The `--kind product` reroute, as a pure decision.
+///
+/// Any other kind (including the empty string) keeps the goal it was given.
+fn goal_for_kind(kind: &str, goal: &str) -> String {
+    if kind == "product" {
+        PRODUCT_GOAL.to_string()
+    } else {
+        goal.to_string()
+    }
+}
+
+/// Title used when a standing goal is created on first reference.
+///
+/// Byte-identical to the sidecar's strings on purpose — see [`DEFAULT_GOAL`].
+fn standing_goal_title(goal: &str) -> &str {
+    if goal == PRODUCT_GOAL {
+        "Ship value to yoyo's users"
+    } else {
+        goal
+    }
+}
+
+/// Summary sibling of [`standing_goal_title`]. Also byte-identical.
+fn standing_goal_summary(goal: &str) -> &str {
+    if goal == PRODUCT_GOAL {
+        "value shipped to yoyo's product users — features, UX, and fixes they experience directly, independent of any single session"
+    } else {
+        "standing goal (created on first reference)"
+    }
+}
+
+/// Node id of a planned task: `task_{run_id}_{num}`.
+fn task_node_id(run_id: &str, num: &str) -> String {
+    format!("task_{run_id}_{num}")
+}
+
+/// Label stamped on a session run when the caller names no task.
+fn default_session_task_label(day: &str) -> String {
+    format!("evolve session day {day}")
+}
+
+/// Which goal a session records under: an explicitly requested one wins, else
+/// the goal the recorder was opened against, else [`DEFAULT_GOAL`].
+fn session_goal<'a>(requested: Option<&'a str>, recorder_goal: &'a str) -> &'a str {
+    let requested = requested.map(str::trim).filter(|s| !s.is_empty());
+    let fallback = Some(recorder_goal.trim()).filter(|s| !s.is_empty());
+    requested.or(fallback).unwrap_or(DEFAULT_GOAL)
+}
+
+/// Create a standing goal node if absent (used for `goal_product_value`, which
+/// no session opens but product-kind tasks advance).
+///
+/// Ported verbatim from `tools/gasp-emit/src/main.rs:58-82`, minus its
+/// `Box<dyn Error>` return: yoyo propagates the store's own error type.
+async fn ensure_goal<S: EventStore>(
+    state: &YoAgentState<S>,
+    goal: &str,
+    actor: &ActorRef,
+) -> Result<(), StateError> {
+    if state.get_node(NodeId::new(goal)).await.is_none() {
+        state
+            .record_goal(GaspGoal::new(
+                GoalId::new(goal),
+                standing_goal_title(goal),
+                standing_goal_summary(goal),
+                actor.clone(),
+            ))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Record the start of an evolve session: create the session goal if it does
+/// not exist yet, then open a run under it.
+///
+/// Takes the recorder rather than a store because a GASP repo is single-writer
+/// behind a 600s lease — opening a second `GitEventStore` on the same root
+/// collides with the recorder's rather than cooperating (measured Day 165, and
+/// the whole reason the sidecar cannot run alongside).
+// Dormant: the caller is #683 items (3)+(7) (the operator-lane env bridge),
+// which cannot exist until the sidecar's session record is retired.
+#[allow(dead_code)]
+pub(crate) async fn session_start(
+    recorder: &GaspRecorder,
+    run_id: &str,
+    goal: Option<&str>,
+    goal_title: Option<&str>,
+    goal_summary: Option<&str>,
+    day: &str,
+    task: Option<&str>,
+) -> Result<(), StateError> {
+    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    session_start_in(
+        recorder.state(),
+        recorder.actor(),
+        run_id,
+        &goal,
+        goal_title,
+        goal_summary,
+        day,
+        task,
+    )
+    .await
+}
+
+/// Store-generic body of [`session_start`], so the behaviour is testable
+/// against a scratch store without a live recorder.
+#[allow(clippy::too_many_arguments)]
+async fn session_start_in<S: EventStore>(
+    state: &YoAgentState<S>,
+    actor: &ActorRef,
+    run_id: &str,
+    goal: &str,
+    goal_title: Option<&str>,
+    goal_summary: Option<&str>,
+    day: &str,
+    task: Option<&str>,
+) -> Result<(), StateError> {
+    // A session goal keeps its *configured* title/summary — unlike
+    // `ensure_goal`, which is the on-first-reference fallback.
+    if state.get_node(NodeId::new(goal)).await.is_none() {
+        state
+            .record_goal(GaspGoal::new(
+                GoalId::new(goal),
+                goal_title
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(DEFAULT_GOAL_TITLE),
+                goal_summary
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(DEFAULT_GOAL_SUMMARY),
+                actor.clone(),
+            ))
+            .await?;
+    }
+    let task = task
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_session_task_label(day));
+    state
+        .record_run_started(actor.clone(), RunId::new(run_id), task)
+        .await?;
+    Ok(())
+}
+
+/// Record a task planned inside a session, under the goal its `kind` selects.
+// Dormant for the same reason as [`session_start`] — #683 items (3)+(7).
+#[allow(dead_code)]
+pub(crate) async fn task_planned(
+    recorder: &GaspRecorder,
+    run_id: &str,
+    num: &str,
+    title: &str,
+    kind: &str,
+    goal: Option<&str>,
+) -> Result<(), StateError> {
+    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    task_planned_in(
+        recorder.state(),
+        recorder.actor(),
+        run_id,
+        num,
+        title,
+        kind,
+        &goal,
+    )
+    .await
+}
+
+/// Store-generic body of [`task_planned`].
+#[allow(clippy::too_many_arguments)]
+async fn task_planned_in<S: EventStore>(
+    state: &YoAgentState<S>,
+    actor: &ActorRef,
+    run_id: &str,
+    num: &str,
+    title: &str,
+    kind: &str,
+    goal: &str,
+) -> Result<(), StateError> {
+    let goal = goal_for_kind(kind, goal);
+    ensure_goal(state, &goal, actor).await?;
+    state
+        .record_task(Task {
+            id: TaskId::new(task_node_id(run_id, num)),
+            title: title.to_string(),
+            summary: format!("planned as task {num} of the session"),
+            status: TaskStatus::Open,
+            goal: Some(GoalId::new(goal.as_str())),
+            created_by: actor.clone(),
+            metadata: serde_json::json!({ "kind": kind }),
+        })
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
