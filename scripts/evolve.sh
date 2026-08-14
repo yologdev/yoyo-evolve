@@ -1341,6 +1341,29 @@ echo ""
 #    silent failure here reproduces the exact empty-diff → FAIL → revert bug
 #    the safety commit exists to kill, and a lying log would poison
 #    trajectory/skill-evolve mining.
+# Fingerprint of everything a fix attempt could possibly have changed: new
+# commits (HEAD), staged+unstaged content (diff HEAD), and untracked files
+# (porcelain). Content-sensitive, not just filename-sensitive, so re-editing the
+# same file to different bytes counts as progress. Used by the no-progress
+# detector in the eval-fix loop.
+# Returns non-zero when git could not answer. That third value matters: `cksum`
+# of empty input is "4294967295 0" for a CLEAN TREE and for a FAILED git call
+# alike, and the baseline is always taken on a clean tree — so a wedged index
+# (ENOSPC on .git, a runner killed mid-`git add`) would render "I could not
+# measure" byte-identically to "the agent did nothing" and count toward a
+# `git reset --hard`. Persistent faults repeat, which is exactly what defeats
+# the two-consecutive rule. "Couldn't check" must not increment that counter.
+work_state_fingerprint() {
+    local head porc diff
+    head=$(git rev-parse HEAD 2>/dev/null) || return 1
+    porc=$(git status --porcelain 2>/dev/null) || return 1
+    diff=$(git diff HEAD 2>/dev/null) || return 1
+    printf '%s|%s|%s' \
+        "$head" \
+        "$(printf '%s' "$porc" | sort | cksum)" \
+        "$(printf '%s' "$diff" | cksum)"
+}
+
 safety_commit() {
     local msg="$1" staged_protected commit_out
     git add -A 2>/dev/null || true
@@ -1860,6 +1883,19 @@ BFIXEOF
     # On FAIL: give the agent up to 9 chances to fix, then re-evaluate. Revert only after all attempts fail.
     EVAL_ATTEMPT=0
     MAX_EVAL_ATTEMPTS=10
+    # No-progress detector. A fix attempt that changes NO files leaves the
+    # evaluator a byte-identical diff, so the next verdict is guaranteed to be
+    # the same FAIL — the loop is provably not converging, it is just paying for
+    # the same answer again. Day 166 ground all 10 attempts against an empty
+    # diff in a 98-minute session because the task was blocked upstream
+    # (yoagent#111) and no amount of retrying could ever have moved it.
+    # Two CONSECUTIVE no-ops, not one: a single fix attempt can no-op on a
+    # transient API error or timeout and succeed on the next try. Any real
+    # change resets the counter, so a slow-but-progressing task is untouched.
+    NO_PROGRESS_FIXES=0
+    MAX_NO_PROGRESS_FIXES=2
+    NO_PROGRESS_CAUSES=""   # per-attempt observed cause, carried into the receipt
+    REVERT_CLASS=""         # title-visible revert class (planner reads titles only)
     EVAL_LOG=""
     BUDGET_UNVERIFIED=""  # set by the budget gates below; changes the accept wording only
     EVAL_OVERRIDE_REASON=""  # set when a Checked FAIL overrides a summary PASS
@@ -2096,6 +2132,7 @@ EVALEOF
             if [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; then
                 # ── Fix attempt: feed evaluator feedback back to agent ──
                 echo "    Giving agent a chance to fix (fix attempt $EVAL_ATTEMPT of $((MAX_EVAL_ATTEMPTS - 1)))..."
+                FIX_STATE_BEFORE=$(work_state_fingerprint)
                 FIX_TIMEOUT=600
                 FIX_PROMPT=$(mktemp)
                 FILED_SECTION=$(session_filed_issues_section)  # fresh — prior attempt may have filed
@@ -2120,12 +2157,21 @@ FIXEOF
                 FIX_EXIT=0
                 STAGE_NAME="fix_task${TASK_NUM}_attempt${EVAL_ATTEMPT}" \
                     run_agent_with_fallback "$FIX_TIMEOUT" "$FIX_PROMPT" "$FIX_LOG" "--context-strategy checkpoint" || FIX_EXIT=$?
+                # Why an attempt might have produced nothing. Recorded HERE
+                # because $FIX_LOG is deleted two lines down, and the receipt
+                # must not assert "blocked upstream" when the real cause was the
+                # clock: a thinking model can burn all 600s before its first
+                # write, and the same prompt reproduces that next attempt.
+                FIX_NOOP_CAUSE="agent exited 0 without changing anything"
                 if [ "$FIX_EXIT" -eq 124 ]; then
                     echo "    WARNING: Fix agent timed out after ${FIX_TIMEOUT}s."
+                    FIX_NOOP_CAUSE="timed out after ${FIX_TIMEOUT}s"
                 elif grep -q '"type":"error"' "$FIX_LOG" 2>/dev/null; then
                     echo "    WARNING: Fix agent hit API error."
+                    FIX_NOOP_CAUSE="API error"
                 elif [ "$FIX_EXIT" -ne 0 ]; then
                     echo "    WARNING: Fix agent exited with code $FIX_EXIT."
+                    FIX_NOOP_CAUSE="exited with code $FIX_EXIT"
                 fi
                 rm -f "$FIX_PROMPT" "$FIX_LOG"
 
@@ -2193,6 +2239,62 @@ $(echo "$CLIPPY_OUT" | tail -30)
                 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
                     safety_commit "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM, eval-fix $EVAL_ATTEMPT)"
                 fi
+                # Checked AFTER the safety commit: a real change always moves
+                # HEAD or the diff by this point, so an unchanged fingerprint
+                # means the attempt genuinely produced nothing.
+                if ! FIX_STATE_AFTER=$(work_state_fingerprint); then
+                    # Third value: git could not answer. Neither progress nor
+                    # no-progress — do not touch the counter, and say so loudly
+                    # rather than let an unmeasurable attempt push toward a reset.
+                    echo "    WARNING: could not measure whether fix attempt $EVAL_ATTEMPT changed anything (git failed) — no-op counter left at $NO_PROGRESS_FIXES." >&2
+                elif [ "$FIX_STATE_AFTER" = "$FIX_STATE_BEFORE" ]; then
+                    NO_PROGRESS_FIXES=$((NO_PROGRESS_FIXES + 1))
+                    NO_PROGRESS_CAUSES="${NO_PROGRESS_CAUSES:+$NO_PROGRESS_CAUSES; }attempt $EVAL_ATTEMPT: $FIX_NOOP_CAUSE"
+                    echo "    Fix attempt $EVAL_ATTEMPT changed nothing — $FIX_NOOP_CAUSE (${NO_PROGRESS_FIXES}/${MAX_NO_PROGRESS_FIXES} consecutive no-op)."
+                    if [ "$NO_PROGRESS_FIXES" -ge "$MAX_NO_PROGRESS_FIXES" ]; then
+                        echo "    Task $TASK_NUM: stopping the fix loop — $NO_PROGRESS_FIXES consecutive attempts changed nothing,"
+                        echo "    so the evaluator would see an identical diff and the remaining $((MAX_EVAL_ATTEMPTS - EVAL_ATTEMPT)) attempt(s) cannot change the verdict."
+                        # Whether to KEEP or REVERT is decided by whether there is
+                        # anything to keep — NOT by the fact that the loop stalled.
+                        # The harness is deliberately fail-open everywhere else in
+                        # this loop ("a flaky output format turning a green task
+                        # into a revert is worse than the disease"), and the budget
+                        # gate above would have accepted this task UNVERIFIED a few
+                        # attempts later. Stopping earlier must not silently convert
+                        # that accept into a `git reset --hard`.
+                        if git diff --quiet "$PRE_TASK_SHA" HEAD 2>/dev/null; then
+                            # Empty diff — the Day 166 case. Nothing to lose.
+                            TASK_OK=false
+                            REVERT_CLASS=" (no progress — likely blocked, NOT too large)"
+                            REVERT_REASON="Fix loop made no progress and produced no diff: $NO_PROGRESS_FIXES consecutive fix attempts changed no files (stopped at attempt $EVAL_ATTEMPT of $MAX_EVAL_ATTEMPTS). Last evaluator objection: ${EVAL_REASON:-no reason given}"
+                            REVERT_DETAILS="No file changed across $NO_PROGRESS_FIXES consecutive fix attempts and the task's diff is empty.
+
+Observed cause per attempt: ${NO_PROGRESS_CAUSES:-not recorded}
+
+Read that line before deciding what to do next. A clean exit that changed nothing suggests the task is blocked on something outside the diff (a missing upstream API, an impossible instruction) — making it SMALLER will not help; find the blocker first. Repeated timeouts suggest the opposite: the agent ran out of clock, and a smaller task genuinely is the answer.
+
+Evaluator feedback:
+${EVAL_FEEDBACK:-no eval feedback captured}"
+                        else
+                            # Real work exists and passed protected/build/test/
+                            # clippy. Keep it, unverified, exactly as the budget
+                            # gate would have — the evaluator's objection is
+                            # preserved in the receipt instead of being resolved.
+                            echo "    Task $TASK_NUM has a non-empty diff — keeping it UNVERIFIED rather than reverting green work."
+                            BUDGET_UNVERIFIED=no_progress
+                            UNVERIFIED_REASON="Fix loop made no progress: $NO_PROGRESS_FIXES consecutive fix attempts changed no files (${NO_PROGRESS_CAUSES:-cause not recorded}). Last evaluator objection: ${EVAL_REASON:-no reason given}"
+                            UNVERIFIED_FEEDBACK="${EVAL_FEEDBACK:-no eval feedback captured}"
+                        fi
+                        break
+                    fi
+                else
+                    # Log the reset too: without this the guard only ever speaks
+                    # when it fires, so "evaluated 9 times, reset each time" and
+                    # "guard never armed" produce byte-identical logs.
+                    [ "$NO_PROGRESS_FIXES" -gt 0 ] && echo "    Fix attempt $EVAL_ATTEMPT changed files — no-op counter reset."
+                    NO_PROGRESS_FIXES=0
+                    NO_PROGRESS_CAUSES=""
+                fi
                 continue
             else
                 # All fix attempts exhausted → give up
@@ -2245,7 +2347,14 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
             # token. Refresh before filing — otherwise the receipt vanishes
             # and the next planner never learns to shrink the task.
             refresh_gh_token
-            ISSUE_TITLE="Task reverted: ${task_title:0:200}"
+            # The class goes in the TITLE, not just the body. The planner's
+            # revert fetch is `--json number,title` (titles only, by design —
+            # see the comment there), and its standing instruction is "make it
+            # SMALLER than last time". For a no-progress revert that advice is
+            # wrong: the task stalled because something outside the diff blocked
+            # it, and a smaller version stalls identically. A reason buried in a
+            # body nothing fetches cannot correct that.
+            ISSUE_TITLE="Task reverted${REVERT_CLASS:-}: ${task_title:0:180}"
             ISSUE_BODY="**Day $DAY, Task $TASK_NUM** was automatically reverted by the verification gate.
 
 **Reason:** $REVERT_REASON
@@ -2294,15 +2403,23 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
             fi
         fi
     else
-        if [ "$BUDGET_UNVERIFIED" = "eval_failed" ]; then
-            # The evaluator RAN and rejected; the budget ended the fix loop.
-            # Saying "skipped" here was the review's finding #4 — a softer
-            # rerun of the Day-160 "verified OK after three FAILs" mislabel.
-            echo "    Task $TASK_NUM: accepted UNVERIFIED (budget exhausted; build+test passed, evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved)"
+        if [ "$BUDGET_UNVERIFIED" = "eval_failed" ] || [ "$BUDGET_UNVERIFIED" = "no_progress" ]; then
+            # The evaluator RAN and rejected; something other than a PASS ended
+            # the fix loop. Saying "skipped" here was the review's finding #4 —
+            # a softer rerun of the Day-160 "verified OK after three FAILs"
+            # mislabel — so both stoppers get their own honest wording rather
+            # than falling into the generic "budget exhausted" branch below,
+            # which would be false twice over for a no-progress stop.
+            if [ "$BUDGET_UNVERIFIED" = "no_progress" ]; then
+                UNVERIFIED_WHY="the fix loop stopped making progress ($NO_PROGRESS_FIXES consecutive attempts changed no files)"
+            else
+                UNVERIFIED_WHY="the session budget ended the fix loop"
+            fi
+            echo "    Task $TASK_NUM: accepted UNVERIFIED ($UNVERIFIED_WHY; build+test passed, evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved)"
             # Carry the unresolved objection out of the session (see above).
             if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
                 refresh_gh_token
-                UNVERIFIED_BODY="**Day $DAY, Task $TASK_NUM** shipped with the evaluator's objections UNRESOLVED — the session budget ended the fix loop, and the harness accepted the task on its green build+test (fail-open by design).
+                UNVERIFIED_BODY="**Day $DAY, Task $TASK_NUM** shipped with the evaluator's objections UNRESOLVED — $UNVERIFIED_WHY, and the harness accepted the task on its green build+test (fail-open by design).
 
 **Task:** $task_title
 

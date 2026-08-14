@@ -294,5 +294,116 @@ if require "gasp cfg-gate feature name extracted from main.rs" "$GASP_FEAT"; the
         "$(grep -cE "cargo clippy .*--features ${GASP_FEAT}" "$GASP_CI")" "1"
 fi
 
+# ── eval-fix loop: the no-progress detector ──────────────────────────────
+# Day 166 ground all 10 eval attempts against a byte-identical empty diff in a
+# 98-minute session, because the task was blocked upstream (yoagent#111) and no
+# retry could move it. A fix attempt that changes nothing leaves the evaluator
+# the same input, so the same verdict is guaranteed.
+NP_MAX=$(grep -oE '^[[:space:]]*MAX_NO_PROGRESS_FIXES=[0-9]+' "$SCRIPT" | grep -oE '[0-9]+$' | head -1)
+EV_MAX=$(grep -oE '^[[:space:]]*MAX_EVAL_ATTEMPTS=[0-9]+' "$SCRIPT" | grep -oE '[0-9]+$' | head -1)
+if require "MAX_NO_PROGRESS_FIXES extracted" "$NP_MAX" \
+   && require "MAX_EVAL_ATTEMPTS extracted" "$EV_MAX"; then
+    check "no-progress guard fires before the attempt cap" \
+        "$([ "$NP_MAX" -lt "$EV_MAX" ] && echo yes || echo no)" "yes"
+    # >1 on purpose: one no-op can be a transient API error or timeout, and
+    # abandoning on that would revert work that a retry would have finished.
+    check "no-progress guard tolerates a single transient no-op" \
+        "$([ "$NP_MAX" -ge 2 ] && echo yes || echo no)" "yes"
+fi
+
+# ── the no-progress COUNTER, not just its constants ──────────────────────
+# The two constant checks above pin that the guard *could* fire; they say
+# nothing about the increment, the reset, the keep-vs-revert decision, or the
+# unmeasurable case. Mutation-measured: five mutants of this block (no
+# accumulation, no reset, -ge -> -gt, dropped TASK_OK=false, inverted
+# fingerprint compare) ALL survive the constant + fingerprint checks alone.
+#
+# Lift the block from its `if` down to the `fi` at the SAME indentation — a
+# naive /^[[:space:]]*fi$/ range stops at the first inner `fi` and drops the
+# reset branch, which is the one nothing else covers.
+NP_BLOCK=$(awk '
+    !inb && /^[[:space:]]*if ! FIX_STATE_AFTER=/ {
+        inb=1; ind=$0; sub(/[^ ].*/, "", ind); print; next }
+    inb { print; if ($0 == ind "fi") exit }
+' "$SCRIPT")
+# $1=counter in  $2=fp before  $3=fp after ("FAIL" = git could not answer)
+# $4=diff-empty? (yes|no)  ->  "<counter out> <TASK_OK> <BUDGET_UNVERIFIED>"
+np_step() {
+    ( set -uo pipefail
+      _FP_NOW="$3"; _DIFF_EMPTY="$4"   # captured OUT: "$3" inside a stub is the STUB's $3
+      work_state_fingerprint() { [ "$_FP_NOW" = FAIL ] && return 1; printf '%s' "$_FP_NOW"; }
+      # Intercept only the one git call the block makes; anything else is a bug.
+      git() { case "$*" in "diff --quiet"*) [ "$_DIFF_EMPTY" = yes ] && return 0 || return 1;;
+                           *) return 0;; esac; }
+      FIX_STATE_BEFORE="$2"; NO_PROGRESS_FIXES="$1"; NO_PROGRESS_CAUSES=""
+      MAX_NO_PROGRESS_FIXES="$NP_MAX"; MAX_EVAL_ATTEMPTS="$EV_MAX"
+      EVAL_ATTEMPT=1; TASK_NUM=0; EVAL_REASON=stub; EVAL_FEEDBACK=stub
+      FIX_NOOP_CAUSE=stub; PRE_TASK_SHA=deadbeef; TASK_OK=true
+      REVERT_REASON=""; REVERT_DETAILS=""; BUDGET_UNVERIFIED=""
+      UNVERIFIED_REASON=""; UNVERIFIED_FEEDBACK=""
+      while :; do eval "$NP_BLOCK"; break; done   # `break` needs a loop to leave
+      printf '%s %s %s\n' "$NO_PROGRESS_FIXES" "$TASK_OK" "${BUDGET_UNVERIFIED:-none}"
+    ) 2>/dev/null | tail -1
+}
+if require "no-progress block extracted" "$NP_BLOCK" && [ -n "$NP_MAX" ]; then
+    check "no-progress: first no-op counts but does not abandon" \
+        "$(np_step 0 same same yes)" "1 true none"
+    # Empty diff — the Day 166 case. Nothing to keep, so reverting is free.
+    check "no-progress: at threshold with an EMPTY diff, revert" \
+        "$(np_step $(( NP_MAX - 1 )) same same yes)" "$NP_MAX false none"
+    # Non-empty diff — green work exists. Must NOT convert the harness's
+    # fail-open accept into a git reset --hard.
+    check "no-progress: at threshold with a NON-EMPTY diff, keep it UNVERIFIED" \
+        "$(np_step $(( NP_MAX - 1 )) same same no)" "$NP_MAX true no_progress"
+    # The reset is what makes the guard safe for a slow-but-progressing task.
+    check "no-progress: any real change resets the streak" \
+        "$(np_step $(( NP_MAX - 1 )) before after yes)" "0 true none"
+    # Third value: git could not answer. Neither progress nor no-progress.
+    check "no-progress: an unmeasurable attempt leaves the counter alone" \
+        "$(np_step $(( NP_MAX - 1 )) same FAIL yes)" "$(( NP_MAX - 1 )) true none"
+fi
+
+# The fingerprint must be content-sensitive, not filename-sensitive: a fix that
+# rewrites the same file to different bytes IS progress and must reset the
+# counter. Extracted from evolve.sh and driven against a throwaway git repo —
+# `eval` of a *function definition* is safe here (status 0); see the note on
+# budget_left. Never run against the real repo.
+FP_FN=$(awk '/^work_state_fingerprint\(\) \{/,/^\}/' "$SCRIPT")
+if require "work_state_fingerprint extracted" "$FP_FN"; then
+    FP_R=$( (
+        eval "$FP_FN"
+        T=$(mktemp -d) || exit 1
+        cd "$T" || exit 1
+        # Neutralise ambient git config: a dev machine's core.excludesFile
+        # can hide the fixture files and red the suite for reasons that have
+        # nothing to do with the code under test.
+        export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+        git init -q . >/dev/null 2>&1 || exit 1
+        git config user.email t@t; git config user.name t; git config commit.gpgsign false
+        echo one > f.txt; git add -A; git commit -qm init >/dev/null 2>&1
+        a=$(work_state_fingerprint); b=$(work_state_fingerprint)
+        echo two > f.txt
+        c=$(work_state_fingerprint)
+        # The case that actually matters, and the only one that isolates content
+        # sensitivity: BOTH states show the identical ` M f.txt` in porcelain, so
+        # a filename-only fingerprint cannot tell them apart. A fix agent
+        # re-editing one file between attempts looks exactly like this.
+        echo three > f.txt
+        c2=$(work_state_fingerprint)
+        git add -A; git commit -qm second >/dev/null 2>&1
+        d=$(work_state_fingerprint)
+        echo x > untracked.txt
+        e=$(work_state_fingerprint)
+        cd /; rm -rf "$T"
+        [ "$a" = "$b" ]   || { echo unstable;        exit 0; }
+        [ "$a" != "$c" ]  || { echo change-blind;    exit 0; }
+        [ "$c" != "$c2" ] || { echo content-blind;   exit 0; }
+        [ "$c2" != "$d" ] || { echo commit-blind;    exit 0; }
+        [ "$d" != "$e" ]  || { echo untracked-blind; exit 0; }
+        echo ok
+    ) 2>/dev/null )
+    check "work_state_fingerprint: stable + content/commit/untracked sensitive" "$FP_R" "ok"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
