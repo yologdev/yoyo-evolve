@@ -14,8 +14,33 @@ const GOAL_FILE: &str = ".yoyo/goal.md";
 /// Verify command file path (project-local).
 const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
 
-/// Maximum characters of verify output to include in prompts.
+/// Maximum bytes of verify-command output that reach a prompt or the display.
 const VERIFY_OUTPUT_MAX: usize = 2000;
+
+/// Cap verify-command output, marking the cut **in-band**.
+///
+/// Pure, so the decision is testable without spawning a shell. Under budget the
+/// return value is byte-identical to the input, so the common (short) case is
+/// unchanged.
+///
+/// Why the marker: this string has two consumers — the stderr status block and,
+/// via `/goal check`, an actual **prompt** sent to the model. A silent cut hands
+/// the model the head of a test run and lets it read a missing `test result: ok`
+/// line as a failure (or a vanished error as a pass). Repo convention: every
+/// elision layer marks its own cuts. Cuts on a char boundary, never a byte index.
+fn cap_verify_output(output: &str) -> String {
+    if output.len() <= VERIFY_OUTPUT_MAX {
+        return output.to_string();
+    }
+    let head = safe_truncate(output, VERIFY_OUTPUT_MAX);
+    let elided = output.len() - head.len();
+    format!(
+        "{head}\n… [yoyo: verify output truncated — {shown} of {total} bytes shown, \
+         {elided} elided. Re-run the verify command yourself for the full output.]",
+        shown = head.len(),
+        total = output.len(),
+    )
+}
 
 /// Maximum bytes of the goal text that reach a *prompt*.
 ///
@@ -154,8 +179,7 @@ fn run_verify_command(cmd: &str) -> (i32, String) {
                 }
                 combined.push_str(&stderr);
             }
-            let truncated = safe_truncate(&combined, VERIFY_OUTPUT_MAX).to_string();
-            (code, truncated)
+            (code, cap_verify_output(&combined))
         }
         Err(e) => (-1, format!("Failed to run verify command: {e}")),
     }
@@ -174,15 +198,11 @@ pub fn run_goal_verify_after_prompt() -> Option<(bool, String)> {
     if passed {
         eprintln!("{GREEN}  ✓ Goal verify passed{RESET}");
     } else {
-        // Show truncated output so the agent knows what failed
-        let display = if output.len() > VERIFY_OUTPUT_MAX {
-            let truncated = safe_truncate(&output, VERIFY_OUTPUT_MAX);
-            format!("{truncated}… (truncated)")
-        } else {
-            output.clone()
-        };
+        // `output` is already capped and cut-marked by `cap_verify_output`, so the
+        // re-truncation that used to live here could never fire (its `(truncated)`
+        // marker was structurally dead while the real cut upstream was silent).
         eprintln!("{YELLOW}  ⚠ Goal verify failed (exit {code}):{RESET}");
-        for line in display.lines().take(10) {
+        for line in output.lines().take(10) {
             eprintln!("{DIM}    {line}{RESET}");
         }
     }
