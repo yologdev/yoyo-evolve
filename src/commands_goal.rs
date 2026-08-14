@@ -817,4 +817,122 @@ mod tests {
             assert!(!passed);
         });
     }
+
+    // ---- the two size caps (both shipped untested; pinned Day 167) ----------
+    //
+    // Both are pure and both are *user-visible*: one decides what the model is
+    // told about a failing verify run, the other what the model is told the
+    // user's goal is. The assertions below sit at the emission point — the
+    // string a caller actually receives — and the numbers in the cut marker are
+    // checked against the returned string's own length, not recomputed with the
+    // helper under test.
+
+    /// Split a capped string at its in-band cut marker, returning
+    /// `(kept_prefix, marker_tail)`.
+    fn split_at_marker<'a>(s: &'a str, marker: &str) -> (&'a str, &'a str) {
+        let idx = s
+            .find(marker)
+            .unwrap_or_else(|| panic!("expected cut marker {marker:?} in output"));
+        (&s[..idx], &s[idx..])
+    }
+
+    #[test]
+    fn test_cap_verify_output_under_budget_is_byte_identical() {
+        // The common case, and the regression risk: short output must pass
+        // through untouched — no marker, no reflow, not even a trailing newline.
+        let short = "test result: ok. 42 passed; 0 failed\n";
+        assert_eq!(cap_verify_output(short), short);
+        assert_eq!(cap_verify_output(""), "");
+
+        // Exactly at the budget is still under it (inclusive boundary).
+        let exact = "x".repeat(VERIFY_OUTPUT_MAX);
+        assert_eq!(cap_verify_output(&exact), exact);
+    }
+
+    #[test]
+    fn test_cap_verify_output_over_budget_marks_cut_on_char_boundary() {
+        // `✓` is 3 bytes, so a naive `s.truncate(2000)` would land inside a
+        // character and panic — 2000 is not a multiple of 3.
+        let big: String = "✓".repeat(VERIFY_OUTPUT_MAX);
+        assert!(big.len() > VERIFY_OUTPUT_MAX);
+        let capped = cap_verify_output(&big);
+
+        let (kept, tail) = split_at_marker(&capped, "\n… [yoyo: verify output truncated");
+        assert!(big.starts_with(kept), "kept text must be a prefix of input");
+        assert!(
+            big.is_char_boundary(kept.len()),
+            "cut at {} is not a char boundary",
+            kept.len()
+        );
+        assert!(kept.len() <= VERIFY_OUTPUT_MAX);
+        // The reported numbers must describe the string actually returned.
+        assert!(
+            tail.contains(&format!("{} of {} bytes shown", kept.len(), big.len())),
+            "marker numbers disagree with the returned string: {tail}"
+        );
+        assert!(
+            tail.contains(&format!("{} elided", big.len() - kept.len())),
+            "elided count disagrees with the returned string: {tail}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_verify_command_caps_output_at_emission_point() {
+        // Emission point: what `/goal check` and the post-prompt path actually
+        // receive, not the pure helper one layer down.
+        with_temp_dir(|| {
+            let (code, output) = run_verify_command("for i in $(seq 1 2000); do printf '✓✓'; done");
+            assert_eq!(code, 0);
+            assert!(output.contains("… [yoyo: verify output truncated"));
+            assert!(
+                output.len() < 8000,
+                "output was not capped: {}",
+                output.len()
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_goal_for_prompt_under_budget_is_byte_identical() {
+        with_temp_dir(|| {
+            let goal = "Ship the ✓ gate and keep the tests green";
+            save_goal(goal).unwrap();
+            assert_eq!(goal_for_prompt().unwrap(), goal);
+            // No goal at all stays `None` rather than becoming an empty string.
+            clear_goal().unwrap();
+            assert!(goal_for_prompt().is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_goal_for_prompt_over_budget_cuts_while_show_stays_uncapped() {
+        with_temp_dir(|| {
+            let goal: String = "✓".repeat(GOAL_PROMPT_MAX_BYTES);
+            assert!(goal.len() > GOAL_PROMPT_MAX_BYTES);
+            save_goal(&goal).unwrap();
+
+            let prompt = goal_for_prompt().expect("goal is set");
+            let (kept, tail) =
+                split_at_marker(&prompt, "\n\n… [yoyo: goal truncated for the prompt");
+            assert!(goal.starts_with(kept));
+            assert!(
+                goal.is_char_boundary(kept.len()),
+                "cut at {} is not a char boundary",
+                kept.len()
+            );
+            assert!(kept.len() <= GOAL_PROMPT_MAX_BYTES);
+            assert!(
+                tail.contains(&format!("{} of {} bytes shown", kept.len(), goal.len())),
+                "marker numbers disagree with the returned string: {tail}"
+            );
+            assert!(tail.contains(&format!("{} elided", goal.len() - kept.len())));
+
+            // The display half is supposed to stay uncapped — assert it.
+            assert_eq!(load_goal().unwrap(), goal);
+            assert!(!format_goal(&goal).contains("goal truncated for the prompt"));
+        });
+    }
 }
