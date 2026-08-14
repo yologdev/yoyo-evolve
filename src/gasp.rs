@@ -540,4 +540,136 @@ mod tests {
         assert_eq!(messages_label(&messages), "fix the parser");
         assert_eq!(messages_label(&[]), "");
     }
+
+    // -----------------------------------------------------------------------
+    // Pure decision helpers of the ported half (#683 item 5).
+    //
+    // These assert *verbatim literals*, never the module's own consts: the
+    // point is that a node identity in a shared store still matches the
+    // sidecar's (`tools/gasp-emit/src/main.rs:66-79,155`). Comparing a helper
+    // against the const it returns would pass through any rewording and pin
+    // nothing.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn goal_for_kind_reroutes_only_product() {
+        let cases: &[(&str, &str, &str)] = &[
+            // (kind, passed goal, expected goal)
+            ("product", "goal_self_improvement", "goal_product_value"),
+            ("product", "goal_skill_quality", "goal_product_value"),
+            ("evolve", "goal_self_improvement", "goal_self_improvement"),
+            ("", "goal_self_improvement", "goal_self_improvement"),
+            // Near-misses keep their goal: the sidecar compares for equality.
+            ("Product", "goal_self_improvement", "goal_self_improvement"),
+            ("product ", "goal_self_improvement", "goal_self_improvement"),
+            ("products", "goal_self_improvement", "goal_self_improvement"),
+            // An already-product goal survives a non-product kind unchanged.
+            ("evolve", "goal_product_value", "goal_product_value"),
+        ];
+        for (kind, goal, expected) in cases {
+            assert_eq!(
+                goal_for_kind(kind, goal),
+                *expected,
+                "goal_for_kind({kind:?}, {goal:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn standing_goal_title_matches_the_sidecar_byte_for_byte() {
+        let cases: &[(&str, &str)] = &[
+            ("goal_product_value", "Ship value to yoyo's users"),
+            // Every other goal is titled with its own id.
+            ("goal_self_improvement", "goal_self_improvement"),
+            ("goal_skill_quality", "goal_skill_quality"),
+            ("", ""),
+        ];
+        for (goal, expected) in cases {
+            assert_eq!(standing_goal_title(goal), *expected, "title of {goal:?}");
+        }
+    }
+
+    #[test]
+    fn standing_goal_summary_matches_the_sidecar_byte_for_byte() {
+        let cases: &[(&str, &str)] = &[
+            (
+                "goal_product_value",
+                "value shipped to yoyo's product users — features, UX, and fixes they experience directly, independent of any single session",
+            ),
+            (
+                "goal_self_improvement",
+                "standing goal (created on first reference)",
+            ),
+            ("", "standing goal (created on first reference)"),
+        ];
+        for (goal, expected) in cases {
+            assert_eq!(
+                standing_goal_summary(goal),
+                *expected,
+                "summary of {goal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn task_node_id_has_the_sidecar_shape() {
+        let cases: &[(&str, &str, &str)] = &[
+            ("run_42", "01", "task_run_42_01"),
+            ("run_42", "2", "task_run_42_2"),
+            // Neither half is normalised — the sidecar interpolates verbatim.
+            ("", "", "task__"),
+            ("day-167-0252", "10", "task_day-167-0252_10"),
+        ];
+        for (run_id, num, expected) in cases {
+            assert_eq!(
+                task_node_id(run_id, num),
+                *expected,
+                "task_node_id({run_id:?}, {num:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn default_session_task_label_matches_the_sidecar() {
+        let cases: &[(&str, &str)] = &[
+            ("167", "evolve session day 167"),
+            // The sidecar falls back to an empty --day, and so do we.
+            ("", "evolve session day "),
+        ];
+        for (day, expected) in cases {
+            assert_eq!(
+                default_session_task_label(day),
+                *expected,
+                "label for day {day:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_goal_prefers_request_then_recorder_then_default() {
+        let cases: &[(Option<&str>, &str, &str)] = &[
+            // (requested, recorder's goal, expected)
+            (Some("goal_skill_quality"), "goal_x", "goal_skill_quality"),
+            (
+                Some("  goal_skill_quality  "),
+                "goal_x",
+                "goal_skill_quality",
+            ),
+            // A blank request is absence, not a goal named "".
+            (Some(""), "goal_x", "goal_x"),
+            (Some("   "), "goal_x", "goal_x"),
+            (None, "goal_x", "goal_x"),
+            (None, "  goal_x  ", "goal_x"),
+            // Both blank: the standing default, never an empty node id.
+            (None, "", "goal_self_improvement"),
+            (Some("  "), "   ", "goal_self_improvement"),
+        ];
+        for (requested, recorder_goal, expected) in cases {
+            assert_eq!(
+                session_goal(*requested, recorder_goal),
+                *expected,
+                "session_goal({requested:?}, {recorder_goal:?})"
+            );
+        }
+    }
 }
