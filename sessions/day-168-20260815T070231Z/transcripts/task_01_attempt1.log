@@ -1,0 +1,99 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with issue #767 — it's the smallest, sharpest fix on my backlog, and I filed it myself last round. Let me verify its claims first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"ast"' src/commands.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn parse_ast_grep_args'… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+All three claims check out. Let me look at the existing precedent for this kind of drift guard.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'map_arg_hint_advertises…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn command_arg_hint' -A… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.7s (2 ✓)
+
+Claims verified. The hint is the odd artifact out — the parser matches the detailed help and its own examples. Making the fix now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 4 lines)
+  -         "ast" => Some("<pattern> [path]"),
+  +         // Must match `parse_ast_grep_args`: a bare trailing positional is folded into the
+  +         // PATTERN, not read as a path — only `--in` sets the path. Pinned by
+  +         // `ast_hint_advertises_only_argument_shapes_the_parser_honours` in commands_ast_grep.rs.
+  +         "ast" => Some("<pattern> [--lang <lang>] [--in <path>]"),
+ ✓ (1m 17s)
+  -         "ast" => Some("<pattern> [path]"),
+  +         // Must match `parse_ast_grep_args`: a bare trailing positional is folded into the
+  +         // PATTERN, not read as a path — only `--in` sets the path. Pinned by
+  +         // `ast_hint_advertises_only_argument_shapes_the_parser_honours` in commands_ast_grep.rs.
+  +         "ast" => Some("<pattern> [--lang <lang>] [--in <path>]"),
+
+Now the tests — a drift guard so this can't silently regress, plus the missing assertion on the bare-positional behaviour:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'parse_ast_grep_args' sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,312p' src/commands_a… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (2 → 58 lines)
+  +     /// A bare trailing positional is folded into the PATTERN — it is NOT a path.
+  +     ///
+  +     /// This is the parser's real contract (multi-token patterns like
+  +     /// `fn $NAME($$$ARGS) -> $RET` depend on the join), and it was unasserted until
+  +     /// #767: the completion hint advertised `/ast <pattern> [path]`, so
+  +     /// `/ast $X.unwrap() src/` searched for the literal pattern `"$X.unwrap() src/"`
+  +     /// and reported `No matches found.` — a silent wrong-op, not an error.
+  +     #[test]
+  +     fn bare_trailing_positional_joins_the_pattern_rather_than_setting_the_path() {
+  +         let (pattern, lang, path) =
+  +             parse_ast_grep_args("/ast $X.unwrap() src/").expect("should parse");
+  +         assert_eq!(pattern, "$X.unwrap() src/");
+  +         assert_eq!(lang, None);
+  +         assert_eq!(
+  +             path, None,
+  +             "a bare positional must not silently become the search path"
+  +         );
+  +     }
+  + 
+  +     /// Drift guard for #767, in the direction the bug actually lived.
+  ... (38 more lines)
+ ✓ (1m 19s)
+  +     /// A bare trailing positional is folded into the PATTERN — it is NOT a path.
+  +     ///
+  +     /// This is the parser's real contract (multi-token patterns like
+  +     /// `fn $NAME($$$ARGS) -> $RET` depend on the join), and it was unasserted until
+  +     /// #767: the completion hint advertised `/ast <pattern> [path]`, so
+  +     /// `/ast $X.unwrap() src/` searched for the literal pattern `"$X.unwrap() src/"`
+  +     /// and reported `No matches found.` — a silent wrong-op, not an error.
+  +     #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 36s (3 ✓)
+
+Let me verify the guard actually fires on the violating path, not just the compliant one:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|"ast" => Some("<patter… ✓ (145ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test ast_hint_advertises 2… ✓ (20.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.3s (2 ✓)
+
+The guard catches the exact bug with an actionable message. Now let me price the other branch too — a plausible-but-unconsumed flag:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|"ast" => Some("<patter… ✓ (20.3s)
+
+Both branches fire on their own violating path. Restoring the real fix and running the full gate:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|"ast" => Some("<patter… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
