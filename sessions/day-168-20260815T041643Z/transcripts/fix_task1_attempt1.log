@@ -1,0 +1,182 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the prediction line that landed, then read the target file and grade.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --on… (8 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The prediction landed. Now step 2 — read the file and run each bet's evidence command.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_ast_grep.rs &… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs:96..176 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1… (5 lines) ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== /a… (3 lines) ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"ast"' src/dispatch_sub… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 31s (6 ✓)
+
+Now let me check how the family tally parses grades, so my tokens are read correctly.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn tally_hypothesis_fam… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,360p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn record' -A 12 src/co… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.5s (3 ✓)
+
+The parser matches lowercase "hit"/"partial" exactly (record(), line 226-230) — the task template's uppercase HIT would be silently scored as not-a-hit, which is exactly the round-37 failure. Writing lowercase tokens to match the machine that reads them.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (55 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+JSON validity check, then land the h3 fix (which my disposition line claims — it must be true before I finish):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import json;[json.lo… ✓ (29ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (2 → 27 lines)
+  + /// Maximum number of lines `/ast` prints from one search.
+  + ///
+  + /// Both sibling search commands bound their output (`GREP_MAX_MATCHES` for
+  + /// `/grep`, `take(20)` for `/find`); `/ast` printed `sg`'s stdout unbounded
+  + /// until Day 168. A judgment threshold for readability, not a measurement.
+  + pub const AST_MAX_OUTPUT_LINES: usize = 200;
+  + 
+  + /// Cap `sg` output at [`AST_MAX_OUTPUT_LINES`], marking the cut in band.
+  + ///
+  + /// Under budget the input is returned byte-identically. A silent elision would
+  + /// be worse than a noisy one, so the marker states how many lines were dropped.
+  + pub fn cap_ast_output(out: &str) -> String {
+  +     let total = out.lines().count();
+  +     if total <= AST_MAX_OUTPUT_LINES {
+  +         return out.to_string();
+  +     }
+  +     let kept: Vec<&str> = out.lines().take(AST_MAX_OUTPUT_LINES).collect();
+  +     format!(
+  +         "{}\n… {} more line(s) elided — /ast shows the first {} (narrow the pattern, or scope it with --in)",
+  +         kept.join("\n"),
+  ... (7 more lines)
+ ✓ (19.2s)
+  + /// Maximum number of lines `/ast` prints from one search.
+  + ///
+  + /// Both sibling search commands bound their output (`GREP_MAX_MATCHES` for
+  + /// `/grep`, `take(20)` for `/find`); `/ast` printed `sg`'s stdout unbounded
+  + /// until Day 168. A judgment threshold for readability, not a measurement.
+  + pub const AST_MAX_OUTPUT_LINES: usize = 200;
+  + 
+  + /// Cap `sg` output at [`AST_MAX_OUTPUT_LINES`], marking the cut in band.
+  ... (13 more lines)
+  2 tools completed in 25.8s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: constant `AST_MAX_OUTPUT_LINES` is never used[0m
+  [1m[94m--> [0msrc/commands_ast_grep.rs:24:11
+   [1m[94m|[0m
+[1m[94m24[0m [1m[94m|[0m pub const AST_MAX_OUTPUT_LINES: usize = 200;
+   [1m[94m|[0m           [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `cap_ast_output` is never used[0m
+  [1m[94m--> [0msrc/commands_ast_grep.rs:30:8
+   [1m[94m|[0m
+[1m[94m30[0m [1m[94m|[0m pub fn cap_ast_output(out: &str) -> String {
+   [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I added the definition without its consumer — the documented failure mode. Wiring the two call sites now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Ok(stdout)' src/command… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '70s/Ok(stdout)/Ok(cap_as… ✓ (5ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Both call sites wired. Now the emission-point tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (2 → 50 lines)
+  +     #[test]
+  +     fn test_cap_ast_output_under_budget_is_byte_identical() {
+  +         let small = "src/a.rs:1:foo\nsrc/b.rs:2:bar\n";
+  +         assert_eq!(cap_ast_output(small), small);
+  +         let exact = (0..AST_MAX_OUTPUT_LINES)
+  +             .map(|i| format!("line {i}"))
+  +             .collect::<Vec<_>>()
+  +             .join("\n");
+  +         assert_eq!(cap_ast_output(&exact), exact, "at the cap, nothing is cut");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_cap_ast_output_marks_the_cut_in_band() {
+  +         let big = (0..AST_MAX_OUTPUT_LINES + 37)
+  +             .map(|i| format!("line {i}"))
+  +             .collect::<Vec<_>>()
+  +             .join("\n");
+  +         let capped = cap_ast_output(&big);
+  +         // The elision is announced, and the count it reports is the real one.
+  +         assert!(
+  ... (30 more lines)
+ ✓ (1m 36s)
+  +     #[test]
+  +     fn test_cap_ast_output_under_budget_is_byte_identical() {
+  +         let small = "src/a.rs:1:foo\nsrc/b.rs:2:bar\n";
+  +         assert_eq!(cap_ast_output(small), small);
+  +         let exact = (0..AST_MAX_OUTPUT_LINES)
+  +             .map(|i| format!("line {i}"))
+  +             .collect::<Vec<_>>()
+  +             .join("\n");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  2 tools completed in 1m 41s (2 ✓)
+
+Green. Now the CLAUDE.md note the task requires when a fix lands, and re-reading the diff to verify my disposition claim is true:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_ast_grep' CLAU… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No existing entry — I'll add one next to its sibling search command.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_search.rs`… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (23ms)
+  2 tools completed in 11.7s (2 ✓)
+
+Now re-reading the actual diff to confirm my grade line's disposition claim is true rather than aspirational:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== src… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -U0 src/commands_ast_gr… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+Fix is real (21 non-test lines, 49 test lines). Now I'll make the grade line's disposition precisely match the diff I just re-read, rather than leave a claim written before the fix existed:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (57ms)
+
+Now filing the two findings I explicitly claimed were filed — that claim must also be true:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (70 lines) ✓ (859ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

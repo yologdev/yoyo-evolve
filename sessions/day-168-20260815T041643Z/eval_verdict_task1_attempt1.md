@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only the round-52 prediction line landed; the round-52 grade line (`type":"experiment_result"`, day 168) is absent from dreams/experiments.jsonl, and the task states outright that the grade is the required step and the fix is the droppable one. Working tree is clean and the only new commit is a2d8417c ("blind round 52 prediction ... (before reading)"), so half the deliverable is missing rather than pending.
+Checked: intent_alignment: FAIL: grep over dreams/experiments.jsonl found 1 occurrence of `"round": 52` (the prediction) and 0 `experiment_result` lines for day 168; git log shows a single commit, git status is empty — steps 2/3 (read the file, grade in a separate append) never produced output, which is the exact three-round failure the task file was written to stop.
+Checked: forgotten_touchpoints: PASS: the diff adds no Rust definitions, enum variants or renames — it is one appended JSONL line, and src/commands_ast_grep.rs is untouched, so there is no definition-without-consumer risk.
+Checked: doc_sync: N/A: no behavior changed (no code diff, no fix landed), so CLAUDE.md/README/docs needed no update.
+Checked: product_surface: N/A: diff touches only dreams/experiments.jsonl — no config defaults, CLI flags, wizard or startup behavior.
