@@ -1658,6 +1658,128 @@ mod tests {
         apply_cli_flags(&args); // should not panic
     }
 
+    /// #766 (b): `--print` used to be an early branch in `emit_output` that
+    /// returned before `write_output_file` was ever reached, so
+    /// `yoyo --print -p "…" -o file` exited 0 with no file and *nothing* on
+    /// stderr. `-o` means "also save this", never "instead of printing", so the
+    /// write must happen in every mode. Asserted at the emission point —
+    /// `emit_output` itself, not a helper one layer below it.
+    #[test]
+    fn emit_output_writes_the_output_file_in_print_mode() {
+        let tmp = tempfile::Builder::new()
+            .prefix("yoyo_emit_print")
+            .tempdir()
+            .unwrap();
+        let path = tmp.path().join("pm_out.txt");
+        let response = PromptOutcome {
+            text: "ok".to_string(),
+            ..Default::default()
+        };
+        let failed = emit_output(
+            &response,
+            "test-model",
+            &Usage::default(),
+            false,
+            &SessionChanges::new(),
+            &Some(path.to_string_lossy().to_string()),
+            false,
+            true, // print_mode
+            std::time::Duration::from_secs(0),
+            1,
+        );
+        assert!(!failed, "a successful write must not report failure");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ok",
+            "--print must still honour -o"
+        );
+    }
+
+    /// The same decision for `--output-format json`: the middle branch of
+    /// `emit_output` must not swallow `-o` either.
+    #[test]
+    fn emit_output_writes_the_output_file_in_json_mode() {
+        let tmp = tempfile::Builder::new()
+            .prefix("yoyo_emit_json")
+            .tempdir()
+            .unwrap();
+        let path = tmp.path().join("json_out.txt");
+        let response = PromptOutcome {
+            text: "ok".to_string(),
+            ..Default::default()
+        };
+        let failed = emit_output(
+            &response,
+            "test-model",
+            &Usage::default(),
+            false,
+            &SessionChanges::new(),
+            &Some(path.to_string_lossy().to_string()),
+            true, // json_output
+            false,
+            std::time::Duration::from_secs(0),
+            1,
+        );
+        assert!(!failed);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "ok");
+    }
+
+    /// #766 (a): a failed `--output` write must reach the caller so the caller
+    /// can set a non-zero exit code. The helper never terminates the process
+    /// itself; `emit_output` reports, `run_single_prompt` decides.
+    #[test]
+    fn emit_output_reports_a_failed_write_to_its_caller() {
+        let tmp = tempfile::Builder::new()
+            .prefix("yoyo_emit_fail")
+            .tempdir()
+            .unwrap();
+        // Directory does not exist, so the write cannot succeed.
+        let path = tmp.path().join("no_such_dir").join("out.txt");
+        let response = PromptOutcome {
+            text: "ok".to_string(),
+            ..Default::default()
+        };
+        let failed = emit_output(
+            &response,
+            "test-model",
+            &Usage::default(),
+            false,
+            &SessionChanges::new(),
+            &Some(path.to_string_lossy().to_string()),
+            false,
+            false,
+            std::time::Duration::from_secs(0),
+            1,
+        );
+        assert!(
+            failed,
+            "a failed -o write must be reported so the caller can exit non-zero"
+        );
+        assert!(!path.exists());
+    }
+
+    /// No `-o` given: nothing is written and nothing is reported as failed.
+    #[test]
+    fn emit_output_without_output_path_reports_no_failure() {
+        let response = PromptOutcome {
+            text: "ok".to_string(),
+            ..Default::default()
+        };
+        let failed = emit_output(
+            &response,
+            "test-model",
+            &Usage::default(),
+            false,
+            &SessionChanges::new(),
+            &None,
+            false,
+            true,
+            std::time::Duration::from_secs(0),
+            1,
+        );
+        assert!(!failed);
+    }
+
     #[test]
     #[serial]
     fn test_apply_cli_flags_no_rtk_via_env() {
