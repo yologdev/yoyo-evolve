@@ -1,0 +1,245 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file's relevant sections.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/format/highli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,430p' src/format/hig… ✓ (3ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Now step 1 — the normalize_lang fix, committed on its own.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (2 → 12 lines)
+    fn normalize_lang(lang: &str) -> Option<&'static str> {
+  -     match lang.to_lowercase().as_str() {
+  +     // A fence tag may carry attributes: ```rust,ignore or ```rust no_run. Match on the
+  +     // head only. This is the single seam every caller reaches the language table
+  +     // through, so fixing it here covers every door (markdown renderer, direct calls)
+  +     // instead of one caller's parse.
+  +     let head = lang
+  +         .split([',', ' ', '\t'])
+  +         .next()
+  +         .unwrap_or("")
+  +         .trim()
+  +         .to_lowercase();
+  +     match head.as_str() {
+ ✓ (1m 40s)
+    fn normalize_lang(lang: &str) -> Option<&'static str> {
+  -     match lang.to_lowercase().as_str() {
+  +     // A fence tag may carry attributes: ```rust,ignore or ```rust no_run. Match on the
+  +     // head only. This is the single seam every caller reaches the language table
+  +     // through, so fixing it here covers every door (markdown renderer, direct calls)
+  +     // instead of one caller's parse.
+  +     let head = lang
+  +         .split([',', ' ', '\t'])
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/format/h… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1219p' src/format/h… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 45 lines)
+  +     // --- #758: fence tags with attributes (```rust,ignore / ```rust no_run) ---
+  + 
+  +     #[test]
+  +     fn test_normalize_lang_ignores_fence_attributes() {
+  +         // A tag with an attribute must resolve exactly like the bare tag.
+  +         assert_eq!(normalize_lang("rust,ignore"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("rust,no_run"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("rust no_run"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("rust\tignore"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("Rust,ignore"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("js,live"), normalize_lang("js"));
+  +         assert_eq!(normalize_lang("python,skip"), normalize_lang("python"));
+  +         assert_eq!(normalize_lang("rs,should_panic"), Some("rust"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_normalize_lang_bare_tags_unchanged() {
+  +         assert_eq!(normalize_lang("rust"), Some("rust"));
+  +         assert_eq!(normalize_lang("rs"), Some("rust"));
+  +         assert_eq!(normalize_lang("yaml"), Some("yaml"));
+  ... (25 more lines)
+ ✓ (1m 39s)
+  +     // --- #758: fence tags with attributes (```rust,ignore / ```rust no_run) ---
+  + 
+  +     #[test]
+  +     fn test_normalize_lang_ignores_fence_attributes() {
+  +         // A tag with an attribute must resolve exactly like the bare tag.
+  +         assert_eq!(normalize_lang("rust,ignore"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("rust,no_run"), normalize_lang("rust"));
+  +         assert_eq!(normalize_lang("rust no_run"), normalize_lang("rust"));
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib format::highlig… ✓ (139ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight 2>&1 | tail… ✓ (151ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 40s (6 ✓)
+
+Step 1 green. Committing it alone before starting step 2.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 committed. Now step 2 — the Rust lifetime bug.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "String literals" src/fo… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (2 → 13 lines)
+  +         // Rust: a `'` is far more often a lifetime tick (`&'a str`, `'static`, `'_`)
+  +         // than a char literal. Opening a string on it made the "literal" run to the
+  +         // next `'` or end of line, swallowing real string literals and pairing two
+  +         // lifetimes into one green run (#759). Only the unambiguous char-literal
+  +         // shapes open a literal here; everything else is emitted as plain text.
+  +         if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+  +             result.push(ch);
+  +             i += 1;
+  +             continue;
+  +         }
+  + 
+            // String literals: "..." or '...'
+            if ch == '"' || ch == '\'' {
+ ✓ (12.3s)
+  +         // Rust: a `'` is far more often a lifetime tick (`&'a str`, `'static`, `'_`)
+  +         // than a char literal. Opening a string on it made the "literal" run to the
+  +         // next `'` or end of line, swallowing real string literals and pairing two
+  +         // lifetimes into one green run (#759). Only the unambiguous char-literal
+  +         // shapes open a literal here; everything else is emitted as plain text.
+  +         if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+  +             result.push(ch);
+  +             i += 1;
+  ... (5 more lines)
+  2 tools completed in 18.0s (2 ✓)
+
+Expected — now the helper (definition + consumer in the same edit):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 1 lines) ✓ (12.3s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `rust_char_literal_end` in this scope[0m
+   [1m[94m--> [0msrc/format/highlight.rs:393:44
+    [1m[94m|[0m
+[1m[94m393[0m [1m[94m|[0m         if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+    [1m[94m|[0m                                            [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The call site exists but the helper doesn't yet. Adding it:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (2 → 29 lines)
+  + /// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
+  + ///
+  + /// Returns the index of the closing `'` when it does, `None` otherwise. Only the
+  + /// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
+  + /// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
+  + /// as a lifetime, because guessing the other way is what produced #759.
+  + ///
+  + /// Known gap, stated rather than papered over: a unicode escape such as `'\u{1F600}'`
+  + /// is longer than one char after the backslash, so it reads as a lifetime and is
+  + /// emitted unstyled. That loses colour on a rare literal; the old behaviour lost the
+  + /// rest of the line on a common one.
+  + fn rust_char_literal_end(chars: &[char], i: usize) -> Option<usize> {
+  +     if chars.get(i) != Some(&'\'') {
+  +         return None;
+  +     }
+  +     // 'x' — one char, then the closing tick.
+  +     if chars.get(i + 1).is_some_and(|c| *c != '\\') && chars.get(i + 2) == Some(&'\'') {
+  +         return Some(i + 2);
+  +     }
+  +     // '\n' / '\\' / '\'' — backslash, one char, then the closing tick.
+  ... (9 more lines)
+ ✓ (1m 40s)
+  + /// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
+  + ///
+  + /// Returns the index of the closing `'` when it does, `None` otherwise. Only the
+  + /// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
+  + /// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
+  + /// as a lifetime, because guessing the other way is what produced #759.
+  + ///
+  + /// Known gap, stated rather than papered over: a unicode escape such as `'\u{1F600}'`
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (10.9s)
+  2 tools completed in 1m 54s (2 ✓)
+
+Builds. Now the tests for step 2:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 64 lines)
+  +     // --- #759: Rust lifetimes must not open a string literal ---
+  + 
+  +     #[test]
+  +     fn test_rust_char_literal_end_table() {
+  +         let cases: &[(&str, Option<usize>)] = &[
+  +             ("'x'", Some(2)),
+  +             ("'\\n'", Some(3)),
+  +             ("'\\\\'", Some(3)),
+  +             ("'\\''", Some(3)),
+  +             ("'a", None),
+  +             ("'a>", None),
+  +             ("'static", None),
+  +             ("'_", None),
+  +             ("'", None),
+  +             ("''", None),
+  +         ];
+  +         for (src, want) in cases {
+  +             let chars: Vec<char> = src.chars().collect();
+  +             assert_eq!(rust_char_literal_end(&chars, 0), *want, "input {src:?}");
+  +         }
+  ... (44 more lines)
+ ✓ (12.8s)
+  +     // --- #759: Rust lifetimes must not open a string literal ---
+  + 
+  +     #[test]
+  +     fn test_rust_char_literal_end_table() {
+  +         let cases: &[(&str, Option<usize>)] = &[
+  +             ("'x'", Some(2)),
+  +             ("'\\n'", Some(3)),
+  +             ("'\\\\'", Some(3)),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 1 lines)
+  -         assert!(!out.contains(GREEN), "got {out:?}");
+  +         assert!(!out.contains(&format!("{GREEN}")), "got {out:?}");
+ ✓ (1m 43s)
+  -         assert!(!out.contains(GREEN), "got {out:?}");
+  +         assert!(!out.contains(&format!("{GREEN}")), "got {out:?}");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight 2>&1 | grep… ✓ (190ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight 2>&1 | grep… ✓ (320ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 6s (4 ✓)
+
+All 108 pass. Let me confirm the new tests actually ran, and verify they'd catch a regression:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::highlight::te… ✓ (159ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Negative control — do the new tests actually fail without the fix?
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/if norm == "rust" \&\&… ✓ (24.3s)
+
+Both #759 tests fail without the guard — not vacuous. Restoring:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/if norm == "zzz"/if no… ✓ (5ms)
+
+Now a real end-to-end check of the two rendered strings from the issues:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/d… (10 lines) ✓ (6ms)
+
+  ✓ Watch passed after fix (attempt 1)
+
