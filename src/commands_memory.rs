@@ -14,19 +14,45 @@ use crate::memory::{
 
 // ── /remember ────────────────────────────────────────────────────────────
 
+/// What a note's optional `[category:X]` prefix turned out to be. Three states
+/// because the old two-state version returned `("general", whole_string)` for an
+/// unknown category, so `/remember [category:tyop] note` saved the malformed
+/// prefix *inside* the note text under a green success line — a silent wrong-op
+/// on a typo. An unrecognised category is now its own value, so the caller
+/// refuses instead of guessing.
+enum CategoryPrefix<'a> {
+    Plain(&'a str),
+    Tagged { category: &'a str, note: &'a str },
+    UnknownCategory(&'a str),
+}
+
 /// Parse an optional `[category:X]` prefix from a note string.
-/// Returns `(category, remaining_note)`. If no prefix, category is `"general"`.
-fn parse_category_prefix(note: &str) -> (&str, &str) {
+fn parse_category_prefix(note: &str) -> CategoryPrefix<'_> {
     if let Some(rest) = note.strip_prefix("[category:") {
         if let Some(end) = rest.find(']') {
-            let cat = &rest[..end];
+            let cat = &rest[..end]; // `find` yields a char boundary
             let remaining = rest[end + 1..].trim();
-            if is_valid_category(cat) && !remaining.is_empty() {
-                return (cat, remaining);
+            if !is_valid_category(cat) {
+                return CategoryPrefix::UnknownCategory(cat);
+            }
+            if !remaining.is_empty() {
+                return CategoryPrefix::Tagged {
+                    category: cat,
+                    note: remaining,
+                };
             }
         }
     }
-    ("general", note)
+    CategoryPrefix::Plain(note)
+}
+
+/// The message a user receives when the category they named is not one we know:
+/// names the offending token, lists what is accepted, says nothing was saved.
+fn unknown_category_message(cat: &str) -> String {
+    format!(
+        "error: '{cat}' is not a known memory category (known: {}). Nothing was saved — retry with a known category, or drop the [category:...] prefix to save under 'general'.",
+        MEMORY_CATEGORIES.join(", ")
+    )
 }
 
 pub fn handle_remember(input: &str) {
@@ -45,7 +71,14 @@ pub fn handle_remember(input: &str) {
         println!("    /remember [category:bug] watch out for UTF-8 panics in truncate{RESET}\n");
         return;
     }
-    let (category, actual_note) = parse_category_prefix(&note);
+    let (category, actual_note) = match parse_category_prefix(&note) {
+        CategoryPrefix::Plain(n) => ("general", n),
+        CategoryPrefix::Tagged { category, note } => (category, note),
+        CategoryPrefix::UnknownCategory(cat) => {
+            eprintln!("{RED}  {}{RESET}\n", unknown_category_message(cat));
+            return;
+        }
+    };
     let mut memory = load_memories();
     add_memory_with_category(&mut memory, actual_note, category);
     match save_memories(&memory) {
@@ -302,10 +335,26 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    /// Collapse the two *accepted* outcomes back to the `(category, note)` pair
+    /// the handler uses, so the tests that predate the three-state split keep
+    /// asserting exactly what they asserted before. Panics on the refusal state
+    /// — that case has its own tests below, and must never be read as accepted.
+    fn accepted(p: super::CategoryPrefix<'_>) -> (&str, &str) {
+        match p {
+            super::CategoryPrefix::Plain(n) => ("general", n),
+            super::CategoryPrefix::Tagged { category, note } => (category, note),
+            super::CategoryPrefix::UnknownCategory(cat) => {
+                panic!("expected an accepted prefix, got UnknownCategory({cat})")
+            }
+        }
+    }
+
     #[test]
     fn test_parse_category_prefix_with_valid_category() {
         use super::parse_category_prefix;
-        let (cat, note) = parse_category_prefix("[category:build] always run cargo fmt");
+        let (cat, note) = accepted(parse_category_prefix(
+            "[category:build] always run cargo fmt",
+        ));
         assert_eq!(cat, "build");
         assert_eq!(note, "always run cargo fmt");
     }
@@ -313,18 +362,53 @@ mod tests {
     #[test]
     fn test_parse_category_prefix_without_category() {
         use super::parse_category_prefix;
-        let (cat, note) = parse_category_prefix("just a plain note");
+        let (cat, note) = accepted(parse_category_prefix("just a plain note"));
         assert_eq!(cat, "general");
         assert_eq!(note, "just a plain note");
     }
 
     #[test]
-    fn test_parse_category_prefix_invalid_category() {
-        use super::parse_category_prefix;
-        // Invalid category falls back to general, entire string is the note
-        let (cat, note) = parse_category_prefix("[category:unknown] some note");
+    fn test_parse_category_prefix_invalid_category_is_refused_not_swallowed() {
+        use super::{parse_category_prefix, CategoryPrefix};
+        // Was a characterization test pinning the silent wrong-op: an unknown
+        // category used to yield ("general", "[category:unknown] some note"),
+        // i.e. the malformed prefix was stored inside the note text under a
+        // green success line. It is now refused, and the offending token is
+        // carried out so the message can name it.
+        match parse_category_prefix("[category:unknown] some note") {
+            CategoryPrefix::UnknownCategory(cat) => assert_eq!(cat, "unknown"),
+            other => panic!(
+                "unknown category must be refused, got {:?}",
+                match other {
+                    CategoryPrefix::Plain(n) => format!("Plain({n})"),
+                    CategoryPrefix::Tagged { category, note } =>
+                        format!("Tagged({category}, {note})"),
+                    CategoryPrefix::UnknownCategory(_) => unreachable!(),
+                }
+            ),
+        }
+        // The other direction: a note that merely starts with '[' is not a
+        // prefix attempt and must still be accepted verbatim.
+        let (cat, note) = accepted(parse_category_prefix("[wip] some note"));
         assert_eq!(cat, "general");
-        assert_eq!(note, "[category:unknown] some note");
+        assert_eq!(note, "[wip] some note");
+    }
+
+    #[test]
+    fn test_unknown_category_message_names_token_and_says_nothing_was_saved() {
+        // Emission point: this is the string the user actually receives.
+        let msg = super::unknown_category_message("tyop");
+        assert!(
+            msg.contains("'tyop'"),
+            "must name the offending token: {msg}"
+        );
+        assert!(
+            msg.contains("Nothing was saved"),
+            "must state that nothing was saved: {msg}"
+        );
+        for &c in crate::memory::MEMORY_CATEGORIES {
+            assert!(msg.contains(c), "must list known category {c}: {msg}");
+        }
     }
 
     #[test]
@@ -332,7 +416,7 @@ mod tests {
         use super::parse_category_prefix;
         for &valid_cat in crate::memory::MEMORY_CATEGORIES {
             let input = format!("[category:{valid_cat}] test note");
-            let (cat, note) = parse_category_prefix(&input);
+            let (cat, note) = accepted(parse_category_prefix(&input));
             assert_eq!(cat, valid_cat, "category {valid_cat} should be parsed");
             assert_eq!(note, "test note");
         }
@@ -342,7 +426,7 @@ mod tests {
     fn test_parse_category_prefix_empty_note_after_prefix() {
         use super::parse_category_prefix;
         // If note after prefix is empty, treat whole string as note with general category
-        let (cat, note) = parse_category_prefix("[category:build]");
+        let (cat, note) = accepted(parse_category_prefix("[category:build]"));
         assert_eq!(cat, "general");
         assert_eq!(note, "[category:build]");
     }
@@ -350,7 +434,7 @@ mod tests {
     #[test]
     fn test_parse_category_prefix_whitespace_only_after_prefix() {
         use super::parse_category_prefix;
-        let (cat, note) = parse_category_prefix("[category:build]   ");
+        let (cat, note) = accepted(parse_category_prefix("[category:build]   "));
         assert_eq!(cat, "general");
         assert_eq!(note, "[category:build]   ");
     }
