@@ -16,6 +16,31 @@ pub fn is_ast_grep_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Maximum number of lines `/ast` prints from one search.
+///
+/// Both sibling search commands bound their output (`GREP_MAX_MATCHES` for
+/// `/grep`, `take(20)` for `/find`); `/ast` printed `sg`'s stdout unbounded
+/// until Day 168. A judgment threshold for readability, not a measurement.
+pub const AST_MAX_OUTPUT_LINES: usize = 200;
+
+/// Cap `sg` output at [`AST_MAX_OUTPUT_LINES`], marking the cut in band.
+///
+/// Under budget the input is returned byte-identically. A silent elision would
+/// be worse than a noisy one, so the marker states how many lines were dropped.
+pub fn cap_ast_output(out: &str) -> String {
+    let total = out.lines().count();
+    if total <= AST_MAX_OUTPUT_LINES {
+        return out.to_string();
+    }
+    let kept: Vec<&str> = out.lines().take(AST_MAX_OUTPUT_LINES).collect();
+    format!(
+        "{}\n… {} more line(s) elided — /ast shows the first {} (narrow the pattern, or scope it with --in)",
+        kept.join("\n"),
+        total - AST_MAX_OUTPUT_LINES,
+        AST_MAX_OUTPUT_LINES
+    )
+}
+
 /// Run ast-grep structural search.
 /// Returns Ok(output) or Err(error message).
 pub fn run_ast_grep_search(
@@ -42,7 +67,7 @@ pub fn run_ast_grep_search(
             if stdout.trim().is_empty() {
                 Ok("No matches found.".into())
             } else {
-                Ok(stdout)
+                Ok(cap_ast_output(&stdout))
             }
         }
         Ok(out) => {
@@ -52,7 +77,7 @@ pub fn run_ast_grep_search(
                 if stdout.trim().is_empty() {
                     Ok("No matches found.".into())
                 } else {
-                    Ok(stdout)
+                    Ok(cap_ast_output(&stdout))
                 }
             } else {
                 Err(format!("ast-grep error: {}", stderr.trim()))
@@ -170,6 +195,54 @@ mod tests {
         use crate::help::help_text;
         let help = help_text();
         assert!(help.contains("/ast"), "/ast should appear in help text");
+    }
+
+    #[test]
+    fn test_cap_ast_output_under_budget_is_byte_identical() {
+        let small = "src/a.rs:1:foo\nsrc/b.rs:2:bar\n";
+        assert_eq!(cap_ast_output(small), small);
+        let exact = (0..AST_MAX_OUTPUT_LINES)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(cap_ast_output(&exact), exact, "at the cap, nothing is cut");
+    }
+
+    #[test]
+    fn test_cap_ast_output_marks_the_cut_in_band() {
+        let big = (0..AST_MAX_OUTPUT_LINES + 37)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = cap_ast_output(&big);
+        // The elision is announced, and the count it reports is the real one.
+        assert!(
+            capped.contains("37 more line(s) elided"),
+            "cut must be marked in band with the true count, got: {capped}"
+        );
+        // Kept lines + exactly one marker line.
+        assert_eq!(capped.lines().count(), AST_MAX_OUTPUT_LINES + 1);
+        assert!(capped.lines().next() == Some("line 0"));
+        assert!(
+            capped.contains(&format!("line {}", AST_MAX_OUTPUT_LINES - 1)),
+            "the last kept line must survive"
+        );
+        assert!(
+            !capped.contains(&format!("line {}\n", AST_MAX_OUTPUT_LINES)),
+            "the first dropped line must not survive"
+        );
+    }
+
+    #[test]
+    fn test_cap_ast_output_is_char_boundary_safe() {
+        // Multi-byte content must not panic and must not be sliced mid-char.
+        let big = (0..AST_MAX_OUTPUT_LINES + 5)
+            .map(|i| format!("✓ src/файл{i}.rs:1:さくら"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = cap_ast_output(&big);
+        assert!(capped.contains("5 more line(s) elided"));
+        assert!(capped.contains("さくら"));
     }
 
     #[test]
