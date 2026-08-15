@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what the ledger claims, and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -2 drea… (8 lines) ✓ (11ms)
+ ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 drea… (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state all --limi… ✓ (29ms)
+ ✓ (362ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 21.4s (4 ✓)
+
+Both failures confirmed. Let me look at the fix that actually landed so the CLAUDE.md bullet is accurate, and verify the sibling defect before filing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 90a9db10 --stat && git …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,70p' src/commands_memo… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show b9a8f2d6 --stat && echo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,110p' src/commands_me… ✓ (6ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12.5s (4 ✓)
+
+Both defects confirmed with real output. Let me check the ledger readers before appending a correction line (must not double-count grades).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"experiment' src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MEMORY_CATEGORIES" src/… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '148,170p' src/commands_r… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.1s (3 ✓)
+
+Ledger readers filter strictly by type, so an unknown-type correction line is invisible to both parse_experiment_visits and the family tally — no double-count. Now filing the issue the disposition claimed, with real evidence.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (52 lines) ✓ (994ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Issue #769 filed. Now the honest correction to the ledger — appended, not rewritten, with a type both readers skip:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (51ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the CLAUDE.md bullet. Let me find the right insertion point:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_move.rs\`… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,412p' src/commands_m… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.3s (2 ✓)
+
+Now the CLAUDE.md bullet, placed with its sibling command handlers:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 2 lines)
+    - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+  + - `commands_memory.rs` — `/remember`, `/memories`, `/forget` REPL handlers on top of `src/memory.rs`. Day 168 (blind round 53, a never-forecast file): `parse_category_prefix` returns the **three-state** `CategoryPrefix<'_>` (`Plain` / `Tagged` / `UnknownCategory`) instead of a `(category, note)` pair, and `handle_remember` **refuses** an unknown category rather than guessing. Before this, `/remember [category:tyop] note` fell through to `("general", note)` where `note` was the **full original string** — so the malformed prefix was stored verbatim *inside* the note text, under a category the user did not ask for, with a green `✓ Remembered` line and no error; a pre-existing characterization test pinned that silent wrong-op as intended behaviour, and it was rewritten to assert the refusal in **both** directions (an unknown category is refused *and* a note merely starting with `[`, e.g. `[wip] some note`, is still accepted verbatim — the escape hatch that stops the refusal from swallowing ordinary notes). The refusal message is the pure `unknown_category_message(cat)`: it names the offending token, lists `memory::MEMORY_CATEGORIES` (read from the const, never hand-copied), and states outright that **nothing was saved** — pinned at the **emission point** (`test_unknown_category_message_names_token_and_says_nothing_was_saved` asserts the literal string a caller receives, not one layer below it). `/remember` has no non-interactive door — piped mode refuses slash commands, and `src/dispatch.rs:251` is the sole route — so this is a REPL-surface change only. **Known and unfixed, filed as #769:** the `[category:TYPE]` grammar is now *enforced* by the parser but appears on no discoverability surface — `/help remember` (`help_data.rs:1051-1060`) and the completion arg hint (`commands.rs:290`) both still say `/remember <note>`, and the only place the grammar and its five values are shown is `handle_remember`'s own no-argument usage text. The fix reaches two other files (and `help_data.rs` carries the drift-guard suite), so it exceeded round 53's ≤25-line in-file cap; the honest fix ties the documented list to `MEMORY_CATEGORIES` rather than adding a fourth hand-copy. **Deliberately not capped:** `handle_memories` prints every stored entry with no bound and no elision marker, unlike its sibling list commands (`/grep` at `GREP_MAX_MATCHES = 50`, `/find` at `take(20)`, `/ast` at `AST_MAX_OUTPUT_LINES = 200`). That was round 53's one winning bet and the fix was still declined, for a reason specific to this command: memories are user-authored one at a time (the live `.yoyo/memory.json` holds 20), and the printed index **is** the argument `/forget` consumes, so eliding row 57 would hide the very number the next command needs. Capping here would be cargo-culting the `/ast` bound into a place where the elision costs more than the flood.
+ ✓ (56.6s)
+    - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+  + - `commands_memory.rs` — `/remember`, `/memories`, `/forget` REPL handlers on top of `src/memory.rs`. Day 168 (blind round 53, a never-forecast file): `parse_category_prefix` returns the **three-state** `CategoryPrefix<'_>` (`Plain` / `Tagged` / `UnknownCategory`) instead of a `(category, note)` pair, and `handle_remember` **refuses** an unknown category rather than guessing. Before this, `/remember [category:tyop] note` fell through to `("general", note)` where `note` was the **full original string** — so the malformed prefix was stored verbatim *inside* the note text, under a category the user did not ask for, with a green `✓ Remembered` line and no error; a pre-existing characterization test pinned that silent wrong-op as intended behaviour, and it was rewritten to assert the refusal in **both** directions (an unknown category is refused *and* a note merely starting with `[`, e.g. `[wip] some note`, is still accepted verbatim — the escape hatch that stops the refusal from swallowing ordinary notes). The refusal message is the pure `unknown_category_message(cat)`: it names the offending token, lists `memory::MEMORY_CATEGORIES` (read from the const, never hand-copied), and states outright that **nothing was saved** — pinned at the **emission point** (`test_unknown_category_message_names_token_and_says_nothing_was_saved` asserts the literal string a caller receives, not one layer below it). `/remember` has no non-interactive door — piped mode refuses slash commands, and `src/dispatch.rs:251` is the sole route — so this is a REPL-surface change only. **Known and unfixed, filed as #769:** the `[category:TYPE]` grammar is now *enforced* by the parser but appears on no discoverability surface — `/help remember` (`help_data.rs:1051-1060`) and the completion arg hint (`commands.rs:290`) both still say `/remember <note>`, and the only place the grammar and its five values are shown is `handle_remember`'s own no-argument usage text. The fix reaches two other files (and `help_data.rs` carries the drift-guard suite), so it exceeded round 53's ≤25-line in-file cap; the honest fix ties the documented list to `MEMORY_CATEGORIES` rather than adding a fourth hand-copy. **Deliberately not capped:** `handle_memories` prints every stored entry with no bound and no elision marker, unlike its sibling list commands (`/grep` at `GREP_MAX_MATCHES = 50`, `/find` at `take(20)`, `/ast` at `AST_MAX_OUTPUT_LINES = 200`). That was round 53's one winning bet and the fix was still declined, for a reason specific to this command: memories are user-authored one at a time (the live `.yoyo/memory.json` holds 20), and the printed index **is** the argument `/forget` consumes, so eliding row 57 would hide the very number the next command needs. Capping here would be cargo-culting the `/ast` bound into a place where the elision costs more than the flood.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== dispatch route ===" &&… ✓ (45ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+The dispatch line number differs from the evaluator's — let me check before asserting it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '249,253p' src/dispatch.r… ✓ (6ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

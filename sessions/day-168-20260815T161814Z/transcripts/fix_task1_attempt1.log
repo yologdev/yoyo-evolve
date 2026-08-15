@@ -1,0 +1,237 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the prediction that was already committed, then run the settling commands.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 4000… (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams/experiments.jsonl &… ✓ (8ms)
+ ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -n 1 dreams/experiments.jso… ✓ (35ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3.9s (3 ✓)
+
+Prediction line and #738 mirror both exist. Now step 2 — running the settling commands.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== H1 SETTLE ===" && grep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== H2 SETTLE ===" && grep… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_memory.rs:60..165 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.9s (3 ✓)
+
+H1 and H3 settled against the actual source. Checking the remaining context for H2's finding:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,58p' src/commands_memo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn … (6 lines) ✓ (3ms)
+ ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.6s (2 ✓)
+
+H1 is a clean miss — the taxonomy is wired. Checking the adjacent surface my h1 evidence line cited:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== help_data /remember ==… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+H1 miss confirmed, and the adjacent surface is where the real defect sits. Let me check the rest of the file and its tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,357p' src/commands_m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three bets have settled. Writing the grade record first (before the fix) so the round's record can't be lost:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '"exper… (6 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (49 lines) ✓ (51ms)
+  2 tools completed in 42.4s (2 ✓)
+
+Grade record is safe. Committing it immediately, then landing the fix:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix — a three-state parse with an honest refusal instead of the silent swallow:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_memory.rs:1..61 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_memory.rs (14 → 50 lines)
+  + /// What a note's optional `[category:X]` prefix turned out to be.
+  + ///
+  + /// Three states on purpose. The old two-state version returned
+  + /// `("general", whole_string)` for an unknown category, so `/remember
+  + /// [category:tyop] note` was saved under the wrong category *with the
+  + /// malformed prefix baked into the note text*, under a green success line —
+  + /// a silent wrong-op on a typo. An unrecognised category is now its own
+  + /// value so the caller can refuse instead of guessing.
+  + enum CategoryPrefix<'a> {
+  +     /// No usable prefix — the whole string is the note, category `"general"`.
+  +     Plain(&'a str),
+  +     /// A known category and the note that follows it.
+  +     Tagged { category: &'a str, note: &'a str },
+  +     /// A `[category:X]` prefix naming a category that does not exist.
+  +     UnknownCategory(&'a str),
+  + }
+  + 
+    /// Parse an optional `[category:X]` prefix from a note string.
+  - /// Returns `(category, remaining_note)`. If no prefix, category is `"general"`.
+  - fn parse_category_prefix(note: &str) -> (&str, &str) {
+  ... (41 more lines)
+ ✓ (12.4s)
+  + /// What a note's optional `[category:X]` prefix turned out to be.
+  + ///
+  + /// Three states on purpose. The old two-state version returned
+  + /// `("general", whole_string)` for an unknown category, so `/remember
+  + /// [category:tyop] note` was saved under the wrong category *with the
+  + /// malformed prefix baked into the note text*, under a green success line —
+  + /// a silent wrong-op on a typo. An unrecognised category is now its own
+  + /// value so the caller can refuse instead of guessing.
+  ... (13 more lines)
+  2 tools completed in 25.9s (2 ✓)
+
+Expected — now the call site and the tests that consume it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_memory.rs (1 → 8 lines)
+  -     let (category, actual_note) = parse_category_prefix(&note);
+  +     let (category, actual_note) = match parse_category_prefix(&note) {
+  +         CategoryPrefix::Plain(n) => ("general", n),
+  +         CategoryPrefix::Tagged { category, note } => (category, note),
+  +         CategoryPrefix::UnknownCategory(cat) => {
+  +             eprintln!("{RED}  {}{RESET}\n", unknown_category_message(cat));
+  +             return;
+  +         }
+  +     };
+ ✓ (12.4s)
+  -     let (category, actual_note) = parse_category_prefix(&note);
+  +     let (category, actual_note) = match parse_category_prefix(&note) {
+  +         CategoryPrefix::Plain(n) => ("general", n),
+  +         CategoryPrefix::Tagged { category, note } => (category, note),
+  +         CategoryPrefix::UnknownCategory(cat) => {
+  +             eprintln!("{RED}  {}{RESET}\n", unknown_category_message(cat));
+  +             return;
+  +         }
+  +     };
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_memory.rs:351:13
+    [1m[94m|[0m
+[1m[94m351[0m [1m[94m|[0m         let (cat, note) = parse_category_prefix("[category:build] always run cargo fmt");
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^[0m   [1m[94m--------------------------------------------------------------[0m [1m[94mthis expression has type `commands_memory::CategoryPrefix<'_>`[0m
+    [1m[94m|[0m             [1m[91m|[0m
+    [1m[94m|[0m             [1m[91mexpected `CategoryPrefix<'_>`, found `(_, _)`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected enum `[1m[35mcommands_memory::CategoryPrefix<'_>[0m`
+              found tuple `[1m[35m(_, _)[0m`
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_memory.rs:359:13
+    [1m[94m|[0m
+[1m[94m359[0m [1m[94m|[0m         let (cat, note) = parse_category_prefix("just a plain note");
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^[0m   [1m[94m------------------------------------------[0m [1m[94mthis expression has type `commands_memory::CategoryPrefix<'_>`[0m
+    [1m[94m|[0m             [1m[91m|[0m
+    [1m[94m|[0m             [1m[91mexpected `CategoryPrefix<'_>`, found `(_, _)`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected enum `[1m[35mcommands_memory::CategoryPrefix<'_>[0m`
+              found tuple `[1m[35m(_, _)[0m`
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_memory.rs:368:13
+    [1m[94m|[0m
+[1m[94m368[0m [1m[94m|[0m         let (cat, note) = parse_category_prefix("[category:unknown] some note");
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^[0m   [1m[94m-----------------------------------------------------[0m [1m[94mthis expression has type `commands_memory::CategoryPrefix<'_>`[0m
+    [...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The remaining errors are the six test call sites still destructuring a tuple. Let me update them:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,402p' src/commands_m… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_memory.rs (4 → 20 lines)
+  +     /// Collapse the two *accepted* outcomes back to the `(category, note)` pair
+  +     /// the handler uses, so the tests that predate the three-state split keep
+  +     /// asserting exactly what they asserted before. Panics on the refusal state
+  +     /// — that case has its own tests below, and must never be read as accepted.
+  +     fn accepted(p: super::CategoryPrefix<'_>) -> (&str, &str) {
+  +         match p {
+  +             super::CategoryPrefix::Plain(n) => ("general", n),
+  +             super::CategoryPrefix::Tagged { category, note } => (category, note),
+  +             super::CategoryPrefix::UnknownCategory(cat) => {
+  +                 panic!("expected an accepted prefix, got UnknownCategory({cat})")
+  +             }
+  +         }
+  +     }
+  + 
+        #[test]
+        fn test_parse_category_prefix_with_valid_category() {
+            use super::parse_category_prefix;
+  -         let (cat, note) = parse_category_prefix("[category:build] always run cargo fmt");
+  +         let (cat, note) = accepted(parse_category_prefix(
+  +             "[category:build] always run cargo fmt",
+  ... (1 more lines)
+ ✓ (12.4s)
+  +     /// Collapse the two *accepted* outcomes back to the `(category, note)` pair
+  +     /// the handler uses, so the tests that predate the three-state split keep
+  +     /// asserting exactly what they asserted before. Panics on the refusal state
+  +     /// — that case has its own tests below, and must never be read as accepted.
+  +     fn accepted(p: super::CategoryPrefix<'_>) -> (&str, &str) {
+  +         match p {
+  +             super::CategoryPrefix::Plain(n) => ("general", n),
+  +             super::CategoryPrefix::Tagged { category, note } => (category, note),
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.3s (2 ✓)
+
+Now the remaining four, including rewriting the characterization test that pinned the wrong-op:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (75 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 55s (4 ✓)
+
+All green (4883 passed). Checking the fix stayed inside its budget:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (18 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+55 added non-test lines against a 25-line cap — mostly my own prose. Trimming the comments to code-tight:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '15,90p' src/commands_mem… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.0s (2 ✓)
+
+Net 36. Restoring the original nested shape shrinks the diff further (and keeps it closer to what was there):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (21.1s)
+
+  ✓ Watch passed after fix (attempt 1)
+
