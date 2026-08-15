@@ -152,7 +152,14 @@ what you changed and that it passed. Don't loop indefinitely re-checking work th
 already green; once verified, move on."#;
 
 /// Minimal system prompt for --lite mode (small/local LLMs with limited context).
-pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+///
+/// Kept terse on purpose — this is substituted *wholesale* for [`SYSTEM_PROMPT`]
+/// (see `cli.rs`, the `if lite && !user_set_system_prompt` branch), so anything
+/// missing here is missing outright rather than inherited. The evidence line is
+/// the one section that must survive the shrink: small models are the most prone
+/// to inventing file paths and command output, so the guidance matters *more*
+/// here than in the full prompt, not less. Costs ~30 tokens of an 8k window.
+pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nDon't invent file paths, function names, or command output — read or run to confirm first, and say so when you don't know.\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
 
 /// The 4 essential tools available in --lite mode.
 pub const LITE_TOOLS: &[&str] = &["bash", "read_file", "write_file", "edit_file"];
@@ -302,6 +309,26 @@ mod tests {
 
         // LITE_DEFAULT_CONTEXT_WINDOW should be reasonable for small models
         assert_eq!(LITE_DEFAULT_CONTEXT_WINDOW, 8_000);
+    }
+
+    #[test]
+    fn lite_system_prompt_keeps_the_anti_fabrication_guidance() {
+        // --lite substitutes this string wholesale for SYSTEM_PROMPT, so the
+        // evidence/anti-fabrication guidance is not inherited — it either lives
+        // here or a --lite session runs without it. Asserted on the constant a
+        // caller actually receives (cli.rs sets config.system_prompt to exactly
+        // this value), not on some intermediate.
+        let p = LITE_SYSTEM_PROMPT;
+        assert!(
+            p.contains("Don't invent"),
+            "lite prompt lost its anti-fabrication instruction"
+        );
+        assert!(
+            p.contains("read or run to confirm"),
+            "lite prompt lost its verify-before-asserting instruction"
+        );
+        // Still minimal: the whole point of --lite is a small context budget.
+        assert!(p.len() < SYSTEM_PROMPT.len() / 2);
     }
 
     #[test]
