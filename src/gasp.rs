@@ -445,6 +445,85 @@ async fn task_planned_in<S: EventStore>(
     Ok(())
 }
 
+/// Outcome recorded for a session that names none. The sidecar's
+/// `unwrap_or_else(|| "done".into())`, named rather than inlined.
+const DEFAULT_SESSION_OUTCOME: &str = "done";
+
+/// Split the comma-separated `--extra` list of repo-relative projection paths
+/// committed alongside the run boundary.
+///
+/// Byte-identical to the sidecar's parse (`tools/gasp-emit/src/main.rs:277-282`):
+/// same three operations, same order. Not "improved" on purpose — a
+/// differently-parsed path list writes a *different boundary commit*.
+fn parse_extra_paths(extra: &str) -> Vec<&str> {
+    extra
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+/// Which outcome a finished session records: an explicitly requested one wins,
+/// else [`DEFAULT_SESSION_OUTCOME`]. Same shape as [`session_goal`] — absence
+/// gets its own name instead of being absorbed by an inline `unwrap_or`.
+fn session_outcome(requested: Option<&str>) -> &str {
+    requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_SESSION_OUTCOME)
+}
+
+/// Record the end of an evolve session: finish the open run, write the
+/// run-boundary commit, and release the repo lease.
+///
+/// Ported from the sidecar's `"session-end"` arm
+/// (`tools/gasp-emit/src/main.rs:269-288`). Two deliberate differences from
+/// the sidecar:
+///
+/// 1. It returns the boundary sha instead of printing it. The sidecar printed
+///    because it was a CLI; in-process the caller decides what to say.
+/// 2. Unlike [`session_start`] and [`task_planned`] there is **no**
+///    store-generic `*_in` body: `commit_run` and `release_lease` are
+///    `GitEventStore` inherent methods, not `EventStore` trait methods, so a
+///    generic body is not expressible here. That is a property of the upstream
+///    API, not an oversight — which is also why this function is
+///    compile-and-unit-tested only: exercising it needs a live
+///    `GitEventStore` and takes a 600s repo lease. Its two decision halves
+///    ([`parse_extra_paths`], [`session_outcome`]) are pure and table-tested.
+///
+/// Takes the recorder for the same reason its siblings do: a GASP repo is
+/// single-writer behind that lease, so opening a second `GitEventStore` on the
+/// same root collides with the recorder's rather than cooperating.
+// Dormant: the caller is #683 items (3)+(7) (the operator-lane env bridge),
+// which cannot exist until the sidecar's session record is retired.
+#[allow(dead_code)]
+pub(crate) async fn session_end(
+    recorder: &GaspRecorder,
+    run_id: &str,
+    outcome: Option<&str>,
+    goal: Option<&str>,
+    extra: &str,
+) -> Result<Option<String>, StateError> {
+    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    let outcome = session_outcome(outcome);
+    recorder
+        .state()
+        .record_run_finished(
+            recorder.actor().clone(),
+            RunId::new(run_id),
+            outcome.to_string(),
+        )
+        .await?;
+    let sha = recorder.store().commit_run(
+        &RunId::new(run_id),
+        &GoalId::new(goal.as_str()),
+        outcome,
+        &parse_extra_paths(extra),
+    )?;
+    recorder.store().release_lease()?;
+    Ok(sha)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,5 +750,45 @@ mod tests {
                 "session_goal({requested:?}, {recorder_goal:?})"
             );
         }
+    }
+
+    #[test]
+    fn parse_extra_paths_matches_the_sidecar_parse() {
+        let cases: &[(&str, &[&str])] = &[
+            // No paths at all: an empty list, never a vec holding "".
+            ("", &[]),
+            (",,", &[]),
+            ("  ", &[]),
+            // The ordinary shapes.
+            ("skills", &["skills"]),
+            ("a,b", &["a", "b"]),
+            // Whitespace around each element is trimmed, like the sidecar's
+            // `map(str::trim)`.
+            (" a , b ", &["a", "b"]),
+            ("\ta\n,b", &["a", "b"]),
+            // Empty elements between real ones are dropped, not kept as "".
+            ("a,,b", &["a", "b"]),
+            (",a,", &["a"]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                parse_extra_paths(input),
+                expected.to_vec(),
+                "parse_extra_paths({input:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn session_outcome_names_absence_rather_than_absorbing_it() {
+        // Absence, and every shape that is absence wearing a string.
+        assert_eq!(session_outcome(None), "done");
+        assert_eq!(session_outcome(Some("")), "done");
+        assert_eq!(session_outcome(Some("   ")), "done");
+        assert_eq!(session_outcome(None), DEFAULT_SESSION_OUTCOME);
+        // A real outcome survives, trimmed.
+        assert_eq!(session_outcome(Some("reverted")), "reverted");
+        assert_eq!(session_outcome(Some(" reverted ")), "reverted");
+        assert_eq!(session_outcome(Some("done")), "done");
     }
 }
