@@ -835,6 +835,55 @@ mod tests {
         assert!(target_after.contains("pub const LIMIT: usize = 42;"));
     }
 
+    /// Round 55 (h3): `/extract`'s help promises "Creates the target file if it
+    /// doesn't exist", but the write path only called `fs::write`, which does not
+    /// create missing *parent directories*. Asserted at the emission point — the
+    /// `Result` a caller actually receives — plus the two files' final state,
+    /// because the pre-fix failure was not merely an error: the source write ran
+    /// first, so the symbol was deleted from the source and then written nowhere.
+    #[test]
+    fn extract_symbol_creates_missing_target_parent_dir() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        // Two levels deep, neither existing — the pre-fix path failed here.
+        let target = dir.path().join("newdir").join("nested").join("constants.rs");
+
+        fs::write(&source, "pub const MAX: usize = 7;\n\nfn keep() {}\n").unwrap();
+        assert!(!target.parent().unwrap().exists());
+
+        let result = extract_symbol(source.to_str().unwrap(), target.to_str().unwrap(), "MAX");
+
+        // Emission point: the caller gets Ok, not a raw OS "No such file or
+        // directory" error arriving after it already confirmed the move.
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+
+        // The symbol actually landed in the target...
+        let target_after = fs::read_to_string(&target).unwrap();
+        assert!(target_after.contains("pub const MAX: usize = 7;"));
+
+        // ...and the source is not left mutilated (symbol removed, written nowhere).
+        let source_after = fs::read_to_string(&source).unwrap();
+        assert!(!source_after.contains("const MAX"));
+        assert!(source_after.contains("fn keep()"));
+    }
+
+    /// A target in the current directory has an empty parent path; the guard must
+    /// pass it through rather than trying to create "".
+    #[test]
+    fn extract_symbol_bare_target_filename_still_works() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        let target = dir.path().join("target.rs");
+
+        fs::write(&source, "pub const ONE: usize = 1;\n\nfn keep() {}\n").unwrap();
+
+        let result = extract_symbol(source.to_str().unwrap(), target.to_str().unwrap(), "ONE");
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(fs::read_to_string(&target)
+            .unwrap()
+            .contains("pub const ONE: usize = 1;"));
+    }
+
     #[test]
     fn extract_symbol_moves_static() {
         let dir = TempDir::new().unwrap();
