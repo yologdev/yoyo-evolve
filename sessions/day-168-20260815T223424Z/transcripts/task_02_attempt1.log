@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the three files at the exact spots the task names.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1045,1070p' src/help_dat… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_category_prefix" … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+Now the test first. Let me check the guards file structure:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help_data_guards.rs &&… ✓ (5ms)
+
+Adding the guard test first (it should fail against the current help text):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data_guards.rs (2 → 35 lines)
+  +     /// `memory::MEMORY_CATEGORIES` is the authority on which `[category:TYPE]`
+  +     /// values `/remember` accepts — `parse_category_prefix` *refuses* anything
+  +     /// else and saves nothing. The help text is a hand-written copy of that
+  +     /// list (`command_help` returns `&'static str`, so it cannot interpolate
+  +     /// the const), and a hand copy drifts silently: adding a sixth category
+  +     /// would leave the help advertising five while the parser accepts six.
+  +     /// This test is the only thing tying the two together — it reads the const
+  +     /// rather than re-listing the values, so a new category fails here instead
+  +     /// of quietly leaving the documentation behind.
+  +     #[test]
+  +     fn test_remember_help_documents_every_memory_category() {
+  +         let help = command_help("remember").expect("/remember should have a help entry");
+  +         for cat in crate::memory::MEMORY_CATEGORIES {
+  +             assert!(
+  +                 help.contains(cat),
+  +                 "command_help(\"remember\") never mentions the memory category `{cat}`, but \
+  +                  `/remember [category:{cat}]` is accepted by the parser. The five accepted \
+  +                  values live in memory::MEMORY_CATEGORIES; the help text must list all of them, \
+  +                  or a user can only discover the grammar by typing `/remember` with no argument."
+  +             );
+  ... (15 more lines)
+ ✓ (1m 26s)
+  +     /// `memory::MEMORY_CATEGORIES` is the authority on which `[category:TYPE]`
+  +     /// values `/remember` accepts — `parse_category_prefix` *refuses* anything
+  +     /// else and saves nothing. The help text is a hand-written copy of that
+  +     /// list (`command_help` returns `&'static str`, so it cannot interpolate
+  +     /// the const), and a hand copy drifts silently: adding a sixth category
+  +     /// would leave the help advertising five while the parser accepts six.
+  +     /// This test is the only thing tying the two together — it reads the const
+  +     /// rather than re-listing the values, so a new category fails here instead
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test remember_help 2>&1 | … ✓ (138ms)
+  2 tools completed in 1m 29s (2 ✓)
+
+The guard fails as intended. Now the help text:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (11 → 23 lines)
+            "remember" => Some(
+  -             "/remember <note> — Save a project-specific memory\n\n\
+  +             "/remember [category:TYPE] <note> — Save a project-specific memory\n\n\
+                 Usage:\n\
+  -              \x20 /remember <note>    Save a memory for this project\n\n\
+  +              \x20 /remember <note>                    Save under 'general'\n\
+  +              \x20 /remember [category:TYPE] <note>    Save under a named category\n\n\
+                 Saves a note that persists across sessions for the current\n\
+                 project directory. Memories are loaded automatically when\n\
+                 you start yoyo in the same directory.\n\n\
+  +              Categories (TYPE must be one of these — anything else is\n\
+  +              refused and nothing is saved):\n\
+  +              \x20 general        Uncategorized notes (the default)\n\
+  +              \x20 build          Build, test and toolchain quirks\n\
+  +              \x20 convention     Project style and process rules\n\
+  +              \x20 architecture   How the code is put together\n\
+  +              \x20 bug            Known defects and their workarounds\n\n\
+  +              Only a leading [category:...] is treated as a tag. A note that\n\
+  +              merely starts with a bracket is saved verbatim, so\n\
+  +              '/remember [wip] fix this' stores the text as written.\n\n\
+  ... (6 more lines)
+ ✓ (1m 30s)
+            "remember" => Some(
+  -             "/remember <note> — Save a project-specific memory\n\n\
+  +             "/remember [category:TYPE] <note> — Save a project-specific memory\n\n\
+                 Usage:\n\
+  -              \x20 /remember <note>    Save a memory for this project\n\n\
+  +              \x20 /remember <note>                    Save under 'general'\n\
+  +              \x20 /remember [category:TYPE] <note>    Save under a named category\n\n\
+                 Saves a note that persists across sessions for the current\n\
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help_data.rs && grep -… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+Plenty of headroom. Now the completion hint:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "remember" => Some("<note>"),
+  +         "remember" => Some("[category:TYPE] <note>"),
+ ✓ (1m 29s)
+  -         "remember" => Some("<note>"),
+  +         "remember" => Some("[category:TYPE] <note>"),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (44.2s)
+  3 tools completed in 3m 50s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/3 changed files were in top-10 predictions (66.7% accuracy)
+     Predicted correctly: src/help_data.rs, src/commands.rs
+     Surprises (not predicted): src/help_data_guards.rs
+

@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing CLAUDE.md doc update.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "769" CLAUDE.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"remember" => Some' -A … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5.2s (3 ✓)
+
+Code half is in place. Now the CLAUDE.md paragraph:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "769" CLAUDE.md && sed -… ✓ (4ms)
+  2 tools completed in 3.6s (2 ✓)
+
+The stale "known and unfixed" claim is gone. Verifying the build:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (54.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (53.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (53.5s)
+  4 tools completed in 2m 50s (4 ✓)
+
+All green: 5011 passed, 0 failed; clippy clean with -D warnings.
+
+Emission-point check (what a user actually receives):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo -p '/help re… ✓ (14.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.5s (2 ✓)
+
+## Fixed
+
+The evaluator's single FAIL was doc_sync: the code half had landed but CLAUDE.md:126 still carried the "Known and unfixed, filed as #769" paragraph asserting that /help remember and commands.rs:290 "both still say /remember <note>" — a claim the commit itself had made false.
+
+Changed: CLAUDE.md only (the sole file the evaluator flagged). The stale paragraph in the commands_memory.rs bullet is replaced with a statement that:
+
+• #769 is closed — round 53 fixed the world (parser refuses), this fixed the description; explicitly noted as the opposite of the Day-164 anti-pattern rather than an instance of it.
+• All three surfaces now state the same contract: header /remember [category:TYPE] <note>, both accepted forms, all five values, the [wip] … escape-hatch prose, a tagged example, and the arg hint Some("[category:TYPE] <note>") matching the neighbouring bracket convention.
+• The help list is a hand-written copy (because command_help returns Option<&'static str> with ~8 call sites), tied to the authority by a test, not codegen: test_remember_help_documents_every_memory_category iterates crate::memory::MEMORY_CATEGORIES, so a sixth category fails a test instead of silently leaving the help behind.
+• Named as the third instance of the three-source disagreement shape (#745, #767).
+
+The bullet's existing **"Deliberately not capped"** paragraph about handle_memories is untouched, as the task required — that decision is unchanged.
+
+Verified: cargo fmt → cargo clippy --all-targets -- -D warnings (clean) → cargo build → cargo test: 5011 passed, 0 failed. grep confirms the "Known and unfixed" sentence is gone and the only remaining #769 mention is the new closure statement. Working tree carries exactly one modified file, CLAUDE.md.
+
+  watch: no files changed this turn — skipping
+
