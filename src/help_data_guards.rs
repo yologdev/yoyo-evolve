@@ -522,6 +522,39 @@ mod tests {
         }
     }
 
+    /// `memory::MEMORY_CATEGORIES` is the authority on which `[category:TYPE]`
+    /// values `/remember` accepts — `parse_category_prefix` *refuses* anything
+    /// else and saves nothing. The help text is a hand-written copy of that
+    /// list (`command_help` returns `&'static str`, so it cannot interpolate
+    /// the const), and a hand copy drifts silently: adding a sixth category
+    /// would leave the help advertising five while the parser accepts six.
+    /// This test is the only thing tying the two together — it reads the const
+    /// rather than re-listing the values, so a new category fails here instead
+    /// of quietly leaving the documentation behind.
+    #[test]
+    fn test_remember_help_documents_every_memory_category() {
+        let help = command_help("remember").expect("/remember should have a help entry");
+        for cat in crate::memory::MEMORY_CATEGORIES {
+            assert!(
+                help.contains(cat),
+                "command_help(\"remember\") never mentions the memory category `{cat}`, but \
+                 `/remember [category:{cat}]` is accepted by the parser. The five accepted \
+                 values live in memory::MEMORY_CATEGORIES; the help text must list all of them, \
+                 or a user can only discover the grammar by typing `/remember` with no argument."
+            );
+        }
+        // Both accepted forms must survive in the prose: the tagged one and the
+        // bare one (a note merely *starting* with `[` is stored verbatim).
+        assert!(
+            help.contains("[category:"),
+            "command_help(\"remember\") must document the [category:TYPE] prefix the parser enforces"
+        );
+        assert!(
+            help.contains("/remember <note>"),
+            "command_help(\"remember\") must keep documenting the bare `/remember <note>` form"
+        );
+    }
+
     #[test]
     fn test_quit_and_exit_share_short_description() {
         let quit_desc = command_short_description("quit");

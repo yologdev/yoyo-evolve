@@ -287,7 +287,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "test" => Some("[args...]"),
         "export" => Some("[filename]"),
         "search" => Some("<query>"),
-        "remember" => Some("<note>"),
+        "remember" => Some("[category:TYPE] <note>"),
         "forget" => Some("<id>"),
         "explain" => Some("<file>"),
         "map" => Some("[--all] [--regex] [path]"),

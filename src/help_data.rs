@@ -1049,15 +1049,27 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /plan apply",
         ),
         "remember" => Some(
-            "/remember <note> — Save a project-specific memory\n\n\
+            "/remember [category:TYPE] <note> — Save a project-specific memory\n\n\
              Usage:\n\
-             \x20 /remember <note>    Save a memory for this project\n\n\
+             \x20 /remember <note>                    Save under 'general'\n\
+             \x20 /remember [category:TYPE] <note>    Save under a named category\n\n\
              Saves a note that persists across sessions for the current\n\
              project directory. Memories are loaded automatically when\n\
              you start yoyo in the same directory.\n\n\
+             Categories (TYPE must be one of these — anything else is\n\
+             refused and nothing is saved):\n\
+             \x20 general        Uncategorized notes (the default)\n\
+             \x20 build          Build, test and toolchain quirks\n\
+             \x20 convention     Project style and process rules\n\
+             \x20 architecture   How the code is put together\n\
+             \x20 bug            Known defects and their workarounds\n\n\
+             Only a leading [category:...] is treated as a tag. A note that\n\
+             merely starts with a bracket is saved verbatim, so\n\
+             '/remember [wip] fix this' stores the text as written.\n\n\
              Examples:\n\
              \x20 /remember always run migrations before testing\n\
-             \x20 /remember the auth module uses JWT with RS256",
+             \x20 /remember the auth module uses JWT with RS256\n\
+             \x20 /remember [category:build] cargo test needs --release here",
         ),
         "memories" => Some(
             "/memories [query] — List or search project memories\n\n\

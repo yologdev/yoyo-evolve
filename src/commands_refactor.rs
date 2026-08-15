@@ -846,7 +846,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let source = dir.path().join("source.rs");
         // Two levels deep, neither existing — the pre-fix path failed here.
-        let target = dir.path().join("newdir").join("nested").join("constants.rs");
+        let target = dir
+            .path()
+            .join("newdir")
+            .join("nested")
+            .join("constants.rs");
 
         fs::write(&source, "pub const MAX: usize = 7;\n\nfn keep() {}\n").unwrap();
         assert!(!target.parent().unwrap().exists());
