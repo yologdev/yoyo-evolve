@@ -1296,7 +1296,10 @@ mod tests {
     #[test]
     fn test_rust_lifetime_does_not_swallow_string_literal() {
         let out = highlight_code_line("rust", "let x: &'a str = \"hi\";");
-        assert!(out.contains(&format!("{GREEN}\"hi\"{RESET}")), "got {out:?}");
+        assert!(
+            out.contains(&format!("{GREEN}\"hi\"{RESET}")),
+            "got {out:?}"
+        );
         assert!(!out.contains(&format!("{GREEN}'a")), "got {out:?}");
     }
 
@@ -1318,7 +1321,10 @@ mod tests {
     fn test_rust_apostrophe_in_comment_unchanged() {
         // Near-miss that must pass through: the inline-comment branch still wins.
         let out = highlight_code_line("rust", "let y = 1; // don't");
-        assert!(out.contains(&format!("{DIM}// don't{RESET}")), "got {out:?}");
+        assert!(
+            out.contains(&format!("{DIM}// don't{RESET}")),
+            "got {out:?}"
+        );
     }
 
     #[test]
