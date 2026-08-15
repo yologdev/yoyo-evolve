@@ -88,6 +88,50 @@ pub fn run_ast_grep_search(
 }
 
 /// Parse `/ast` command arguments into (pattern, lang, path).
+/// Decide whether a bare trailing positional is a path the user meant to scope
+/// the search to, rather than part of the pattern (#767).
+///
+/// `/ast` takes its path via `--in`, but a bare second positional is the natural
+/// thing to reach for — and the catch-all arm of `parse_ast_grep_args` used to
+/// fold it into the *pattern* string, so `/ast $X.unwrap() src/` searched for the
+/// literal pattern `"$X.unwrap() src/"` and reported `No matches found.`: a silent
+/// wrong-op, the worst of the three available behaviours.
+///
+/// This does **not** guess the user's intent by treating the token as the path —
+/// guessing would silently mis-scope a legitimate pattern. It only recognises the
+/// unambiguous shape so the caller can refuse with an actionable error:
+///
+/// - there must be **≥2** pattern tokens, so a single-token pattern that happens
+///   to name a file (`/ast mod.rs`) is untouched and keeps its escape hatch;
+/// - the **last** token only, since a path argument trails;
+/// - and that token must actually exist on disk, per the injected `exists`
+///   resolver — the I/O stays at the call site so this stays pure and testable.
+///
+/// Returns the offending token, or `None` when the input is not that shape.
+fn bare_path_argument<'a>(
+    pattern_parts: &[&'a str],
+    exists: &dyn Fn(&str) -> bool,
+) -> Option<&'a str> {
+    if pattern_parts.len() < 2 {
+        return None;
+    }
+    let last = *pattern_parts.last()?;
+    if exists(last) {
+        Some(last)
+    } else {
+        None
+    }
+}
+
+/// The error shown when a bare positional path is detected (#767). Pure so the
+/// wording is pinned by a test at the emission point, not one layer below it.
+fn bare_path_error(token: &str) -> String {
+    format!(
+        "/ast takes its path via --in, so `{token}` would be searched for as part of the pattern.\n\
+         Did you mean: /ast <pattern> --in {token}"
+    )
+}
+
 pub fn parse_ast_grep_args(
     input: &str,
 ) -> Result<(String, Option<String>, Option<String>), String> {
@@ -132,6 +176,16 @@ pub fn parse_ast_grep_args(
         return Err("Usage: /ast <pattern> [--lang <lang>] [--in <path>]".into());
     }
 
+    // Only when no `--in` was given: with an explicit path the trailing token is
+    // unambiguously part of the pattern.
+    if path.is_none() {
+        if let Some(token) =
+            bare_path_argument(&pattern_parts, &|p| std::path::Path::new(p).exists())
+        {
+            return Err(bare_path_error(token));
+        }
+    }
+
     Ok((pattern_parts.join(" "), lang, path))
 }
 
@@ -164,6 +218,61 @@ pub fn handle_ast_grep(input: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- #767: a bare positional path is refused, not folded into the pattern ---
+
+    #[test]
+    fn bare_path_argument_needs_two_tokens_and_an_existing_path() {
+        let yes = |_: &str| true;
+        let no = |_: &str| false;
+
+        // The shape it exists to catch.
+        assert_eq!(
+            bare_path_argument(&["$X.unwrap()", "src/"], &yes),
+            Some("src/")
+        );
+        // A single-token pattern keeps its escape hatch even if it names a file.
+        assert_eq!(bare_path_argument(&["mod.rs"], &yes), None);
+        // A trailing token that is not on disk is pattern syntax, not a path.
+        assert_eq!(
+            bare_path_argument(&["fn", "$N()", "{", "$$$", "}"], &no),
+            None
+        );
+        // Only the LAST token is considered — a path argument trails.
+        assert_eq!(bare_path_argument(&["src/", "$X"], &|p| p == "src/"), None);
+        assert_eq!(bare_path_argument(&[], &yes), None);
+    }
+
+    #[test]
+    fn parse_refuses_a_bare_positional_path_with_an_actionable_error() {
+        // `src` exists in this repo, so this is the real live shape.
+        let err = parse_ast_grep_args("/ast $X.unwrap() src")
+            .expect_err("a bare positional path should be refused, not folded into the pattern");
+        assert!(
+            err.contains("--in src"),
+            "the error must name the escape hatch verbatim, got: {err}"
+        );
+        assert!(
+            err.contains("src"),
+            "the error must name the offending token, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_leaves_ordinary_patterns_byte_identical() {
+        // Multi-token pattern whose tokens are not paths: unchanged.
+        let (pattern, lang, path) =
+            parse_ast_grep_args("/ast fn $NAME() { $$$ }").expect("plain pattern should parse");
+        assert_eq!(pattern, "fn $NAME() { $$$ }");
+        assert_eq!(lang, None);
+        assert_eq!(path, None);
+
+        // An explicit --in disambiguates: the trailing token stays pattern.
+        let (pattern, _, path) =
+            parse_ast_grep_args("/ast $X.unwrap() --in src").expect("--in form should parse");
+        assert_eq!(pattern, "$X.unwrap()");
+        assert_eq!(path.as_deref(), Some("src"));
+    }
 
     #[test]
     fn test_is_ast_grep_available_no_panic() {
@@ -305,7 +414,7 @@ mod tests {
         assert!(result.unwrap_err().contains("--in requires"));
     }
 
-    /// A bare trailing positional is folded into the PATTERN — it is NOT a path.
+    /// A bare trailing positional is never silently turned into the search path.
     ///
     /// This is the parser's real contract (multi-token patterns like
     /// `fn $NAME($$$ARGS) -> $RET` depend on the join), and it was unasserted until
@@ -314,9 +423,18 @@ mod tests {
     /// and reported `No matches found.` — a silent wrong-op, not an error.
     #[test]
     fn bare_trailing_positional_joins_the_pattern_rather_than_setting_the_path() {
+        // FIXED (#767): a bare trailing positional that names an existing path is
+        // now REFUSED with an actionable error. It is still never silently turned
+        // into the search path — the parser does not guess, it asks.
+        let err = parse_ast_grep_args("/ast $X.unwrap() src/")
+            .expect_err("a bare positional naming a real path must be refused");
+        assert!(err.contains("--in src/"), "got: {err}");
+
+        // The other direction, unchanged: a trailing token that is not a path is
+        // ordinary pattern syntax and still joins the pattern.
         let (pattern, lang, path) =
-            parse_ast_grep_args("/ast $X.unwrap() src/").expect("should parse");
-        assert_eq!(pattern, "$X.unwrap() src/");
+            parse_ast_grep_args("/ast $X.unwrap() $Y").expect("should parse");
+        assert_eq!(pattern, "$X.unwrap() $Y");
         assert_eq!(lang, None);
         assert_eq!(
             path, None,
