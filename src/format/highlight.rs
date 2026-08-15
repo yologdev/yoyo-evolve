@@ -27,6 +27,35 @@ fn normalize_lang(lang: &str) -> Option<&'static str> {
     }
 }
 
+/// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
+///
+/// Returns the index of the closing `'` when it does, `None` otherwise. Only the
+/// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
+/// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
+/// as a lifetime, because guessing the other way is what produced #759.
+///
+/// Known gap, stated rather than papered over: a unicode escape such as `'\u{1F600}'`
+/// is longer than one char after the backslash, so it reads as a lifetime and is
+/// emitted unstyled. That loses colour on a rare literal; the old behaviour lost the
+/// rest of the line on a common one.
+fn rust_char_literal_end(chars: &[char], i: usize) -> Option<usize> {
+    if chars.get(i) != Some(&'\'') {
+        return None;
+    }
+    // 'x' — one char, then the closing tick.
+    if chars.get(i + 1).is_some_and(|c| *c != '\\') && chars.get(i + 2) == Some(&'\'') {
+        return Some(i + 2);
+    }
+    // '\n' / '\\' / '\'' — backslash, one char, then the closing tick.
+    if chars.get(i + 1) == Some(&'\\')
+        && chars.get(i + 2).is_some()
+        && chars.get(i + 3) == Some(&'\'')
+    {
+        return Some(i + 3);
+    }
+    None
+}
+
 /// Get the keyword list for a normalized language.
 fn lang_keywords(lang: &str) -> &'static [&'static str] {
     match lang {
@@ -383,6 +412,17 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
             let rest: String = chars[i..].iter().collect();
             result.push_str(&format!("{DIM}{rest}{RESET}"));
             break;
+        }
+
+        // Rust: a `'` is far more often a lifetime tick (`&'a str`, `'static`, `'_`)
+        // than a char literal. Opening a string on it made the "literal" run to the
+        // next `'` or end of line, swallowing real string literals and pairing two
+        // lifetimes into one green run (#759). Only the unambiguous char-literal
+        // shapes open a literal here; everything else is emitted as plain text.
+        if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+            result.push(ch);
+            i += 1;
+            continue;
         }
 
         // String literals: "..." or '...'
@@ -1226,6 +1266,69 @@ mod tests {
             out.contains(&format!("{BOLD_CYAN}let{RESET}")),
             "got {out:?}"
         );
+    }
+
+    // --- #759: Rust lifetimes must not open a string literal ---
+
+    #[test]
+    fn test_rust_char_literal_end_table() {
+        let cases: &[(&str, Option<usize>)] = &[
+            ("'x'", Some(2)),
+            ("'\\n'", Some(3)),
+            ("'\\\\'", Some(3)),
+            ("'\\''", Some(3)),
+            ("'a", None),
+            ("'a>", None),
+            ("'static", None),
+            ("'_", None),
+            ("'", None),
+            ("''", None),
+        ];
+        for (src, want) in cases {
+            let chars: Vec<char> = src.chars().collect();
+            assert_eq!(rust_char_literal_end(&chars, 0), *want, "input {src:?}");
+        }
+        // Not a tick at all -> None.
+        let chars: Vec<char> = "x".chars().collect();
+        assert_eq!(rust_char_literal_end(&chars, 0), None);
+    }
+
+    #[test]
+    fn test_rust_lifetime_does_not_swallow_string_literal() {
+        let out = highlight_code_line("rust", "let x: &'a str = \"hi\";");
+        assert!(out.contains(&format!("{GREEN}\"hi\"{RESET}")), "got {out:?}");
+        assert!(!out.contains(&format!("{GREEN}'a")), "got {out:?}");
+    }
+
+    #[test]
+    fn test_rust_two_lifetimes_do_not_pair_up() {
+        let out = highlight_code_line("rust", "fn f<'a>(s: &'a str) {}");
+        assert!(!out.contains(&format!("{GREEN}")), "got {out:?}");
+    }
+
+    #[test]
+    fn test_rust_char_literal_still_highlighted() {
+        let out = highlight_code_line("rust", "let c = 'x';");
+        assert!(out.contains(&format!("{GREEN}'x'{RESET}")), "got {out:?}");
+        let esc = highlight_code_line("rust", "let c = '\\n';");
+        assert!(esc.contains(&format!("{GREEN}'\\n'{RESET}")), "got {esc:?}");
+    }
+
+    #[test]
+    fn test_rust_apostrophe_in_comment_unchanged() {
+        // Near-miss that must pass through: the inline-comment branch still wins.
+        let out = highlight_code_line("rust", "let y = 1; // don't");
+        assert!(out.contains(&format!("{DIM}// don't{RESET}")), "got {out:?}");
+    }
+
+    #[test]
+    fn test_single_quotes_still_strings_in_other_languages() {
+        let py = highlight_code_line("python", "s = 'hi'");
+        assert!(py.contains(&format!("{GREEN}'hi'{RESET}")), "got {py:?}");
+        let js = highlight_code_line("js", "const s = 'hi';");
+        assert!(js.contains(&format!("{GREEN}'hi'{RESET}")), "got {js:?}");
+        let sh = highlight_code_line("shell", "echo 'hi'");
+        assert!(sh.contains(&format!("{GREEN}'hi'{RESET}")), "got {sh:?}");
     }
 
     // --- End-to-end through MarkdownRenderer ---
