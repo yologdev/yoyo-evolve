@@ -305,6 +305,62 @@ mod tests {
         assert!(result.unwrap_err().contains("--in requires"));
     }
 
+    /// A bare trailing positional is folded into the PATTERN — it is NOT a path.
+    ///
+    /// This is the parser's real contract (multi-token patterns like
+    /// `fn $NAME($$$ARGS) -> $RET` depend on the join), and it was unasserted until
+    /// #767: the completion hint advertised `/ast <pattern> [path]`, so
+    /// `/ast $X.unwrap() src/` searched for the literal pattern `"$X.unwrap() src/"`
+    /// and reported `No matches found.` — a silent wrong-op, not an error.
+    #[test]
+    fn bare_trailing_positional_joins_the_pattern_rather_than_setting_the_path() {
+        let (pattern, lang, path) =
+            parse_ast_grep_args("/ast $X.unwrap() src/").expect("should parse");
+        assert_eq!(pattern, "$X.unwrap() src/");
+        assert_eq!(lang, None);
+        assert_eq!(
+            path, None,
+            "a bare positional must not silently become the search path"
+        );
+    }
+
+    /// Drift guard for #767, in the direction the bug actually lived.
+    ///
+    /// The completion hint is the surface most likely to be trusted (the REPL prints it
+    /// unprompted), and it disagreed with both the parser and the detailed help for as long
+    /// as `/ast` has existed. Two opposite checks:
+    ///
+    /// 1. every `--flag` the hint advertises is really *consumed* as a flag — not folded
+    ///    into the pattern by the catch-all arm, which is how a plausible-but-wrong flag
+    ///    (say `--path`) would fail: silently, with no error and no match;
+    /// 2. the hint advertises no bare optional positional, because the parser honours none.
+    #[test]
+    fn ast_hint_advertises_only_argument_shapes_the_parser_honours() {
+        let hint = crate::commands::command_arg_hint("ast").expect("/ast should have an arg hint");
+
+        for token in hint.split_whitespace() {
+            let flag = token.trim_start_matches('[');
+            if flag.starts_with("--") {
+                let (pattern, _, _) = parse_ast_grep_args(&format!("/ast PAT {flag} VALUE"))
+                    .unwrap_or_else(|e| panic!("hint {hint:?} advertises {flag}, rejected: {e}"));
+                assert_eq!(
+                    pattern, "PAT",
+                    "hint {hint:?} advertises {flag}, but the parser folds it into the pattern \
+                     instead of consuming it as a flag"
+                );
+            } else if token.starts_with('[') {
+                panic!(
+                    "hint {hint:?} advertises the bare optional positional {token}, but \
+                     parse_ast_grep_args folds every non-flag token into the pattern (#767)"
+                );
+            }
+        }
+
+        for flag in ["--lang", "--in"] {
+            assert!(hint.contains(flag), "hint {hint:?} should advertise {flag}");
+        }
+    }
+
     #[test]
     fn test_ast_tab_completion() {
         use crate::commands::command_arg_completions;

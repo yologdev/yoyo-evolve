@@ -297,7 +297,10 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "stash" => Some("push | pop | list | drop"),
         "mark" => Some("<name>"),
         "jump" => Some("<name>"),
-        "ast" => Some("<pattern> [path]"),
+        // Must match `parse_ast_grep_args`: a bare trailing positional is folded into the
+        // PATTERN, not read as a path — only `--in` sets the path. Pinned by
+        // `ast_hint_advertises_only_argument_shapes_the_parser_honours` in commands_ast_grep.rs.
+        "ast" => Some("<pattern> [--lang <lang>] [--in <path>]"),
         "todo" => hint_from!(crate::commands_todo::TODO_VERBS),
         "docs" => Some("<crate-name>"),
         "rename" => Some("<old> <new> [path]"),
