@@ -3,7 +3,17 @@
 use super::*;
 
 fn normalize_lang(lang: &str) -> Option<&'static str> {
-    match lang.to_lowercase().as_str() {
+    // A fence tag may carry attributes: ```rust,ignore or ```rust no_run. Match on the
+    // head only. This is the single seam every caller reaches the language table
+    // through, so fixing it here covers every door (markdown renderer, direct calls)
+    // instead of one caller's parse.
+    let head = lang
+        .split([',', ' ', '\t'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    match head.as_str() {
         "rust" | "rs" => Some("rust"),
         "python" | "py" => Some("python"),
         "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" => Some("js"),
@@ -1169,6 +1179,53 @@ mod tests {
         assert_eq!(normalize_lang("yaml"), Some("yaml"));
         assert_eq!(normalize_lang("yml"), Some("yaml"));
         assert_eq!(normalize_lang("toml"), Some("toml"));
+    }
+
+    // --- #758: fence tags with attributes (```rust,ignore / ```rust no_run) ---
+
+    #[test]
+    fn test_normalize_lang_ignores_fence_attributes() {
+        // A tag with an attribute must resolve exactly like the bare tag.
+        assert_eq!(normalize_lang("rust,ignore"), normalize_lang("rust"));
+        assert_eq!(normalize_lang("rust,no_run"), normalize_lang("rust"));
+        assert_eq!(normalize_lang("rust no_run"), normalize_lang("rust"));
+        assert_eq!(normalize_lang("rust\tignore"), normalize_lang("rust"));
+        assert_eq!(normalize_lang("Rust,ignore"), normalize_lang("rust"));
+        assert_eq!(normalize_lang("js,live"), normalize_lang("js"));
+        assert_eq!(normalize_lang("python,skip"), normalize_lang("python"));
+        assert_eq!(normalize_lang("rs,should_panic"), Some("rust"));
+    }
+
+    #[test]
+    fn test_normalize_lang_bare_tags_unchanged() {
+        assert_eq!(normalize_lang("rust"), Some("rust"));
+        assert_eq!(normalize_lang("rs"), Some("rust"));
+        assert_eq!(normalize_lang("yaml"), Some("yaml"));
+        // An empty head is not a language.
+        assert_eq!(normalize_lang(""), None);
+        assert_eq!(normalize_lang(",ignore"), None);
+        // An unknown head stays unknown, attribute or not.
+        assert_eq!(normalize_lang("nosuchlang"), None);
+        assert_eq!(normalize_lang("cobol,x"), None);
+    }
+
+    #[test]
+    fn test_highlight_code_line_honors_fence_attributes() {
+        // Emission point: the rendered string is the promise a user experiences.
+        assert_eq!(
+            highlight_code_line("rust,ignore", "let x = 1;"),
+            highlight_code_line("rust", "let x = 1;")
+        );
+        assert_eq!(
+            highlight_code_line("rust no_run", "let x = 1;"),
+            highlight_code_line("rust", "let x = 1;")
+        );
+        // ...and it is genuinely highlighted, not just consistently dimmed.
+        let out = highlight_code_line("rust,ignore", "let x = 1;");
+        assert!(
+            out.contains(&format!("{BOLD_CYAN}let{RESET}")),
+            "got {out:?}"
+        );
     }
 
     // --- End-to-end through MarkdownRenderer ---
