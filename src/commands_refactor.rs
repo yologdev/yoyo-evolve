@@ -215,6 +215,17 @@ pub fn extract_symbol(
     new_target.push_str(&block_text);
     new_target.push('\n');
 
+    // Create the target's parent directory if it is missing — and do it BEFORE
+    // touching the source, because the source write below happens first: a bad
+    // target path used to delete the symbol from the source and write it nowhere.
+    if let Some(parent) = std::path::Path::new(target_path).parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!("Cannot create target directory '{}': {e}", parent.display())
+            })?;
+        }
+    }
+
     // Write both files
     std::fs::write(source_path, &new_source)
         .map_err(|e| format!("Failed to write source file '{source_path}': {e}"))?;
