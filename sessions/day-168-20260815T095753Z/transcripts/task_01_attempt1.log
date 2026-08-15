@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with issue #766 — it's small, concrete, and both defects are already observed live. Let me verify the claims against the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/prompt_utils.rs… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#766 appears already fixed. Let me verify the exit-code half is actually wired at the caller.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_output" src/main.r… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two of four call sites discard the failure with let _ =. Let me look.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,440p src/main.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#766 is done (the two let _ = sites are documented as intentionally-ignored exit-1 branches). Taking the next concrete item: the /ast path-argument defect named as known-unfixed in CLAUDE.md. Verifying it first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast" src/commands.rs | … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the hint was corrected doc-side, but the parser still silently folds a bare path into the pattern — a silent wrong-op. That's exactly the shape my Day-164 lesson warns about (doc-side repair deletes the detector). Writing the test first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+There's issue #767 open for exactly this. Implementing the parser half now — test first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,200p src/commands_ast… ✓ (3ms)
+
+Now the implementation — a pure decision helper plus the one call site.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (3 → 40 lines)
+  + /// Decide whether a bare trailing positional is a path the user meant to scope
+  + /// the search to, rather than part of the pattern (#767).
+  + ///
+  + /// `/ast` takes its path via `--in`, but a bare second positional is the natural
+  + /// thing to reach for — and the catch-all arm of `parse_ast_grep_args` used to
+  + /// fold it into the *pattern* string, so `/ast $X.unwrap() src/` searched for the
+  + /// literal pattern `"$X.unwrap() src/"` and reported `No matches found.`: a silent
+  + /// wrong-op, the worst of the three available behaviours.
+  + ///
+  + /// This does **not** guess the user's intent by treating the token as the path —
+  + /// guessing would silently mis-scope a legitimate pattern. It only recognises the
+  + /// unambiguous shape so the caller can refuse with an actionable error:
+  + ///
+  + /// - there must be **≥2** pattern tokens, so a single-token pattern that happens
+  + ///   to name a file (`/ast mod.rs`) is untouched and keeps its escape hatch;
+  + /// - the **last** token only, since a path argument trails;
+  + /// - and that token must actually exist on disk, per the injected `exists`
+  + ///   resolver — the I/O stays at the call site so this stays pure and testable.
+  + ///
+  + /// Returns the offending token, or `None` when the input is not that shape.
+  ... (20 more lines)
+ ✓ (34.6s)
+  + /// Decide whether a bare trailing positional is a path the user meant to scope
+  + /// the search to, rather than part of the pattern (#767).
+  + ///
+  + /// `/ast` takes its path via `--in`, but a bare second positional is the natural
+  + /// thing to reach for — and the catch-all arm of `parse_ast_grep_args` used to
+  + /// fold it into the *pattern* string, so `/ast $X.unwrap() src/` searched for the
+  + /// literal pattern `"$X.unwrap() src/"` and reported `No matches found.`: a silent
+  + /// wrong-op, the worst of the three available behaviours.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (5 → 15 lines)
+        if pattern_parts.is_empty() {
+            return Err("Usage: /ast <pattern> [--lang <lang>] [--in <path>]".into());
+  +     }
+  + 
+  +     // Only when no `--in` was given: with an explicit path the trailing token is
+  +     // unambiguously part of the pattern.
+  +     if path.is_none() {
+  +         if let Some(token) =
+  +             bare_path_argument(&pattern_parts, &|p| std::path::Path::new(p).exists())
+  +         {
+  +             return Err(bare_path_error(token));
+  +         }
+        }
+    
+        Ok((pattern_parts.join(" "), lang, path))
+ ✓ (1m 40s)
+        if pattern_parts.is_empty() {
+            return Err("Usage: /ast <pattern> [--lang <lang>] [--in <path>]".into());
+  +     }
+  + 
+  +     // Only when no `--in` was given: with an explicit path the trailing token is
+  +     // unambiguously part of the pattern.
+  +     if path.is_none() {
+  +         if let Some(token) =
+  ... (7 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 24s (2 ✓)
+
+Now the tests — including one at the emission point (what a caller actually receives).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (6 → 58 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // --- #767: a bare positional path is refused, not folded into the pattern ---
+  + 
+  +     #[test]
+  +     fn bare_path_argument_needs_two_tokens_and_an_existing_path() {
+  +         let yes = |_: &str| true;
+  +         let no = |_: &str| false;
+  + 
+  +         // The shape it exists to catch.
+  +         assert_eq!(
+  +             bare_path_argument(&["$X.unwrap()", "src/"], &yes),
+  +             Some("src/")
+  +         );
+  +         // A single-token pattern keeps its escape hatch even if it names a file.
+  +         assert_eq!(bare_path_argument(&["mod.rs"], &yes), None);
+  +         // A trailing token that is not on disk is pattern syntax, not a path.
+  +         assert_eq!(bare_path_argument(&["fn", "$N()", "{", "$$$", "}"], &no), None);
+  ... (38 more lines)
+ ✓ (1m 39s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // --- #767: a bare positional path is refused, not folded into the pattern ---
+  + 
+  +     #[test]
+  +     fn bare_path_argument_needs_two_tokens_and_an_existing_path() {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (22.5s)
+  2 tools completed in 2m 6s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4874 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+An existing test pinned the old (defective) behaviour. Let me read it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 405,445p src/commands_ast… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's a characterization test of the defect itself. Updating it to pin the fixed behaviour, keeping its documentation role in both directions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_ast_grep.rs (11 → 20 lines)
+        #[test]
+        fn bare_trailing_positional_joins_the_pattern_rather_than_setting_the_path() {
+  +         // FIXED (#767): a bare trailing positional that names an existing path is
+  +         // now REFUSED with an actionable error. It is still never silently turned
+  +         // into the search path — the parser does not guess, it asks.
+  +         let err = parse_ast_grep_args("/ast $X.unwrap() src/")
+  +             .expect_err("a bare positional naming a real path must be refused");
+  +         assert!(err.contains("--in src/"), "got: {err}");
+  + 
+  +         // The other direction, unchanged: a trailing token that is not a path is
+  +         // ordinary pattern syntax and still joins the pattern.
+            let (pattern, lang, path) =
+  -             parse_ast_grep_args("/ast $X.unwrap() src/").expect("should parse");
+  -         assert_eq!(pattern, "$X.unwrap() src/");
+  +             parse_ast_grep_args("/ast $X.unwrap() $Y").expect("should parse");
+  +         assert_eq!(pattern, "$X.unwrap() $Y");
+            assert_eq!(lang, None);
+            assert_eq!(
+                path, None,
+ ✓ (1m 44s)
+        #[test]
+        fn bare_trailing_positional_joins_the_pattern_rather_than_setting_the_path() {
+  +         // FIXED (#767): a bare trailing positional that names an existing path is
+  +         // now REFUSED with an actionable error. It is still never silently turned
+  +         // into the search path — the parser does not guess, it asks.
+  +         let err = parse_ast_grep_args("/ast $X.unwrap() src/")
+  +             .expect_err("a bare positional naming a real path must be refused");
+  +         assert!(err.contains("--in src/"), "got: {err}");
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 415,425p src/commands_ast… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 417,421p src/commands_ast… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 44s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (54.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 4m 43s (6 ✓)
+
+All green. Now updating CLAUDE.md, which currently documents this defect as known-and-unfixed.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Known and unfixed" CLAU… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (24ms)
+  2 tools completed in 13.1s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
