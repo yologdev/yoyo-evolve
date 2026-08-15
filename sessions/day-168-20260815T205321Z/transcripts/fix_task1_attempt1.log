@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to complete step 3 (read + grade) and step 4. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && tail -1 … ✓ (45ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction is committed and mirrored. Now step 3 — reading the target and grading each bet.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli_config.rs && grep … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h3's headline assertion is already falsified. Let me read the whole file now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs:99..234 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs:232..310 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== LITE_SYSTEM_PROMPT cal… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1840,1870p' src/cli.rs &… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 15s (5 ✓)
+
+Now I have all three bets settled. Let me confirm the h1 defect's blast radius before deciding on the step-4 fix.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1378… (4 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h1 is a genuine, in-scope defect. Applying the step-4 fix — one line to the constant plus an emission-point test, confined to src/cli_config.rs.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs (2 → 9 lines)
+    /// Minimal system prompt for --lite mode (small/local LLMs with limited context).
+  - pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+  + ///
+  + /// Kept terse on purpose — this is substituted *wholesale* for [`SYSTEM_PROMPT`]
+  + /// (see `cli.rs`, the `if lite && !user_set_system_prompt` branch), so anything
+  + /// missing here is missing outright rather than inherited. The evidence line is
+  + /// the one section that must survive the shrink: small models are the most prone
+  + /// to inventing file paths and command output, so the guidance matters *more*
+  + /// here than in the full prompt, not less. Costs ~30 tokens of an 8k window.
+  + pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nDon't invent file paths, function names, or command output — read or run to confirm first, and say so when you don't know.\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+ ✓ (1m 43s)
+    /// Minimal system prompt for --lite mode (small/local LLMs with limited context).
+  - pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+  + ///
+  + /// Kept terse on purpose — this is substituted *wholesale* for [`SYSTEM_PROMPT`]
+  + /// (see `cli.rs`, the `if lite && !user_set_system_prompt` branch), so anything
+  + /// missing here is missing outright rather than inherited. The evidence line is
+  + /// the one section that must survive the shrink: small models are the most prone
+  + /// to inventing file paths and command output, so the guidance matters *more*
+  + /// here than in the full prompt, not less. Costs ~30 tokens of an 8k window.
+  + pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nDon't invent file paths, function names, or command output — read or run to confirm first, and say so when you don't know.\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli_config.rs (2 → 22 lines)
+  +     #[test]
+  +     fn lite_system_prompt_keeps_the_anti_fabrication_guidance() {
+  +         // --lite substitutes this string wholesale for SYSTEM_PROMPT, so the
+  +         // evidence/anti-fabrication guidance is not inherited — it either lives
+  +         // here or a --lite session runs without it. Asserted on the constant a
+  +         // caller actually receives (cli.rs sets config.system_prompt to exactly
+  +         // this value), not on some intermediate.
+  +         let p = LITE_SYSTEM_PROMPT;
+  +         assert!(
+  +             p.contains("Don't invent"),
+  +             "lite prompt lost its anti-fabrication instruction"
+  +         );
+  +         assert!(
+  +             p.contains("read or run to confirm"),
+  +             "lite prompt lost its verify-before-asserting instruction"
+  +         );
+  +         // Still minimal: the whole point of --lite is a small context budget.
+  +         assert!(p.len() < SYSTEM_PROMPT.len() / 2);
+  +     }
+  + 
+  ... (2 more lines)
+ ✓ (1m 44s)
+  +     #[test]
+  +     fn lite_system_prompt_keeps_the_anti_fabrication_guidance() {
+  +         // --lite substitutes this string wholesale for SYSTEM_PROMPT, so the
+  +         // evidence/anti-fabrication guidance is not inherited — it either lives
+  +         // here or a --lite session runs without it. Asserted on the constant a
+  +         // caller actually receives (cli.rs sets config.system_prompt to exactly
+  +         // this value), not on some intermediate.
+  +         let p = LITE_SYSTEM_PROMPT;
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (58.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test cli_config:: 2>&1 | g… ✓ (157ms)
+  5 tools completed in 5m 39s (5 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
