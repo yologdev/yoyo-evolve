@@ -21,10 +21,6 @@ pub fn parse_extract_args(input: &str) -> Option<(String, String, String)> {
     }
 }
 
-/// Find a top-level symbol block (fn, struct, enum, impl, trait, type, const, static) in source text.
-/// Returns `(start_line_0indexed, end_line_0indexed, block_text)` where the range
-/// is inclusive on both ends.
-///
 /// True for characters that can continue a Rust identifier.
 fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -195,9 +191,15 @@ fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
     out
 }
 
+/// Find a top-level symbol block (fn, struct, enum, impl, trait, type, const, static) in source text.
+/// Returns `(start_line_0indexed, end_line_0indexed, block_text)` where the range
+/// is inclusive on both ends.
+///
 /// Uses brace-depth tracking: finds the line where the symbol keyword + name appear,
 /// then scans backwards to collect any `#[...]` attributes or `///` doc comments
-/// immediately above, then scans forward counting `{` and `}` until depth returns to 0.
+/// immediately above, then scans forward counting the *structurally significant* `{`
+/// and `}` reported by [`significant_braces`] (so braces inside strings, char literals
+/// and comments are ignored) until depth returns to 0.
 pub fn find_symbol_block(source: &str, symbol: &str) -> Option<(usize, usize, String)> {
     let lines: Vec<&str> = source.lines().collect();
 
@@ -1233,7 +1235,10 @@ fn process_data() {
         let source = "fn tricky() {\n    println!(\"}\");\n    let x = 1;\n}\n";
         let (start, end, block) = find_symbol_block(source, "tricky").unwrap();
         assert_eq!((start, end), (0, 3), "block should span the whole fn");
-        assert!(block.ends_with('}'), "block should end with the closing brace");
+        assert!(
+            block.ends_with('}'),
+            "block should end with the closing brace"
+        );
     }
 
     #[test]
@@ -1246,8 +1251,7 @@ fn process_data() {
     #[test]
     fn find_symbol_block_open_brace_in_string_does_not_swallow_next_fn() {
         // Previously returned Some((0, 5, …)) — swallowed `fn after()`.
-        let source =
-            "fn tricky2() {\n    println!(\"{\");\n    let x = 1;\n}\n\nfn after() {}\n";
+        let source = "fn tricky2() {\n    println!(\"{\");\n    let x = 1;\n}\n\nfn after() {}\n";
         let (start, end, block) = find_symbol_block(source, "tricky2").unwrap();
         assert_eq!((start, end), (0, 3));
         assert!(
