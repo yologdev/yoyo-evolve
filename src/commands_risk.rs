@@ -12,9 +12,9 @@ use crate::format::*;
 pub(crate) use crate::commands_risk_snapshots::{
     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
     ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
-    parse_failed_ci_runs, parse_validation_events, risk_autosnapshot_enabled, snapshot_before,
-    write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
-    RISK_VALIDATION_PATH,
+    parse_failed_ci_runs, parse_validation_events, read_validation_ledger,
+    risk_autosnapshot_enabled, snapshot_before, write_risk_snapshot_to, write_validation_event,
+    ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.
@@ -1163,9 +1163,45 @@ fn format_learning_status(weights_path: &std::path::Path) -> String {
     out
 }
 
+/// One honest line about the *state of the ledger file itself*, printed above
+/// `/risk accuracy`'s report. Pure so the string a user receives can be
+/// asserted directly (#764: all three ledger states used to render
+/// identically).
+///
+/// `None` on the two states whose existing output is already correct: a
+/// healthy ledger (say nothing) and a genuinely missing one (the report's own
+/// "accuracy tracking starts automatically" copy is true).
+fn ledger_health_line(ledger: &ValidationLedger) -> Option<String> {
+    match ledger {
+        ValidationLedger::Missing => None,
+        ValidationLedger::Unreadable(msg) => Some(msg.clone()),
+        ValidationLedger::Present { dropped: 0, .. } => None,
+        ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+            "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+             the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+             does not apply here."
+        )),
+        ValidationLedger::Present { dropped, .. } => Some(format!(
+            "{RISK_VALIDATION_PATH}: {dropped} unparseable line(s) skipped — \
+             the numbers below cover only the rest of the ledger."
+        )),
+    }
+}
+
 /// Handle the `/risk accuracy` subcommand.
 fn handle_risk_accuracy() {
-    let events = load_validation_history_from(std::path::Path::new(RISK_VALIDATION_PATH));
+    // Read the ledger through the three-state reader so a corrupt file can't
+    // masquerade as a missing one (#764). Still open on that issue: a line
+    // that is valid JSON but missing fields is absorbed by the parser's
+    // `unwrap_or` defaults and counts as a healthy event.
+    let ledger = read_validation_ledger(std::path::Path::new(RISK_VALIDATION_PATH));
+    if let Some(line) = ledger_health_line(&ledger) {
+        println!("  {YELLOW}⚠ {line}{RESET}");
+    }
+    let events = match ledger {
+        ValidationLedger::Present { events, .. } => events,
+        _ => Vec::new(),
+    };
     let stats = compute_accuracy_stats(&events);
 
     // Section 1: Overall accuracy summary
