@@ -8,13 +8,21 @@
 //! `Agent::prompt_with_sender` so run/tool events are actually recorded. All
 //! four agent-start call sites in `src/prompt.rs` go through those helpers.
 //!
-//! Ported from the sidecar, and **only these two**: `session-start`
-//! (`session_start`) and `task` (`task_planned`), plus the `ensure_goal` helper
-//! they share. `task-result` and `session-end` are **still only in
-//! `tools/gasp-emit`** — they need `StatePatch` / `propose_patch` / `link` /
-//! `EvalResult`. The ported pair ships **dormant**: nothing calls it yet, since
-//! its consumers are #683 items (3)+(7) (the operator-lane env bridge). It
-//! compiles, it unit-tests, it records nothing.
+//! Ported from the sidecar, and **only these three arms**: `session-start`
+//! (`session_start`), `task` (`task_planned`) and `session-end`
+//! (`session_end`), plus the `ensure_goal` helper the first two share.
+//! `task-result` is **still only in `tools/gasp-emit`**, and the reason is that
+//! it is *unreachable* from yoyo rather than merely unwritten: it names
+//! `ProjectRef`, `ArtifactRef` and `PatchStatus`, none of which appear anywhere
+//! in the published yoagent 0.16.3 source (verified by grepping the crate — no
+//! matches), so there is nothing here to call. `session_end` is the odd one of
+//! the three: it has no store-generic `*_in` body, because `commit_run` /
+//! `release_lease` are `GitEventStore` *inherent* methods rather than
+//! `EventStore` trait methods, so it cannot be driven against a scratch store
+//! and is compile-tested only (its two pure halves are table-tested). All
+//! three ship **dormant**: nothing calls them yet, since their consumers are
+//! #683 items (3)+(7) (the operator-lane env bridge). They compile, they
+//! unit-test, they record nothing.
 //!
 //! Redaction is not optional here: recorded summaries land in a *shareable*
 //! git repo, so the recorder is opened with `with_summarizer(redact_secrets)`
@@ -226,16 +234,17 @@ pub(crate) async fn tee_prompt_messages(
 // ---------------------------------------------------------------------------
 // Session-graph emission — the ported half of `tools/gasp-emit` (#683 item 5)
 //
-// LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
-// share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
-// those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
-// where the rest of that surface's complexity lives. This half is a prefix of
-// the sequence, not a replacement for the sidecar.
+// LANDED HERE: `session-start`, `task` (plus the `ensure_goal` helper they
+// share) and, since Day 168, `session-end`. STILL ONLY IN `tools/gasp-emit`:
+// `task-result` — it names `ProjectRef`, `ArtifactRef` and `PatchStatus`, none
+// of which appear anywhere in the published yoagent 0.16.3 source (grepped, no
+// matches), so it is unreachable from yoyo today rather than merely unwritten.
+// This half is a prefix of the sequence, not a replacement for the sidecar.
 //
 // Everything below ships DORMANT: nothing calls `session_start` /
-// `task_planned` yet. Their consumers are #683 items (3)+(7), the operator-lane
-// env bridge, which is deliberately not wired here — wiring it early would
-// destroy the sidecar's session record.
+// `task_planned` / `session_end` yet. Their consumers are #683 items (3)+(7),
+// the operator-lane env bridge, which is deliberately not wired here — wiring
+// it early would destroy the sidecar's session record.
 // ---------------------------------------------------------------------------
 
 /// The standing goal an evolve session serves when none is named. Copied
