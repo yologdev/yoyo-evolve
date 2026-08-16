@@ -674,6 +674,10 @@ struct PostPromptContext<'a> {
     turn_history: &'a mut TurnHistory,
     turn_snap: TurnSnapshot,
     changes_before: &'a [String],
+    /// Monotonic edit count captured BEFORE this turn ran. `changes_before` is
+    /// path-deduped and feeds the summary body; this answers "did this turn
+    /// edit anything" (#774).
+    edits_before: usize,
     last_error: &'a mut Option<String>,
     prompt_start: Instant,
     effective_input: &'a str,
@@ -766,7 +770,8 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
     }
     ctx.turn_history.push(ctx.turn_snap);
 
-    let files_modified = changes_after.len() > ctx.changes_before.len();
+    // Edits, not distinct files: turn 2 re-editing the same file still worked.
+    let files_modified = ctx.session_changes.edit_count() > ctx.edits_before;
 
     // Show a compact summary of files changed in this turn
     if files_modified && !is_quiet() {
@@ -1109,6 +1114,7 @@ pub async fn run_repl(
             .iter()
             .map(|c| c.path.clone())
             .collect();
+        let edits_before = session_changes.edit_count();
         let mut turn_snap = TurnSnapshot::new();
         for path in &changes_before {
             turn_snap.snapshot_file(path);
@@ -1284,6 +1290,7 @@ pub async fn run_repl(
             turn_history: &mut turn_history,
             turn_snap,
             changes_before: &changes_before,
+            edits_before,
             last_error: &mut last_error,
             prompt_start,
             effective_input: &effective_input,
@@ -1309,7 +1316,7 @@ pub async fn run_repl(
                     agent.follow_up_queue_len(),
                     // Same tool-usage proxy the turn-end marker uses below:
                     // the turn touched at least one file.
-                    session_changes.snapshot().len() > changes_before.len(),
+                    session_changes.edit_count() > edits_before,
                     crate::cli::is_continue_on_silence(),
                 )
                 && !crate::prompt_budget::session_budget_exhausted(30)
@@ -1332,6 +1339,7 @@ pub async fn run_repl(
                 }
 
                 // Snapshot state for the continuation turn
+                let cont_edits_before = session_changes.edit_count();
                 let cont_changes_before: Vec<String> = session_changes
                     .snapshot()
                     .iter()
@@ -1374,6 +1382,7 @@ pub async fn run_repl(
                     turn_history: &mut turn_history,
                     turn_snap: cont_turn_snap,
                     changes_before: &cont_changes_before,
+                    edits_before: cont_edits_before,
                     last_error: &mut last_error,
                     prompt_start: cont_start,
                     effective_input: cont_prompt,
@@ -1390,12 +1399,13 @@ pub async fn run_repl(
             // as "maybe type continue?"; a stated belief can be wrong, but it
             // can also be argued with.
             //
-            // `did_work` proxy: the turn touched at least one file. That's the
-            // cheapest signal reachable here — imprecise for read-only turns
-            // (a paused exploration turn prints nothing), but the error is
-            // toward silence, which is the product-safe direction.
+            // `did_work` predicate: this turn recorded >=1 file edit (a
+            // monotonic count, so re-editing one file across several turns
+            // still counts — #774). Imprecise for read-only turns (a paused
+            // exploration turn prints nothing), but the error is toward
+            // silence, which is the product-safe direction.
             if !is_quiet() {
-                let did_work = session_changes.snapshot().len() > changes_before.len();
+                let did_work = session_changes.edit_count() > edits_before;
                 let queue_pending = agent.follow_up_queue_len();
                 let final_text_chars = last_text.trim().chars().count();
                 let end = classify_turn_end(

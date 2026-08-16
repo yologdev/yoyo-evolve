@@ -6,6 +6,7 @@
 use crate::format::pluralize;
 use crate::sync_util::lock_or_recover;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Tracks files modified during a session via write_file and edit_file tool calls.
@@ -13,6 +14,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 pub struct SessionChanges {
     inner: Arc<Mutex<Vec<FileChange>>>,
+    /// Monotonic count of every `record` call, INCLUDING repeats of a path
+    /// already in `inner`. `inner.len()` deliberately deduplicates by path, so
+    /// it answers "how many distinct files has this session touched" — a
+    /// session-wide question. Per-turn "did this turn do work?" checks need the
+    /// other one, and editing a single file across several turns is the shape
+    /// where the two disagree (#774). Shared with the vec via `Arc` so clones
+    /// see the same counter.
+    edits: Arc<AtomicUsize>,
 }
 
 /// A single file modification event.
@@ -43,12 +52,16 @@ impl SessionChanges {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(Vec::new())),
+            edits: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     /// Record a file modification.
     pub fn record(&self, path: &str, kind: ChangeKind) {
         let mut changes = lock_or_recover(&self.inner);
+        // Bump unconditionally — on BOTH branches below. This counts edits,
+        // not distinct files.
+        self.edits.fetch_add(1, Ordering::Relaxed);
         // Update existing entry if same path, or add new
         if let Some(existing) = changes.iter_mut().find(|c| c.path == path) {
             existing.kind = kind;
@@ -65,9 +78,17 @@ impl SessionChanges {
         lock_or_recover(&self.inner).clone()
     }
 
+    /// Number of `record` calls since the last [`SessionChanges::clear`],
+    /// counting repeat edits of the same path. Use this — not
+    /// `snapshot().len()` — to ask "did this turn do work?".
+    pub fn edit_count(&self) -> usize {
+        self.edits.load(Ordering::Relaxed)
+    }
+
     /// Clear all tracked changes.
     pub fn clear(&self) {
         lock_or_recover(&self.inner).clear();
+        self.edits.store(0, Ordering::Relaxed);
     }
 
     /// Return a JSON summary of file changes for `--json` output.
@@ -354,6 +375,46 @@ mod tests {
         let snapshot = changes.snapshot();
         assert_eq!(snapshot[0].path, "src/cli.rs");
         assert_eq!(snapshot[0].kind, ChangeKind::Edit);
+    }
+
+    #[test]
+    fn test_edit_count_counts_every_record_even_on_the_same_path() {
+        // The bug this counter exists for: iterating on ONE file across turns.
+        // The path-deduped vec stays at length 1 while real edits accumulate.
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        changes.record("src/main.rs", ChangeKind::Edit);
+        assert_eq!(changes.edit_count(), 2, "both records must be counted");
+        assert_eq!(changes.snapshot().len(), 1, "path dedup is unchanged");
+    }
+
+    #[test]
+    fn test_edit_count_two_distinct_paths() {
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        changes.record("src/cli.rs", ChangeKind::Edit);
+        assert_eq!(changes.edit_count(), 2);
+        assert_eq!(changes.snapshot().len(), 2);
+    }
+
+    #[test]
+    fn test_clear_resets_edit_count_as_well_as_the_vec() {
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        changes.record("src/main.rs", ChangeKind::Edit);
+        changes.clear();
+        assert_eq!(changes.edit_count(), 0);
+        assert_eq!(changes.snapshot().len(), 0);
+    }
+
+    #[test]
+    fn test_edit_count_is_shared_across_clones() {
+        // SessionChanges is Clone and shared across async tasks; a clone must
+        // see the same counter, exactly as it sees the same vec.
+        let changes = SessionChanges::new();
+        let cloned = changes.clone();
+        cloned.record("src/main.rs", ChangeKind::Write);
+        assert_eq!(changes.edit_count(), 1);
     }
 
     #[test]
