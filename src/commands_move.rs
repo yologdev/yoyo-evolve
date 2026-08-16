@@ -132,12 +132,18 @@ pub fn find_impl_blocks(source: &str, type_name: &str) -> Vec<(usize, usize, Str
                 }
             }
 
-            // Brace-depth tracking
+            // Brace-depth tracking. Braces inside string/char literals and comments
+            // are not structural — the scan iterates `significant_braces` (#771 item 3:
+            // a body containing `println!("}")` or a trailing `// }` used to end the
+            // impl block early, and `/move` rewrites two files off this range).
             let mut depth: i32 = 0;
             let mut found_open = false;
             let mut end = i;
+            // Per scan, not per line: a `/* … */` may span lines.
+            let mut in_block_comment = false;
             for (j, line) in lines.iter().enumerate().skip(i) {
-                for ch in line.chars() {
+                for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment)
+                {
                     if ch == '{' {
                         depth += 1;
                         found_open = true;
@@ -225,12 +231,15 @@ pub fn find_method_in_impl(
         }
     }
 
-    // Brace-depth tracking forward
+    // Brace-depth tracking forward. Braces inside string/char literals and comments are
+    // not structural — see `commands_refactor::significant_braces` (#771 item 3).
     let mut depth: i32 = 0;
     let mut found_open = false;
     let mut end = decl_line;
+    // Per scan, not per line: a `/* … */` may span lines.
+    let mut in_block_comment = false;
     for (j, line) in lines.iter().enumerate().skip(decl_line) {
-        for ch in line.chars() {
+        for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment) {
             if ch == '{' {
                 depth += 1;
                 found_open = true;

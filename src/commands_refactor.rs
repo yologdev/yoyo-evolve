@@ -108,7 +108,12 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
 /// that reads as complete.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
-fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+///
+/// `pub(crate)` because it has a second consumer: `find_impl_blocks` and
+/// `find_method_in_impl` in `commands_move.rs` used to count braces with no
+/// string/comment state at all, which is the same data-corruption class through
+/// `/move` that #770 fixed here (#771 item 3). One scanner, one set of table tests.
+pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
     let chars: Vec<char> = line.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
