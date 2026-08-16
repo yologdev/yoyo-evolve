@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 0 — reading the actual gasp.rs comment blocks before rewriting them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '215,250p' src/gasp.rs ✓ (5ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (45 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp-emit\|still only\|… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:225..245 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:476..521 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 11.5s (6 ✓)
+
+Confirmed both blocks contradict the code. Rewriting them (comment-only):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (7 → 15 lines)
+  - //! Ported from the sidecar, and **only these two**: `session-start`
+  - //! (`session_start`) and `task` (`task_planned`), plus the `ensure_goal` helper
+  - //! they share. `task-result` and `session-end` are **still only in
+  - //! `tools/gasp-emit`** — they need `StatePatch` / `propose_patch` / `link` /
+  - //! `EvalResult`. The ported pair ships **dormant**: nothing calls it yet, since
+  - //! its consumers are #683 items (3)+(7) (the operator-lane env bridge). It
+  - //! compiles, it unit-tests, it records nothing.
+  + //! Ported from the sidecar, and **only these three arms**: `session-start`
+  + //! (`session_start`), `task` (`task_planned`) and `session-end`
+  + //! (`session_end`), plus the `ensure_goal` helper the first two share.
+  + //! `task-result` is **still only in `tools/gasp-emit`**, and the reason is that
+  + //! it is *unreachable* from yoyo rather than merely unwritten: it names
+  + //! `ProjectRef`, `ArtifactRef` and `PatchStatus`, none of which appear anywhere
+  + //! in the published yoagent 0.16.3 source (verified by grepping the crate — no
+  + //! matches), so there is nothing here to call. `session_end` is the odd one of
+  + //! the three: it has no store-generic `*_in` body, because `commit_run` /
+  + //! `release_lease` are `GitEventStore` *inherent* methods rather than
+  + //! `EventStore` trait methods, so it cannot be driven against a scratch store
+  + //! and is compile-tested only (its two pure halves are table-tested). All
+  + //! three ship **dormant**: nothing calls them yet, since their consumers are
+  ... (2 more lines)
+ ✓ (56.3s)
+  - //! Ported from the sidecar, and **only these two**: `session-start`
+  - //! (`session_start`) and `task` (`task_planned`), plus the `ensure_goal` helper
+  - //! they share. `task-result` and `session-end` are **still only in
+  - //! `tools/gasp-emit`** — they need `StatePatch` / `propose_patch` / `link` /
+  - //! `EvalResult`. The ported pair ships **dormant**: nothing calls it yet, since
+  - //! its consumers are #683 items (3)+(7) (the operator-lane env bridge). It
+  - //! compiles, it unit-tests, it records nothing.
+  + //! Ported from the sidecar, and **only these three arms**: `session-start`
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (10 → 11 lines)
+  - // LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
+  - // share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
+  - // those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
+  - // where the rest of that surface's complexity lives. This half is a prefix of
+  - // the sequence, not a replacement for the sidecar.
+  + // LANDED HERE: `session-start`, `task` (plus the `ensure_goal` helper they
+  + // share) and, since Day 168, `session-end`. STILL ONLY IN `tools/gasp-emit`:
+  + // `task-result` — it names `ProjectRef`, `ArtifactRef` and `PatchStatus`, none
+  + // of which appear anywhere in the published yoagent 0.16.3 source (grepped, no
+  + // matches), so it is unreachable from yoyo today rather than merely unwritten.
+  + // This half is a prefix of the sequence, not a replacement for the sidecar.
+    //
+    // Everything below ships DORMANT: nothing calls `session_start` /
+  - // `task_planned` yet. Their consumers are #683 items (3)+(7), the operator-lane
+  - // env bridge, which is deliberately not wired here — wiring it early would
+  - // destroy the sidecar's session record.
+  + // `task_planned` / `session_end` yet. Their consumers are #683 items (3)+(7),
+  + // the operator-lane env bridge, which is deliberately not wired here — wiring
+  + // it early would destroy the sidecar's session record.
+ ✓ (56.4s)
+  - // LANDED HERE: `session-start` and `task` (plus the `ensure_goal` helper they
+  - // share). STILL ONLY IN `tools/gasp-emit`: `task-result` and `session-end` —
+  - // those need `StatePatch` / `propose_patch` / `link` / `EvalResult`, which is
+  - // where the rest of that surface's complexity lives. This half is a prefix of
+  - // the sequence, not a replacement for the sidecar.
+  + // LANDED HERE: `session-start`, `task` (plus the `ensure_goal` helper they
+  + // share) and, since Day 168, `session-end`. STILL ONLY IN `tools/gasp-emit`:
+  + // `task-result` — it names `ProjectRef`, `ArtifactRef` and `PatchStatus`, none
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo fmt -- … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (13ms)
+  4 tools completed in 2m 9s (4 ✓)
+
+Step 0 committed. Now step 1 — reading the actual update code.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_update.rs && … ✓ (5ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

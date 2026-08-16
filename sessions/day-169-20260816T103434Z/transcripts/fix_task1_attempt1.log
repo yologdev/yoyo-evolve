@@ -1,0 +1,192 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual file to see what's there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tmp\|unzip\|tar\|Comman… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_update…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 90,190p src/commands_upda… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,190p src/commands_upd… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 19.5s (5 ✓)
+
+Now I'll implement step 1. First the path + extractor pure helpers:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (4 → 85 lines)
+    
+    use crate::cli;
+    use crate::format::*;
+  + use std::path::{Path, PathBuf};
+  + 
+  + /// Where one `/update` run stages its download and its extracted tree.
+  + ///
+  + /// Both paths are built with [`Path::join`], never by string concatenation with
+  + /// `/`, so they are correct on Windows as well as Unix. See [`update_paths`].
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub(crate) struct UpdatePaths {
+  +     /// The downloaded archive.
+  +     pub archive: PathBuf,
+  +     /// The directory the archive is extracted into — unique per run.
+  +     pub extract_dir: PathBuf,
+  + }
+  + 
+  + /// Build the staging paths for one update run (pure).
+  + ///
+  + /// `temp_root` is the caller's temp directory (`std::env::temp_dir()` in
+  ... (64 more lines)
+ ✓ (19.4s)
+    
+    use crate::cli;
+    use crate::format::*;
+  + use std::path::{Path, PathBuf};
+  + 
+  + /// Where one `/update` run stages its download and its extracted tree.
+  + ///
+  + /// Both paths are built with [`Path::join`], never by string concatenation with
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now wiring the consumers:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (22 → 28 lines)
+        // Step 4: Download
+  -     let temp_path = format!("/tmp/yoyo-update-{}.{}", latest_version, ext);
+  +     let run_id = update_run_id();
+  +     let paths = update_paths(&std::env::temp_dir(), &run_id, latest_version, ext);
+  +     let temp_path = paths.archive.to_string_lossy().to_string();
+  +     let extract_dir = paths.extract_dir.to_string_lossy().to_string();
+    
+        println!("Downloading {}...", asset_name);
+        match download_file(&download_url, &temp_path) {
+            Ok(_) => (),
+            Err(e) => {
+  +             let _ = std::fs::remove_file(&paths.archive);
+                let install_cmd = if os == "windows" {
+                    "irm https://raw.githubusercontent.com/yologdev/yoyo-evolve/main/install.ps1 | iex"
+                } else {
+  ···
+            }
+        }
+    
+  -     // Step 5: Extract and replace
+  ... (7 more lines)
+ ✓ (19.4s)
+        // Step 4: Download
+  -     let temp_path = format!("/tmp/yoyo-update-{}.{}", latest_version, ext);
+  +     let run_id = update_run_id();
+  +     let paths = update_paths(&std::env::temp_dir(), &run_id, latest_version, ext);
+  +     let temp_path = paths.archive.to_string_lossy().to_string();
+  +     let extract_dir = paths.extract_dir.to_string_lossy().to_string();
+    
+        println!("Downloading {}...", asset_name);
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (23 → 22 lines)
+  -     if archive_path.ends_with(".tar.gz") {
+  -         // Extract tar.gz
+  -         std::process::Command::new("tar")
+  -             .args(["xzf", archive_path, "-C", extract_dir])
+  -             .output()
+  -             .map_err(|e| format!("Failed to extract tar.gz: {}", e))?
+  -             .status
+  -             .success()
+  -             .then_some(())
+  -             .ok_or_else(|| "Failed to extract tar.gz".to_string())?;
+  -     } else if archive_path.ends_with(".zip") {
+  -         // Extract zip
+  -         std::process::Command::new("unzip")
+  -             .args([archive_path, "-d", extract_dir])
+  +     if let Some(argv) = extractor_argv(archive_path, extract_dir) {
+  +         let program = &argv[0];
+  +         let output = std::process::Command::new(program)
+  +             .args(&argv[1..])
+                .output()
+  -             .map_err(|e| format!("Failed to extract zip: {}", e))?
+  ... (21 more lines)
+ ✓ (1m 40s)
+  -     if archive_path.ends_with(".tar.gz") {
+  -         // Extract tar.gz
+  -         std::process::Command::new("tar")
+  -             .args(["xzf", archive_path, "-C", extract_dir])
+  -             .output()
+  -             .map_err(|e| format!("Failed to extract tar.gz: {}", e))?
+  -             .status
+  -             .success()
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 9s (2 ✓)
+
+Now the failure-path cleanup (a failed update must not leave a poisoned directory):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 165,205p src/commands_upd… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 205,265p src/commands_upd… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 265,285p src/commands_upd… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (2 → 7 lines)
+                }
+  +             // Remove the half-extracted tree so a failed update leaves nothing
+  +             // a later run could mistake for a complete extraction. The archive
+  +             // itself is deliberately kept — the extractor errors above name it
+  +             // so the user can finish by hand.
+  +             let _ = std::fs::remove_dir_all(&paths.extract_dir);
+                Err(format!("Failed to extract archive: {}", e))
+ ✓ (1m 37s)
+                }
+  +             // Remove the half-extracted tree so a failed update leaves nothing
+  +             // a later run could mistake for a complete extraction. The archive
+  +             // itself is deliberately kept — the extractor errors above name it
+  +             // so the user can finish by hand.
+  +             let _ = std::fs::remove_dir_all(&paths.extract_dir);
+                Err(format!("Failed to extract archive: {}", e))
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 48s (4 ✓)
+
+Now the tests at the emission point:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_update.rs (4 → 166 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // ---- Windows-safety of the staging paths and the extractor choice (#756) ----
+  +     //
+  +     // These pin what a caller actually receives: the `PathBuf`s handed to the
+  +     // download/extract steps, and the argv that reaches the OS. They never
+  +     // shell out to a real download or a real extractor.
+  + 
+  +     #[test]
+  +     fn update_paths_are_under_the_given_temp_root() {
+  +         for root in [
+  +             Path::new("/tmp"),
+  +             Path::new("/var/folders/x9/tmpdir"),
+  +             Path::new(r"C:\Users\me\AppData\Local\Temp"),
+  +         ] {
+  +             let p = update_paths(root, "4242-1700000000", "v0.1.16", "tar.gz");
+  +             assert!(
+  +                 p.archive.starts_with(root),
+  ... (146 more lines)
+ ✓ (1m 38s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // ---- Windows-safety of the staging paths and the extractor choice (#756) ----
+  +     //
+  +     // These pin what a caller actually receives: the `PathBuf`s handed to the
+  +     // download/extract steps, and the argv that reaches the OS. They never
+  ... (13 more lines)
+  2 tools completed in 2m 4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

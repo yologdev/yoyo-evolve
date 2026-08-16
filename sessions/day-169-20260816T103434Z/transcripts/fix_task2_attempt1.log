@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the experiment ledger for this round.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 drea… (9 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The prediction and h1 grade are in place; h2 and h3 are ungraded. Let me run their named evidence commands against the target.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h2 evidence ===" && gr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/docs.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,235p' src/docs.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '225,260p' src/docs.rs; e… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 55.1s (4 ✓)
+
+Both settle. h2 is falsified (bound exists and is marked in band); h3 is a partial — the mechanism I predicted is wrong, but the conflation is real in one of the two entry points:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/docs.rs:196..218 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The h3 finding is a real user-visible defect and fits the ≤20-line cap. Landing the fix in one file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/docs.rs (9 → 4 lines)
+        let body = match fetch_docs_html(&url) {
+            Ok(body) => body,
+  -         Err(_) => {
+  -             return (
+  -                 false,
+  -                 format!("Item '{item}' not found in crate '{crate_name}' on docs.rs"),
+  -             );
+  -         }
+  +         Err(e) => return (false, item_fetch_error_message(&e, crate_name, item)),
+        };
+ ✓ (12.1s)
+        let body = match fetch_docs_html(&url) {
+            Ok(body) => body,
+  -         Err(_) => {
+  -             return (
+  -                 false,
+  -                 format!("Item '{item}' not found in crate '{crate_name}' on docs.rs"),
+  -             );
+  -         }
+  +         Err(e) => return (false, item_fetch_error_message(&e, crate_name, item)),
+        };
+
+Expected — adding the definition in the same edit (the "never add a definition without its consumer" rule, run in reverse):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/docs.rs (1 → 16 lines)
+  + /// Build the user-facing message for a failed item fetch.
+  + ///
+  + /// A transport failure and a genuine "item not found" are different facts and must not
+  + /// reach the user as one sentence: telling someone their item does not exist in the crate
+  + /// when the machine is offline (or `curl` is missing, or docs.rs returned a 500) sends them
+  + /// to check their spelling for a problem that is not theirs. `fetch_docs_summary` already
+  + /// separates the two; this is the same separation for the item path.
+  + fn item_fetch_error_message(err: &str, crate_name: &str, item: &str) -> String {
+  +     if err.contains("Could not reach") || err.contains("Error fetching docs") {
+  +         format!("{err} (looking up '{item}' in '{crate_name}')")
+  +     } else {
+  +         format!("Item '{item}' not found in crate '{crate_name}' on docs.rs")
+  +     }
+  + }
+  + 
+    /// Fetch docs for a specific item within a crate (e.g., `/docs tokio task`).
+ ✓ (1m 52s)
+  + /// Build the user-facing message for a failed item fetch.
+  + ///
+  + /// A transport failure and a genuine "item not found" are different facts and must not
+  + /// reach the user as one sentence: telling someone their item does not exist in the crate
+  + /// when the machine is offline (or `curl` is missing, or docs.rs returned a 500) sends them
+  + /// to check their spelling for a problem that is not theirs. `fetch_docs_summary` already
+  + /// separates the two; this is the same separation for the item path.
+  + fn item_fetch_error_message(err: &str, crate_name: &str, item: &str) -> String {
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -12 src/docs.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (55 lines) ✓ (24.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 32s (3 ✓)
+
+Fix is green. Now re-reading the actual diff before authoring the grading line (round 36's lesson):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat src/docs.rs && e… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both bets settled. Appending the grades — one line per bet, as the protocol's "append as you go" requires:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (62 lines) ✓ (76ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
