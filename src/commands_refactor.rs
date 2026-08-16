@@ -29,7 +29,15 @@ fn is_ident_char(c: char) -> bool {
 /// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
 /// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
 /// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
-fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+///
+/// Recognised: `'x'`, `'\n'`-style one-char escapes, and `'\u{7d}'` unicode escapes.
+///
+/// Two consumers, deliberately sharing one scanner: [`significant_braces`] here (so a
+/// brace inside a char literal is not structural, #770) and
+/// `format::highlight::highlight_code_line` (so a lifetime tick does not open a string
+/// literal and swallow the rest of the line, #759). A second copy of this rule is how
+/// #759 outlived #770 by a day — keep it one implementation with one table test.
+pub(crate) fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
     let mut j = start + 1;
     let first = *chars.get(j)?;
     if first == '\'' {

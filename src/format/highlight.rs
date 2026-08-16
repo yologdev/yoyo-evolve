@@ -29,31 +29,17 @@ fn normalize_lang(lang: &str) -> Option<&'static str> {
 
 /// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
 ///
-/// Returns the index of the closing `'` when it does, `None` otherwise. Only the
-/// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
-/// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
-/// as a lifetime, because guessing the other way is what produced #759.
+/// Delegates to [`crate::commands_refactor::char_literal_len`] — the *same* rule that
+/// keeps a brace inside a char literal from counting as structural (#770). The
+/// highlighter used to carry its own narrower copy of this discrimination; one scanner
+/// with one table test is the point, because two copies is exactly how the lifetime bug
+/// survived here after being fixed there.
 ///
-/// Known gap, stated rather than papered over: a unicode escape such as `'\u{1F600}'`
-/// is longer than one char after the backslash, so it reads as a lifetime and is
-/// emitted unstyled. That loses colour on a rare literal; the old behaviour lost the
-/// rest of the line on a common one.
-fn rust_char_literal_end(chars: &[char], i: usize) -> Option<usize> {
-    if chars.get(i) != Some(&'\'') {
-        return None;
-    }
-    // 'x' — one char, then the closing tick.
-    if chars.get(i + 1).is_some_and(|c| *c != '\\') && chars.get(i + 2) == Some(&'\'') {
-        return Some(i + 2);
-    }
-    // '\n' / '\\' / '\'' — backslash, one char, then the closing tick.
-    if chars.get(i + 1) == Some(&'\\')
-        && chars.get(i + 2).is_some()
-        && chars.get(i + 3) == Some(&'\'')
-    {
-        return Some(i + 3);
-    }
-    None
+/// Recognised as char literals: `'x'`, one-char escapes (`'\n'`, `'\\'`, `'\''`) and
+/// unicode escapes (`'\u{7d}'`). Everything else (`'a`, `'a>`, `'static`, `'_`) is a
+/// lifetime and is emitted as plain text, because guessing the other way produced #759.
+fn is_rust_char_literal(chars: &[char], i: usize) -> bool {
+    chars.get(i) == Some(&'\'') && crate::commands_refactor::char_literal_len(chars, i).is_some()
 }
 
 /// Get the keyword list for a normalized language.
@@ -419,7 +405,7 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
         // next `'` or end of line, swallowing real string literals and pairing two
         // lifetimes into one green run (#759). Only the unambiguous char-literal
         // shapes open a literal here; everything else is emitted as plain text.
-        if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+        if norm == "rust" && ch == '\'' && !is_rust_char_literal(&chars, i) {
             result.push(ch);
             i += 1;
             continue;
@@ -1272,25 +1258,30 @@ mod tests {
 
     #[test]
     fn test_rust_char_literal_end_table() {
-        let cases: &[(&str, Option<usize>)] = &[
-            ("'x'", Some(2)),
-            ("'\\n'", Some(3)),
-            ("'\\\\'", Some(3)),
-            ("'\\''", Some(3)),
-            ("'a", None),
-            ("'a>", None),
-            ("'static", None),
-            ("'_", None),
-            ("'", None),
-            ("''", None),
+        // Tables the discrimination the highlighter consumes. Since Day 169 the rule
+        // lives once, in `commands_refactor::char_literal_len`, so the unicode-escape
+        // rows below are new coverage the old local copy could not satisfy.
+        let cases: &[(&str, bool)] = &[
+            ("'x'", true),
+            ("'\\n'", true),
+            ("'\\\\'", true),
+            ("'\\''", true),
+            ("'\\u{7d}'", true),
+            ("'\\u{1F600}'", true),
+            ("'a", false),
+            ("'a>", false),
+            ("'static", false),
+            ("'_", false),
+            ("'", false),
+            ("''", false),
         ];
         for (src, want) in cases {
             let chars: Vec<char> = src.chars().collect();
-            assert_eq!(rust_char_literal_end(&chars, 0), *want, "input {src:?}");
+            assert_eq!(is_rust_char_literal(&chars, 0), *want, "input {src:?}");
         }
-        // Not a tick at all -> None.
+        // Not a tick at all -> not a char literal.
         let chars: Vec<char> = "x".chars().collect();
-        assert_eq!(rust_char_literal_end(&chars, 0), None);
+        assert!(!is_rust_char_literal(&chars, 0));
     }
 
     #[test]
