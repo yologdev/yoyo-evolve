@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: Only step 1 landed — the `type:"experiment"` prediction line for round 61 (plus the verified #738 comment at issue-comment 5309852492) — but there is no `type:"experiment_result"` line for round 61 anywhere in dreams/experiments.jsonl (`grep -c 'experiment_result.*"round": 61'` returns 0) and the working tree is clean, so the grade the task called "a hard requirement of this task, not a nice-to-have" was never authored. That is exactly the rounds-42/43/44 failure mode this round was written to stop.
+Checked: intent_alignment: FAIL: Steps 1a/1b/1c are done and done well (bets registered before the read, mirrored to #738, prediction-only commit ad725179), but steps 2 and 3 are absent — no evidence-command results and no hypothesis_grades for round 61, which the task's own guardrail said to preserve even at the cost of the optional fix.
+Checked: forgotten_touchpoints: PASS: The diff adds one JSONL ledger line and no Rust definitions, enum variants, or renames; no source file is touched, so there is no definition-without-consumer risk.
+Checked: doc_sync: N/A: No source fix landed (step 4 not taken), and the task explicitly says no CLAUDE.md change is required unless step 4 lands a source change.
+Checked: product_surface: N/A: The diff touches only dreams/experiments.jsonl — no config defaults, CLI flags, wizard, or startup behavior.

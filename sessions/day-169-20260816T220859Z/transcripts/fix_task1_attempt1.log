@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check the current state and fix the missing docs deliverable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "edits\|edit_count" src/… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Code is in place. Now the missing docs deliverable:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
+  + - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`). Day 169 (#774): `SessionChanges` carries a **monotonic edit counter** (`edits: Arc<AtomicUsize>`, read via `edit_count()`, bumped unconditionally by `record` on *both* the dedup and push branches, zeroed by `clear()`) alongside the path-deduped vec, which keeps its exact meaning — `snapshot().len()` still counts **distinct files** and both dedup tests (`test_session_changes_deduplicates_same_path`, `test_to_json_summary_deduplicates_paths`) are untouched. Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the `used_tools` argument to `should_auto_continue` (the `--continue-on-silence` gate), and `did_work` (the turn-end marker). Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is.
+ ✓ (47.3s)
+  - - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
+  + - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`). Day 169 (#774): `SessionChanges` carries a **monotonic edit counter** (`edits: Arc<AtomicUsize>`, read via `edit_count()`, bumped unconditionally by `record` on *both* the dedup and push branches, zeroed by `clear()`) alongside the path-deduped vec, which keeps its exact meaning — `snapshot().len()` still counts **distinct files** and both dedup tests (`test_session_changes_deduplicates_same_path`, `test_to_json_summary_deduplicates_paths`) are untouched. Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the `used_tools` argument to `should_auto_continue` (the `--continue-on-silence` gate), and `did_work` (the turn-end marker). Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (34.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A15 "^fa… ✓ (47.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 "pani… ✓ (47.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (43.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo > /tmp/t.l… ✓ (44.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t2.log 2>&1; e… ✓ (47.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t3.log 2>&1; e… ✓ (47.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (304ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (13 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 6m 31s (10 ✓)
+
+Done.
+
+**What was missing:** only the Docs deliverable. The evaluator confirmed the code half (counter + all three `repl.rs` consumers + the `:1394` comment) was already correct and complete in 0c741e71; git diff HEAD~1 --stat showed only the two source files.
+
+What I changed: the session.rs bullet in CLAUDE.md (line 98) now states:
+• SessionChanges carries a monotonic edits: Arc<AtomicUsize> read via edit_count(), bumped unconditionally by record on both the dedup and push branches, zeroed by clear()
+• snapshot().len() keeps its exact meaning (distinct files) and both dedup tests are untouched
+• the three per-turn `repl.rs` consumers that now read the counter, named individually
+• why: the deduped length answers a session-wide question, clear() only fires from /clear, so turns 2..N on the same file read as "no work"
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build all clean; cargo test green — 4939 + 89 + 19 + 12 passed, 0 failed.
+
+One thing worth reporting honestly: the first combined run reported 4849 passed; 90 failed with no failure names or panic lines in the output. Two subsequent standalone cargo test runs were fully green with zero FAILED occurrences, so I could not reproduce it and cannot explain it — I did not chase it further since the change in this commit is documentation-only and touches no code.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

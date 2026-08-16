@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual structure of SessionChanges before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,90p src/session.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes_before\|snapsho… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 660,690p src/repl.rs; ech… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1378,1400p src/repl.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1383..1401 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 13.5s (5 ✓)
+
+Now let me write the tests first (rule 5).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_session_changes_de… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (1 → 41 lines)
+  +     fn test_edit_count_counts_every_record_even_on_the_same_path() {
+  +         // The bug this counter exists for: iterating on ONE file across turns.
+  +         // The path-deduped vec stays at length 1 while real edits accumulate.
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", ChangeKind::Write);
+  +         changes.record("src/main.rs", ChangeKind::Edit);
+  +         assert_eq!(changes.edit_count(), 2, "both records must be counted");
+  +         assert_eq!(changes.snapshot().len(), 1, "path dedup is unchanged");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_edit_count_two_distinct_paths() {
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", ChangeKind::Write);
+  +         changes.record("src/cli.rs", ChangeKind::Edit);
+  +         assert_eq!(changes.edit_count(), 2);
+  +         assert_eq!(changes.snapshot().len(), 2);
+  +     }
+  + 
+  +     #[test]
+  ... (21 more lines)
+ ✓ (13.3s)
+  +     fn test_edit_count_counts_every_record_even_on_the_same_path() {
+  +         // The bug this counter exists for: iterating on ONE file across turns.
+  +         // The path-deduped vec stays at length 1 while real edits accumulate.
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", ChangeKind::Write);
+  +         changes.record("src/main.rs", ChangeKind::Edit);
+  +         assert_eq!(changes.edit_count(), 2, "both records must be counted");
+  +         assert_eq!(changes.snapshot().len(), 1, "path dedup is unchanged");
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.4s (2 ✓)
+
+Tests fail for the right reason. Now the implementation:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (3 → 11 lines)
+    pub struct SessionChanges {
+        inner: Arc<Mutex<Vec<FileChange>>>,
+  +     /// Monotonic count of every `record` call, INCLUDING repeats of a path
+  +     /// already in `inner`. `inner.len()` deliberately deduplicates by path, so
+  +     /// it answers "how many distinct files has this session touched" — a
+  +     /// session-wide question. Per-turn "did this turn do work?" checks need the
+  +     /// other one, and editing a single file across several turns is the shape
+  +     /// where the two disagree (#774). Shared with the vec via `Arc` so clones
+  +     /// see the same counter.
+  +     edits: Arc<AtomicUsize>,
+    }
+ ✓ (12.9s)
+    pub struct SessionChanges {
+        inner: Arc<Mutex<Vec<FileChange>>>,
+  +     /// Monotonic count of every `record` call, INCLUDING repeats of a path
+  +     /// already in `inner`. `inner.len()` deliberately deduplicates by path, so
+  +     /// it answers "how many distinct files has this session touched" — a
+  +     /// session-wide question. Per-turn "did this turn do work?" checks need the
+  +     /// other one, and editing a single file across several turns is the shape
+  +     /// where the two disagree (#774). Shared with the vec via `Arc` so clones
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (10.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 35.2s (3 ✓)
+
+Now the three consumers in repl.rs — the definition and its consumers land together.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (72 lines) ✓ (25ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
