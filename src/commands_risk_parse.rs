@@ -77,10 +77,7 @@ pub(crate) fn read_validation_ledger(path: &std::path::Path) -> ValidationLedger
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
-            return ValidationLedger::Unreadable(format!(
-                "could not read {}: {e}",
-                path.display()
-            ))
+            return ValidationLedger::Unreadable(format!("could not read {}: {e}", path.display()))
         }
     };
     let (events, dropped) = parse_validation_events_counting(&content);

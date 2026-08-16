@@ -2806,7 +2806,10 @@ mod tests {
             dropped: 3,
         };
         let line = ledger_health_line(&ledger).expect("dropped > 0 must be reported");
-        assert!(line.contains(RISK_VALIDATION_PATH), "names the path: {line:?}");
+        assert!(
+            line.contains(RISK_VALIDATION_PATH),
+            "names the path: {line:?}"
+        );
         assert!(line.contains('3'), "names how many were dropped: {line:?}");
         assert!(
             line.contains("only the rest"),
@@ -2825,7 +2828,10 @@ mod tests {
             dropped: 4,
         };
         let line = ledger_health_line(&ledger).expect("all-corrupt must be reported");
-        assert!(line.contains(RISK_VALIDATION_PATH), "names the path: {line:?}");
+        assert!(
+            line.contains(RISK_VALIDATION_PATH),
+            "names the path: {line:?}"
+        );
         assert!(line.contains('4'), "names the line count: {line:?}");
         assert!(
             line.contains("exists"),
