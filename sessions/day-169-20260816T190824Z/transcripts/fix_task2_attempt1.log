@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the claims in the task against the actual source.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_retry.rs && s… ✓ (6ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Confirmed the defect exists. Now let me trace whether the real tool name reaches the handler.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_retry" src/ | g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_tool_name\|last_to… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1185p' src/dispatch… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DispatchContext"… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_error\|last_tool_n… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,740p' src/repl.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 23.3s (6 ✓)
+
+The handler doesn't receive it. Let me check exactly what the plumbing would require — especially whether all writers of last_error can supply a name.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,820p' src/repl.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,960p;1070,1085p;1280… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1327,1340p' src/watch.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WatchResult {" src/watc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BUILTIN_TOOL_NAMES" -A … ✓ (4ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 39.4s (5 ✓)
+
+Escape hatch confirmed on both clauses. Let me nail down the exact evidence before acting.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_retry" CLAUDE.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DispatchContext {" src/… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '975,1012p' src/commands_… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.6s (3 ✓)
+
+Escape hatch confirmed. And the hand-typed copy has already drifted — web_search is in BUILTIN_TOOL_NAMES but not in KNOWN_TOOL_NAMES. Let me verify that's a live bug:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/d… (12 lines) ✓ (25ms)
+
+  watch: no files changed this turn — skipping
+
