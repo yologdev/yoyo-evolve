@@ -872,6 +872,168 @@ impl Foo {
         );
     }
 
+    // #771 item 3. Before the brace scan routed through
+    // `commands_refactor::significant_braces`, every `{`/`}` character counted —
+    // including the one inside `println!("}")`. That closed the impl block at the
+    // println line, so `find_impl_blocks` returned end == 2 (the println) instead
+    // of end == 4 (the real closing brace), and `/move` rewrote two files off that
+    // wrong range.
+    #[test]
+    fn test_find_impl_blocks_ignores_brace_inside_string_literal() {
+        let src = "\
+impl Foo {
+    fn a(&self) {
+        println!(\"}\");
+    }
+}
+";
+        let blocks = find_impl_blocks(src, "Foo");
+        assert_eq!(blocks.len(), 1, "expected one impl block: {blocks:?}");
+        let (start, end, text) = &blocks[0];
+        assert_eq!(*start, 0);
+        assert_eq!(
+            *end, 4,
+            "the impl must end at its real closing brace, not at the `}}` inside the string \
+             (the pre-#771 answer was 3)"
+        );
+        assert!(text.contains("println!"));
+        assert_eq!(
+            text.matches("\n}").count(),
+            1,
+            "captured block must include the impl's own closing brace: {text:?}"
+        );
+    }
+
+    // Same class, the other direction: a `}` in a trailing line comment used to
+    // decrement the depth. Old answer for this fixture was end == 3; correct is 4.
+    #[test]
+    fn test_find_impl_blocks_ignores_brace_in_trailing_line_comment() {
+        let src = "\
+impl Foo {
+    fn a(&self) {
+        let _x = 1; // }
+    }
+}
+";
+        let blocks = find_impl_blocks(src, "Foo");
+        assert_eq!(blocks.len(), 1, "expected one impl block: {blocks:?}");
+        assert_eq!(
+            blocks[0].1, 4,
+            "a `}}` inside a `//` comment is not structural (the pre-#771 answer was 3)"
+        );
+    }
+
+    // #771 item 3, method level: the same string-literal brace used to end the
+    // method one line early, so `/move` captured `fn target` WITHOUT its closing
+    // brace (old end == 2) and deleted that same short range from the source,
+    // leaving the source with an unmatched `{`.
+    #[test]
+    fn test_find_method_in_impl_ignores_brace_inside_string_literal() {
+        let impl_text = "\
+impl Foo {
+    fn target(&self) {
+        println!(\"}\");
+    }
+
+    fn neighbor(&self) {}
+}";
+        let (start, end, text, _has_self) = find_method_in_impl(impl_text, "target").unwrap();
+        assert_eq!(start, 1);
+        assert_eq!(
+            end, 3,
+            "the method must end at its own closing brace (the pre-#771 answer was 2)"
+        );
+        assert!(text.contains("println!"));
+        assert!(
+            text.trim_end().ends_with('}'),
+            "captured method must include its closing brace: {text:?}"
+        );
+        assert!(
+            !text.contains("fn neighbor"),
+            "must not swallow the following method: {text:?}"
+        );
+    }
+
+    // The layer that matters: the user receives TWO rewritten files. Drives the
+    // real `/move` write path in a tempdir (absolute paths, never the project
+    // root) with a method whose body contains `println!("}")`.
+    #[test]
+    fn test_move_method_with_brace_in_string_rewrites_both_files_correctly() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        let target = dir.path().join("target.rs");
+
+        fs::write(
+            &source,
+            "\
+impl Src {
+    fn moved(&self) {
+        println!(\"}\");
+    }
+
+    fn neighbor(&self) {
+        println!(\"keep me\");
+    }
+}
+",
+        )
+        .unwrap();
+        fs::write(
+            &target,
+            "\
+impl Dst {
+    fn existing(&self) {}
+}
+",
+        )
+        .unwrap();
+
+        move_method(
+            source.to_str().unwrap(),
+            "Src",
+            "moved",
+            Some(target.to_str().unwrap()),
+            "Dst",
+        )
+        .expect("move_method should succeed");
+
+        let new_source = fs::read_to_string(&source).unwrap();
+        let new_target = fs::read_to_string(&target).unwrap();
+
+        // The whole method, including its closing brace, landed in the target.
+        assert!(
+            new_target.contains("fn moved"),
+            "target should hold the moved method: {new_target}"
+        );
+        assert!(
+            new_target.contains("println!(\"}\");"),
+            "target should hold the method body verbatim: {new_target}"
+        );
+        assert!(
+            new_target.contains("fn existing"),
+            "target's own method must survive: {new_target}"
+        );
+
+        // The source no longer holds it, still holds its neighbour, and is balanced.
+        assert!(
+            !new_source.contains("fn moved"),
+            "source should no longer hold the moved method: {new_source}"
+        );
+        assert!(
+            !new_source.contains("println!(\"}\");"),
+            "no fragment of the moved method may be left behind: {new_source}"
+        );
+        assert!(
+            new_source.contains("fn neighbor"),
+            "the neighbouring method must survive the move: {new_source}"
+        );
+        assert_eq!(
+            new_source.matches('{').count(),
+            new_source.matches('}').count(),
+            "source must have equal `{{` and `}}` counts after the move: {new_source}"
+        );
+    }
+
     #[test]
     fn test_find_method_in_impl_basic() {
         let impl_text = "impl Foo {\n    fn bar(&self) -> i32 {\n        42\n    }\n}";
