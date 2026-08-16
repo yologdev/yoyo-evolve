@@ -1,0 +1,67 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing CLAUDE.md documentation. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "char_literal_len\|is_ru… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,70p src/format/highlig…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,80p src/commands_refac… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/\*"\|/\*\|is_in_code_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces\` is… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 11.6s (6 ✓)
+
+Now let me update both CLAUDE.md bullets.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
+  + - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML. Day 169 (#759): under `norm == "rust"` **only**, a `'` no longer unconditionally opens a string/char literal. Rust lifetimes (`&'a str`, `fn f<'a>(…)`, `'static`, `'_`) never close their tick, so from that character on the *rest of the line* rendered in string colour — every Rust source line containing a lifetime displayed wrong, anywhere yoyo prints highlighted Rust (file display, `/find`/`/grep` context, tool-output rendering). The discrimination is **not** a second implementation: `is_rust_char_literal` delegates to `commands_refactor::char_literal_len`, the same helper `significant_braces` uses, made `pub(crate)` with this consumer in the same diff — so the char-literal-vs-lifetime rule has one statement and one table test, not a third quote scanner drifting from the other two. That reuse also closed a gap the highlighter's own deleted copy had: `'\u{1F600}'` now highlights as a char literal instead of rendering unstyled. **Named classes covered** (this is not a claim to lex Rust): `'x'`, `'\n'`, `'\''`, `'\u{7d}'` char literals highlight as before; a `'` that opens no *closed* literal is emitted as plain text, so the lifetime tick is inert and the code after it keeps its normal colours. **Deliberately unchanged:** every non-Rust language — Python, JS, shell and the rest still treat `'…'` as a genuine string, byte-identical to before, because the guard is gated on the language. **Still open, same as the sibling scanner (#771 items 1–2):** this highlighter is **line-based with no cross-line state at all**, so a `/* … */` block comment spanning lines and a string literal spanning lines are both mis-coloured from the second line on — that is *more* limited than `significant_braces`, which at least carries a same-file `in_block_comment` flag; nested block comments are unhandled in both. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, and unchanged python/js/shell single-quoted strings).
+ ✓ (56.9s)
+  - - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
+  + - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML. Day 169 (#759): under `norm == "rust"` **only**, a `'` no longer unconditionally opens a string/char literal. Rust lifetimes (`&'a str`, `fn f<'a>(…)`, `'static`, `'_`) never close their tick, so from that character on the *rest of the line* rendered in string colour — every Rust source line containing a lifetime displayed wrong, anywhere yoyo prints highlighted Rust (file display, `/find`/`/grep` context, tool-output rendering). The discrimination is **not** a second implementation: `is_rust_char_literal` delegates to `commands_refactor::char_literal_len`, the same helper `significant_braces` uses, made `pub(crate)` with this consumer in the same diff — so the char-literal-vs-lifetime rule has one statement and one table test, not a third quote scanner drifting from the other two. That reuse also closed a gap the highlighter's own deleted copy had: `'\u{1F600}'` now highlights as a char literal instead of rendering unstyled. **Named classes covered** (this is not a claim to lex Rust): `'x'`, `'\n'`, `'\''`, `'\u{7d}'` char literals highlight as before; a `'` that opens no *closed* literal is emitted as plain text, so the lifetime tick is inert and the code after it keeps its normal colours. **Deliberately unchanged:** every non-Rust language — Python, JS, shell and the rest still treat `'…'` as a genuine string, byte-identical to before, because the guard is gated on the language. **Still open, same as the sibling scanner (#771 items 1–2):** this highlighter is **line-based with no cross-line state at all**, so a `/* … */` block comment spanning lines and a string literal spanning lines are both mis-coloured from the second line on — that is *more* limited than `significant_braces`, which at least carries a same-file `in_block_comment` flag; nested block comments are unhandled in both. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, and unchanged python/js/shell single-quoted strings).
+
+Now the commands_refactor.rs bullet, which the evaluator flagged for describing only significant_braces as shared:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**.
+  + One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. Day 169 (#759) made `char_literal_len` itself `pub(crate)` for the same reason and with the same discipline: `src/format/highlight.rs` had a **private copy of this exact discrimination with the lifetime bug still in it**, so it now calls this helper (`is_rust_char_literal`) rather than keeping a third quote scanner — the consumer landed in the same diff as the visibility change. `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test; note the highlighter is line-based with no `in_block_comment` state, so it is *strictly more* limited than `significant_braces` — see that bullet. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**.
+ ✓ (56.7s)
+  - One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**.
+  + One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. Day 169 (#759) made `char_literal_len` itself `pub(crate)` for the same reason and with the same discipline: `src/format/highlight.rs` had a **private copy of this exact discrimination with the lifetime bug still in it**, so it now calls this helper (`is_rust_char_literal`) rather than keeping a third quote scanner — the consumer landed in the same diff as the visibility change. `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test; note the highlighter is line-based with no `in_block_comment` state, so it is *strictly more* limited than `significant_braces` — see that bullet. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*lifetime\|fn .*cha… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1255,1340p src/format/hig… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (9 lines) ✓ (33ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (3 → 10 lines)
+            let esc = highlight_code_line("rust", "let c = '\\n';");
+            assert!(esc.contains(&format!("{GREEN}'\\n'{RESET}")), "got {esc:?}");
+  +         // Unicode escapes: coverage the deleted local copy could not satisfy, asserted
+  +         // at the emission point rather than only in the helper table above.
+  +         let uni = highlight_code_line("rust", "let c = '\\u{1F600}';");
+  +         assert!(
+  +             uni.contains(&format!("{GREEN}'\\u{{1F600}}'{RESET}")),
+  +             "got {uni:?}"
+  +         );
+        }
+ ✓ (1m 41s)
+            let esc = highlight_code_line("rust", "let c = '\\n';");
+            assert!(esc.contains(&format!("{GREEN}'\\n'{RESET}")), "got {esc:?}");
+  +         // Unicode escapes: coverage the deleted local copy could not satisfy, asserted
+  +         // at the emission point rather than only in the helper table above.
+  +         let uni = highlight_code_line("rust", "let c = '\\u{1F600}';");
+  +         assert!(
+  +             uni.contains(&format!("{GREEN}'\\u{{1F600}}'{RESET}")),
+  +             "got {uni:?}"
+  +         );
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --quiet … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --quiet 2>&1 | tail … ✓ (1m 10s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | grep -… ✓ (1m 8s)
+  8 tools completed in 5m 20s (8 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

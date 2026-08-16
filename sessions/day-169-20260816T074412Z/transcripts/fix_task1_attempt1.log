@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'is_quiet\|is_plain_outp… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,175p src/rtk.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (4ms)
+ ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,35p src/rtk.rs && echo … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 21.6s (5 ✓)
+
+Now landing the actual fix.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/rtk.rs (1 → 17 lines)
+  + /// The one-time RTK detection notice, or `None` when it must not be printed.
+  + ///
+  + /// Pure decision half of the announcement at the single `eprintln!` call site in
+  + /// `maybe_prefix_rtk`: silent under `--quiet` and glyph-free under `--screen-reader`,
+  + /// the same two conventions every other stderr notice in the codebase follows.
+  + pub fn rtk_announcement(quiet: bool, plain: bool) -> Option<&'static str> {
+  +     if quiet {
+  +         return None;
+  +     }
+  +     Some(if plain {
+  +         "RTK detected — using compressed output (disable with --no-rtk)"
+  +     } else {
+  +         "📦 RTK detected — using compressed output (disable with --no-rtk)"
+  +     })
+  + }
+  + 
+    /// Prefix a command with `rtk` if appropriate.
+ ✓ (19.9s)
+  + /// The one-time RTK detection notice, or `None` when it must not be printed.
+  + ///
+  + /// Pure decision half of the announcement at the single `eprintln!` call site in
+  + /// `maybe_prefix_rtk`: silent under `--quiet` and glyph-free under `--screen-reader`,
+  + /// the same two conventions every other stderr notice in the codebase follows.
+  + pub fn rtk_announcement(quiet: bool, plain: bool) -> Option<&'static str> {
+  +     if quiet {
+  +         return None;
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/rtk.rs (4 → 9 lines)
+            // Print announcement once
+            if !RTK_ANNOUNCED.swap(true, Ordering::Relaxed) {
+  -             eprintln!("📦 RTK detected — using compressed output (disable with --no-rtk)");
+  +             if let Some(msg) = rtk_announcement(
+  +                 crate::format::is_quiet(),
+  +                 crate::format::is_plain_output(),
+  +             ) {
+  +                 eprintln!("{msg}");
+  +             }
+            }
+ ✓ (1m 41s)
+            // Print announcement once
+            if !RTK_ANNOUNCED.swap(true, Ordering::Relaxed) {
+  -             eprintln!("📦 RTK detected — using compressed output (disable with --no-rtk)");
+  +             if let Some(msg) = rtk_announcement(
+  +                 crate::format::is_quiet(),
+  +                 crate::format::is_plain_output(),
+  +             ) {
+  +                 eprintln!("{msg}");
+  +             }
+            }
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 7s (2 ✓)
+
+Now the emission-point test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/rtk.rs (2 → 2 lines) ✓ (1m 41s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/rtk.rs (1 → 19 lines)
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_rtk_announcement_respects_quiet_and_plain_output() {
+  +         // The exact string the caller prints, in all three states.
+  +         assert_eq!(
+  +             rtk_announcement(false, false),
+  +             Some("📦 RTK detected — using compressed output (disable with --no-rtk)")
+  +         );
+  +         assert_eq!(
+  +             rtk_announcement(false, true),
+  +             Some("RTK detected — using compressed output (disable with --no-rtk)")
+  +         );
+  +         // Screen-reader mode keeps the words, drops the glyph.
+  +         assert!(!rtk_announcement(false, true).unwrap().contains('📦'));
+  +         // --quiet prints nothing at all.
+  +         assert_eq!(rtk_announcement(true, false), None);
+  +         assert_eq!(rtk_announcement(true, true), None);
+  +     }
+ ✓ (1m 40s)
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_rtk_announcement_respects_quiet_and_plain_output() {
+  +         // The exact string the caller prints, in all three states.
+  +         assert_eq!(
+  +             rtk_announcement(false, false),
+  +             Some("📦 RTK detected — using compressed output (disable with --no-rtk)")
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 39s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | grep -… ✓ (55.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rtk.rs" CLAUDE.md ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression
+  + - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression. Day 169 (blind round 56, a never-forecast file — this was an **unpredicted find while reading for h2**, not a graded bet, and the round's ledger says so): the one-time detection notice in `maybe_prefix_rtk` now goes through the pure `rtk_announcement(quiet, plain) -> Option<&'static str>` — `None` under `is_quiet()`, glyph-free under `is_plain_output()`. It was the only stderr notice in the codebase that consulted neither, so `--quiet` still printed it and `--screen-reader` still got the `📦`; the two conventions ~15 other sites follow were skipped here because the announcement is buried inside a command-rewriting function rather than in a display module. The `RTK_ANNOUNCED` swap still happens first, so the notice stays once-per-process in every mode. Pinned by `test_rtk_announcement_respects_quiet_and_plain_output`, which asserts the literal string the call site prints in all three states (the `eprintln!` itself takes no other input) — the earlier round-56 grade line claimed this fix had landed when it had not, and the correction line in `dreams/experiments.jsonl` records that rather than quietly replacing it.
+ ✓ (57.2s)
+  - - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression
+  + - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression. Day 169 (blind round 56, a never-forecast file — this was an **unpredicted find while reading for h2**, not a graded bet, and the round's ledger says so): the one-time detection notice in `maybe_prefix_rtk` now goes through the pure `rtk_announcement(quiet, plain) -> Option<&'static str>` — `None` under `is_quiet()`, glyph-free under `is_plain_output()`. It was the only stderr notice in the codebase that consulted neither, so `--quiet` still printed it and `--screen-reader` still got the `📦`; the two conventions ~15 other sites follow were skipped here because the announcement is buried inside a command-rewriting function rather than in a display module. The `RTK_ANNOUNCED` swap still happens first, so the notice stays once-per-process in every mode. Pinned by `test_rtk_announcement_respects_quiet_and_plain_output`, which asserts the literal string the call site prints in all three states (the `eprintln!` itself takes no other input) — the earlier round-56 grade line claimed this fix had landed when it had not, and the correction line in `dreams/experiments.jsonl` records that rather than quietly replacing it.
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 7m 15s (6 ✓)
+
+Now the honest correction line in the ledger (append-only — the false claim is corrected, not rewritten):

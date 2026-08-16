@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two relevant scanners.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "char_literal_len" -A 60…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/highlight.rs &&… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:28..60  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:365..505 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 -- src/form… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1265,1340p' src/format/h… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 58.0s (6 ✓)
+
+The fix for #759 already landed with tests — but the duplicate scanner the task warns about is still there. Let me verify the current state and check the existing helper's test coverage.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "char_literal_len\|signi… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:20..34 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (4 → 12 lines)
+    /// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
+    /// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
+    /// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
+  - fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+  + ///
+  + /// Recognised: `'x'`, `'\n'`-style one-char escapes, and `'\u{7d}'` unicode escapes.
+  + ///
+  + /// Two consumers, deliberately sharing one scanner: [`significant_braces`] here (so a
+  + /// brace inside a char literal is not structural, #770) and
+  + /// `format::highlight::highlight_code_line` (so a lifetime tick does not open a string
+  + /// literal and swallow the rest of the line, #759). A second copy of this rule is how
+  + /// #759 outlived #770 by a day — keep it one implementation with one table test.
+  + pub(crate) fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+ ✓ (1m 37s)
+    /// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
+    /// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
+    /// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
+  - fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+  + ///
+  + /// Recognised: `'x'`, `'\n'`-style one-char escapes, and `'\u{7d}'` unicode escapes.
+  + ///
+  + /// Two consumers, deliberately sharing one scanner: [`significant_braces`] here (so a
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 49s (3 ✓)
+
+Now replace the highlighter's duplicate scanner with the shared one.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (28 → 14 lines)
+    /// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
+    ///
+  - /// Returns the index of the closing `'` when it does, `None` otherwise. Only the
+  - /// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
+  - /// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
+  - /// as a lifetime, because guessing the other way is what produced #759.
+  + /// Delegates to [`crate::commands_refactor::char_literal_len`] — the *same* rule that
+  + /// keeps a brace inside a char literal from counting as structural (#770). The
+  + /// highlighter used to carry its own narrower copy of this discrimination; one scanner
+  + /// with one table test is the point, because two copies is exactly how the lifetime bug
+  + /// survived here after being fixed there.
+    ///
+  - /// Known gap, stated rather than papered over: a unicode escape such as `'\u{1F600}'`
+  - /// is longer than one char after the backslash, so it reads as a lifetime and is
+  - /// emitted unstyled. That loses colour on a rare literal; the old behaviour lost the
+  - /// rest of the line on a common one.
+  - fn rust_char_literal_end(chars: &[char], i: usize) -> Option<usize> {
+  -     if chars.get(i) != Some(&'\'') {
+  -         return None;
+  -     }
+  ... (18 more lines)
+ ✓ (12.3s)
+    /// Does the `'` at `chars[i]` open a Rust char literal (rather than a lifetime tick)?
+    ///
+  - /// Returns the index of the closing `'` when it does, `None` otherwise. Only the
+  - /// unambiguous shapes are recognised — `'x'`, and a backslash escape of one char
+  - /// (`'\n'`, `'\\'`, `'\''`). Everything else (`'a`, `'a>`, `'static`, `'_`) is treated
+  - /// as a lifetime, because guessing the other way is what produced #759.
+  + /// Delegates to [`crate::commands_refactor::char_literal_len`] — the *same* rule that
+  + /// keeps a brace inside a char literal from counting as structural (#770). The
+  ... (13 more lines)
+
+Expected — now the call site and the table test.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 1 lines)
+  -         if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+  +         if norm == "rust" && ch == '\'' && !is_rust_char_literal(&chars, i) {
+ ✓ (12.4s)
+  -         if norm == "rust" && ch == '\'' && rust_char_literal_end(&chars, i).is_none() {
+  +         if norm == "rust" && ch == '\'' && !is_rust_char_literal(&chars, i) {
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (22 → 27 lines)
+        #[test]
+        fn test_rust_char_literal_end_table() {
+  -         let cases: &[(&str, Option<usize>)] = &[
+  -             ("'x'", Some(2)),
+  -             ("'\\n'", Some(3)),
+  -             ("'\\\\'", Some(3)),
+  -             ("'\\''", Some(3)),
+  -             ("'a", None),
+  -             ("'a>", None),
+  -             ("'static", None),
+  -             ("'_", None),
+  -             ("'", None),
+  -             ("''", None),
+  +         // Tables the discrimination the highlighter consumes. Since Day 169 the rule
+  +         // lives once, in `commands_refactor::char_literal_len`, so the unicode-escape
+  +         // rows below are new coverage the old local copy could not satisfy.
+  +         let cases: &[(&str, bool)] = &[
+  +             ("'x'", true),
+  +             ("'\\n'", true),
+  +             ("'\\\\'", true),
+  ... (21 more lines)
+ ✓ (1m 40s)
+        #[test]
+        fn test_rust_char_literal_end_table() {
+  -         let cases: &[(&str, Option<usize>)] = &[
+  -             ("'x'", Some(2)),
+  -             ("'\\n'", Some(3)),
+  -             ("'\\\\'", Some(3)),
+  -             ("'\\''", Some(3)),
+  -             ("'a", None),
+  ... (13 more lines)
+  2 tools completed in 2m 2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
