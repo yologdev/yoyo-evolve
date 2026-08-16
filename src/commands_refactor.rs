@@ -25,6 +25,176 @@ pub fn parse_extract_args(input: &str) -> Option<(String, String, String)> {
 /// Returns `(start_line_0indexed, end_line_0indexed, block_text)` where the range
 /// is inclusive on both ends.
 ///
+/// True for characters that can continue a Rust identifier.
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
+/// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
+/// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
+fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+    let mut j = start + 1;
+    let first = *chars.get(j)?;
+    if first == '\'' {
+        // `''` is not a char literal.
+        return None;
+    }
+    if first == '\\' {
+        j += 1;
+        let esc = *chars.get(j)?;
+        if esc == 'u' && chars.get(j + 1) == Some(&'{') {
+            j += 2;
+            while j < chars.len() && chars[j] != '}' {
+                j += 1;
+            }
+            chars.get(j)?; // unterminated `\u{`
+            j += 1;
+        } else {
+            j += 1;
+        }
+    } else {
+        j += 1;
+    }
+    if chars.get(j) == Some(&'\'') {
+        Some(j + 1 - start)
+    } else {
+        None
+    }
+}
+
+/// If a raw-string literal opens at `chars[start]` (an `r`, optionally preceded by a
+/// `b` byte-string prefix), return `(hash_count, index_just_after_the_opening_quote)`.
+fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+    if chars.get(start) != Some(&'r') {
+        return None;
+    }
+    // The `r` must begin a token: either it is the first char, or the char before it
+    // is not an identifier char, or it is a `b` prefix that itself begins a token.
+    let prev_ok = match start.checked_sub(1) {
+        None => true,
+        Some(p) => {
+            !is_ident_char(chars[p])
+                || (chars[p] == 'b' && p.checked_sub(1).is_none_or(|q| !is_ident_char(chars[q])))
+        }
+    };
+    if !prev_ok {
+        return None;
+    }
+    let mut j = start + 1;
+    let mut hashes = 0usize;
+    while chars.get(j) == Some(&'#') {
+        hashes += 1;
+        j += 1;
+    }
+    if chars.get(j) == Some(&'"') {
+        Some((hashes, j + 1))
+    } else {
+        None
+    }
+}
+
+/// Return the structurally significant `{` / `}` characters of `line`, in order,
+/// skipping any that appear inside string literals, char literals, or comments.
+///
+/// `in_block_comment` carries `/* … */` state across lines and is updated in place.
+/// Braces are returned **in order** rather than as an open/close count, because a line
+/// like `} fn other() {` both closes a block and opens one and the caller's depth
+/// machine must see those in sequence.
+///
+/// Handles: `"…"` strings with `\` escapes, raw strings `r"…"` / `r#"…"#` (any hash
+/// count, plus the `b` byte prefix), `'x'` char literals *without* mistaking a lifetime
+/// `&'a str` for one, `//` line comments, and `/* … */` block comments including
+/// multi-line ones. Deliberately **not** handled: a string literal that spans lines
+/// (the rest of that line is skipped, but the next line is scanned as ordinary code)
+/// and nested `/* /* */ */` block comments (Rust allows nesting; the first `*/` ends
+/// the comment here). Both are recorded in the follow-up issue rather than in prose
+/// that reads as complete.
+///
+/// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
+fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        if *in_block_comment {
+            if c == '*' && chars.get(i + 1) == Some(&'/') {
+                *in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if c == '/' && chars.get(i + 1) == Some(&'/') {
+            // Line comment: nothing after this matters on this line.
+            break;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            *in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if let Some((hashes, mut j)) = raw_string_open(&chars, i) {
+            // Scan for a closing `"` followed by exactly `hashes` `#`.
+            loop {
+                match chars.get(j) {
+                    None => break, // unterminated on this line
+                    Some('"') => {
+                        let closed = (1..=hashes).all(|k| chars.get(j + k) == Some(&'#'));
+                        if closed {
+                            j += 1 + hashes;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    Some(_) => j += 1,
+                }
+            }
+            i = j;
+            continue;
+        }
+
+        if c == '"' {
+            let mut j = i + 1;
+            while j < chars.len() {
+                if chars[j] == '\\' {
+                    j += 2;
+                } else if chars[j] == '"' {
+                    j += 1;
+                    break;
+                } else {
+                    j += 1;
+                }
+            }
+            i = j;
+            continue;
+        }
+
+        if c == '\'' {
+            if let Some(len) = char_literal_len(&chars, i) {
+                i += len;
+            } else {
+                // A lifetime (`&'a str`) — ordinary character, keep going.
+                i += 1;
+            }
+            continue;
+        }
+
+        if c == '{' || c == '}' {
+            out.push(c);
+        }
+        i += 1;
+    }
+
+    out
+}
+
 /// Uses brace-depth tracking: finds the line where the symbol keyword + name appear,
 /// then scans backwards to collect any `#[...]` attributes or `///` doc comments
 /// immediately above, then scans forward counting `{` and `}` until depth returns to 0.
@@ -111,13 +281,17 @@ pub fn find_symbol_block(source: &str, symbol: &str) -> Option<(usize, usize, St
         return Some((start_line, decl_line, block));
     }
 
-    // Scan forward with brace-depth tracking
+    // Scan forward with brace-depth tracking. Braces inside string/char literals and
+    // comments are not structural — see `significant_braces` (#770: a body containing
+    // `println!("}")` used to end the block early and `/extract` then deleted a
+    // truncated range from the source, corrupting both files).
     let mut depth: i32 = 0;
     let mut found_open = false;
     let mut end_line = decl_line;
+    let mut in_block_comment = false;
 
     for (i, line) in lines.iter().enumerate().skip(decl_line) {
-        for ch in line.chars() {
+        for ch in significant_braces(line, &mut in_block_comment) {
             if ch == '{' {
                 depth += 1;
                 found_open = true;
@@ -1005,5 +1179,142 @@ fn process_data() {
         assert!(result.is_some());
         let (_, _, block) = result.unwrap();
         assert!(block.contains("fn process_data"));
+    }
+
+    // --- #770: braces inside strings / chars / comments are not structural ---
+
+    #[test]
+    fn significant_braces_table() {
+        // (line, incoming block-comment state) -> (expected braces, outgoing state)
+        let cases: Vec<(&str, bool, Vec<char>, bool)> = vec![
+            // plain control flow is untouched
+            ("if x { y } else {", false, vec!['{', '}', '{'], false),
+            // braces in a string literal
+            (r#"    println!("}");"#, false, vec![], false),
+            (r#"    println!("{");"#, false, vec![], false),
+            // escaped quote does not end the string, so the `}` stays inside it
+            (r#"    let s = "\"}";"#, false, vec![], false),
+            // trailing line comment
+            ("    let x = 1; // }", false, vec![], false),
+            ("    } // { not real", false, vec!['}'], false),
+            // block comment opening and closing on one line
+            ("    /* } */ let y = 2; {", false, vec!['{'], false),
+            // block comment spanning lines
+            ("    /* start {", false, vec![], true),
+            ("       still } inside", true, vec![], true),
+            ("       end */ }", true, vec!['}'], false),
+            // lifetimes must NOT be read as char literals (#759's trap)
+            ("fn f<'a>(x: &'a str) -> &'a str {", false, vec!['{'], false),
+            // real char literals are skipped
+            ("    let c = '{';", false, vec![], false),
+            (r"    let c = '\'';", false, vec![], false),
+            (r"    let c = '\u{7d}'; {", false, vec!['{'], false),
+            // raw strings, with and without hashes
+            (r##"    let s = r#"}"#; {"##, false, vec!['{'], false),
+            (r#"    let s = r"}";"#, false, vec![], false),
+            (r##"    let s = br#"{"#;"##, false, vec![], false),
+            // `r` that is merely the tail of an identifier is not a raw string
+            (r#"    let ptr = "x"; {"#, false, vec!['{'], false),
+            // multi-byte input must not panic
+            ("    // café — résumé }", false, vec![], false),
+            ("    let s = \"✓}\"; {", false, vec!['{'], false),
+        ];
+
+        for (line, mut state, expected, expected_state) in cases {
+            let got = significant_braces(line, &mut state);
+            assert_eq!(got, expected, "braces for line: {line:?}");
+            assert_eq!(state, expected_state, "block-comment state after: {line:?}");
+        }
+    }
+
+    #[test]
+    fn find_symbol_block_ignores_brace_in_string() {
+        // Previously returned Some((0, 1, "fn tricky() {")) — two lines short.
+        let source = "fn tricky() {\n    println!(\"}\");\n    let x = 1;\n}\n";
+        let (start, end, block) = find_symbol_block(source, "tricky").unwrap();
+        assert_eq!((start, end), (0, 3), "block should span the whole fn");
+        assert!(block.ends_with('}'), "block should end with the closing brace");
+    }
+
+    #[test]
+    fn find_symbol_block_ignores_brace_in_line_comment() {
+        let source = "fn tricky3() {\n    let x = 1; // }\n}\n";
+        let (start, end, _) = find_symbol_block(source, "tricky3").unwrap();
+        assert_eq!((start, end), (0, 2));
+    }
+
+    #[test]
+    fn find_symbol_block_open_brace_in_string_does_not_swallow_next_fn() {
+        // Previously returned Some((0, 5, …)) — swallowed `fn after()`.
+        let source =
+            "fn tricky2() {\n    println!(\"{\");\n    let x = 1;\n}\n\nfn after() {}\n";
+        let (start, end, block) = find_symbol_block(source, "tricky2").unwrap();
+        assert_eq!((start, end), (0, 3));
+        assert!(
+            !block.contains("fn after"),
+            "must not swallow the following item: {block:?}"
+        );
+    }
+
+    #[test]
+    fn extract_symbol_moves_whole_symbol_with_brace_in_string() {
+        // Emission-point test: the user receives two files, so assert on both files.
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.rs");
+        let dst = dir.path().join("dst.rs");
+        std::fs::write(
+            &src,
+            "fn keep() {}\n\nfn tricky() {\n    println!(\"}\");\n    let x = 1;\n}\n",
+        )
+        .unwrap();
+
+        let res = extract_symbol(src.to_str().unwrap(), dst.to_str().unwrap(), "tricky");
+        assert!(res.is_ok(), "extract failed: {res:?}");
+
+        let target = std::fs::read_to_string(&dst).unwrap();
+        assert!(target.contains("fn tricky()"), "target: {target:?}");
+        assert!(target.contains("let x = 1;"), "target: {target:?}");
+        assert!(
+            target.trim_end().ends_with('}'),
+            "target must include the closing brace: {target:?}"
+        );
+
+        let remaining = std::fs::read_to_string(&src).unwrap();
+        assert!(
+            !remaining.contains("fn tricky"),
+            "source still has the symbol: {remaining:?}"
+        );
+        assert!(remaining.contains("fn keep()"), "source: {remaining:?}");
+        assert_eq!(
+            remaining.matches('{').count(),
+            remaining.matches('}').count(),
+            "source left with unbalanced braces: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn extract_symbol_open_brace_in_string_leaves_following_fn_in_source() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.rs");
+        let dst = dir.path().join("dst.rs");
+        std::fs::write(
+            &src,
+            "fn tricky2() {\n    println!(\"{\");\n    let x = 1;\n}\n\nfn after() {}\n",
+        )
+        .unwrap();
+
+        let res = extract_symbol(src.to_str().unwrap(), dst.to_str().unwrap(), "tricky2");
+        assert!(res.is_ok(), "extract failed: {res:?}");
+
+        let remaining = std::fs::read_to_string(&src).unwrap();
+        assert!(
+            remaining.contains("fn after() {}"),
+            "following item was swallowed out of the source: {remaining:?}"
+        );
+        let target = std::fs::read_to_string(&dst).unwrap();
+        assert!(
+            !target.contains("fn after"),
+            "target must not carry the following item: {target:?}"
+        );
     }
 }
