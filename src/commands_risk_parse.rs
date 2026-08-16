@@ -325,6 +325,126 @@ pub(crate) fn snapshot_before<'a>(
 mod tests {
     use super::*;
 
+    /// One well-formed validation line, parameterised by day.
+    fn valid_line(day: u32) -> String {
+        format!(
+            r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+        )
+    }
+
+    #[test]
+    fn counting_reports_zero_dropped_for_a_clean_ledger() {
+        let content = format!("{}\n{}\n", valid_line(160), valid_line(161));
+        let (events, dropped) = parse_validation_events_counting(&content);
+        assert_eq!(events.len(), 2);
+        assert_eq!(dropped, 0, "well-formed lines are never counted as dropped");
+    }
+
+    #[test]
+    fn counting_reports_the_number_of_unparseable_lines() {
+        let content = format!(
+            "{}\nnot-json\n{}\n{{\"day\":9,\n",
+            valid_line(160),
+            valid_line(161)
+        );
+        let (events, dropped) = parse_validation_events_counting(&content);
+        assert_eq!(events.len(), 2, "valid lines still parse");
+        assert_eq!(dropped, 2, "both the garbage and the truncated line count");
+    }
+
+    #[test]
+    fn counting_never_counts_blank_lines_or_a_trailing_newline() {
+        // A trailing newline is normal JSONL and blank/whitespace-only lines
+        // are not corruption — counting them would manufacture a warning on a
+        // perfectly healthy ledger.
+        let content = format!("\n{}\n\n   \n{}\n", valid_line(160), valid_line(161));
+        let (events, dropped) = parse_validation_events_counting(&content);
+        assert_eq!(events.len(), 2);
+        assert_eq!(dropped, 0);
+    }
+
+    #[test]
+    fn parse_validation_events_still_returns_just_the_events() {
+        // The delegation must leave every existing caller byte-identical.
+        let content = format!("{}\nnot-json\n{}\n", valid_line(160), valid_line(161));
+        let events = parse_validation_events(&content);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].day, 160);
+        assert_eq!(events[1].day, 161);
+    }
+
+    #[test]
+    fn read_validation_ledger_missing_path_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("never_written.jsonl");
+        assert!(matches!(
+            read_validation_ledger(&path),
+            ValidationLedger::Missing
+        ));
+    }
+
+    #[test]
+    fn read_validation_ledger_reports_clean_present_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(&path, format!("{}\n{}\n", valid_line(160), valid_line(161))).unwrap();
+        match read_validation_ledger(&path) {
+            ValidationLedger::Present { events, dropped } => {
+                assert_eq!(events.len(), 2);
+                assert_eq!(dropped, 0);
+            }
+            _ => panic!("expected Present"),
+        }
+    }
+
+    #[test]
+    fn read_validation_ledger_counts_partial_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(&path, format!("{}\ntruncated{{\n", valid_line(160))).unwrap();
+        match read_validation_ledger(&path) {
+            ValidationLedger::Present { events, dropped } => {
+                assert_eq!(events.len(), 1, "the surviving line is still reported");
+                assert_eq!(dropped, 1, "the dropped line is no longer silent");
+            }
+            _ => panic!("expected Present"),
+        }
+    }
+
+    #[test]
+    fn read_validation_ledger_all_corrupt_is_present_not_missing() {
+        // The sharp case: the file exists and every line is garbage. That is a
+        // *different fact* from "tracking hasn't started" and must never be
+        // collapsed into Missing.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(&path, "not-json\n{oops\n").unwrap();
+        match read_validation_ledger(&path) {
+            ValidationLedger::Present { events, dropped } => {
+                assert!(events.is_empty());
+                assert_eq!(dropped, 2);
+            }
+            _ => panic!("expected Present"),
+        }
+    }
+
+    #[test]
+    fn read_validation_ledger_unreadable_names_the_path() {
+        // A directory at the ledger path exists but cannot be read to string.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::create_dir(&path).unwrap();
+        match read_validation_ledger(&path) {
+            ValidationLedger::Unreadable(msg) => {
+                assert!(
+                    msg.contains(&path.display().to_string()),
+                    "message must name the path, got {msg:?}"
+                );
+            }
+            _ => panic!("expected Unreadable"),
+        }
+    }
+
     #[test]
     fn test_parse_all_snapshots_empty() {
         let snapshots = parse_all_snapshots("");

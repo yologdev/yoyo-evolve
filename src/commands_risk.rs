@@ -2772,6 +2772,80 @@ fn handle_risk_validate() {
 mod tests {
     use super::*;
 
+    // ── #764: the ledger-health line a `/risk accuracy` caller actually reads ──
+    // These assert the *string emitted*, not the state one layer below it.
+
+    #[test]
+    fn ledger_health_line_says_nothing_on_a_healthy_ledger() {
+        // The common path must stay byte-identical to pre-#764 output.
+        let ledger = ValidationLedger::Present {
+            events: Vec::new(),
+            dropped: 0,
+        };
+        assert_eq!(ledger_health_line(&ledger), None);
+    }
+
+    #[test]
+    fn ledger_health_line_says_nothing_when_the_ledger_is_missing() {
+        // Today's "accuracy tracking starts automatically" copy is already
+        // correct for a genuinely absent file — no second message.
+        assert_eq!(ledger_health_line(&ValidationLedger::Missing), None);
+    }
+
+    #[test]
+    fn ledger_health_line_names_the_path_and_count_on_partial_corruption() {
+        let ledger = ValidationLedger::Present {
+            events: vec![ValidationEvent {
+                day: 160,
+                hit_count: 2,
+                total_changed: 5,
+                accuracy_pct: 40.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            }],
+            dropped: 3,
+        };
+        let line = ledger_health_line(&ledger).expect("dropped > 0 must be reported");
+        assert!(line.contains(RISK_VALIDATION_PATH), "names the path: {line:?}");
+        assert!(line.contains('3'), "names how many were dropped: {line:?}");
+        assert!(
+            line.contains("only the rest"),
+            "says the numbers below are partial: {line:?}"
+        );
+    }
+
+    #[test]
+    fn ledger_health_line_all_corrupt_names_the_path_and_denies_it_is_missing() {
+        // The one that matters: every line unparseable. The report printed
+        // below this says accuracy tracking "starts automatically" — copy that
+        // is about an *absent* ledger. The line must contradict that outright
+        // rather than let a corrupt file wear a missing file's explanation.
+        let ledger = ValidationLedger::Present {
+            events: Vec::new(),
+            dropped: 4,
+        };
+        let line = ledger_health_line(&ledger).expect("all-corrupt must be reported");
+        assert!(line.contains(RISK_VALIDATION_PATH), "names the path: {line:?}");
+        assert!(line.contains('4'), "names the line count: {line:?}");
+        assert!(
+            line.contains("exists"),
+            "asserts the file is present: {line:?}"
+        );
+        assert!(
+            line.contains("does not apply"),
+            "disowns the missing-ledger copy printed underneath: {line:?}"
+        );
+    }
+
+    #[test]
+    fn ledger_health_line_passes_the_unreadable_message_through() {
+        let ledger = ValidationLedger::Unreadable("could not read foo.jsonl: nope".to_string());
+        assert_eq!(
+            ledger_health_line(&ledger).as_deref(),
+            Some("could not read foo.jsonl: nope")
+        );
+    }
+
     /// A *captured* GitHub compare payload, not one I wrote from memory.
     ///
     /// Taken verbatim (then trimmed to 3 of 14 file entries, patches clipped)
