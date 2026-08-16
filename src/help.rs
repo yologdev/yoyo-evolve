@@ -331,6 +331,14 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  def               Find where a symbol is defined (e.g. yoyo def handle_goal)"
+    );
+    let _ = writeln!(
+        s,
+        "  ast               Structural code search via ast-grep (e.g. yoyo ast '$X.unwrap()' --in src/)"
+    );
+    let _ = writeln!(
+        s,
         "  update            Check for and install the latest yoyo release"
     );
     let _ = writeln!(

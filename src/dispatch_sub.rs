@@ -283,6 +283,23 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 crate::commands_search::handle_index();
                 return Some(None);
             }
+            "ast" => {
+                // Plain space-join, not `quote_args_as_command`: both handlers
+                // whitespace-split their input, so injected quotes would land inside
+                // the pattern/symbol. Args reach the handler verbatim, so every
+                // correction the REPL path earned — #767's bare-path refusal,
+                // `cap_ast_output`'s 200-line bound — applies here too.
+                let input = join_args_as_command(args);
+                crate::commands_ast_grep::handle_ast_grep(&input);
+                return Some(None);
+            }
+            "def" => {
+                // Same join reasoning; `normalize_symbol_query`'s forgiveness of
+                // `foo()` / `&foo` / `mod::foo` comes along unchanged.
+                let input = join_args_as_command(args);
+                crate::commands_search::handle_def(&input);
+                return Some(None);
+            }
             "update" => {
                 if let Err(e) = crate::commands_update::handle_update() {
                     eprintln!("{RED}  {e}{RESET}");
@@ -477,10 +494,12 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
 /// that actually works, and a verb removed from the `match` but left here would make
 /// the guard stay silent on a word that is now a paid prompt.
 pub const ROUTED_SUBCOMMANDS: &[&str] = &[
+    "ast",
     "blame",
     "changelog",
     "commit",
     "config",
+    "def",
     "diff",
     "docs",
     "doctor",
@@ -1320,6 +1339,47 @@ mod tests {
             matches!(result, Some(None)),
             "expected Some(None) for `index` subcommand"
         );
+    }
+
+    #[test]
+    fn test_try_dispatch_subcommand_ast_and_def() {
+        // The shapes from the Day 169 assessment, which used to fall straight
+        // through to the paid single-prompt path. Asserted at the level a caller
+        // observes — the dispatcher says "handled", not "fell through". `sg` may be
+        // absent and `src/` makes #767's bare-path refusal fire; both are
+        // handler-internal outcomes that leave the routing decision the same.
+        let cases: &[&[&str]] = &[
+            &["yoyo", "ast", "$X.unwrap()", "src/"],
+            &["yoyo", "ast", "unwrap()", "--in", "src/commands_goal.rs"],
+            &["yoyo", "def", "handle_goal"],
+        ];
+        for case in cases {
+            let args: Vec<String> = case.iter().map(|s| s.to_string()).collect();
+            assert!(
+                matches!(try_dispatch_subcommand(&args), Some(None)),
+                "expected Some(None) for {case:?} — falling through starts a paid LLM turn"
+            );
+        }
+    }
+
+    #[test]
+    fn test_search_verbs_are_not_claimed_as_unknown_words() {
+        // The bare two-token forms (`yoyo ast`, `yoyo def`) used to be caught by the
+        // near-miss guard; now that they route, they must reach the handler's own
+        // usage message instead of being called unknown.
+        for verb in ["ast", "def"] {
+            assert!(
+                ROUTED_SUBCOMMANDS.contains(&verb),
+                "`{verb}` must be in ROUTED_SUBCOMMANDS"
+            );
+            let args = vec!["yoyo".to_string(), verb.to_string()];
+            let word = bare_word_arg(&args).expect("`yoyo <verb>` is the bare-word shape");
+            assert_eq!(
+                bare_word_near_miss(word),
+                None,
+                "the near-miss guard must not claim `{verb}` as an unknown command"
+            );
+        }
     }
 
     #[test]
