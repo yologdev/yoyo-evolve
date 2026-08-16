@@ -502,12 +502,7 @@ mod tests {
         let p = update_paths(root, "77-1700000000", "v0.1.16", "tar.gz");
         // Exactly one component is appended to the root for each path, so the
         // separator between them is the platform's own — no `/` was baked in.
-        let archive_tail: Vec<_> = p
-            .archive
-            .strip_prefix(root)
-            .unwrap()
-            .components()
-            .collect();
+        let archive_tail: Vec<_> = p.archive.strip_prefix(root).unwrap().components().collect();
         let dir_tail: Vec<_> = p
             .extract_dir
             .strip_prefix(root)
@@ -519,14 +514,22 @@ mod tests {
 
         let file = p.archive.file_name().unwrap().to_str().unwrap();
         let dir = p.extract_dir.file_name().unwrap().to_str().unwrap();
-        assert!(!file.contains('/'), "archive segment holds a slash: {}", file);
+        assert!(
+            !file.contains('/'),
+            "archive segment holds a slash: {}",
+            file
+        );
         assert!(
             !file.contains('\\'),
             "archive segment holds a backslash: {}",
             file
         );
         assert!(!dir.contains('/'), "dir segment holds a slash: {}", dir);
-        assert!(!dir.contains('\\'), "dir segment holds a backslash: {}", dir);
+        assert!(
+            !dir.contains('\\'),
+            "dir segment holds a backslash: {}",
+            dir
+        );
         assert_eq!(file, "yoyo-update-77-1700000000-v0.1.16.tar.gz");
         assert_eq!(dir, "yoyo-update-77-1700000000");
     }
@@ -602,7 +605,11 @@ mod tests {
     #[test]
     fn extractor_missing_message_names_the_command_and_the_kept_archive() {
         let msg = extractor_missing_message("tar", "/tmp/yoyo-update-9-1.zip", "No such file");
-        assert!(msg.contains("tar"), "message must name the command: {}", msg);
+        assert!(
+            msg.contains("tar"),
+            "message must name the command: {}",
+            msg
+        );
         assert!(
             msg.contains("/tmp/yoyo-update-9-1.zip"),
             "message must name the archive left behind: {}",
@@ -619,7 +626,10 @@ mod tests {
     /// shell out to `unzip`.
     #[test]
     fn update_zip_extension_belongs_to_the_windows_target_only() {
-        assert_eq!(platform_target("windows", "x86_64").map(|(_, e)| e), Some("zip"));
+        assert_eq!(
+            platform_target("windows", "x86_64").map(|(_, e)| e),
+            Some("zip")
+        );
         for (os, arch) in [
             ("linux", "x86_64"),
             ("macos", "x86_64"),
