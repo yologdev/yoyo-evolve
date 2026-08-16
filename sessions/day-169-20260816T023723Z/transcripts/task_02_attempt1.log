@@ -1,0 +1,303 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code — handler signatures first, as the task says.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn handle_ast_grep"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ROUTED_SUBCOMMANDS" -A4… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+Both handlers are fn(&str) with no agent state. Now the existing arms:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"find"\|"grep"\|"outlin…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_sub.rs && gre… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 70,120p src/dispatch_sub.… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_ast_grep\|handle…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_ast_grep_args"… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,110p src/dispatch_sub.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1285,1330p src/dispatch_s… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 23.9s (7 ✓)
+
+Both handlers are pure fn(&str) printers — no agent state, so both ship. Writing the tests first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 51 lines)
+  +     #[test]
+  +     fn test_try_dispatch_subcommand_ast() {
+  +         // The shape from the Day 169 assessment: three tokens, which used to fall
+  +         // straight through to the paid single-prompt path. Asserted at the level a
+  +         // caller observes — the dispatcher says "handled", not "fell through".
+  +         // `sg` may be absent and `src/` makes #767's bare-path refusal fire; both
+  +         // are handler-internal outcomes and the routing decision is the same.
+  +         let args = vec![
+  +             "yoyo".into(),
+  +             "ast".into(),
+  +             "$X.unwrap()".into(),
+  +             "src/".into(),
+  +         ];
+  +         let result = try_dispatch_subcommand(&args);
+  +         assert!(
+  +             matches!(result, Some(None)),
+  +             "expected Some(None) for `ast` subcommand — falling through starts a paid LLM turn"
+  +         );
+  +     }
+  + 
+  ... (31 more lines)
+ ✓ (13.3s)
+  +     #[test]
+  +     fn test_try_dispatch_subcommand_ast() {
+  +         // The shape from the Day 169 assessment: three tokens, which used to fall
+  +         // straight through to the paid single-prompt path. Asserted at the level a
+  +         // caller observes — the dispatcher says "handled", not "fell through".
+  +         // `sg` may be absent and `src/` makes #767's bare-path refusal fire; both
+  +         // are handler-internal outcomes and the routing decision is the same.
+  +         let args = vec![
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (6 → 7 lines)
+                let args = vec!["yoyo".to_string(), verb.to_string()];
+  +             let word = bare_word_arg(&args).expect("`yoyo <verb>` is the bare-word shape");
+                assert_eq!(
+  -                 bare_word_near_miss(&args),
+  +                 bare_word_near_miss(word),
+                    None,
+                    "the near-miss guard must not claim `{verb}` as an unknown command"
+                );
+ ✓ (1m 36s)
+                let args = vec!["yoyo".to_string(), verb.to_string()];
+  +             let word = bare_word_arg(&args).expect("`yoyo <verb>` is the bare-word shape");
+                assert_eq!(
+  -                 bare_word_near_miss(&args),
+  +                 bare_word_near_miss(word),
+                    None,
+                    "the near-miss guard must not claim `{verb}` as an unknown command"
+                );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet dispatch_sub … ✓ (912ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 58s (3 ✓)
+
+Three red tests confirming the hole. Now the arms — plain space-join, since both parsers whitespace-split (quotes would land inside the pattern):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (4 → 22 lines)
+                "index" => {
+                    crate::commands_search::handle_index();
+  +                 return Some(None);
+  +             }
+  +             "ast" => {
+  +                 // Plain space-join, not `quote_args_as_command`: `parse_ast_grep_args`
+  +                 // whitespace-splits its input, so injected quotes would become part
+  +                 // of the pattern. Args reach the handler verbatim, so #767's
+  +                 // bare-path refusal and `cap_ast_output`'s 200-line bound apply here
+  +                 // exactly as they do in the REPL.
+  +                 let input = join_args_as_command(args);
+  +                 crate::commands_ast_grep::handle_ast_grep(&input);
+  +                 return Some(None);
+  +             }
+  +             "def" => {
+  +                 // Same reasoning as `ast`: `parse_def_query` trims and normalizes the
+  +                 // raw remainder, so the REPL's `normalize_symbol_query` forgiveness
+  +                 // (`foo()`, `&foo`, `mod::foo`) comes along unchanged.
+  +                 let input = join_args_as_command(args);
+  +                 crate::commands_search::handle_def(&input);
+  ... (2 more lines)
+ ✓ (1m 38s)
+                "index" => {
+                    crate::commands_search::handle_index();
+  +                 return Some(None);
+  +             }
+  +             "ast" => {
+  +                 // Plain space-join, not `quote_args_as_command`: `parse_ast_grep_args`
+  +                 // whitespace-splits its input, so injected quotes would become part
+  +                 // of the pattern. Args reach the handler verbatim, so #767's
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4901 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — table and help text still to land.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (6 → 8 lines)
+    pub const ROUTED_SUBCOMMANDS: &[&str] = &[
+  +     "ast",
+        "blame",
+        "changelog",
+        "commit",
+        "config",
+  +     "def",
+        "diff",
+ ✓ (1m 38s)
+    pub const ROUTED_SUBCOMMANDS: &[&str] = &[
+  +     "ast",
+        "blame",
+        "changelog",
+        "commit",
+        "config",
+  +     "def",
+        "diff",
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 315,335p src/help.rs && e… ✓ (5ms)
+  2 tools completed in 1m 41s (2 ✓)
+
+Now the help entries, in the same style as their grep/outline neighbours:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 12 lines)
+        let _ = writeln!(
+            s,
+            "  outline           Search for symbols or show file structure (e.g. yoyo outline src/main.rs)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  def               Find where a symbol is defined (e.g. yoyo def handle_goal)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  ast               Structural code search via ast-grep (e.g. yoyo ast '$X.unwrap()' --in src/)"
+        );
+ ✓ (1m 42s)
+        let _ = writeln!(
+            s,
+            "  outline           Search for symbols or show file structure (e.g. yoyo outline src/main.rs)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  def               Find where a symbol is defined (e.g. yoyo def handle_goal)"
+  +     );
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --quiet … ✓ (58.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 45s (2 ✓)
+
+All green. Now the size gate and a real manual check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_sub.rs && car… ✓ (355ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+2016 lines — 16 into the 50-line grace band (warning, not fatal). Let me see the exact register line it prints:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (167ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate offers "split it, or register it". Before taking on permanent register debt for 16 lines, let me tighten my own additions — the two dispatch tests are the same assertion twice, so a table serves better:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1315,1385p src/dispatch_s… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (29 → 20 lines)
+        #[test]
+  -     fn test_try_dispatch_subcommand_ast() {
+  -         // The shape from the Day 169 assessment: three tokens, which used to fall
+  -         // straight through to the paid single-prompt path. Asserted at the level a
+  -         // caller observes — the dispatcher says "handled", not "fell through".
+  -         // `sg` may be absent and `src/` makes #767's bare-path refusal fire; both
+  -         // are handler-internal outcomes and the routing decision is the same.
+  -         let args = vec![
+  -             "yoyo".into(),
+  -             "ast".into(),
+  -             "$X.unwrap()".into(),
+  -             "src/".into(),
+  +     fn test_try_dispatch_subcommand_ast_and_def() {
+  +         // The shapes from the Day 169 assessment, which used to fall straight
+  +         // through to the paid single-prompt path. Asserted at the level a caller
+  +         // observes — the dispatcher says "handled", not "fell through". `sg` may be
+  +         // absent and `src/` makes #767's bare-path refusal fire; both are
+  +         // handler-internal outcomes that leave the routing decision the same.
+  +         let cases: &[&[&str]] = &[
+  +             &["yoyo", "ast", "$X.unwrap()", "src/"],
+  ... (26 more lines)
+ ✓ (1m 42s)
+        #[test]
+  -     fn test_try_dispatch_subcommand_ast() {
+  -         // The shape from the Day 169 assessment: three tokens, which used to fall
+  -         // straight through to the paid single-prompt path. Asserted at the level a
+  -         // caller observes — the dispatcher says "handled", not "fell through".
+  -         // `sg` may be absent and `src/` makes #767's bare-path refusal fire; both
+  -         // are handler-internal outcomes and the routing decision is the same.
+  -         let args = vec![
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (18 → 17 lines)
+                "ast" => {
+  -                 // Plain space-join, not `quote_args_as_command`: `parse_ast_grep_args`
+  -                 // whitespace-splits its input, so injected quotes would become part
+  -                 // of the pattern. Args reach the handler verbatim, so #767's
+  -                 // bare-path refusal and `cap_ast_output`'s 200-line bound apply here
+  -                 // exactly as they do in the REPL.
+  +                 // Plain space-join, not `quote_args_as_command`: both handlers
+  +                 // whitespace-split their input, so injected quotes would land inside
+  +                 // the pattern/symbol. Args reach the handler verbatim, so every
+  +                 // correction the REPL path earned — #767's bare-path refusal,
+  +                 // `cap_ast_output`'s 200-line bound — applies here too.
+                    let input = join_args_as_command(args);
+                    crate::commands_ast_grep::handle_ast_grep(&input);
+                    return Some(None);
+                }
+                "def" => {
+  -                 // Same reasoning as `ast`: `parse_def_query` trims and normalizes the
+  -                 // raw remainder, so the REPL's `normalize_symbol_query` forgiveness
+  -                 // (`foo()`, `&foo`, `mod::foo`) comes along unchanged.
+  +                 // Same join reasoning; `normalize_symbol_query`'s forgiveness of
+  ... (4 more lines)
+ ✓ (1m 45s)
+                "ast" => {
+  -                 // Plain space-join, not `quote_args_as_command`: `parse_ast_grep_args`
+  -                 // whitespace-splits its input, so injected quotes would become part
+  -                 // of the pattern. Args reach the handler verbatim, so #767's
+  -                 // bare-path refusal and `cap_ast_output`'s 200-line bound apply here
+  -                 // exactly as they do in the REPL.
+  +                 // Plain space-join, not `quote_args_as_command`: both handlers
+  +                 // whitespace-split their input, so injected quotes would land inside
+  ... (13 more lines)
+  3 tools completed in 3m 46s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

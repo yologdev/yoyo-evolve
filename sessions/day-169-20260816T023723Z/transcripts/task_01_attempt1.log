@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading find_symbol_block in the target file.
+  ▶ search 'fn find_symbol_block|fn extract_symbol' in src/commands_refactor.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_refactor.rs &… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "find_symbol_block\|extr… ✓ (4ms)
+  ▶ read src/commands_refactor.rs:28..163 ✓ (1ms)
+  ▶ read src/commands_refactor.rs:162..257 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'println\|tricky\|brace'… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 38.1s (6 ✓)
+
+Now let me add the scanner. Writing the helper first, then tests.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_refactor.rs (1 → 171 lines)
+  + /// True for characters that can continue a Rust identifier.
+  + fn is_ident_char(c: char) -> bool {
+  +     c.is_alphanumeric() || c == '_'
+  + }
+  + 
+  + /// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
+  + /// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
+  + /// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
+  + fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
+  +     let mut j = start + 1;
+  +     let first = *chars.get(j)?;
+  +     if first == '\'' {
+  +         // `''` is not a char literal.
+  +         return None;
+  +     }
+  +     if first == '\\' {
+  +         j += 1;
+  +         let esc = *chars.get(j)?;
+  +         if esc == 'u' && chars.get(j + 1) == Some(&'{') {
+  +             j += 2;
+  ... (151 more lines)
+ ✓ (20.9s)
+  + /// True for characters that can continue a Rust identifier.
+  + fn is_ident_char(c: char) -> bool {
+  +     c.is_alphanumeric() || c == '_'
+  + }
+  + 
+  + /// If `chars[start]` is a `'` that opens a *closed* char literal, return how many
+  + /// chars the literal occupies (including both quotes). Returns `None` for a lone `'`
+  + /// that is really a lifetime (`&'a str`), which must be treated as an ordinary char.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the call site (definition without consumer breaks the build — wiring it immediately):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_refactor.rs (7 → 11 lines)
+  -     // Scan forward with brace-depth tracking
+  +     // Scan forward with brace-depth tracking. Braces inside string/char literals and
+  +     // comments are not structural — see `significant_braces` (#770: a body containing
+  +     // `println!("}")` used to end the block early and `/extract` then deleted a
+  +     // truncated range from the source, corrupting both files).
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut end_line = decl_line;
+  +     let mut in_block_comment = false;
+    
+        for (i, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in line.chars() {
+  +         for ch in significant_braces(line, &mut in_block_comment) {
+ ✓ (1m 43s)
+  -     // Scan forward with brace-depth tracking
+  +     // Scan forward with brace-depth tracking. Braces inside string/char literals and
+  +     // comments are not structural — see `significant_braces` (#770: a body containing
+  +     // `println!("}")` used to end the block early and `/extract` then deleted a
+  +     // truncated range from the source, corrupting both files).
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut end_line = decl_line;
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (169ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_refactor.rs (6 → 143 lines)
+            assert!(result.is_some());
+            let (_, _, block) = result.unwrap();
+            assert!(block.contains("fn process_data"));
+  +     }
+  + 
+  +     // --- #770: braces inside strings / chars / comments are not structural ---
+  + 
+  +     #[test]
+  +     fn significant_braces_table() {
+  +         // (line, incoming block-comment state) -> (expected braces, outgoing state)
+  +         let cases: Vec<(&str, bool, Vec<char>, bool)> = vec![
+  +             // plain control flow is untouched
+  +             ("if x { y } else {", false, vec!['{', '}', '{'], false),
+  +             // braces in a string literal
+  +             (r#"    println!("}");"#, false, vec![], false),
+  +             (r#"    println!("{");"#, false, vec![], false),
+  +             // escaped quote does not end the string, so the `}` stays inside it
+  +             (r#"    let s = "\"}";"#, false, vec![], false),
+  +             // trailing line comment
+  +             ("    let x = 1; // }", false, vec![], false),
+  ... (122 more lines)
+ ✓ (1m 43s)
+            assert!(result.is_some());
+            let (_, _, block) = result.unwrap();
+            assert!(block.contains("fn process_data"));
+  +     }
+  + 
+  +     // --- #770: braces inside strings / chars / comments are not structural ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_refact… ✓ (145ms)
+  4 tools completed in 3m 57s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     Predicted correctly: src/commands_refactor.rs
+

@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan from the assessment. Let me start by clearing the plan directory.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 683 --comments 2>/… ✓ (947ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 6s (2 ✓)
+
+Only one community issue (#683), and Day 168 already closed the actionable half of it. Let me write the plan.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (111 lines) ✓ (57.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (90 lines) ✓ (57.7s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (59 lines) ✓ (57.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -3 session_plan/task_01.md … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 53s (5 ✓)
+
+Plan written. session_plan/ is gitignored (as documented in CLAUDE.md), so the commit is a no-op — the files are on disk for the implementation agents.
+
+Task 1 — Fix #770: `/extract` corrupts source files (product, src/commands_refactor.rs)
+find_symbol_block counts braces with a bare for ch in line.chars() and no literal/comment state, and extract_symbol uses that range to delete lines from the source. A println!("}") truncates the block → source left with unbalanced braces and the target gets a fragment; a println!("{") swallows the next function. Both silent — the preview shows the same wrong block the write uses. One pure significant_braces(line, &mut in_block_comment) -> Vec<char> helper (braces in order, so } fn other() { still works), covering string/char literals with escapes, Rust lifetimes (the #759 trap — don't repeat it), //, /* */ across lines, and raw strings. Tests at the emission point: after extract_symbol, assert both files.
+
+Task 2 — CLI doors for `/ast` and `/def` (product, src/dispatch_sub.rs + src/help.rs)
+Measured this session: yoyo ast '$X.unwrap()' src/ prints yoyo (prompt mode) — it falls through to the single-prompt path and **starts a paid LLM turn**. Four of six search commands have CLI doors; these two don't. Third instance in four days of "two doors, one works" (#745, #767). Must route to the same handlers so #767's bare-path refusal and cap_ast_output come along — a new path starts at zero corrections. Flagged the 1946/2000 line budget in that file and the grace-band register line.
+
+#683 — response only, no slot. Day 168 landed session_end; task-result is provably unreachable (ProjectRef/ArtifactRef/PatchStatus are absent from both pub use yoagent_state::{…} blocks in yoagent 0.16.3), which is what produced receipt #765's empty diffs. The comment reports the half that landed, names the constraint that session_end has no store-generic body, and puts one decision in front of @yuanhao — upstream re-export request, or close item (5) as "named subset ported".
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the docs. Let me first verify the actual state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "34 verbs" CLAUDE.md ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/const ROUTED_SUBCOMMAND…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,45p' docs/src/usage/co… ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (45 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/help.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,350p' src/help.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 13.1s (7 ✓)
+
+Now the docs table:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (1 → 3 lines)
+    > | `yoyo index` | Build and display project index |
+  + > | `yoyo def` | Find where a symbol is defined (e.g. `yoyo def handle_goal`) |
+  + > | `yoyo ast` | Structural code search via ast-grep (e.g. `yoyo ast '$X.unwrap()' --in src/`) |
+ ✓ (1m 10s)
+    > | `yoyo index` | Build and display project index |
+  + > | `yoyo def` | Find where a symbol is defined (e.g. `yoyo def handle_goal`) |
+  + > | `yoyo ast` | Structural code search via ast-grep (e.g. `yoyo ast '$X.unwrap()' --in src/`) |
+
+Now CLAUDE.md — the verb count:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `ROUTED_SUBCOMMANDS` (34 verbs, a second copy of the dispatcher's match arms)
+  + `ROUTED_SUBCOMMANDS` (36 verbs, a second copy of the dispatcher's match arms)
+ ✓ (1m 10s)
+  - `ROUTED_SUBCOMMANDS` (34 verbs, a second copy of the dispatcher's match arms)
+  + `ROUTED_SUBCOMMANDS` (36 verbs, a second copy of the dispatcher's match arms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_search.rs`… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - pinned by a fixture-table test)
+  + pinned by a fixture-table test). Day 169: `/def` has a **CLI door** — `yoyo def <symbol>` routes through `try_dispatch_subcommand` to the same `handle_def`, forwarding its args verbatim; before this, `yoyo def handle_goal` was three tokens, so it slipped past the Day-165 bare-word near-miss guard (which only inspects `yoyo <word>`) and fell through to the single-prompt path — a paid LLM turn with write-capable tools, answering a search question from priors. `find`/`grep`/`index`/`outline` already had doors; this is the "two doors, one works" shape of #745 and #767 again.
+ ✓ (1m 10s)
+  - pinned by a fixture-table test)
+  + pinned by a fixture-table test). Day 169: `/def` has a **CLI door** — `yoyo def <symbol>` routes through `try_dispatch_subcommand` to the same `handle_def`, forwarding its args verbatim; before this, `yoyo def handle_goal` was three tokens, so it slipped past the Day-165 bare-word near-miss guard (which only inspects `yoyo <word>`) and fell through to the single-prompt path — a paid LLM turn with write-capable tools, answering a search question from priors. `find`/`grep`/`index`/`outline` already had doors; this is the "two doors, one works" shape of #745 and #767 again.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_ast_grep.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '101p' CLAUDE.md | tail -… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - rather than left as a fixture asserting a known-wrong output.
+  + rather than left as a fixture asserting a known-wrong output. Day 169: `/ast` has a **CLI door** — `yoyo ast '$X.unwrap()' --in src/` routes through `try_dispatch_subcommand` to the same `handle_ast_grep`, args forwarded verbatim, so every correction the handler earned (#767's bare-path refusal, `cap_ast_output`'s 200-line bound) comes along rather than a second implementation starting at zero corrections. Before this the multi-token form slipped past the Day-165 near-miss guard (which only inspects the bare `yoyo <word>` shape) and started a billed LLM turn; bare `yoyo ast` now reaches the handler's own usage message instead.
+ ✓ (1m 10s)
+  - rather than left as a fixture asserting a known-wrong output.
+  + rather than left as a fixture asserting a known-wrong output. Day 169: `/ast` has a **CLI door** — `yoyo ast '$X.unwrap()' --in src/` routes through `try_dispatch_subcommand` to the same `handle_ast_grep`, args forwarded verbatim, so every correction the handler earned (#767's bare-path refusal, `cap_ast_output`'s 200-line bound) comes along rather than a second implementation starting at zero corrections. Before this the multi-token form slipped past the Day-165 near-miss guard (which only inspects the bare `yoyo <word>` shape) and started a billed LLM turn; bare `yoyo ast` now reaches the handler's own usage message instead.
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 49s (6 ✓)
+
+Now add the routing note to the dispatch_sub.rs bullet itself:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - this pre-dispatch refusal is kept beside it as the earlier and cheaper stop for the non-interactive door, since it returns before `handle_goal` is ever entered and so needs no gate consultation at all.
+  + this pre-dispatch refusal is kept beside it as the earlier and cheaper stop for the non-interactive door, since it returns before `handle_goal` is ever entered and so needs no gate consultation at all. Day 169: `"ast"` and `"def"` arms were added (34 → 36 verbs), both delegating to the existing `commands_ast_grep::handle_ast_grep` / `commands_search::handle_def` with args re-joined verbatim by the pre-existing `join_args_as_command` — the near-miss guard only inspects the two-token `yoyo <word>` shape, so `yoyo ast '$X.unwrap()' src/` and `yoyo def handle_goal` were falling through to the single-prompt path and spending API tokens; four of the six search commands (`find`/`grep`/`index`/`outline`) already had doors, making this the third "two doors, one works" instance in four days (#745, #767).
+ ✓ (1m 11s)
+  - this pre-dispatch refusal is kept beside it as the earlier and cheaper stop for the non-interactive door, since it returns before `handle_goal` is ever entered and so needs no gate consultation at all.
+  + this pre-dispatch refusal is kept beside it as the earlier and cheaper stop for the non-interactive door, since it returns before `handle_goal` is ever entered and so needs no gate consultation at all. Day 169: `"ast"` and `"def"` arms were added (34 → 36 verbs), both delegating to the existing `commands_ast_grep::handle_ast_grep` / `commands_search::handle_def` with args re-joined verbatim by the pre-existing `join_args_as_command` — the near-miss guard only inspects the two-token `yoyo <word>` shape, so `yoyo ast '$X.unwrap()' src/` and `yoyo def handle_goal` were falling through to the single-prompt path and spending API tokens; four of the six search commands (`find`/`grep`/`index`/`outline`) already had doors, making this the third "two doors, one works" instance in four days (#745, #767).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
