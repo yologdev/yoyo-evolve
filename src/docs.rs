@@ -188,6 +188,21 @@ pub fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
     (true, build_docs_display(&url, description, &items_display))
 }
 
+/// Build the user-facing message for a failed item fetch.
+///
+/// A transport failure and a genuine "item not found" are different facts and must not
+/// reach the user as one sentence: telling someone their item does not exist in the crate
+/// when the machine is offline (or `curl` is missing, or docs.rs returned a 500) sends them
+/// to check their spelling for a problem that is not theirs. `fetch_docs_summary` already
+/// separates the two; this is the same separation for the item path.
+fn item_fetch_error_message(err: &str, crate_name: &str, item: &str) -> String {
+    if err.contains("Could not reach") || err.contains("Error fetching docs") {
+        format!("{err} (looking up '{item}' in '{crate_name}')")
+    } else {
+        format!("Item '{item}' not found in crate '{crate_name}' on docs.rs")
+    }
+}
+
 /// Fetch docs for a specific item within a crate (e.g., `/docs tokio task`).
 /// Constructs the URL as `https://docs.rs/<crate>/latest/<crate_mod>/<item>/`.
 /// Returns (found, summary_text).
@@ -204,12 +219,7 @@ pub fn fetch_docs_item(crate_name: &str, item: &str) -> (bool, String) {
 
     let body = match fetch_docs_html(&url) {
         Ok(body) => body,
-        Err(_) => {
-            return (
-                false,
-                format!("Item '{item}' not found in crate '{crate_name}' on docs.rs"),
-            );
-        }
+        Err(e) => return (false, item_fetch_error_message(&e, crate_name, item)),
     };
 
     let description = extract_meta_description(&body);
@@ -545,5 +555,46 @@ mod tests {
         assert!(!result.contains("📝"));
         assert!(result.contains("Structs: Foo"));
         assert!(!result.contains("Docs available at the URL above."));
+    }
+
+    // The two tests below pin `item_fetch_error_message`, which is the whole of what
+    // `fetch_docs_item` returns to its caller on the error path (the call site is
+    // `Err(e) => return (false, item_fetch_error_message(&e, crate_name, item))` and does
+    // nothing else to the string). Stated plainly: they do NOT drive a live fetch — that
+    // needs the network — so they assert the message a caller receives, one call short of
+    // the process boundary.
+
+    #[test]
+    fn test_item_fetch_transport_failure_is_not_reported_as_a_missing_item() {
+        // Offline / DNS failure / 5xx: `fetch_docs_html` returns "Could not reach docs.rs".
+        let msg = item_fetch_error_message("Could not reach docs.rs", "tokio", "task");
+        assert!(
+            !msg.contains("not found in crate"),
+            "a transport failure must not tell the user the item does not exist: {msg}"
+        );
+        assert_eq!(
+            msg, "Could not reach docs.rs (looking up 'task' in 'tokio')",
+            "the reachability failure and the crate/item being looked up are both named"
+        );
+
+        // curl missing entirely: the spawn error is transport too, not a missing item.
+        let spawn = item_fetch_error_message(
+            "Error fetching docs: No such file or directory (os error 2)",
+            "tokio",
+            "task",
+        );
+        assert!(!spawn.contains("not found in crate"), "{spawn}");
+        assert!(spawn.contains("Error fetching docs"), "{spawn}");
+    }
+
+    #[test]
+    fn test_item_fetch_genuine_not_found_keeps_its_message() {
+        // The pass-through half: a real "not found" is byte-identical to the pre-fix message,
+        // so separating transport failures did not cost the common case its wording.
+        let msg = item_fetch_error_message("not found on docs.rs", "serde", "Serialize");
+        assert_eq!(
+            msg,
+            "Item 'Serialize' not found in crate 'serde' on docs.rs"
+        );
     }
 }
