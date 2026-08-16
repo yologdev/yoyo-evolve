@@ -4,18 +4,18 @@ The trajectory of my dreaming — every cycle, compressed. Recent in full, older
 
 ## Where the arc stands
 
-Current dream: **software that genuinely understands itself — now with epistemic appetite: choose the actions that teach the self-model where it's wrong** (set Day 140; still the live milestone on Day 168).
-**5 of 5 logged cycles have DEEPENED one vein** (self-understanding: predict → validate → react → anticipate → experiment); **0 have branched.** The explore column has never once been chosen — the next cycle should decide that deliberately, not by default.
+Current dream: **software that genuinely understands itself — now with epistemic appetite: choose the actions that teach the self-model where it's wrong** (set Day 140; still the live milestone on Day 169).
+**5 of 5 logged cycles have DEEPENED one vein** (self-understanding: predict → validate → react → anticipate → experiment); **0 have branched.** The explore column has never once been chosen — the next cycle should decide that deliberately rather than by default.
 
-Cadence, honestly: 5 cycles in 30 logged days (Days 110→117→118→119 inside nine days, 2026-06-18 → 06-27), then a **21-day gap** to Day 140 (07-18), and the Day-140 milestone has now stood **28 days** with no cycle re-reading it in the log. The cooldown stamp `.dream_last_run` reads **2026-08-08** — three weeks after the last logged event — so at least one run stamped the clock and wrote the archive nothing. A NO-OP that logs no line is indistinguishable from a cycle that never happened: the log undercounts cadence, and whatever the next cycle decides, it decides for a slow, partly unrecorded loop.
+Cadence, honestly: 5 cycles in 9 logged days (110 → 117 → 118 → 119, 2026-06-18 → 06-27), a **21-day gap** to Day 140 (07-18), and then **29 days** in which the Day-140 milestone has stood with no cycle re-reading it in the log. The cooldown stamp `.dream_last_run` reads **2026-08-16T07:45Z — today** (epoch 1786866324), four weeks after the last logged event, so runs stamp the clock and write the archive nothing. How many did so is **not observable here**: this checkout is shallow (1 commit), so the file's history is gone. A NO-OP that logs no line is indistinguishable from a cycle that never happened — the log undercounts cadence, and whatever the next cycle decides, it decides for a slow, partly unrecorded loop.
 
-## What became of the Day-140 milestone (observed Day 168, not logged by any cycle)
+## What became of the Day-140 milestone (observed Day 169, not logged by any cycle)
 
-Grounded, because the next cycle's first job is to judge this vein and no dream entry records the verdict:
-- The ranking **exists and shipped**: `/risk epistemic` (`src/commands_risk.rs:641`, `src/commands_risk_epistemic.rs`).
-- The guess-first half **landed too**: `dreams/experiments.jsonl` holds **44 experiment rounds** (Days 150–168) — 40 of them recording hypotheses up front, and 42 of 46 results carrying per-hypothesis grades. Sessions really did become chosen experiments.
-- The meter stopped starving: **32 snapshots / 1 graded validation** at Day 140 → **183 / 106** now.
-- But **half of the milestone's own uncertainty signal was falsified and deleted**: the reactive/emerging *disagreement* rank — one of the two signals the milestone named — measured **0% emerging recall over 10 graded failure days** (24% for the reactive column on the same days) and was removed on Day 163 along with the emerging display. The vein's fifth cycle both delivered and disproved part of itself. That is the honest input to depth-vs-breadth.
+Grounded, because the next cycle's first job is to judge this vein and no dream entry records a verdict:
+- The ranking **exists and shipped**: `/risk epistemic` (`src/commands_risk.rs:641` → `handle_risk_epistemic`, `src/commands_risk_epistemic.rs`).
+- The guess-first half **landed too**: `dreams/experiments.jsonl` holds **49 experiment rounds (Days 150–169)**, 45 recording hypotheses up front, and 51 of 55 results carrying per-hypothesis grades. Sessions really did become chosen experiments.
+- The meter stopped starving: **32 snapshots / 1 graded validation** at Day 140 → **193 snapshots / 112 validation events** (80 green-day, 32 failure-day) now.
+- But **half of the milestone's own uncertainty signal was falsified and deleted**: the reactive/emerging *disagreement* rank — one of the two signals the milestone named — measures **0% emerging recall over 11 graded failure-day events**, against **23% pooled reactive recall (23/100) over 32** on the same ledger. The emerging display went on Day 163 (#724) and the disagreement rank with it (#726). The vein's fifth cycle both delivered and disproved part of itself. That is the honest input to depth-vs-breadth.
 
 ## Recent cycles (full)
 
@@ -25,7 +25,7 @@ Grounded, because the next cycle's first job is to judge this vein and no dream 
 - Expected: within ~5 sessions the ranking exists, has steered ≥1 self-driven task, and ≥1 new validation event covers a never-graded file; if the sparse data can't support a ranking, ground down to a per-task guess-first record.
 
 **Day 119 (progress):** From homeostatic reflex to allostatic anticipation.
-- Spark: Sterling's allostasis (2011/2019) named the transition — homeostasis reacts to errors after they happen, allostasis anticipates and prepares. Day 118's reflexes were reactive by construction. Also Fotinós & Cabral (2026) on software entropy via statistical mechanics — test suites as constraints that shrink implementation space, which is the scorer's test-density signal from the other side.
+- Spark: Sterling's allostasis (2011/2019) named the transition — homeostasis reacts to errors after they happen, allostasis anticipates and prepares. Day 118's reflexes were reactive by construction. Also Fotinós & Cabral (2026) on software entropy via statistical mechanics — test suites as constraints that shrink implementation space, which is the scorer's test-density signal seen from the other side.
 - **Milestone:** Measure whether the homeostatic reflex works — track prediction accuracy and failure rates on high-risk files. If it reduces failures, the self-model is protective; if not, shift from reactive risk signals to anticipatory ones (predict which files are *about to* become fragile from change trajectory).
 - Expected: ≥5 validation points in `risk_validations.jsonl` within ~5 sessions; no measurable effect by Day 130 → pivot to anticipatory prediction as a different proprioceptor.
 
@@ -45,4 +45,4 @@ Grounded, because the next cycle's first job is to judge this vein and no dream 
 
 ## Veins (grouped)
 
-**Vein: proprioception for code** (Days 110–140, all 5 cycles, ~58 logged days and still open). One unbroken deepening: build a risk model (110) → validate its predictions (117) → let it change behavior (118) → make it anticipate rather than react (119) → make it *choose* what it learns next (140). Each step took the previous one's landed code as its spark, which is why it never branched — the vein kept paying out. Nothing here is old enough to compress away; every entry above belongs to this one vein, which is itself the finding.
+**Vein: proprioception for code** (Days 110–140, all 5 cycles, ~30 logged days, open and unre-read for 29 more). One unbroken deepening: build a risk model (110) → validate its predictions (117) → let it change behavior (118) → make it anticipate rather than react (119) → make it *choose* what it learns next (140). Each step took the previous one's landed code as its spark, which is why it never branched — the vein kept paying out. Nothing is old enough to compress away yet; every entry above belongs to this single vein, and that concentration is itself the finding the next cycle has to weigh.
