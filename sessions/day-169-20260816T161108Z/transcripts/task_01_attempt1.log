@@ -1,0 +1,303 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual state, then make my first concrete change quickly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,120p src/commands_risk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,780p src/commands_ris… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct EpistemicEntry" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 660,700p src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,780p scripts/extract_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 780,830p scripts/extract_… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 27.1s (8 ✓)
+
+Now the implementation. First the tier enum:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 41 lines)
+  + /// Primary ordering key for the epistemic ranking. Lower = darker = ranks
+  + /// first.
+  + ///
+  + /// This is the **predicate form** of the two study weights
+  + /// ([`W_RECENTLY_STUDIED`], [`W_VISITED_UNGRADED`]), which still exist and
+  + /// still apply — they now only order files *within* a tier. The weights alone
+  + /// could not do this job: the ranking's real consumer is a top-N *selector*
+  + /// (`EPISTEMIC_TOP_N` in `scripts/extract_trajectory.py`), and a −1.0 discount
+  + /// does not move a file scoring +1.0 (never graded) +1.0 (stale) off the top,
+  + /// so the planner was handed the rooms I had most recently lit. A selector
+  + /// needs a predicate, not a nudge.
+  + ///
+  + /// The variant order **is** the sort order and is pinned by a test: reordering
+  + /// these variants silently reorders the ranking.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+  + pub(crate) enum StudyTier {
+  +     /// No experiment round has ever named this file.
+  +     NeverStudied,
+  +     /// A round named it but recorded no grade — the expedition happened and
+  +     /// produced nothing falsifiable, so it is darker than a graded round but
+  ... (21 more lines)
+ ✓ (15.7s)
+  + /// Primary ordering key for the epistemic ranking. Lower = darker = ranks
+  + /// first.
+  + ///
+  + /// This is the **predicate form** of the two study weights
+  + /// ([`W_RECENTLY_STUDIED`], [`W_VISITED_UNGRADED`]), which still exist and
+  + /// still apply — they now only order files *within* a tier. The weights alone
+  + /// could not do this job: the ranking's real consumer is a top-N *selector*
+  + /// (`EPISTEMIC_TOP_N` in `scripts/extract_trajectory.py`), and a −1.0 discount
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 8 lines)
+        /// `None` is the explicit abstention case: the risk model has no score
+        /// for this file — it sorts after scored files within a tie.
+        pub(crate) risk_score: Option<f64>,
+  +     /// Study tier — the **primary** sort key, ahead of `score`. See
+  +     /// [`StudyTier`].
+  +     pub(crate) tier: StudyTier,
+    }
+ ✓ (10.0s)
+        /// `None` is the explicit abstention case: the risk model has no score
+        /// for this file — it sorts after scored files within a tie.
+        pub(crate) risk_score: Option<f64>,
+  +     /// Study tier — the **primary** sort key, ahead of `score`. See
+  +     /// [`StudyTier`].
+  +     pub(crate) tier: StudyTier,
+    }
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.0s (2 ✓)
+
+Now the compute site — tier assignment and sort key:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (23 → 25 lines)
+            // visit that produced no grade must never wear the word "graded".
+  +         let study_state = studied.get(path.as_str()).map(|(state, _)| *state);
+            if let Some((state, day)) = studied.get(path.as_str()) {
+                match state {
+                    StudyState::Graded(grade) => {
+  ···
+                    score,
+                    reasons,
+                    risk_score: score_by_path.get(path.as_str()).copied(),
+  +                 tier: study_tier(study_state),
+                });
+            }
+        }
+ ✓ (10.0s)
+            // visit that produced no grade must never wear the word "graded".
+  +         let study_state = studied.get(path.as_str()).map(|(state, _)| *state);
+            if let Some((state, day)) = studied.get(path.as_str()) {
+                match state {
+                    StudyState::Graded(grade) => {
+  ···
+                    score,
+                    reasons,
+  ... (5 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: field `tier` is never read[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic.rs:546:16
+    [1m[94m|[0m
+[1m[94m535[0m [1m[94m|[0m pub(crate) struct EpistemicEntry {
+    [1m[94m|[0m                   [1m[94m--------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m546[0m [1m[94m|[0m     pub(crate) tier: StudyTier,
+    [1m[94m|[0m                [1m[91m^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[E0063][0m[1m: missing field `tier` in initializer of `commands_risk_epistemic::EpistemicEntry`[0m
+    [1m[94m--> [0msrc/commands_risk_epistemic.rs:1917:28
+     [1m[94m|[0m
+[1m[94m1917[0m [1m[94m|[0m         let entries = vec![EpistemicEntry {
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^[0m [1m[91mmissing `tier`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `tier` in initializer of `commands_risk_epistemic::EpistemicEntry`[0m
+    [1m[94m--> [0msrc/commands_risk_epistemic.rs:1954:28
+     [1m[94m|[0m
+[1m[94m1954[0m [1m[94m|[0m         let entries = vec![EpistemicEntry {
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^[0m [1m[91mmissing `tier`[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The remaining halves: sort key, report grouping, and the two test fixtures.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 10 lines)
+        entries.sort_by(|a, b| {
+            use std::cmp::Ordering;
+  +         // Study tier first — the predicate the top-N selector needs. A file
+  +         // already studied by a graded round ranks below every unstudied one
+  +         // whatever its score; the score orders within a tier.
+  +         match a.tier.cmp(&b.tier) {
+  +             Ordering::Equal => {}
+  +             other => return other,
+  +         }
+            if (a.score - b.score).abs() > SCORE_EPSILON {
+ ✓ (10.1s)
+        entries.sort_by(|a, b| {
+            use std::cmp::Ordering;
+  +         // Study tier first — the predicate the top-N selector needs. A file
+  +         // already studied by a graded round ranks below every unstudied one
+  +         // whatever its score; the score orders within a tier.
+  +         match a.tier.cmp(&b.tier) {
+  +             Ordering::Equal => {}
+  +             other => return other,
+  +         }
+            if (a.score - b.score).abs() > SCORE_EPSILON {
+
+Now the report grouping and closing note:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (8 → 17 lines)
+            let mut truncated_reasons = 0usize;
+  +         let mut last_tier: Option<StudyTier> = None;
+            for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+  +             // Group header, emitted only when a group actually appears in the
+  +             // shown slice. Deliberately carries no leading "N." so it cannot
+  +             // match the planner's entry regex, and no "never forecast"
+  +             // substring, which is that parser's hard stop for this half.
+  +             if last_tier != Some(e.tier) {
+  +                 out.push_str(&format!("  {DIM}{}{RESET}\n", study_tier_header(e.tier)));
+  +                 last_tier = Some(e.tier);
+  +             }
+                out.push_str(&format!(
+                    "  {:>2}. {YELLOW}{:<40}{RESET} {:.1}\n",
+                    i + 1,
+ ✓ (10.2s)
+            let mut truncated_reasons = 0usize;
+  +         let mut last_tier: Option<StudyTier> = None;
+            for (i, e) in entries.iter().take(REPORT_TOP_N).enumerate() {
+  +             // Group header, emitted only when a group actually appears in the
+  +             // shown slice. Deliberately carries no leading "N." so it cannot
+  +             // match the planner's entry regex, and no "never forecast"
+  +             // substring, which is that parser's hard stop for this half.
+  +             if last_tier != Some(e.tier) {
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (10 → 23 lines)
+            None => StudyTier::NeverStudied,
+            Some(StudyState::VisitedUngraded) => StudyTier::VisitedUngraded,
+            Some(StudyState::Graded(_)) => StudyTier::Graded,
+  +     }
+  + }
+  + 
+  + /// Group header for one tier in the report.
+  + ///
+  + /// Two constraints checked by tests, not by eye: no header may contain the
+  + /// substring `never forecast` (`extract_trajectory.py` hard-stops entry
+  + /// collection on it), and none may match that script's numbered-entry regex.
+  + pub(crate) fn study_tier_header(tier: StudyTier) -> &'static str {
+  +     match tier {
+  +         StudyTier::NeverStudied => "dark — no deliberate study on record",
+  +         StudyTier::VisitedUngraded => "visited by an ungraded round",
+  +         StudyTier::Graded => "already studied by a graded round (shown for completeness, ranked last)",
+        }
+    }
+ ✓ (10.2s)
+            None => StudyTier::NeverStudied,
+            Some(StudyState::VisitedUngraded) => StudyTier::VisitedUngraded,
+            Some(StudyState::Graded(_)) => StudyTier::Graded,
+  +     }
+  + }
+  + 
+  + /// Group header for one tier in the report.
+  + ///
+  ... (10 more lines)
+  2 tools completed in 30.3s (2 ✓)
+
+Now the closing note and the two test fixtures:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 3 lines)
+            out.push_str(&format!(
+  -             "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
+  +             "\n  {DIM}ordered by (study tier, score): a deliberate study round is direct evidence\n  about a file that the validation ledger cannot supply, so a studied file ranks below\n  every unstudied one regardless of score. That is a judgment call, not a measurement —\n  within a group, higher score still means the model is blinder.{RESET}\n"
+            ));
+ ✓ (10.2s)
+            out.push_str(&format!(
+  -             "\n  {DIM}high score = the model is blindest here; an outcome touching these files teaches the most{RESET}\n"
+  +             "\n  {DIM}ordered by (study tier, score): a deliberate study round is direct evidence\n  about a file that the validation ledger cannot supply, so a studied file ranks below\n  every unstudied one regardless of score. That is a judgment call, not a measurement —\n  within a group, higher score still means the model is blinder.{RESET}\n"
+            ));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (8.7s)
+  3 tools completed in 25.2s (3 ✓)
+
+Builds. Now the tests — including the emission-point one:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn snap(" -A 14 src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1846,1856p src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (181 lines) ✓ (930ms)
+  3 tools completed in 30.2s (3 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (42 lines) ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test ranking_puts 2>&1 | s… ✓ (144ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "W_NEVER_GRADED\|W_STALE… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 19s (5 ✓)
+
+That's the real live shape — let me match it exactly (a graded-but-stale dark file at 0.5 vs a studied one at 1.5, which is precisely the Day-169 report):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test ranking_puts 2>&1 | s… ✓ (143ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 16s (2 ✓)
+
+Scores are exactly as designed (dark 0.5, studied 1.5) — my filler file just joined the list. Assert relative order:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (1m 18s)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (157ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The size gate fires — honest response is the Day-166 precedent (extract the #[cfg(test)]-only modules to a sibling file), not a register entry. Checking visibility first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn truncate_reason\|con… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,98p src/main.rs; sed -… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,32p src/commands_risk_e… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.6s (3 ✓)
+
+Extracting both #[cfg(test)] modules verbatim to a sibling file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (8.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '13s/.*/    use crate::co… ✓ (1m 17s)
+  3 tools completed in 1m 49s (3 ✓)
+
+All green. Now the extractor self-tests and the live report:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (579ms)
+
+  ✓ Watch passed after fix (attempt 3)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
