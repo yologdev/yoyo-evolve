@@ -106,6 +106,22 @@ fn is_simple_command(command: &str) -> bool {
     true
 }
 
+/// The one-time RTK detection notice, or `None` when it must not be printed.
+///
+/// Pure decision half of the announcement at the single `eprintln!` call site in
+/// `maybe_prefix_rtk`: silent under `--quiet` and glyph-free under `--screen-reader`,
+/// the same two conventions every other stderr notice in the codebase follows.
+pub fn rtk_announcement(quiet: bool, plain: bool) -> Option<&'static str> {
+    if quiet {
+        return None;
+    }
+    Some(if plain {
+        "RTK detected — using compressed output (disable with --no-rtk)"
+    } else {
+        "📦 RTK detected — using compressed output (disable with --no-rtk)"
+    })
+}
+
 /// Prefix a command with `rtk` if appropriate.
 /// Returns the command unchanged if:
 /// - RTK is not installed
@@ -140,7 +156,11 @@ pub fn maybe_prefix_rtk(command: &str) -> String {
     if RTK_SUPPORTED_COMMANDS.contains(&base_cmd) {
         // Print announcement once
         if !RTK_ANNOUNCED.swap(true, Ordering::Relaxed) {
-            eprintln!("📦 RTK detected — using compressed output (disable with --no-rtk)");
+            if let Some(msg) =
+                rtk_announcement(crate::format::is_quiet(), crate::format::is_plain_output())
+            {
+                eprintln!("{msg}");
+            }
         }
         format!("rtk {trimmed}")
     } else {
@@ -151,6 +171,24 @@ pub fn maybe_prefix_rtk(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rtk_announcement_respects_quiet_and_plain_output() {
+        // The exact string the caller prints, in all three states.
+        assert_eq!(
+            rtk_announcement(false, false),
+            Some("📦 RTK detected — using compressed output (disable with --no-rtk)")
+        );
+        assert_eq!(
+            rtk_announcement(false, true),
+            Some("RTK detected — using compressed output (disable with --no-rtk)")
+        );
+        // Screen-reader mode keeps the words, drops the glyph.
+        assert!(!rtk_announcement(false, true).unwrap().contains('📦'));
+        // --quiet prints nothing at all.
+        assert_eq!(rtk_announcement(true, false), None);
+        assert_eq!(rtk_announcement(true, true), None);
+    }
 
     #[test]
     fn test_detect_rtk_returns_bool() {
