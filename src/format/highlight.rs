@@ -1306,6 +1306,13 @@ mod tests {
         assert!(out.contains(&format!("{GREEN}'x'{RESET}")), "got {out:?}");
         let esc = highlight_code_line("rust", "let c = '\\n';");
         assert!(esc.contains(&format!("{GREEN}'\\n'{RESET}")), "got {esc:?}");
+        // Unicode escapes: coverage the deleted local copy could not satisfy, asserted
+        // at the emission point rather than only in the helper table above.
+        let uni = highlight_code_line("rust", "let c = '\\u{1F600}';");
+        assert!(
+            uni.contains(&format!("{GREEN}'\\u{{1F600}}'{RESET}")),
+            "got {uni:?}"
+        );
     }
 
     #[test]
