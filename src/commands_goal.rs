@@ -89,8 +89,20 @@ pub fn goal_for_prompt() -> Option<String> {
 }
 
 /// Load the current goal from `.yoyo/goal.md`, if it exists.
+///
+/// Thin wrapper over [`load_goal_in`] rooted at the process CWD — behaviour is
+/// byte-identical to before this seam existed.
 pub fn load_goal() -> Option<String> {
-    let path = Path::new(GOAL_FILE);
+    load_goal_in(Path::new("."))
+}
+
+/// Load the goal from `<dir>/.yoyo/goal.md`, if it exists.
+///
+/// The `*_in(dir)` half of the `run_git`/`run_git_in` pattern (see `src/git.rs`):
+/// callers that must not depend on the process-global working directory — every
+/// test, and anything reached from a `*_in` function — pass their own root.
+pub fn load_goal_in(dir: &Path) -> Option<String> {
+    let path = dir.join(GOAL_FILE);
     if path.exists() {
         fs::read_to_string(path).ok().and_then(|s| {
             let trimmed = s.trim();

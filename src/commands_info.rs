@@ -1520,14 +1520,28 @@ const DISCOVERY_TIPS: &[&str] = &[
 ];
 
 /// Generate context-sensitive tips based on the current project and session state.
+///
+/// Thin wrapper over [`generate_tips_in`] rooted at the process working
+/// directory. Public behaviour is unchanged; the seam exists so nothing has to
+/// *assert* facts about a process-global that another thread can move under it
+/// (`/cd` calls `std::env::set_current_dir`, which is process-wide — #775).
 pub fn generate_tips() -> Vec<String> {
-    use crate::commands_goal::load_goal;
+    generate_tips_in(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+}
+
+/// Generate context-sensitive tips for the project rooted at `cwd`.
+///
+/// Every filesystem read here resolves against `cwd`, never against the process
+/// working directory — the `*_in(dir)` shape `run_git`/`run_git_in` already uses
+/// in `src/git.rs`. Session state that is genuinely process-global (the watch
+/// command, held in a `RwLock`) is still read as such; it has no directory.
+pub fn generate_tips_in(cwd: &std::path::Path) -> Vec<String> {
+    use crate::commands_goal::load_goal_in;
     use crate::commands_project::{detect_project_type, ProjectType};
     use crate::watch::get_watch_command;
 
     let mut tips: Vec<String> = Vec::new();
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let project = detect_project_type(&cwd);
+    let project = detect_project_type(cwd);
 
     // --- Project-type tips ---
     match project {
@@ -1557,7 +1571,7 @@ pub fn generate_tips() -> Vec<String> {
         tips.push("💡 Set `/watch <cmd>` to auto-check after every agent edit".into());
     }
 
-    if load_goal().is_none() {
+    if load_goal_in(cwd).is_none() {
         tips.push("💡 `/goal set <description>` gives the agent persistent focus".into());
     }
 
