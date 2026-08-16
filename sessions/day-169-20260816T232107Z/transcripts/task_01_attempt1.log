@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target function and its tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "generate_tips" -r src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 25,60p src/git.rs ✓ (3ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "generate_tips" src/comm… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1510,1600p src/commands_i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2690,2770p src/commands_i… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_goal" -A 20… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_info.rs src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tempfile" Cargo.toml &… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 35,50p Cargo.toml; grep -… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 39.8s (9 ✓)
+
+Now the fix. First the load_goal_in seam so the goal read can be rooted:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 85,107p src/commands_goal… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (4 → 16 lines)
+    /// Load the current goal from `.yoyo/goal.md`, if it exists.
+  + ///
+  + /// Thin wrapper over [`load_goal_in`] rooted at the process CWD — behaviour is
+  + /// byte-identical to before this seam existed.
+    pub fn load_goal() -> Option<String> {
+  -     let path = Path::new(GOAL_FILE);
+  +     load_goal_in(Path::new("."))
+  + }
+  + 
+  + /// Load the goal from `<dir>/.yoyo/goal.md`, if it exists.
+  + ///
+  + /// The `*_in(dir)` half of the `run_git`/`run_git_in` pattern (see `src/git.rs`):
+  + /// callers that must not depend on the process-global working directory — every
+  + /// test, and anything reached from a `*_in` function — pass their own root.
+  + pub fn load_goal_in(dir: &Path) -> Option<String> {
+  +     let path = dir.join(GOAL_FILE);
+        if path.exists() {
+ ✓ (1m 54s)
+    /// Load the current goal from `.yoyo/goal.md`, if it exists.
+  + ///
+  + /// Thin wrapper over [`load_goal_in`] rooted at the process CWD — behaviour is
+  + /// byte-identical to before this seam existed.
+    pub fn load_goal() -> Option<String> {
+  -     let path = Path::new(GOAL_FILE);
+  +     load_goal_in(Path::new("."))
+  + }
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (9 → 23 lines)
+    /// Generate context-sensitive tips based on the current project and session state.
+  + ///
+  + /// Thin wrapper over [`generate_tips_in`] rooted at the process working
+  + /// directory. Public behaviour is unchanged; the seam exists so nothing has to
+  + /// *assert* facts about a process-global that another thread can move under it
+  + /// (`/cd` calls `std::env::set_current_dir`, which is process-wide — #775).
+    pub fn generate_tips() -> Vec<String> {
+  -     use crate::commands_goal::load_goal;
+  +     generate_tips_in(&std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+  + }
+  + 
+  + /// Generate context-sensitive tips for the project rooted at `cwd`.
+  + ///
+  + /// Every filesystem read here resolves against `cwd`, never against the process
+  + /// working directory — the `*_in(dir)` shape `run_git`/`run_git_in` already uses
+  + /// in `src/git.rs`. Session state that is genuinely process-global (the watch
+  + /// command, held in a `RwLock`) is still read as such; it has no directory.
+  + pub fn generate_tips_in(cwd: &std::path::Path) -> Vec<String> {
+  +     use crate::commands_goal::load_goal_in;
+        use crate::commands_project::{detect_project_type, ProjectType};
+  ... (6 more lines)
+ ✓ (13.1s)
+    /// Generate context-sensitive tips based on the current project and session state.
+  + ///
+  + /// Thin wrapper over [`generate_tips_in`] rooted at the process working
+  + /// directory. Public behaviour is unchanged; the seam exists so nothing has to
+  + /// *assert* facts about a process-global that another thread can move under it
+  + /// (`/cd` calls `std::env::set_current_dir`, which is process-wide — #775).
+    pub fn generate_tips() -> Vec<String> {
+  -     use crate::commands_goal::load_goal;
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 23s (3 ✓)
+
+Expected — the two remaining CWD reads in the body still need rooting.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (26ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
