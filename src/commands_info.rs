@@ -2733,9 +2733,14 @@ More text.
 
     #[test]
     fn test_generate_tips_includes_rust_hints() {
-        // We're running inside a Rust project (Cargo.toml exists),
-        // so we should see Rust-specific tips.
-        let tips = generate_tips();
+        // Build our own Rust project fixture instead of asserting about the
+        // process CWD: `/cd` calls `std::env::set_current_dir`, which is
+        // process-global, so a parallel test can move the CWD out from under
+        // this assertion (#775). `generate_tips_in` takes the directory.
+        let dir = tempfile::tempdir().expect("create tempdir");
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .expect("write Cargo.toml");
+        let tips = generate_tips_in(dir.path());
         let has_rust_tip = tips
             .iter()
             .any(|t| t.contains("cargo test") || t.contains("clippy"));
@@ -2747,8 +2752,11 @@ More text.
 
     #[test]
     fn test_generate_tips_includes_git_hint() {
-        // We're running in a git repo, so git tip should appear.
-        let tips = generate_tips();
+        // Same reasoning as the Rust-hints test: build the fixture rather than
+        // depending on where the test process happens to be (#775).
+        let dir = tempfile::tempdir().expect("create tempdir");
+        std::fs::create_dir(dir.path().join(".git")).expect("create .git");
+        let tips = generate_tips_in(dir.path());
         let has_git_tip = tips.iter().any(|t| t.contains("/diff --stat"));
         assert!(
             has_git_tip,
