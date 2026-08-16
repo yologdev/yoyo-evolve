@@ -2,6 +2,87 @@
 
 use crate::cli;
 use crate::format::*;
+use std::path::{Path, PathBuf};
+
+/// Where one `/update` run stages its download and its extracted tree.
+///
+/// Both paths are built with [`Path::join`], never by string concatenation with
+/// `/`, so they are correct on Windows as well as Unix. See [`update_paths`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UpdatePaths {
+    /// The downloaded archive.
+    pub archive: PathBuf,
+    /// The directory the archive is extracted into — unique per run.
+    pub extract_dir: PathBuf,
+}
+
+/// Build the staging paths for one update run (pure).
+///
+/// `temp_root` is the caller's temp directory (`std::env::temp_dir()` in
+/// production — `%TEMP%` on Windows, `/tmp` or `$TMPDIR` elsewhere); `run_id`
+/// makes the extract directory unique per run, so two concurrent updates and a
+/// stale tree from a previously failed run cannot collide in one shared
+/// directory and leave a half-extracted tree that the next run reads as
+/// complete.
+///
+/// Every path segment is added with `join`, so no `/` is ever hardcoded into a
+/// path and the separator is whatever the host uses.
+fn update_paths(temp_root: &Path, run_id: &str, version: &str, ext: &str) -> UpdatePaths {
+    UpdatePaths {
+        archive: temp_root.join(format!("yoyo-update-{}-{}.{}", run_id, version, ext)),
+        extract_dir: temp_root.join(format!("yoyo-update-{}", run_id)),
+    }
+}
+
+/// An id unique to this process (and re-run-safe enough in practice): the pid
+/// plus the current wall-clock seconds, so a recycled pid does not reuse a
+/// stale directory.
+fn update_run_id() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{}-{}", std::process::id(), secs)
+}
+
+/// Choose the extractor argv for an archive (pure).
+///
+/// Returns the full argv — program first — or `None` for an archive kind we do
+/// not know how to unpack.
+///
+/// `tar` is used for **both** kinds on purpose. Windows has shipped bsdtar
+/// since Windows 10 1803 and does **not** ship `unzip`, while the release
+/// pipeline publishes the `.zip` only for the Windows target — so the zip
+/// branch is the Windows branch, and shelling out to `unzip` there named the
+/// one extractor that host does not have. bsdtar reads zip archives, and GNU
+/// tar is not asked to (no Unix target ships a zip).
+fn extractor_argv(archive_path: &str, extract_dir: &str) -> Option<Vec<String>> {
+    let args: &[&str] = if archive_path.ends_with(".tar.gz") {
+        &["tar", "xzf"]
+    } else if archive_path.ends_with(".zip") {
+        &["tar", "-xf"]
+    } else {
+        return None;
+    };
+    let mut argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    argv.push(archive_path.to_string());
+    argv.push("-C".to_string());
+    argv.push(extract_dir.to_string());
+    Some(argv)
+}
+
+/// The error shown when the extractor could not be run at all (pure).
+///
+/// It names the command that was not found **and** the archive that was left
+/// behind, so the user can finish the update by hand instead of being told
+/// only that something failed.
+fn extractor_missing_message(program: &str, archive_path: &str, err: &str) -> String {
+    format!(
+        "could not run `{}` to extract the update ({}). \
+         The downloaded archive was left at {} — extract it yourself and replace the yoyo binary manually.",
+        program, err, archive_path
+    )
+}
 
 /// Handle the /update command - download and replace the binary with latest release
 pub fn handle_update() -> Result<(), String> {
@@ -99,12 +180,16 @@ pub fn handle_update() -> Result<(), String> {
     }
 
     // Step 4: Download
-    let temp_path = format!("/tmp/yoyo-update-{}.{}", latest_version, ext);
+    let run_id = update_run_id();
+    let paths = update_paths(&std::env::temp_dir(), &run_id, latest_version, ext);
+    let temp_path = paths.archive.to_string_lossy().to_string();
+    let extract_dir = paths.extract_dir.to_string_lossy().to_string();
 
     println!("Downloading {}...", asset_name);
     match download_file(&download_url, &temp_path) {
         Ok(_) => (),
         Err(e) => {
+            let _ = std::fs::remove_file(&paths.archive);
             let install_cmd = if os == "windows" {
                 "irm https://raw.githubusercontent.com/yologdev/yoyo-evolve/main/install.ps1 | iex"
             } else {
@@ -117,9 +202,11 @@ pub fn handle_update() -> Result<(), String> {
         }
     }
 
-    // Step 5: Extract and replace
-    let extract_dir = "/tmp/yoyo-update-dir";
-    match extract_archive(&temp_path, extract_dir) {
+    // Step 5: Extract and replace. The extract dir is per-run, and created
+    // fresh — a leftover tree from a crashed earlier run must never be read as
+    // a complete extraction.
+    let _ = std::fs::remove_dir_all(&paths.extract_dir);
+    match extract_archive(&temp_path, &extract_dir) {
         Ok(binary_path) => {
             // Get current executable path
             let current_exe = std::env::current_exe()
@@ -180,6 +267,11 @@ pub fn handle_update() -> Result<(), String> {
                     let _ = std::fs::remove_file(&backup_path);
                 }
             }
+            // Remove the half-extracted tree so a failed update leaves nothing
+            // a later run could mistake for a complete extraction. The archive
+            // itself is deliberately kept — the extractor errors above name it
+            // so the user can finish by hand.
+            let _ = std::fs::remove_dir_all(&paths.extract_dir);
             Err(format!("Failed to extract archive: {}", e))
         }
     }
@@ -307,26 +399,25 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
     std::fs::create_dir_all(extract_dir)
         .map_err(|e| format!("Failed to create extract directory: {}", e))?;
 
-    if archive_path.ends_with(".tar.gz") {
-        // Extract tar.gz
-        std::process::Command::new("tar")
-            .args(["xzf", archive_path, "-C", extract_dir])
+    if let Some(argv) = extractor_argv(archive_path, extract_dir) {
+        let program = &argv[0];
+        let output = std::process::Command::new(program)
+            .args(&argv[1..])
             .output()
-            .map_err(|e| format!("Failed to extract tar.gz: {}", e))?
-            .status
-            .success()
-            .then_some(())
-            .ok_or_else(|| "Failed to extract tar.gz".to_string())?;
-    } else if archive_path.ends_with(".zip") {
-        // Extract zip
-        std::process::Command::new("unzip")
-            .args([archive_path, "-d", extract_dir])
-            .output()
-            .map_err(|e| format!("Failed to extract zip: {}", e))?
-            .status
-            .success()
-            .then_some(())
-            .ok_or_else(|| "Failed to extract zip".to_string())?;
+            .map_err(|e| extractor_missing_message(program, archive_path, &e.to_string()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "`{}` failed to extract {} (exit {}). {}",
+                program,
+                archive_path,
+                output
+                    .status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".to_string()),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
     } else {
         return Err("Unsupported archive format".to_string());
     }
@@ -375,6 +466,168 @@ fn extract_archive(archive_path: &str, extract_dir: &str) -> Result<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Windows-safety of the staging paths and the extractor choice (#756) ----
+    //
+    // These pin what a caller actually receives: the `PathBuf`s handed to the
+    // download/extract steps, and the argv that reaches the OS. They never
+    // shell out to a real download or a real extractor.
+
+    #[test]
+    fn update_paths_are_under_the_given_temp_root() {
+        for root in [
+            Path::new("/tmp"),
+            Path::new("/var/folders/x9/tmpdir"),
+            Path::new(r"C:\Users\me\AppData\Local\Temp"),
+        ] {
+            let p = update_paths(root, "4242-1700000000", "v0.1.16", "tar.gz");
+            assert!(
+                p.archive.starts_with(root),
+                "archive {:?} not under {:?}",
+                p.archive,
+                root
+            );
+            assert!(
+                p.extract_dir.starts_with(root),
+                "extract dir {:?} not under {:?}",
+                p.extract_dir,
+                root
+            );
+        }
+    }
+
+    #[test]
+    fn update_paths_never_hardcode_a_separator_in_a_segment() {
+        let root = Path::new("ROOT");
+        let p = update_paths(root, "77-1700000000", "v0.1.16", "tar.gz");
+        // Exactly one component is appended to the root for each path, so the
+        // separator between them is the platform's own — no `/` was baked in.
+        let archive_tail: Vec<_> = p
+            .archive
+            .strip_prefix(root)
+            .unwrap()
+            .components()
+            .collect();
+        let dir_tail: Vec<_> = p
+            .extract_dir
+            .strip_prefix(root)
+            .unwrap()
+            .components()
+            .collect();
+        assert_eq!(archive_tail.len(), 1, "archive tail: {:?}", archive_tail);
+        assert_eq!(dir_tail.len(), 1, "extract dir tail: {:?}", dir_tail);
+
+        let file = p.archive.file_name().unwrap().to_str().unwrap();
+        let dir = p.extract_dir.file_name().unwrap().to_str().unwrap();
+        assert!(!file.contains('/'), "archive segment holds a slash: {}", file);
+        assert!(
+            !file.contains('\\'),
+            "archive segment holds a backslash: {}",
+            file
+        );
+        assert!(!dir.contains('/'), "dir segment holds a slash: {}", dir);
+        assert!(!dir.contains('\\'), "dir segment holds a backslash: {}", dir);
+        assert_eq!(file, "yoyo-update-77-1700000000-v0.1.16.tar.gz");
+        assert_eq!(dir, "yoyo-update-77-1700000000");
+    }
+
+    #[test]
+    fn update_paths_extract_dir_is_unique_per_run() {
+        let root = Path::new("/tmp");
+        let a = update_paths(root, "100-1700000000", "v0.1.16", "tar.gz");
+        let b = update_paths(root, "101-1700000000", "v0.1.16", "tar.gz");
+        assert_ne!(
+            a.extract_dir, b.extract_dir,
+            "two runs shared one extract dir"
+        );
+        assert_ne!(a.archive, b.archive, "two runs shared one archive path");
+        // Same run id → same paths (the helper is pure).
+        assert_eq!(a, update_paths(root, "100-1700000000", "v0.1.16", "tar.gz"));
+    }
+
+    #[test]
+    fn update_run_id_is_not_a_fixed_shared_name() {
+        let id = update_run_id();
+        assert!(!id.is_empty());
+        assert!(
+            id.starts_with(&format!("{}-", std::process::id())),
+            "run id {} does not carry this process's pid",
+            id
+        );
+    }
+
+    #[test]
+    fn extractor_argv_zip_branch_never_uses_unzip() {
+        let argv = extractor_argv(r"C:\Temp\yoyo-update-1-2.zip", r"C:\Temp\yoyo-update-1")
+            .expect("zip is a supported archive kind");
+        assert_ne!(
+            argv[0], "unzip",
+            "the zip branch is the Windows branch and Windows ships no unzip"
+        );
+        assert_eq!(
+            argv,
+            vec![
+                "tar".to_string(),
+                "-xf".to_string(),
+                r"C:\Temp\yoyo-update-1-2.zip".to_string(),
+                "-C".to_string(),
+                r"C:\Temp\yoyo-update-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn extractor_argv_tar_gz_branch_is_the_tar_invocation() {
+        let argv = extractor_argv("/tmp/yoyo-update-1-2.tar.gz", "/tmp/yoyo-update-1")
+            .expect("tar.gz is a supported archive kind");
+        assert_eq!(
+            argv,
+            vec![
+                "tar".to_string(),
+                "xzf".to_string(),
+                "/tmp/yoyo-update-1-2.tar.gz".to_string(),
+                "-C".to_string(),
+                "/tmp/yoyo-update-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn extractor_argv_rejects_unknown_archive_kinds() {
+        assert!(extractor_argv("/tmp/yoyo.rar", "/tmp/out").is_none());
+        assert!(extractor_argv("/tmp/yoyo", "/tmp/out").is_none());
+        assert!(extractor_argv("/tmp/yoyo.tar", "/tmp/out").is_none());
+    }
+
+    #[test]
+    fn extractor_missing_message_names_the_command_and_the_kept_archive() {
+        let msg = extractor_missing_message("tar", "/tmp/yoyo-update-9-1.zip", "No such file");
+        assert!(msg.contains("tar"), "message must name the command: {}", msg);
+        assert!(
+            msg.contains("/tmp/yoyo-update-9-1.zip"),
+            "message must name the archive left behind: {}",
+            msg
+        );
+        assert!(
+            msg.contains("No such file"),
+            "message must carry the OS error: {}",
+            msg
+        );
+    }
+
+    /// The zip branch exists for exactly one target, and that is why it may not
+    /// shell out to `unzip`.
+    #[test]
+    fn update_zip_extension_belongs_to_the_windows_target_only() {
+        assert_eq!(platform_target("windows", "x86_64").map(|(_, e)| e), Some("zip"));
+        for (os, arch) in [
+            ("linux", "x86_64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+        ] {
+            assert_eq!(platform_target(os, arch).map(|(_, e)| e), Some("tar.gz"));
+        }
+    }
 
     /// A realistic published asset list: names carry the tag (as `release.yml`
     /// writes them), every platform is present, and the `.sha256` sidecars —
