@@ -1,0 +1,102 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing scanner and the target functions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn find_impl_blocks\|fn… ✓ (6ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,135p src/commands_refa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,260p src/commands_move… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 133,165p src/commands_mov…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 260,400p src/commands_mov… ✓ (3ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 8.4s (6 ✓)
+
+Now Step 1 — share the scanner.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 80,112p src/commands_refa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 93,111p src/commands_refa… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:93..113 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (2 → 7 lines)
+    /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
+  - fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+  + ///
+  + /// `pub(crate)` because it has a second consumer: `find_impl_blocks` and
+  + /// `find_method_in_impl` in `commands_move.rs` used to count braces with no
+  + /// string/comment state at all, which is the same data-corruption class through
+  + /// `/move` that #770 fixed here (#771 item 3). One scanner, one set of table tests.
+  + pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+ ✓ (1m 42s)
+    /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
+  - fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+  + ///
+  + /// `pub(crate)` because it has a second consumer: `find_impl_blocks` and
+  + /// `find_method_in_impl` in `commands_move.rs` used to count braces with no
+  + /// string/comment state at all, which is the same data-corruption class through
+  + /// `/move` that #770 fixed here (#771 item 3). One scanner, one set of table tests.
+  + pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 52s (4 ✓)
+
+Now Step 2 — the two loops in commands_move.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs:134..156 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs (13 → 19 lines)
+  -             // Brace-depth tracking
+  +             // Brace-depth tracking. Braces inside string/char literals and comments
+  +             // are not structural — the scan iterates `significant_braces` (#771 item 3:
+  +             // a body containing `println!("}")` or a trailing `// }` used to end the
+  +             // impl block early, and `/move` rewrites two files off this range).
+                let mut depth: i32 = 0;
+                let mut found_open = false;
+                let mut end = i;
+  +             // Per scan, not per line: a `/* … */` may span lines.
+  +             let mut in_block_comment = false;
+                for (j, line) in lines.iter().enumerate().skip(i) {
+  -                 for ch in line.chars() {
+  +                 for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment)
+  +                 {
+                        if ch == '{' {
+                            depth += 1;
+                            found_open = true;
+ ✓ (1m 39s)
+  -             // Brace-depth tracking
+  +             // Brace-depth tracking. Braces inside string/char literals and comments
+  +             // are not structural — the scan iterates `significant_braces` (#771 item 3:
+  +             // a body containing `println!("}")` or a trailing `// }` used to end the
+  +             // impl block early, and `/move` rewrites two files off this range).
+                let mut depth: i32 = 0;
+                let mut found_open = false;
+                let mut end = i;
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs (6 → 9 lines)
+  -     // Brace-depth tracking forward
+  +     // Brace-depth tracking forward. Braces inside string/char literals and comments are
+  +     // not structural — see `commands_refactor::significant_braces` (#771 item 3).
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut end = decl_line;
+  +     // Per scan, not per line: a `/* … */` may span lines.
+  +     let mut in_block_comment = false;
+        for (j, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in line.chars() {
+  +         for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment) {
+ ✓ (1m 40s)
+  -     // Brace-depth tracking forward
+  +     // Brace-depth tracking forward. Braces inside string/char literals and comments are
+  +     // not structural — see `commands_refactor::significant_braces` (#771 item 3).
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut end = decl_line;
+  +     // Per scan, not per line: a `/* … */` may span lines.
+  +     let mut in_block_comment = false;
+  ... (3 more lines)
+  3 tools completed in 3m 29s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

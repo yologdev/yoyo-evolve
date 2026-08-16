@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the code first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,300p' src/commands_m… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,420p' src/commands_m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,125p' src/commands_re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '680,760p' src/commands_m… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 27.5s (6 ✓)
+
+Steps 1–2 are in place. Now adding the missing Step 3 tests and docs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_find_impl_blocks_i… ✓ (3ms)
+
+Now I'll add the Step 3 tests.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '868,890p' src/commands_m… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs (2 → 164 lines)
+  +     // #771 item 3. Before the brace scan routed through
+  +     // `commands_refactor::significant_braces`, every `{`/`}` character counted —
+  +     // including the one inside `println!("}")`. That closed the impl block at the
+  +     // println line, so `find_impl_blocks` returned end == 2 (the println) instead
+  +     // of end == 4 (the real closing brace), and `/move` rewrote two files off that
+  +     // wrong range.
+  +     #[test]
+  +     fn test_find_impl_blocks_ignores_brace_inside_string_literal() {
+  +         let src = "\
+  + impl Foo {
+  +     fn a(&self) {
+  +         println!(\"}\");
+  +     }
+  + }
+  + ";
+  +         let blocks = find_impl_blocks(src, "Foo");
+  +         assert_eq!(blocks.len(), 1, "expected one impl block: {blocks:?}");
+  +         let (start, end, text) = &blocks[0];
+  +         assert_eq!(*start, 0);
+  +         assert_eq!(
+  ... (144 more lines)
+ ✓ (1m 39s)
+  +     // #771 item 3. Before the brace scan routed through
+  +     // `commands_refactor::significant_braces`, every `{`/`}` character counted —
+  +     // including the one inside `println!("}")`. That closed the impl block at the
+  +     // println line, so `find_impl_blocks` returned end == 2 (the println) instead
+  +     // of end == 4 (the real closing brace), and `/move` rewrote two files off that
+  +     // wrong range.
+  +     #[test]
+  +     fn test_find_impl_blocks_ignores_brace_inside_string_literal() {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_move 2… ✓ (139ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_move 2>&1 | … ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_move 2>&1 | … ✓ (150ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_move.rs /tmp/cm.… ✓ (23.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 38s (6 ✓)
+
+All four new tests fail against the pre-fix scanner — genuine regression guards. Now the docs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -n "comm… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - That issue also names the sibling defect left alone on purpose: `find_impl_blocks` / `find_method_in_impl` in `src/commands_move.rs` still count braces with no string/comment state, which is the same data-corruption class through `/move`. Proven in **two layers**:
+  + That issue's **item 3** — the sibling data-corruption class in `src/commands_move.rs` — **was fixed the same day** (see that bullet), which is why `significant_braces` is now `pub(crate)` with **two consumers**: `find_symbol_block` here and `find_impl_blocks` / `find_method_in_impl` in `commands_move.rs`. One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**. Proven in **two layers**:
+ ✓ (1m 41s)
+  - That issue also names the sibling defect left alone on purpose: `find_impl_blocks` / `find_method_in_impl` in `src/commands_move.rs` still count braces with no string/comment state, which is the same data-corruption class through `/move`. Proven in **two layers**:
+  + That issue's **item 3** — the sibling data-corruption class in `src/commands_move.rs` — **was fixed the same day** (see that bullet), which is why `significant_braces` is now `pub(crate)` with **two consumers**: `find_symbol_block` here and `find_impl_blocks` / `find_method_in_impl` in `commands_move.rs`. One scanner, one set of table tests — the alternative was a second brace counter drifting from this one. #771 items 1 and 2 (nested block comments, multi-line strings) stay **open**. Proven in **two layers**:
+  2 tools completed in 1m 48s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
