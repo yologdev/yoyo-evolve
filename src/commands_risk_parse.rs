@@ -38,9 +38,66 @@ pub(crate) fn load_validation_history_from(path: &std::path::Path) -> Vec<Valida
     parse_validation_events(&content)
 }
 
+/// The three distinguishable states of the validation ledger on disk.
+///
+/// Before Day 169 all three rendered identically: a missing file, an existing
+/// file whose every line is unparseable, and a healthy file with some lines
+/// silently dropped all produced the same `/risk accuracy` output (#764). The
+/// middle case is the damaging one — it shrinks the denominator of the DREAM
+/// milestone's own meter without saying so — and the "missing" copy that
+/// followed it asserted a *cause* that was false.
+///
+/// **Deliberately NOT covered here** (still open on #764): a line that is
+/// *valid JSON but missing fields* is still absorbed by the `unwrap_or(0)` /
+/// `unwrap_or_default()` defaults below and counts as a healthy event. That is
+/// a different defect. The other readers in this module (`parse_graded_events`,
+/// `parse_all_snapshots`, `parse_failed_ci_runs`) and their ~10 call sites are
+/// untouched by this repair and still drop malformed lines silently.
+pub(crate) enum ValidationLedger {
+    /// The path does not exist. Accuracy tracking genuinely hasn't started.
+    Missing,
+    /// The path exists but could not be read; the string names path + io error.
+    Unreadable(String),
+    /// The file was read. `dropped` counts non-blank lines that failed to
+    /// parse as JSON — `Present { events: [], dropped: n }` (everything
+    /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+    Present {
+        events: Vec<ValidationEvent>,
+        dropped: usize,
+    },
+}
+
+/// Read the validation ledger, keeping missing / unreadable / present-with-
+/// dropped-lines distinct. See [`ValidationLedger`] for what is and isn't
+/// covered.
+pub(crate) fn read_validation_ledger(path: &std::path::Path) -> ValidationLedger {
+    if !path.exists() {
+        return ValidationLedger::Missing;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            return ValidationLedger::Unreadable(format!(
+                "could not read {}: {e}",
+                path.display()
+            ))
+        }
+    };
+    let (events, dropped) = parse_validation_events_counting(&content);
+    ValidationLedger::Present { events, dropped }
+}
+
 /// Parse validation events from JSONL content (testable without filesystem).
 pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
+    parse_validation_events_counting(content).0
+}
+
+/// Same parse as [`parse_validation_events`], additionally returning how many
+/// **non-blank** lines failed `serde_json::from_str`. Blank lines are not
+/// corruption and are never counted (a trailing newline is normal JSONL).
+pub(crate) fn parse_validation_events_counting(content: &str) -> (Vec<ValidationEvent>, usize) {
     let mut events = Vec::new();
+    let mut dropped = 0usize;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -48,7 +105,10 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
         }
         let val: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                dropped += 1;
+                continue;
+            }
         };
         let day = val["day"].as_u64().unwrap_or(0) as u32;
         let hits = val["hits"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -74,7 +134,7 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
             severity,
         });
     }
-    events
+    (events, dropped)
 }
 
 /// A graded validation event reduced to what the epistemic view needs: the
