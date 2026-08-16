@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at what landed and add the two missing deliverables: tests and CLAUDE.md docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p src/commands_risk_… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 315,400p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tempfile\|TempDir" Car… ✓ (7ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 35,55p Cargo.toml; grep -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk" tests/mo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 23.3s (8 ✓)
+
+Now adding the parser tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (6 → 126 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// One well-formed validation line, parameterised by day.
+  +     fn valid_line(day: u32) -> String {
+  +         format!(
+  +             r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+  +         )
+  +     }
+  + 
+  +     #[test]
+  +     fn counting_reports_zero_dropped_for_a_clean_ledger() {
+  +         let content = format!("{}\n{}\n", valid_line(160), valid_line(161));
+  +         let (events, dropped) = parse_validation_events_counting(&content);
+  +         assert_eq!(events.len(), 2);
+  +         assert_eq!(dropped, 0, "well-formed lines are never counted as dropped");
+  +     }
+  + 
+  +     #[test]
+  ... (106 more lines)
+ ✓ (12.3s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// One well-formed validation line, parameterised by day.
+  +     fn valid_line(day: u32) -> String {
+  +         format!(
+  +             r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B3 "pub(crate) enum Val… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (163ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_parse 2… ✓ (24.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 48.4s (4 ✓)
+
+Parser tests pass. Now the emission-point test in commands_risk.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2773,2790p src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 78 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── #764: the ledger-health line a `/risk accuracy` caller actually reads ──
+  +     // These assert the *string emitted*, not the state one layer below it.
+  + 
+  +     #[test]
+  +     fn ledger_health_line_says_nothing_on_a_healthy_ledger() {
+  +         // The common path must stay byte-identical to pre-#764 output.
+  +         let ledger = ValidationLedger::Present {
+  +             events: Vec::new(),
+  +             dropped: 0,
+  +         };
+  +         assert_eq!(ledger_health_line(&ledger), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn ledger_health_line_says_nothing_when_the_ledger_is_missing() {
+  +         // Today's "accuracy tracking starts automatically" copy is already
+  +         // correct for a genuinely absent file — no second message.
+  ... (58 more lines)
+ ✓ (1m 44s)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── #764: the ledger-health line a `/risk accuracy` caller actually reads ──
+  +     // These assert the *string emitted*, not the state one layer below it.
+  + 
+  +     #[test]
+  +     fn ledger_health_line_says_nothing_on_a_healthy_ledger() {
+  ... (13 more lines)
+  2 tools completed in 1m 56s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two files in scope.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_parse.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1230p' src/commands… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (60 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_VALIDATION_PATH\|m… ✓ (1ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,620p' src/commands_r… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 18.6s (5 ✓)
+
+Now the parse module additions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (12 → 72 lines)
+  + /// The three distinguishable states of the validation ledger on disk.
+  + ///
+  + /// Before Day 169 all three rendered identically: a missing file, an existing
+  + /// file whose every line is unparseable, and a healthy file with some lines
+  + /// silently dropped all produced the same `/risk accuracy` output (#764). The
+  + /// middle case is the damaging one — it shrinks the denominator of the DREAM
+  + /// milestone's own meter without saying so — and the "missing" copy that
+  + /// followed it asserted a *cause* that was false.
+  + ///
+  + /// **Deliberately NOT covered here** (still open on #764): a line that is
+  + /// *valid JSON but missing fields* is still absorbed by the `unwrap_or(0)` /
+  + /// `unwrap_or_default()` defaults below and counts as a healthy event. That is
+  + /// a different defect. The other readers in this module (`parse_graded_events`,
+  + /// `parse_all_snapshots`, `parse_failed_ci_runs`) and their ~10 call sites are
+  + /// untouched by this repair and still drop malformed lines silently.
+  + pub(crate) enum ValidationLedger {
+  +     /// The path does not exist. Accuracy tracking genuinely hasn't started.
+  +     Missing,
+  +     /// The path exists but could not be read; the string names path + io error.
+  +     Unreadable(String),
+  ... (53 more lines)
+ ✓ (12.0s)
+  + /// The three distinguishable states of the validation ledger on disk.
+  + ///
+  + /// Before Day 169 all three rendered identically: a missing file, an existing
+  + /// file whose every line is unparseable, and a healthy file with some lines
+  + /// silently dropped all produced the same `/risk accuracy` output (#764). The
+  + /// middle case is the damaging one — it shrinks the denominator of the DREAM
+  + /// milestone's own meter without saying so — and the "missing" copy that
+  + /// followed it asserted a *cause* that was false.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,140p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (4 → 4 lines)
+            });
+        }
+  -     events
+  +     (events, dropped)
+    }
+ ✓ (19.6s)
+            });
+        }
+  -     events
+  +     (events, dropped)
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (4 → 5 lines)
+        ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, snapshot_before, GradedEvent, ParsedSnapshot,
+  -     ValidationEvent,
+  +     parse_graded_events, parse_validation_events, parse_validation_events_counting,
+  +     read_validation_ledger, snapshot_before, GradedEvent, ParsedSnapshot, ValidationEvent,
+  +     ValidationLedger,
+    };
+ ✓ (19.8s)
+        ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, snapshot_before, GradedEvent, ParsedSnapshot,
+  -     ValidationEvent,
+  +     parse_graded_events, parse_validation_events, parse_validation_events_counting,
+  +     read_validation_ledger, snapshot_before, GradedEvent, ParsedSnapshot, ValidationEvent,
+  +     ValidationLedger,
+    };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 4 lines)
+        ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, parse_validation_events_counting,
+  -     read_validation_ledger, snapshot_before, GradedEvent, ParsedSnapshot, ValidationEvent,
+  -     ValidationLedger,
+  +     parse_graded_events, parse_validation_events, read_validation_ledger, snapshot_before,
+  +     GradedEvent, ParsedSnapshot, ValidationEvent, ValidationLedger,
+    };
+ ✓ (19.7s)
+        ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, parse_validation_events_counting,
+  -     read_validation_ledger, snapshot_before, GradedEvent, ParsedSnapshot, ValidationEvent,
+  -     ValidationLedger,
+  +     parse_graded_events, parse_validation_events, read_validation_ledger, snapshot_before,
+  +     GradedEvent, ParsedSnapshot, ValidationEvent, ValidationLedger,
+    };
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 27s (5 ✓)
+
+Now the consumer in commands_risk.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (6 → 6 lines)
+        accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
+  -     parse_failed_ci_runs, parse_validation_events, risk_autosnapshot_enabled, snapshot_before,
+  -     write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+  -     RISK_VALIDATION_PATH,
+  +     parse_failed_ci_runs, parse_validation_events, read_validation_ledger,
+  +     risk_autosnapshot_enabled, snapshot_before, write_risk_snapshot_to, write_validation_event,
+  +     ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    };
+ ✓ (19.6s)
+        accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
+  -     parse_failed_ci_runs, parse_validation_events, risk_autosnapshot_enabled, snapshot_before,
+  -     write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+  -     RISK_VALIDATION_PATH,
+  +     parse_failed_ci_runs, parse_validation_events, read_validation_ledger,
+  +     risk_autosnapshot_enabled, snapshot_before, write_risk_snapshot_to, write_validation_event,
+  +     ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 40 lines)
+  + /// One honest line about the *state of the ledger file itself*, printed above
+  + /// `/risk accuracy`'s report. Pure so the string a user receives can be
+  + /// asserted directly (#764: all three ledger states used to render
+  + /// identically).
+  + ///
+  + /// `None` on the two states whose existing output is already correct: a
+  + /// healthy ledger (say nothing) and a genuinely missing one (the report's own
+  + /// "accuracy tracking starts automatically" copy is true).
+  + fn ledger_health_line(ledger: &ValidationLedger) -> Option<String> {
+  +     match ledger {
+  +         ValidationLedger::Missing => None,
+  +         ValidationLedger::Unreadable(msg) => Some(msg.clone()),
+  +         ValidationLedger::Present { dropped: 0, .. } => None,
+  +         ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+  +             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+  +              the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+  +              does not apply here."
+  +         )),
+  +         ValidationLedger::Present { dropped, .. } => Some(format!(
+  +             "{RISK_VALIDATION_PATH}: {dropped} unparseable line(s) skipped — \
+  ... (21 more lines)
+ ✓ (1m 39s)
+  + /// One honest line about the *state of the ledger file itself*, printed above
+  + /// `/risk accuracy`'s report. Pure so the string a user receives can be
+  + /// asserted directly (#764: all three ledger states used to render
+  + /// identically).
+  + ///
+  + /// `None` on the two states whose existing output is already correct: a
+  + /// healthy ledger (say nothing) and a genuinely missing one (the report's own
+  + /// "accuracy tracking starts automatically" copy is true).
+  ... (13 more lines)
+  2 tools completed in 2m 10s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
