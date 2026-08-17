@@ -56,6 +56,13 @@ pub struct RenameResult {
     /// `DirectoryRestrictions` deny them. Never silently dropped — callers
     /// are expected to report these (see `format_denied_note`).
     pub skipped_denied: Vec<String>,
+    /// Files the rename **actually wrote**, sorted. This is deliberately a
+    /// different fact from `files_changed`, which is computed *before* any
+    /// write happens: a file that fails to read or write is skipped by
+    /// `apply_rename_reporting` and so never appears here (#783). Callers that
+    /// report work done — session change tracking, the watch gate — must read
+    /// this one, not `files_changed`.
+    pub written: Vec<String>,
 }
 
 /// How many denied paths to name in the skip note before summarising the rest.
@@ -183,13 +190,16 @@ pub fn rename_in_files(
     matches.retain(|m| files_changed.binary_search(&m.file).is_ok());
 
     let preview = format_rename_preview(&matches, old_name, new_name);
-    let total_replacements = apply_rename(&matches, old_name, new_name);
+    // Report what was WRITTEN, not what matched (#783): a file that fails to
+    // read or write is skipped by the writer and must not be reported as work.
+    let (total_replacements, written) = apply_rename_reporting(&matches, old_name, new_name);
 
     Ok(RenameResult {
         files_changed,
         total_replacements,
         preview,
         skipped_denied,
+        written,
     })
 }
 
@@ -327,6 +337,12 @@ pub fn format_rename_preview(matches: &[RenameMatch], old_name: &str, new_name: 
 ///
 /// Thin wrapper over [`apply_rename_reporting`] for callers that don't need the
 /// list of files that were actually written.
+///
+/// Test-only since #783: every production caller now needs the written-file
+/// list too, so they all call `apply_rename_reporting` directly. Kept (rather
+/// than deleted) so the replacement-count tests that predate #778 keep running
+/// against the exact call shape they were written for.
+#[cfg(test)]
 pub fn apply_rename(matches: &[RenameMatch], old_name: &str, new_name: &str) -> usize {
     apply_rename_reporting(matches, old_name, new_name).0
 }
@@ -913,8 +929,10 @@ mod tests {
             total_replacements: 3,
             preview: "preview".to_string(),
             skipped_denied: Vec::new(),
+            written: vec!["a.rs".to_string()],
         };
         assert_eq!(r.files_changed, vec!["a.rs"]);
+        assert_eq!(r.written, vec!["a.rs"]);
         assert_eq!(r.total_replacements, 3);
         assert_eq!(r.preview, "preview");
     }
@@ -1024,6 +1042,63 @@ mod tests {
             b.to_str().unwrap().to_string(),
             denied_dir.to_str().unwrap().to_string(),
         )
+    }
+
+    /// #783: `written` reports what the writer actually wrote, across all
+    /// files — this is the list the `rename_symbol` tool hands back to the
+    /// session tracker, so it is asserted on the value a caller receives.
+    #[test]
+    fn rename_in_files_reports_every_file_it_wrote() {
+        let dir = std::env::temp_dir().join(format!("yoyo_written_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.rs").to_str().unwrap().to_string();
+        let b = dir.join("b.rs").to_str().unwrap().to_string();
+        fs::write(&a, "let foo = 1;\n").unwrap();
+        fs::write(&b, "fn foo() {}\n").unwrap();
+
+        let result = rename_in_files(
+            &[a.clone(), b.clone()],
+            "foo",
+            "bar",
+            None,
+            &DirectoryRestrictions::default(),
+        )
+        .expect("both files match");
+
+        // Two files really changed on disk...
+        assert_eq!(fs::read_to_string(&a).unwrap(), "let bar = 1;\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "fn bar() {}\n");
+        // ...and both are reported as written (sorted).
+        let mut expected = vec![a, b];
+        expected.sort();
+        assert_eq!(result.written, expected);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The other direction (#783): a file the writer could not write must NOT
+    /// appear in `written`, or the tracker reports work that never happened.
+    #[test]
+    fn apply_rename_reporting_omits_files_it_could_not_write() {
+        let missing = std::env::temp_dir()
+            .join("yoyo_no_such_dir_783")
+            .join("gone.rs")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let matches = vec![RenameMatch {
+            file: missing,
+            line_num: 1,
+            line_text: "let foo = 1;".to_string(),
+            column: 4,
+        }];
+
+        let (_replacements, written) = apply_rename_reporting(&matches, "foo", "bar");
+        assert!(
+            written.is_empty(),
+            "an unwritable file must not be reported as written: {written:?}"
+        );
     }
 
     #[test]

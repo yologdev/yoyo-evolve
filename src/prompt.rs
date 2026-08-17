@@ -244,6 +244,33 @@ fn is_dropped_tool_args_error(error_msg: &str) -> bool {
             || lower.contains("no arguments"))
 }
 
+/// Record the files a successful `rename_symbol` tool call actually wrote
+/// into the session tracker, as `ChangeKind::Edit` (#783).
+///
+/// The paths are read from the tool result's `files_written` details key,
+/// which `tools::RenameSymbolTool` fills from `RenameResult::written` — i.e.
+/// what the writer really wrote, never what merely matched. Anything else
+/// (missing key, wrong type, non-string entries, empty strings) records
+/// nothing rather than guessing: a tool result is untrusted input here, and a
+/// fabricated path is worse than a missed one.
+///
+/// Returns how many paths were recorded, so callers and tests can assert on
+/// the count without reaching into the tracker's internals.
+fn record_rename_tool_writes(details: &serde_json::Value, changes: &SessionChanges) -> usize {
+    let Some(paths) = details.get("files_written").and_then(|v| v.as_array()) else {
+        return 0;
+    };
+    let mut recorded = 0usize;
+    for path in paths.iter().filter_map(|p| p.as_str()) {
+        if path.is_empty() {
+            continue;
+        }
+        changes.record(path, ChangeKind::Edit);
+        recorded += 1;
+    }
+    recorded
+}
+
 /// Internal state for the prompt event-handling loop.
 /// Bundles the 15+ local variables that were previously declared inline.
 struct PromptEventState {
@@ -418,14 +445,24 @@ impl PromptEventState {
     }
 
     /// Handle a ToolExecutionEnd event: stop timers, log audit data,
-    /// display success/failure status, track errors.
+    /// display success/failure status, track errors, and record the files a
+    /// `rename_symbol` call wrote (#783 — that set is only known here).
     fn handle_tool_execution_end(
         &mut self,
         tool_call_id: String,
         tool_name: String,
         is_error: bool,
         result: ToolResult,
+        changes: &SessionChanges,
     ) {
+        // Track file modifications from rename_symbol. Unlike write_file /
+        // edit_file (recorded at ToolExecutionStart off a single `path`
+        // argument), a rename spans many files and the written set is only
+        // known after the call — so it is read off the tool result here, and
+        // only on success, so a failed rename records nothing.
+        if !is_error && tool_name == "rename_symbol" {
+            record_rename_tool_writes(&result.details, changes);
+        }
         // Clean up deferred timer entry if command was denied before running
         self.deferred_bash_timers.remove(&tool_call_id);
         // Stop any live progress timer for this tool
@@ -783,7 +820,7 @@ async fn handle_prompt_events(
                         state.handle_tool_execution_start(tool_call_id, tool_name, args, changes);
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, tool_name, .. } => {
-                        state.handle_tool_execution_end(tool_call_id, tool_name, is_error, result);
+                        state.handle_tool_execution_end(tool_call_id, tool_name, is_error, result, changes);
                     }
                     AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
                         state.handle_tool_execution_update(tool_call_id, partial_result);

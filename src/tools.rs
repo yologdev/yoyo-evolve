@@ -558,7 +558,12 @@ impl AgentTool for RenameSymbolTool {
                 }
                 Ok(TR {
                     content: vec![Content::Text { text: summary }],
-                    details: serde_json::json!({}),
+                    // #783: the written-file list is the only place the caller
+                    // can learn which paths this call actually touched — the
+                    // set is unknown until after the write, so it cannot be
+                    // read off the arguments the way write_file/edit_file are.
+                    // `prompt::record_rename_tool_writes` consumes this key.
+                    details: serde_json::json!({ "files_written": result.written }),
                 })
             }
             Err(msg) => Err(ToolError::Failed(msg)),
@@ -2090,6 +2095,7 @@ mod tests {
             total_replacements: 5,
             preview: "preview text".to_string(),
             skipped_denied: Vec::new(),
+            written: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
         };
         assert_eq!(result.files_changed.len(), 2);
         assert_eq!(result.total_replacements, 5);
