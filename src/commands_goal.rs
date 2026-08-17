@@ -85,7 +85,15 @@ fn truncate_goal_for_prompt(goal: &str) -> String {
 /// Prompt call sites must use this instead of [`load_goal`]; display call sites
 /// must not.
 pub fn goal_for_prompt() -> Option<String> {
-    load_goal().map(|g| truncate_goal_for_prompt(&g))
+    goal_for_prompt_in(Path::new("."))
+}
+
+/// Load the goal under `dir` for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
+///
+/// The directory-taking sibling of [`goal_for_prompt`]; the CWD-reading wrapper is a
+/// thin call with the process root. Behaviour for a given directory is unchanged.
+fn goal_for_prompt_in(dir: &Path) -> Option<String> {
+    load_goal_in(dir).map(|g| truncate_goal_for_prompt(&g))
 }
 
 /// Load the current goal from `.yoyo/goal.md`, if it exists.
