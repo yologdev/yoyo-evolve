@@ -1,0 +1,47 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to fix the CLAUDE.md doc that now contradicts the code. Let me look at the relevant bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Still unrecorded, delib…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "files_written\|record_r… ✓ (2ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 245,275p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rename_symbol\|changes.… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,365p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolExecutionStart\|Too… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1436,1500p src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1500,1530p src/prompt.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1130,1145p src/prompt.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1250,1275p src/prompt.rs … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`tools.rs\`\|^- \`p… ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 46.5s (13 ✓)
+
+Now the three doc edits:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Still unrecorded, deliberately out of scope:** the `rename_symbol` *agent tool* in `src/tools.rs`, which goes through `rename_in_project_restricted` rather than `handle_rename`.
+  + Day 170 (#783) closed the sibling defect on the *agent-tool* path — the `rename_symbol` tool the **model** calls, which reaches `rename_in_files` via `rename_in_project_restricted` and so inherited nothing from #778. It could not be fixed by adding a name to the `write_file`/`edit_file` match in `prompt.rs`, because those record off a single `path` **argument** while a rename's written set is only known *after* the call: `rename_in_files` now calls `apply_rename_reporting` too and returns that set on `RenameResult.written`, `RenameSymbolTool` emits it as the `files_written` key of the tool result's `details`, and `prompt::record_rename_tool_writes` records those paths as `ChangeKind::Edit` in `handle_tool_execution_end` — **only when `is_error` is false**, so a failed rename records nothing. Same discipline as #778: what was **written**, never what was matched (a file the writer skipped — unreadable, unwritable, or denied by `dir_restrictions` — never reaches `written`). `apply_rename` is now `#[cfg(test)]`-only, since every production caller needs the written list; it is kept rather than deleted so its existing tests keep asserting the exact call shape they were written for. **Still not recorded, pre-existing and unchanged by #783:** the `--output-format json` event path (`prompt::handle_stream_json_events`, reached from `run_prompt_stream_json*`) is handed no `SessionChanges` at all, so it records neither `rename_symbol` **nor** `write_file`/`edit_file` — grep-verified, not inferred.
+ ✓ (58.0s)
+  - **Still unrecorded, deliberately out of scope:** the `rename_symbol` *agent tool* in `src/tools.rs`, which goes through `rename_in_project_restricted` rather than `handle_rename`.
+  + Day 170 (#783) closed the sibling defect on the *agent-tool* path — the `rename_symbol` tool the **model** calls, which reaches `rename_in_files` via `rename_in_project_restricted` and so inherited nothing from #778. It could not be fixed by adding a name to the `write_file`/`edit_file` match in `prompt.rs`, because those record off a single `path` **argument** while a rename's written set is only known *after* the call: `rename_in_files` now calls `apply_rename_reporting` too and returns that set on `RenameResult.written`, `RenameSymbolTool` emits it as the `files_written` key of the tool result's `details`, and `prompt::record_rename_tool_writes` records those paths as `ChangeKind::Edit` in `handle_tool_execution_end` — **only when `is_error` is false**, so a failed rename records nothing. Same discipline as #778: what was **written**, never what was matched (a file the writer skipped — unreadable, unwritable, or denied by `dir_restrictions` — never reaches `written`). `apply_rename` is now `#[cfg(test)]`-only, since every production caller needs the written list; it is kept rather than deleted so its existing tests keep asserting the exact call shape they were written for. **Still not recorded, pre-existing and unchanged by #783:** the `--output-format json` event path (`prompt::handle_stream_json_events`, reached from `run_prompt_stream_json*`) is handed no `SessionChanges` at all, so it records neither `rename_symbol` **nor** `write_file`/`edit_file` — grep-verified, not inferred.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents
+  + - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents. Day 170 (#783): `RenameSymbolTool::execute` puts the paths it actually wrote (`RenameResult.written`) on the tool result's `details` under `"files_written"` — the tool has no `SessionChanges` handle, so the written set is *reported* here and recorded by `prompt::record_rename_tool_writes`; see the `commands_rename.rs` bullet for why the recording cannot happen off the tool's arguments.
+ ✓ (57.3s)
+  - - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents
+  + - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, WebSearchTool, tool builders, SharedState wiring for sub-agents. Day 170 (#783): `RenameSymbolTool::execute` puts the paths it actually wrote (`RenameResult.written`) on the tool result's `details` under `"files_written"` — the tool has no `SessionChanges` handle, so the written set is *reported* here and recorded by `prompt::record_rename_tool_writes`; see the `commands_rename.rs` bullet for why the recording cannot happen off the tool's arguments.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths.
+  + `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths. File-change tracking lives in two places in `PromptEventState`, and the split is forced by the data: `write_file`/`edit_file` are recorded at **ToolExecutionStart** off their single `path` argument, while `rename_symbol` is recorded at **ToolExecutionEnd** by `record_rename_tool_writes`, reading the `files_written` details key and only when `is_error` is false (#783 — a multi-file rename's written set does not exist until the call returns).
+ ✓ (54.3s)
+  - `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths.
+  + `into_result` checks `fatal_error` *before* `retriable_error` so a fatal message that incidentally contains a retriable keyword still stops; overflow and known-benign "stream ended" keep their existing paths. File-change tracking lives in two places in `PromptEventState`, and the split is forced by the data: `write_file`/`edit_file` are recorded at **ToolExecutionStart** off their single `path` argument, while `rename_symbol` is recorded at **ToolExecutionEnd** by `record_rename_tool_writes`, reading the `files_written` details key and only when `is_error` is false (#783 — a multi-file rename's written set does not exist until the call returns).
+  3 tools completed in 3m 3s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
