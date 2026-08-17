@@ -4,6 +4,7 @@ use crate::commands_search::is_binary_extension;
 use crate::config::DirectoryRestrictions;
 use crate::format::*;
 use crate::git::run_git;
+use crate::session::{ChangeKind, SessionChanges};
 
 /// Check if a character is a word boundary character (not alphanumeric or underscore).
 fn is_word_boundary_char(c: char) -> bool {
@@ -323,9 +324,27 @@ pub fn format_rename_preview(matches: &[RenameMatch], old_name: &str, new_name: 
 
 /// Apply the rename across all files, replacing word-boundary matches of `old_name`
 /// with `new_name`. Returns the number of replacements made.
+///
+/// Thin wrapper over [`apply_rename_reporting`] for callers that don't need the
+/// list of files that were actually written.
 pub fn apply_rename(matches: &[RenameMatch], old_name: &str, new_name: &str) -> usize {
+    apply_rename_reporting(matches, old_name, new_name).0
+}
+
+/// Apply the rename and report **which files were actually written**.
+///
+/// The written set is NOT the matched set: a file that can't be read is skipped,
+/// and a failed write is reported but not counted. `/rename` records these paths
+/// into `SessionChanges`, so it must record what really changed on disk — not
+/// what merely matched. Returned paths are sorted for determinism (the internal
+/// grouping is a `HashMap`, whose iteration order is not).
+pub fn apply_rename_reporting(
+    matches: &[RenameMatch],
+    old_name: &str,
+    new_name: &str,
+) -> (usize, Vec<String>) {
     if matches.is_empty() {
-        return 0;
+        return (0, Vec::new());
     }
 
     // Group matches by file
@@ -336,6 +355,7 @@ pub fn apply_rename(matches: &[RenameMatch], old_name: &str, new_name: &str) -> 
     }
 
     let mut total_replacements = 0usize;
+    let mut written: Vec<String> = Vec::new();
 
     for file_path in files_to_update.keys() {
         let content = match std::fs::read_to_string(file_path) {
@@ -358,12 +378,26 @@ pub fn apply_rename(matches: &[RenameMatch], old_name: &str, new_name: &str) -> 
             new_content.pop();
         }
 
-        if let Err(e) = std::fs::write(file_path, &new_content) {
-            println!("{RED}  Failed to write {file_path}: {e}{RESET}");
+        match std::fs::write(file_path, &new_content) {
+            Ok(()) => written.push((*file_path).to_string()),
+            Err(e) => println!("{RED}  Failed to write {file_path}: {e}{RESET}"),
         }
     }
 
-    total_replacements
+    written.sort();
+    (total_replacements, written)
+}
+
+/// Record every file a rename actually wrote into the session tracker.
+///
+/// This is the seam `/rename` was missing: it writes files and, before Day 170,
+/// recorded nothing — so the per-turn checks in `repl.rs` (change summary,
+/// auto-continue, turn-end marker), the `--output-format json` session summary,
+/// and the post-prompt watch gate all read a multi-file rename as "no work".
+pub fn record_renamed_files(changes: &SessionChanges, written: &[String]) {
+    for path in written {
+        changes.record(path, ChangeKind::Edit);
+    }
 }
 
 /// Replace all word-boundary occurrences of `old` with `new` in a single line.
@@ -411,7 +445,10 @@ pub fn parse_rename_args(input: &str) -> Option<(String, String)> {
 }
 
 /// Handle the `/rename` command: find matches, preview, confirm, apply.
-pub fn handle_rename(input: &str) {
+///
+/// Records every file actually written into `changes`, so a rename shows up in
+/// the per-turn change summary, the watch gate, and the JSON session summary.
+pub fn handle_rename(input: &str, changes: &SessionChanges) {
     let (old_name, new_name) = match parse_rename_args(input) {
         Some(args) => args,
         None => {
@@ -461,7 +498,8 @@ pub fn handle_rename(input: &str) {
         return;
     }
 
-    let count = apply_rename(&matches, &old_name, &new_name);
+    let (count, written) = apply_rename_reporting(&matches, &old_name, &new_name);
+    record_renamed_files(changes, &written);
     let repl_word = crate::format::pluralize(count, "replacement", "replacements");
     println!("{GREEN}  ✓ Applied {count} {repl_word}.{RESET}\n");
 }
@@ -675,6 +713,96 @@ mod tests {
     }
 
     // ── rename: apply_rename with temp files ────────────────────────
+
+    /// #778: `/rename` wrote files and recorded nothing, so a multi-file rename
+    /// read as "no work happened" to every per-turn check in `repl.rs`. Pinned at
+    /// the emission point — the `SessionChanges` a caller actually receives.
+    #[test]
+    fn rename_records_every_written_file_in_session_changes() {
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("a.rs");
+        let b = dir.path().join("b.rs");
+        fs::write(&a, "let foo = 1;\n").unwrap();
+        fs::write(&b, "call(foo);\nfoo();\n").unwrap();
+
+        let matches = vec![
+            RenameMatch {
+                file: a.to_str().unwrap().to_string(),
+                line_num: 1,
+                line_text: "let foo = 1;".to_string(),
+                column: 4,
+            },
+            RenameMatch {
+                file: b.to_str().unwrap().to_string(),
+                line_num: 1,
+                line_text: "call(foo);".to_string(),
+                column: 5,
+            },
+            RenameMatch {
+                file: b.to_str().unwrap().to_string(),
+                line_num: 2,
+                line_text: "foo();".to_string(),
+                column: 0,
+            },
+        ];
+
+        let changes = SessionChanges::new();
+        let (count, written) = apply_rename_reporting(&matches, "foo", "baz");
+        record_renamed_files(&changes, &written);
+
+        // The rename really happened on disk.
+        assert_eq!(count, 3);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "let baz = 1;\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "call(baz);\nbaz();\n");
+
+        // Two different facts, asserted separately (#774): edit_count counts
+        // record calls, snapshot().len() counts distinct files. Two files were
+        // written even though three matches were replaced.
+        assert_eq!(changes.edit_count(), 2, "one record per written file");
+        assert_eq!(changes.snapshot().len(), 2, "two distinct files");
+        let paths: Vec<String> = changes.snapshot().into_iter().map(|c| c.path).collect();
+        assert!(paths.contains(&a.to_str().unwrap().to_string()));
+        assert!(paths.contains(&b.to_str().unwrap().to_string()));
+        assert!(
+            changes
+                .snapshot()
+                .iter()
+                .all(|c| c.kind == ChangeKind::Edit)
+        );
+    }
+
+    /// A file that can't be read is skipped by the writer, so it must not be
+    /// recorded either — the tracker reports what changed on disk, not what matched.
+    #[test]
+    fn rename_does_not_record_unreadable_files() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real.rs");
+        fs::write(&real, "let foo = 1;\n").unwrap();
+        let missing = dir.path().join("gone.rs");
+
+        let matches = vec![
+            RenameMatch {
+                file: real.to_str().unwrap().to_string(),
+                line_num: 1,
+                line_text: "let foo = 1;".to_string(),
+                column: 4,
+            },
+            RenameMatch {
+                file: missing.to_str().unwrap().to_string(),
+                line_num: 1,
+                line_text: "let foo = 2;".to_string(),
+                column: 4,
+            },
+        ];
+
+        let changes = SessionChanges::new();
+        let (_, written) = apply_rename_reporting(&matches, "foo", "baz");
+        record_renamed_files(&changes, &written);
+
+        assert_eq!(written, vec![real.to_str().unwrap().to_string()]);
+        assert_eq!(changes.edit_count(), 1);
+        assert_eq!(changes.snapshot().len(), 1);
+    }
 
     #[test]
     fn apply_rename_modifies_files() {

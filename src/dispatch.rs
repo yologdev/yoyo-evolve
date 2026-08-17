@@ -965,7 +965,7 @@ async fn dispatch_file_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Rename => {
-            commands::handle_rename(ctx.input);
+            commands::handle_rename(ctx.input, ctx.session_changes);
             Some(CommandResult::Continue)
         }
         CommandRoute::Move => {
@@ -977,7 +977,7 @@ async fn dispatch_file_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Refactor => {
-            commands::handle_refactor(ctx.input);
+            commands::handle_refactor(ctx.input, ctx.session_changes);
             Some(CommandResult::Continue)
         }
         CommandRoute::Copy => {

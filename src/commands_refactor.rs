@@ -2,6 +2,7 @@
 
 use crate::commands_move::handle_move;
 use crate::commands_rename::handle_rename;
+use crate::session::SessionChanges;
 use crate::format::*;
 
 // ── /extract ─────────────────────────────────────────────────────────────
@@ -527,7 +528,7 @@ pub fn handle_extract(input: &str) {
 ///
 /// With no arguments, displays a summary of all available refactoring commands.
 /// With a subcommand (`rename`, `extract`, `move`), dispatches to the corresponding handler.
-pub fn handle_refactor(input: &str) {
+pub fn handle_refactor(input: &str, changes: &SessionChanges) {
     let rest = input.strip_prefix("/refactor").unwrap_or(input).trim();
 
     if rest.is_empty() {
@@ -562,7 +563,7 @@ pub fn handle_refactor(input: &str) {
             } else {
                 format!("/rename {sub_args}")
             };
-            handle_rename(&forwarded);
+            handle_rename(&forwarded, changes);
         }
         "extract" => {
             let forwarded = if sub_args.is_empty() {
@@ -1110,7 +1111,7 @@ mod tests {
     fn test_refactor_no_args_shows_help() {
         // Calling handle_refactor with no args should not panic
         // and should print the refactoring tools summary
-        handle_refactor("/refactor");
+        handle_refactor("/refactor", &SessionChanges::new());
     }
 
     #[test]
@@ -1169,7 +1170,7 @@ mod tests {
     #[test]
     fn test_refactor_unknown_subcommand() {
         // Should not panic on unknown subcommand
-        handle_refactor("/refactor foobar");
+        handle_refactor("/refactor foobar", &SessionChanges::new());
     }
 
     #[test]
