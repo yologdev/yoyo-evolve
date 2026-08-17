@@ -271,6 +271,27 @@ fn record_rename_tool_writes(details: &serde_json::Value, changes: &SessionChang
     recorded
 }
 
+/// Record the file a `write_file` / `edit_file` tool call names in its arguments.
+///
+/// This is the argument-based half of file-change tracking: both tools carry a
+/// single `path` argument, so the written path is known at ToolExecutionStart.
+/// (A `rename_symbol`'s written set is not — see `record_rename_tool_writes`.)
+///
+/// One statement, two call sites: the display path
+/// (`PromptEventState::handle_tool_execution_start`) and the `--output-format json`
+/// path (`handle_stream_json_events`). Two matches on the same tool names in one
+/// file is the duplication that drifts (#786).
+fn record_tool_arg_writes(tool_name: &str, args: &serde_json::Value, changes: &SessionChanges) {
+    let kind = match tool_name {
+        "write_file" => ChangeKind::Write,
+        "edit_file" => ChangeKind::Edit,
+        _ => return,
+    };
+    if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+        changes.record(path, kind);
+    }
+}
+
 /// Internal state for the prompt event-handling loop.
 /// Bundles the 15+ local variables that were previously declared inline.
 struct PromptEventState {
@@ -348,19 +369,7 @@ impl PromptEventState {
         changes: &SessionChanges,
     ) {
         // Track file modifications from write_file and edit_file
-        match tool_name.as_str() {
-            "write_file" => {
-                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                    changes.record(path, ChangeKind::Write);
-                }
-            }
-            "edit_file" => {
-                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                    changes.record(path, ChangeKind::Edit);
-                }
-            }
-            _ => {}
-        }
+        record_tool_arg_writes(&tool_name, &args, changes);
         // Stop spinner on first activity
         if let Some(s) = self.spinner.take() {
             s.stop();
