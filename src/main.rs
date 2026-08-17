@@ -87,6 +87,7 @@ mod config_paths;
 mod context;
 mod conversations;
 mod dispatch;
+mod dispatch_near_miss;
 mod dispatch_sub;
 mod docs;
 mod format;
