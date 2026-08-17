@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the current state of the files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_near_miss\|^mo… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -40 src/dispatch_near_miss.… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1200,1260p src/dispatch_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub(crate) use … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 88,93p src/main.rs | cat … ✓ (4ms)
+  ▶ edit src/main.rs (1 → 2 lines)
+  + mod dispatch_near_miss;
+    mod dispatch_sub;
+ ✓ (14.2s)
+  + mod dispatch_near_miss;
+    mod dispatch_sub;
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 31.8s (7 ✓)
+
+Now the re-export in dispatch_sub.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (1 → 4 lines)
+    use crate::cli::{collect_repeatable_flag, load_config_file, print_help, Config, VERSION};
+  + // The bare-word near-miss guard moved to `dispatch_near_miss` (Day 170 pure move);
+  + // re-exported here so every existing call site stays byte-unchanged.
+  + pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss, ROUTED_SUBCOMMANDS};
+ ✓ (21.8s)
+    use crate::cli::{collect_repeatable_flag, load_config_file, print_help, Config, VERSION};
+  + // The bare-word near-miss guard moved to `dispatch_near_miss` (Day 170 pure move);
+  + // re-exported here so every existing call site stays byte-unchanged.
+  + pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss, ROUTED_SUBCOMMANDS};
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/dispatch_sub.rs (1 → 5 lines)
+  - pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss, ROUTED_SUBCOMMANDS};
+  + pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss};
+  + // Only this module's tests read the table through the old path; re-exporting it
+  + // unconditionally would be an unused import in a non-test build.
+  + #[cfg(test)]
+  + pub use crate::dispatch_near_miss::ROUTED_SUBCOMMANDS;
+ ✓ (1m 58s)
+  - pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss, ROUTED_SUBCOMMANDS};
+  + pub use crate::dispatch_near_miss::{bare_word_arg, bare_word_near_miss};
+  + // Only this module's tests read the table through the old path; re-exporting it
+  + // unconditionally would be an unused import in a non-test build.
+  + #[cfg(test)]
+  + pub use crate::dispatch_near_miss::ROUTED_SUBCOMMANDS;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (11.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 45s (3 ✓)
+
+Build is green. Now tests and clippy:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (176ms)
+  3 tools completed in 3m 4s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/main.rs
+     Surprises (not predicted): src/dispatch_sub.rs
+

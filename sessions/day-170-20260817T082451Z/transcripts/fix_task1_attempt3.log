@@ -1,0 +1,74 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo and what the probe found.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A2 'name = "yoagent"' C… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff bf87a40b..HEAD -- src/g… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '795,875p' src/gasp.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.3s (4 ✓)
+
+The probe is committed (which the task forbade) and the doc corrections are missing. First, let me actually run the probe to get the fact — that's the whole deliverable.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(feature" src/main.r… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the key step — actually compile it. Starting the featured build with a hard timeout:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (timeout 900… (2 lines)  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:805..875 ✓ (0ms)
+ ✓ (30.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.6s (2 ✓)
+
+The build finished fast (deps cached) — 2 errors. Let me capture the literal output:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/probe_build.log ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A real, sharp finding: `PatchStatus` is genuinely missing in 0.16.4 (E0432), while the second error (E0283) is a probe artifact, not a missing type. Let me refine the probe to isolate exactly what's blocked.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (4.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/YoAgentState::<GitEvent… ✓ (10.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.9s (2 ✓)
+
+Refined probe is green — so only PatchStatus is missing. Let me have the compiler tell me exactly what update_patch_status wants instead:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (5.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The compiler named the exact missing type: yoagent_state::patch::PatchStatus. Now let me probe whether it's reachable by any path from yoyo:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (4.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo build --featur… ✓ (4.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.3s (2 ✓)
+
+Conclusive. Let me capture the upstream re-export list as supplementary detail, then clean up:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.1… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+
