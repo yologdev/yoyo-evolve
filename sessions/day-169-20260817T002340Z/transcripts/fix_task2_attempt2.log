@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,200p src/commands_goal.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_goal.rs && gr… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:505..705 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:704..904 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:903..1173 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:196..506 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_trust_project" src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1175,1200p src/cli.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 52.6s (9 ✓)
+
+Now I'll add the directory-taking siblings.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (3 → 11 lines)
+    pub fn goal_for_prompt() -> Option<String> {
+  -     load_goal().map(|g| truncate_goal_for_prompt(&g))
+  +     goal_for_prompt_in(Path::new("."))
+  + }
+  + 
+  + /// Load the goal under `dir` for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
+  + ///
+  + /// The directory-taking sibling of [`goal_for_prompt`]; the CWD-reading wrapper is a
+  + /// thin call with the process root. Behaviour for a given directory is unchanged.
+  + fn goal_for_prompt_in(dir: &Path) -> Option<String> {
+  +     load_goal_in(dir).map(|g| truncate_goal_for_prompt(&g))
+    }
+ ✓ (1m 41s)
+    pub fn goal_for_prompt() -> Option<String> {
+  -     load_goal().map(|g| truncate_goal_for_prompt(&g))
+  +     goal_for_prompt_in(Path::new("."))
+  + }
+  + 
+  + /// Load the goal under `dir` for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
+  + ///
+  + /// The directory-taking sibling of [`goal_for_prompt`]; the CWD-reading wrapper is a
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (57 → 90 lines)
+    /// Save a goal to `.yoyo/goal.md`, creating the directory if needed.
+    fn save_goal(goal: &str) -> Result<(), String> {
+  -     let path = Path::new(GOAL_FILE);
+  +     save_goal_in(Path::new("."), goal)
+  + }
+  + 
+  + /// Save a goal to `<dir>/.yoyo/goal.md`, creating the directory if needed.
+  + ///
+  + /// The directory-taking sibling of [`save_goal`], which is now a thin wrapper
+  + /// passing the process root. Behaviour for a given directory is unchanged — this
+  + /// exists so tests can write into a `TempDir` without moving the process CWD
+  + /// (#780: `#[serial]` only serialises against other `#[serial]` tests, so a
+  + /// CWD-moving test races every plain `#[test]` that reads it).
+  + fn save_goal_in(dir: &Path, goal: &str) -> Result<(), String> {
+  +     let path = dir.join(GOAL_FILE);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
+  ···
+    
+  ... (59 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs.
+  2 tools completed in 2m 0s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
