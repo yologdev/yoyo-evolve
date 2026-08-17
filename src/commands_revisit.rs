@@ -301,6 +301,43 @@ fn fetch_issue_detail(number: u64) -> Result<String, String> {
     format_issue_check(&stdout)
 }
 
+/// Fetch just the title of an issue, for `/revisit add` (#741).
+///
+/// Same shape as [`fetch_issue_detail`] — one `gh issue view` call, the same
+/// two failure messages — so there is one way of talking to `gh` in this file,
+/// not two. The decision half lives in [`parse_issue_title`]; this function is
+/// only the I/O.
+fn fetch_issue_title(number: u64) -> Result<String, String> {
+    let output = Command::new("gh")
+        .args(["issue", "view", &number.to_string(), "--json", "title"])
+        .output()
+        .map_err(|e| format!("Failed to run `gh`: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gh issue view failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_issue_title(&stdout)
+}
+
+/// Pull the `title` field out of `gh issue view --json title` output.
+///
+/// Pure, so the parse is table-testable without a network or a `gh` binary.
+/// An absent, non-string, or blank title is **not** a title: it comes back as
+/// `Err`, never `Ok("")` — a caller that stored an empty string would render a
+/// blank column and claim it had resolved something (Day 144: absence gets its
+/// own name).
+fn parse_issue_title(json_str: &str) -> Result<String, String> {
+    let item: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| format!("Failed to parse: {e}"))?;
+    match item["title"].as_str() {
+        Some(t) if !t.trim().is_empty() => Ok(t.trim().to_string()),
+        _ => Err("gh returned no title for this issue".to_string()),
+    }
+}
+
 /// Format the check output for a specific issue.
 fn format_issue_check(json_str: &str) -> Result<String, String> {
     let item: serde_json::Value =
@@ -411,7 +448,18 @@ pub fn handle_revisit(input: &str) -> String {
                 );
             }
 
-            revisit_add_at(Path::new(REVISIT_FILE), number, reason, current_day())
+            // Resolve the real title before writing (#741). A failure here is
+            // not fatal — the entry is still added, but the message says the
+            // stored title is a placeholder and nothing was verified.
+            let fetched = fetch_issue_title(number).ok();
+
+            revisit_add_at(
+                Path::new(REVISIT_FILE),
+                number,
+                fetched.as_deref(),
+                reason,
+                current_day(),
+            )
         }
         "remove" => {
             let Some(number) = parse_issue_number(args) else {
@@ -454,7 +502,21 @@ fn revisit_list_at(path: &Path) -> String {
 
 /// `/revisit add` against a specific file. Refuses to write when the existing
 /// file can't be read — overwriting it would destroy every surviving entry.
-fn revisit_add_at(path: &Path, number: u64, reason: &str, day: u64) -> String {
+///
+/// `title` is the *resolved* issue title, passed in by the caller (#741). The
+/// `gh` call lives at the one call site in [`handle_revisit`], so every test
+/// drives this function with no network — the same injected-resolver discipline
+/// `never_forecast_files` uses for `git_added_ts`. `None` means the title could
+/// not be resolved: the entry is still added (the command stays usable offline)
+/// with the old `(issue #N)` placeholder, and the returned message *says* the
+/// title is a placeholder and the issue was never verified to exist.
+fn revisit_add_at(
+    path: &Path,
+    number: u64,
+    title: Option<&str>,
+    reason: &str,
+    day: u64,
+) -> String {
     let mut candidates = match load_revisit_list_from(path) {
         Ok(c) => c,
         Err(e) => return corrupt_file_message(&e, path),
@@ -465,18 +527,30 @@ fn revisit_add_at(path: &Path, number: u64, reason: &str, day: u64) -> String {
         return format!("{YELLOW}  Issue #{number} is already on the revisit list.{RESET}");
     }
 
+    let stored_title = match title {
+        Some(t) => t.to_string(),
+        None => format!("(issue #{number})"),
+    };
+
     candidates.push(RevisitCandidate {
         number,
-        title: format!("(issue #{number})"),
+        title: stored_title.clone(),
         reason: reason.to_string(),
         added_day: day,
     });
 
     match save_revisit_list_to(path, &candidates) {
-        Ok(()) => format!(
-            "{GREEN}  ✓ Added #{number} to revisit list.{RESET}\n  \
-             {DIM}Reason: {reason}{RESET}"
-        ),
+        Ok(()) => match title {
+            Some(t) => format!(
+                "{GREEN}  ✓ Added #{number} — {t}{RESET}\n  {DIM}Reason: {reason}{RESET}"
+            ),
+            None => format!(
+                "{GREEN}  ✓ Added #{number} to revisit list.{RESET}\n  \
+                 {DIM}Reason: {reason}{RESET}\n  \
+                 {YELLOW}Note: could not fetch the title from `gh`, so \"{stored_title}\" is a \
+                 placeholder and the issue was not verified to exist.{RESET}"
+            ),
+        },
         Err(e) => format!("{RED}  Error saving: {e}{RESET}"),
     }
 }
@@ -881,7 +955,7 @@ mod tests {
         let corrupt = r#"[{"number":1,"title":"T","reason":"R","added_day":1},{"num"#;
         std::fs::write(&path, corrupt).unwrap();
 
-        let out = revisit_add_at(&path, 42, "now feasible", 165);
+        let out = revisit_add_at(&path, 42, None, "now feasible", 165);
         assert!(
             !out.contains("✓ Added"),
             "must not report success over a damaged file: {out}"
@@ -897,7 +971,7 @@ mod tests {
         let path = dir.path().join("revisit.json");
         std::fs::write(&path, "[]").unwrap();
 
-        let out = revisit_add_at(&path, 42, "now feasible", 165);
+        let out = revisit_add_at(&path, 42, None, "now feasible", 165);
         assert!(out.contains("✓ Added"), "{out}");
         let loaded = load_revisit_list_from(&path).unwrap();
         assert_eq!(loaded.len(), 1);
@@ -905,7 +979,7 @@ mod tests {
         assert_eq!(loaded[0].added_day, 165);
 
         // Duplicate add is still refused.
-        let dup = revisit_add_at(&path, 42, "again", 165);
+        let dup = revisit_add_at(&path, 42, None, "again", 165);
         assert!(dup.contains("already on the revisit list"), "{dup}");
     }
 
