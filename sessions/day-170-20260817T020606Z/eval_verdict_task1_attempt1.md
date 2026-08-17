@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The diff is empty — `git status` is clean and the last commit touching `src/gasp.rs` is b582ff9b from an earlier session; `grep -n task_result src/gasp.rs` finds nothing, and the module header at :13/:18 still names only three ported arms. Nothing from the task landed.
+Checked: intent_alignment: FAIL: Task asked for a `pub(crate) async fn task_result` in src/gasp.rs plus CLAUDE.md and module-header updates naming four arms; no such function exists and no file was modified. The "stop and write nothing" escape hatch does not apply — yoagent 0.16.4 is resolved (Cargo.lock:2205-2206) and its src/gasp.rs:60-72 does re-export DecisionId/EvalId/ArtifactRef etc., so the port was reachable.
+Checked: forgotten_touchpoints: FAIL: No new definitions were added at all, so there is nothing to wire; the required consumer-side updates (module doc header at src/gasp.rs:11-18, the :245 dormancy comment, the CLAUDE.md gasp.rs bullet) are all still describing three arms.
+Checked: doc_sync: FAIL: CLAUDE.md and the src/gasp.rs header still say `session_start`/`task_planned`/`session_end` and explicitly state `task-result` is only in tools/gasp-emit — consistent with the code, but the task's documented deliverable was not produced.
+Checked: product_surface: N/A: Empty diff; no config defaults, CLI flags, wizard or startup behavior touched.

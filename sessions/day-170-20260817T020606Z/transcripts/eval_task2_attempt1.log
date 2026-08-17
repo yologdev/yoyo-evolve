@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_rename\|handle_… ✓ (10ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,400p' src/commands_r… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session.rs\` —" CLAUDE.… ✓ (10ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (58.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 31s (6 ✓)
+
+Verdict: FAIL (doc_sync only — the code is correct)
+
+• **Implementation is right**: `apply_rename_reporting holds the old body and returns the *written* set (unreadable files still continue, failed writes excluded); apply_rename is a .0` wrapper so no existing test changed; handle_rename records each written path with ChangeKind::Edit.
+• Both doors wired: dispatch.rs:968 (/rename) and :980 (/refactor) both pass ctx.session_changes; handle_refactor threads it to the "rename" arm. The two commands.rs/commands_project.rs hits are pub use re-exports, not calls.
+• Tests at the emission point: asserts edit_count() == 2 and snapshot().len() == 2 for a 3-match/2-file rename (the two facts #774 exists over), plus an unreadable-file exclusion case.
+• The miss: git show --stat HEAD lists only the three src/ files. The task explicitly asked for one sentence in CLAUDE.md's session.rs or commands_rename.rs bullet; line 102 still reads "rename symbol across project files, word-boundary matching, preview and apply", with no mention that it is now a recorded write path. Behavior changed, docs didn't — a one-line addition fixes it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

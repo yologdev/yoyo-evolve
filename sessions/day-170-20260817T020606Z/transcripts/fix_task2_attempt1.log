@@ -1,0 +1,45 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to add the CLAUDE.md doc sentence. Let me check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'record_renamed_files\|f… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
+  + - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply. Day 170 (#778): `/rename` is a **recorded write path** — `handle_rename(input, changes: &SessionChanges)` records every file it actually wrote with `ChangeKind::Edit` (via `apply_rename_reporting`, which returns `(replacements, written_paths)`; `apply_rename` is a one-line `.0` wrapper so no existing test changed), and both doors pass `ctx.session_changes`: `dispatch.rs`'s `/rename` arm and `/refactor rename`, which forwards through `handle_refactor(input, changes)`. It records what was **written**, not what was matched — a file that fails to read or write is skipped by the writer and so is never recorded. Before this the command rewrote every matched file and recorded nothing, so the three per-turn checks in `repl.rs` (change summary, `should_auto_continue`'s `used_tools`, the turn-end `did_work`), `--output-format json`'s `session` summary, and the post-prompt watch gate all read a multi-file rename as "nothing happened". **Still unrecorded, deliberately out of scope:** the `rename_symbol` *agent tool* in `src/tools.rs`, which goes through `rename_in_project_restricted` rather than `handle_rename`.
+ ✓ (58.8s)
+  - - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
+  + - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply. Day 170 (#778): `/rename` is a **recorded write path** — `handle_rename(input, changes: &SessionChanges)` records every file it actually wrote with `ChangeKind::Edit` (via `apply_rename_reporting`, which returns `(replacements, written_paths)`; `apply_rename` is a one-line `.0` wrapper so no existing test changed), and both doors pass `ctx.session_changes`: `dispatch.rs`'s `/rename` arm and `/refactor rename`, which forwards through `handle_refactor(input, changes)`. It records what was **written**, not what was matched — a file that fails to read or write is skipped by the writer and so is never recorded. Before this the command rewrote every matched file and recorded nothing, so the three per-turn checks in `repl.rs` (change summary, `should_auto_continue`'s `used_tools`, the turn-end `did_work`), `--output-format json`'s `session` summary, and the post-prompt watch gate all read a multi-file rename as "nothing happened". **Still unrecorded, deliberately out of scope:** the `rename_symbol` *agent tool* in `src/tools.rs`, which goes through `rename_in_project_restricted` rather than `handle_rename`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 325,410p src/commands_ren… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 13s (4 ✓)
+
+Doc claims match the code. Verifying the build.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 44s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git diff src/… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (58.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 51s (4 ✓)
+
+All green: fmt clean, clippy -D warnings clean, no test failures.
+
+What I changed (the one thing the evaluator flagged): CLAUDE.md line 102, the commands_rename.rs bullet. The added sentences state, verified against the code I just read:
+
+• /rename is now a recorded write path — handle_rename(input, changes: &SessionChanges) records each written file with ChangeKind::Edit via `record_renamed_files`.
+• apply_rename_reporting returns (replacements, written_paths); apply_rename is a one-line .0 wrapper (no existing test churned).
+• It records what was written, not matched — read_to_string errors continue and fs::write errors print instead of pushing (confirmed at src/commands_rename.rs:352-375).
+• Both doors wired: dispatch.rs's /rename arm and `/refactor rename through handle_refactor(input, changes)`.
+• Named the remaining half instead of leaving prose that reads complete: the rename_symbol agent tool in src/tools.rs goes through rename_in_project_restricted and is still unrecorded, out of scope here.
+
+cargo fmt also normalized two lines that the previous attempt left unformatted (an import order in commands_refactor.rs and an assert! wrap in a new test) — no behavior change. Source code was otherwise untouched, since the evaluator marked the code half PASS.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
