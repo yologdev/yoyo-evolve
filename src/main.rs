@@ -247,6 +247,12 @@ async fn run_single_prompt(
     output_format: cli::OutputFormat,
     print_mode: bool,
 ) {
+    // #786: the one tracker for this whole function. Constructed above the
+    // stream-json early return so that branch records into the *same* tracker
+    // the later `build_json_output` / `emit_output` read — a second throwaway
+    // one here is the exact defect of #678.
+    let session_changes = SessionChanges::new();
+
     // Stream-JSON mode: emit NDJSON events and return early
     if output_format == cli::OutputFormat::StreamJson {
         let mut session_total = Usage::default();
@@ -264,6 +270,7 @@ async fn run_single_prompt(
                         content_blocks,
                         &mut session_total,
                         &agent_config.model,
+                        &session_changes,
                     )
                     .await
                 }
@@ -278,6 +285,7 @@ async fn run_single_prompt(
                 prompt_text.trim(),
                 &mut session_total,
                 &agent_config.model,
+                &session_changes,
             )
             .await
         };
@@ -309,7 +317,6 @@ async fn run_single_prompt(
     }
 
     let mut session_total = Usage::default();
-    let session_changes = SessionChanges::new();
     let prompt_start = Instant::now();
     let response = if let Some(ref img_path) = image_path {
         // Multi-modal prompt: text + image
@@ -482,11 +489,23 @@ async fn run_piped_mode(
         std::process::exit(2);
     }
 
+    // #786: the one tracker for this whole function. Constructed above the
+    // stream-json early return so that branch records into the *same* tracker
+    // the later `build_json_output` / `emit_output` read — a second throwaway
+    // one here is the exact defect of #678.
+    let session_changes = SessionChanges::new();
+
     // Stream-JSON mode: emit NDJSON events and return early
     if output_format == cli::OutputFormat::StreamJson {
         let mut session_total = Usage::default();
-        let response =
-            run_prompt_stream_json(agent, input, &mut session_total, &agent_config.model).await;
+        let response = run_prompt_stream_json(
+            agent,
+            input,
+            &mut session_total,
+            &agent_config.model,
+            &session_changes,
+        )
+        .await;
         if response.last_api_error.is_some() {
             std::process::exit(1);
         }
@@ -508,7 +527,6 @@ async fn run_piped_mode(
     }
 
     let mut session_total = Usage::default();
-    let session_changes = SessionChanges::new();
     let prompt_start = Instant::now();
     let initial = run_prompt_with_changes(
         agent,

@@ -1412,9 +1412,10 @@ pub async fn run_prompt_stream_json(
     input: &str,
     session_total: &mut Usage,
     model: &str,
+    changes: &SessionChanges,
 ) -> PromptOutcome {
     let rx = start_prompt(agent, input).await;
-    let outcome = handle_stream_json_events(agent, rx, model).await;
+    let outcome = handle_stream_json_events(agent, rx, model, changes).await;
 
     accumulate_usage(session_total, &outcome.1);
 
@@ -1427,13 +1428,14 @@ pub async fn run_prompt_stream_json_with_content(
     content: Vec<Content>,
     session_total: &mut Usage,
     model: &str,
+    changes: &SessionChanges,
 ) -> PromptOutcome {
     let messages = vec![AgentMessage::Llm(Message::User {
         content,
         timestamp: now_ms(),
     })];
     let rx = start_prompt_messages(agent, messages).await;
-    let outcome = handle_stream_json_events(agent, rx, model).await;
+    let outcome = handle_stream_json_events(agent, rx, model, changes).await;
 
     accumulate_usage(session_total, &outcome.1);
 
@@ -1441,11 +1443,21 @@ pub async fn run_prompt_stream_json_with_content(
 }
 
 /// Internal event handler for streaming JSON mode.
+///
+/// `changes` is the caller's session tracker (#786): this path used to record
+/// nothing at all, so `--output-format json`'s own `session` summary — plus the
+/// per-turn summary, `should_auto_continue`, the turn-end marker and the
+/// post-prompt watch gate — all read zero after a run that edited files.
+/// Recording goes through the same two helpers the display path uses
+/// (`record_tool_arg_writes` at tool-execution start, `record_rename_tool_writes`
+/// at tool-execution end), never a second copy of the tool-name match.
+///
 /// Returns (PromptOutcome, Usage).
 async fn handle_stream_json_events(
     agent: &mut Agent,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
     model: &str,
+    changes: &SessionChanges,
 ) -> (PromptOutcome, Usage) {
     let mut usage = Usage::default();
     let mut collected_text = String::new();
@@ -1470,6 +1482,10 @@ async fn handle_stream_json_events(
                 emit_agent_event(&event);
                 match &event {
                     AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+                        // #786: record write_file / edit_file through the same
+                        // helper the display path uses — never a second match on
+                        // the same tool names.
+                        record_tool_arg_writes(tool_name, args, changes);
                         // Only pay the clone when audit logging is actually on.
                         if is_audit_enabled() {
                             audit_inflight.insert(
@@ -1481,6 +1497,12 @@ async fn handle_stream_json_events(
                     AgentEvent::ToolExecutionEnd {
                         tool_call_id, tool_name, is_error, result,
                     } => {
+                        // #786: a rename's written set only exists once the call
+                        // returns, so it is read off the result details here and
+                        // only on success — same discipline as the display path.
+                        if !*is_error && tool_name == "rename_symbol" {
+                            record_rename_tool_writes(&result.details, changes);
+                        }
                         // Audit log: record the completed tool call with its real
                         // duration and its real success flag (#751).
                         if let Some((audit_tool, audit_args, started)) =
@@ -2307,8 +2329,126 @@ mod tests {
         tx.send(AgentEvent::AgentEnd { messages }).unwrap();
         drop(tx); // closing the channel ends the loop
 
-        let (outcome, _usage) = handle_stream_json_events(&mut agent, rx, "claude-test").await;
+        let changes = SessionChanges::new();
+        let (outcome, _usage) =
+            handle_stream_json_events(&mut agent, rx, "claude-test", &changes).await;
         outcome
+    }
+
+    /// Drive a hand-fed event stream through `handle_stream_json_events` and
+    /// return the tracker it recorded into. #786: assert at the emission point —
+    /// the `SessionChanges` a caller receives — not on the emitted JSON.
+    async fn stream_json_changes_for(events: Vec<AgentEvent>) -> SessionChanges {
+        use yoagent::provider::MockProvider;
+
+        let provider = MockProvider::text("unused");
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+            .with_api_key("not-a-real-key");
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        for event in events {
+            tx.send(event).unwrap();
+        }
+        drop(tx); // closing the channel ends the loop
+
+        let changes = SessionChanges::new();
+        let _ = handle_stream_json_events(&mut agent, rx, "claude-test", &changes).await;
+        changes
+    }
+
+    fn tool_start(id: &str, name: &str, args: serde_json::Value) -> AgentEvent {
+        AgentEvent::ToolExecutionStart {
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            args,
+        }
+    }
+
+    fn tool_end(id: &str, name: &str, is_error: bool, details: serde_json::Value) -> AgentEvent {
+        AgentEvent::ToolExecutionEnd {
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            is_error,
+            result: ToolResult {
+                content: vec![Content::Text {
+                    text: "ok".to_string(),
+                }],
+                details,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_json_records_write_file_into_session_changes() {
+        // #786: --output-format json used to record nothing at all, so its own
+        // `session` summary reported zero edits after a run that edited files.
+        let changes = stream_json_changes_for(vec![tool_start(
+            "call-1",
+            "write_file",
+            serde_json::json!({ "path": "src/new.rs", "content": "fn main() {}" }),
+        )])
+        .await;
+
+        let snapshot = changes.snapshot();
+        assert_eq!(snapshot.len(), 1, "one distinct file recorded");
+        assert_eq!(snapshot[0].path, "src/new.rs");
+        assert_eq!(snapshot[0].kind, ChangeKind::Write);
+        assert_eq!(changes.edit_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_json_records_every_file_a_rename_wrote() {
+        // #783/#786: a rename's written set only exists once the call returns,
+        // so it rides the result details, not the arguments.
+        let changes = stream_json_changes_for(vec![
+            tool_start(
+                "call-1",
+                "rename_symbol",
+                serde_json::json!({ "old_name": "foo", "new_name": "bar" }),
+            ),
+            tool_end(
+                "call-1",
+                "rename_symbol",
+                false,
+                serde_json::json!({ "files_written": ["src/a.rs", "src/b.rs"] }),
+            ),
+        ])
+        .await;
+
+        let snapshot = changes.snapshot();
+        let paths: Vec<&str> = snapshot.iter().map(|c| c.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
+        assert!(
+            snapshot.iter().all(|c| c.kind == ChangeKind::Edit),
+            "a rename edits existing files: {snapshot:?}"
+        );
+        assert_eq!(changes.edit_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn stream_json_failed_rename_records_nothing() {
+        // Record what was WRITTEN, never what was matched — a failed rename
+        // wrote nothing, so it must leave the tracker empty (#778/#783).
+        let changes = stream_json_changes_for(vec![
+            tool_start(
+                "call-1",
+                "rename_symbol",
+                serde_json::json!({ "old_name": "foo", "new_name": "bar" }),
+            ),
+            tool_end(
+                "call-1",
+                "rename_symbol",
+                true,
+                serde_json::json!({ "files_written": ["src/a.rs", "src/b.rs"] }),
+            ),
+        ])
+        .await;
+
+        assert!(
+            changes.snapshot().is_empty(),
+            "a failed rename must record nothing"
+        );
+        assert_eq!(changes.edit_count(), 0);
     }
 
     #[tokio::test]
