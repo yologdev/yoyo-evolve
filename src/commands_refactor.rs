@@ -2,8 +2,8 @@
 
 use crate::commands_move::handle_move;
 use crate::commands_rename::handle_rename;
-use crate::session::SessionChanges;
 use crate::format::*;
+use crate::session::SessionChanges;
 
 // ── /extract ─────────────────────────────────────────────────────────────
 

@@ -763,12 +763,10 @@ mod tests {
         let paths: Vec<String> = changes.snapshot().into_iter().map(|c| c.path).collect();
         assert!(paths.contains(&a.to_str().unwrap().to_string()));
         assert!(paths.contains(&b.to_str().unwrap().to_string()));
-        assert!(
-            changes
-                .snapshot()
-                .iter()
-                .all(|c| c.kind == ChangeKind::Edit)
-        );
+        assert!(changes
+            .snapshot()
+            .iter()
+            .all(|c| c.kind == ChangeKind::Edit));
     }
 
     /// A file that can't be read is skipped by the writer, so it must not be
