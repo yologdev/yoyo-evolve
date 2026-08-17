@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub async fn run_prompt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_tool_arg_writes\… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1480,1530p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --lib str… ✓ (4ms)
+ ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --bin yoy… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 400 cargo test --bin yoy… ✓ (141ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (58.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 36s (8 ✓)
+
+Verdict: PASS
+
+Evidence:
+• `record_tool_arg_writes` extracted once, called from both the display path (prompt.rs:372) and the stream-json ToolExecutionStart arm (prompt.rs:1488) — no duplicated tool-name match.
+• `record_rename_tool_writes reused at stream-json ToolExecutionEnd, gated on !is_error; the #751` audit-log block below it is untouched.
+• Both public fns took the new changes: &SessionChanges param and forward it; main.rs moved the existing SessionChanges::new() above the early return in both run_single_prompt and run_piped_mode — only two production occurrences remain (254, 496), the rest are inside `#[cfg(test)]` at 945+, so no #678-style throwaway tracker.
+• cargo test --bin yoyo stream_json_ → 5 passed (3 new emission-point tests + the 2 pre-existing).
+• CLAUDE.md: the now-false "handed no SessionChanges at all" sentence was rewritten, not deleted; prompt.rs bullet names the shared helper and its call sites.
+
+Cleanup note (not a failure): .yoyo/risk_weights.json harness bookkeeping was swept into the diff.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

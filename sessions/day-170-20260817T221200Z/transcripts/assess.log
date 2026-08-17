@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory shows 7 reverts in the last 10 sessions, which is the loudest signal here.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (9ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Seven reverts in ten sessions is the loudest signal. Let me find out what actually killed them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -180 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (4ms)
+ ✓ (566ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+Workflow runs all "success" but 7 tasks reverted — so the harness is fine and the tasks are dying. Let me get ground truth from the audit log.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf auditwt && git -C /home/runner/work/yoyo-evolve/yoyo-evolve fe… ✓ (1.1s)
+  ▶ $ cd /tmp/auditwt/sessions && for d in $(ls -d day-170-* day-1… (8 lines) ✓ (382ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.8s (2 ✓)
+
+Day 169 attempted 2 tasks/session; Day 170 dropped to 1 and four of them shipped nothing. Let me find the actual failure mode in the transcripts.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/auditwt/sessions && for d in day-170-20260817T100858Z day-170-20260817T1… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three failed sessions have a plan_retry.log — the planner produced no task files. Let me read the eval rejections and the task that was attempted.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/auditwt/sessions/day-170-20260817T131220Z && echo "### TASK FILE (head)"… ✓ (3ms)
+  ▶ $ cd /tmp/auditwt/sessions/day-170-20260817T131220Z && ls -la transcripts/ && echo… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Confirmed: empty diff, clean exit. Let me see the task itself and what the implementation agent actually did.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/auditwt/sessions/day-170-20260817T131220Z && echo "### TASK 01 ###" && c… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it. The impl agent ran 12 read-only tools, then the turn simply ended — no edit, no final text. Let me check whether this is the shape in all four dead sessions.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/auditwt/sessions && for d in day-170-20260817T041623Z day-170-20260817T1… ✓ (5ms)
+
+  watch: no files changed this turn — skipping
+

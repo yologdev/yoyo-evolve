@@ -1,0 +1,250 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_tool_arg_writes\… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,300p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1400,1600p src/prompt.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1443..1573 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:460..490 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 12.3s (6 ✓)
+
+Now let me make the prompt.rs changes.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (8 → 9 lines)
+        input: &str,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+        let rx = start_prompt(agent, input).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (6 → 7 lines)
+        content: Vec<Content>,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+ ✓ (12.1s)
+        input: &str,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+        let rx = start_prompt(agent, input).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+ ✓ (24.4s)
+        content: Vec<Content>,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 2 lines)
+        let rx = start_prompt_messages(agent, messages).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+ ✓ (12.0s)
+        let rx = start_prompt_messages(agent, messages).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+  3 tools completed in 40.3s (3 ✓)
+
+Now the handler itself:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (7 → 17 lines)
+    /// Internal event handler for streaming JSON mode.
+  + ///
+  + /// `changes` is the caller's session tracker (#786): this path used to record
+  + /// nothing at all, so `--output-format json`'s own `session` summary — plus the
+  + /// per-turn summary, `should_auto_continue`, the turn-end marker and the
+  + /// post-prompt watch gate — all read zero after a run that edited files.
+  + /// Recording goes through the same two helpers the display path uses
+  + /// (`record_tool_arg_writes` at tool-execution start, `record_rename_tool_writes`
+  + /// at tool-execution end), never a second copy of the tool-name match.
+  + ///
+    /// Returns (PromptOutcome, Usage).
+    async fn handle_stream_json_events(
+        agent: &mut Agent,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> (PromptOutcome, Usage) {
+ ✓ (12.3s)
+    /// Internal event handler for streaming JSON mode.
+  + ///
+  + /// `changes` is the caller's session tracker (#786): this path used to record
+  + /// nothing at all, so `--output-format json`'s own `session` summary — plus the
+  + /// per-turn summary, `should_auto_continue`, the turn-end marker and the
+  + /// post-prompt watch gate — all read zero after a run that edited files.
+  + /// Recording goes through the same two helpers the display path uses
+  + /// (`record_tool_arg_writes` at tool-execution start, `record_rename_tool_writes`
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_stream_json_even… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1409..1423 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (8 → 9 lines)
+        input: &str,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+        let rx = start_prompt(agent, input).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+ ✓ (12.0s)
+        input: &str,
+        session_total: &mut Usage,
+        model: &str,
+  +     changes: &SessionChanges,
+    ) -> PromptOutcome {
+        let rx = start_prompt(agent, input).await;
+  -     let outcome = handle_stream_json_events(agent, rx, model).await;
+  +     let outcome = handle_stream_json_events(agent, rx, model, changes).await;
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 39.1s (4 ✓)
+
+Now the recording inside the handler:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 6 lines)
+                        AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+  +                         // #786: record write_file / edit_file through the same
+  +                         // helper the display path uses — never a second match on
+  +                         // the same tool names.
+  +                         record_tool_arg_writes(tool_name, args, changes);
+                            // Only pay the clone when audit logging is actually on.
+ ✓ (12.0s)
+                        AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+  +                         // #786: record write_file / edit_file through the same
+  +                         // helper the display path uses — never a second match on
+  +                         // the same tool names.
+  +                         record_tool_arg_writes(tool_name, args, changes);
+                            // Only pay the clone when audit logging is actually on.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 9 lines)
+                        } => {
+  +                         // #786: a rename's written set only exists once the call
+  +                         // returns, so it is read off the result details here and
+  +                         // only on success — same discipline as the display path.
+  +                         if !*is_error && tool_name == "rename_symbol" {
+  +                             record_rename_tool_writes(&result.details, changes);
+  +                         }
+                            // Audit log: record the completed tool call with its real
+                            // duration and its real success flag (#751).
+ ✓ (12.1s)
+                        } => {
+  +                         // #786: a rename's written set only exists once the call
+  +                         // returns, so it is read off the result details here and
+  +                         // only on success — same discipline as the display path.
+  +                         if !*is_error && tool_name == "rename_symbol" {
+  +                             record_rename_tool_writes(&result.details, changes);
+  +                         }
+                            // Audit log: record the completed tool call with its real
+                            // duration and its real success flag (#751).
+  2 tools completed in 28.2s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 5 arguments but 4 arguments were supplied[0m
+    [1m[94m--> [0msrc/main.rs:262:21
+     [1m[94m|[0m
+[1m[94m 262[0m [1m[94m|[0m                       run_prompt_stream_json_with_content(
+     [1m[94m|[0m [1m[94m _____________________[0m[1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m-[0m
+[1m[94m 263[0m [1m[94m|[0m [1m[94m|[0m                         agent,
+[1m[94m 264[0m [1m[94m|[0m [1m[94m|[0m                         content_blocks,
+[1m[94m 265[0m [1m[94m|[0m [1m[94m|[0m                         &mut session_total,
+[1m[94m 266[0m [1m[94m|[0m [1m[94m|[0m                         &agent_config.model,
+[1m[94m 267[0m [1m[94m|[0m [1m[94m|[0m                     )
+     [1m[94m|[0m [1m[94m|_____________________-[0m [1m[94margument #5 of type `&session::SessionChanges` is missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/prompt.rs:1426:14
+     [1m[94m|[0m
+[1m[94m1426[0m [1m[94m|[0m pub async fn run_prompt_stream_json_with_content(
+     [1m[94m|[0m              [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m1431[0m [1m[94m|[0m     changes: &SessionChanges,
+     [1m[94m|[0m     [1m[94m------------------------[0m
+[1m[96mhelp[0m: provide the argument
+     [1m[94m|[0m
+[1m[94m 262[0m [1m[94m|[0m                     run_prompt_stream_json_with_content(
+ [1m[94m...[0m
+[1m[94m 266[0m [1m[94m|[0m                         &agent_config.model,
+[1m[94m 267[0m [92m~ [0m                    [92m    /* &session::SessionChanges */,[0m
+[1m[94m 268[0m [92m~                     [0m)
+     [1m[94m|[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 5 arguments but 4 arguments were supplied[0m
+    [1m[94m--> [0msrc/main.rs:276:13
+     [1m[94m...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,330p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_changes" src/ma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,315p' src/main.rs; e… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '311,313p' src/main.rs; e… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:507..515 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (5 → 11 lines)
+        print_mode: bool,
+    ) {
+  +     // #786: the one tracker for this whole function. Constructed above the
+  +     // stream-json early return so that branch records into the *same* tracker
+  +     // the later `build_json_output` / `emit_output` read — a second throwaway
+  +     // one here is the exact defect of #678.
+  +     let session_changes = SessionChanges::new();
+  + 
+        // Stream-JSON mode: emit NDJSON events and return early
+        if output_format == cli::OutputFormat::StreamJson {
+            let mut session_total = Usage::default();
+ ✓ (12.0s)
+        print_mode: bool,
+    ) {
+  +     // #786: the one tracker for this whole function. Constructed above the
+  +     // stream-json early return so that branch records into the *same* tracker
+  +     // the later `build_json_output` / `emit_output` read — a second throwaway
+  +     // one here is the exact defect of #678.
+  +     let session_changes = SessionChanges::new();
+  + 
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (46 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 34.5s (7 ✓)
+
+Now the piped-mode function:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionChanges::new()" … ✓ (3ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Good — one per function. Now update the existing test call and add the three new tests in prompt.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:2298..2353 ✓ (0ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ToolResult {" src/*.rs… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct ToolResult"… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^yoagent" Cargo.toml; V… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -d ~/.cargo/registry/src/*/yo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (134 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 21s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test stream_json 2>&1 | gr… ✓ (819ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test stream_json -- --list… ✓ (147ms)
+  10 tools completed in 3m 23s (10 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+
