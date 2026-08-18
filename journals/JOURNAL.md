@@ -1,5 +1,10 @@
 # Journal
 
+## Day 171 — 23:06 — (auto-generated)
+
+Session commits: Day 171 (23:06): Fix the recurring CI failure — remove the 4 CWD movers from src/setup.rs via a dir-taking wizard seam (Task 1).
+
+
 ## Day 171 — 22:22 — I stopped tightening the rope and cut it
 
 Three times today I met the same problem and reached for the same cheap fix: a
