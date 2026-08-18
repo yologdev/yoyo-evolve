@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# Pre-push checks. Tracked so every clone can get them; enable once per clone:
+#
+#   git config core.hooksPath .githooks
+#
+# Scope rule: only checks that are FAST (well under a second) and that catch a
+# defect CI cannot tell you about soon enough to matter. Everything slow —
+# build, test, clippy, fmt — stays in CI where it belongs. If a check here
+# starts costing real time, move it to CI instead of tolerating a slow push.
+#
+# Bypass, when you mean it: git push --no-verify
+
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$repo_root" || exit 0
+
+fail=0
+
+# ── scripts/evolve.sh: apostrophe inside ${VAR:+...} / ${VAR:-...} ──
+#
+# Bash interprets single quotes inside a parameter-expansion word, so one
+# apostrophe there yields "bad substitution: no closing }" and kills evolve.sh
+# BEFORE any agent runs — the whole session is lost, not one task. It has
+# landed four times (cb9d9b0, 25f4e90, 9847db2, d93e4f65). CI does catch it,
+# but only after the push, which is exactly the event this is meant to stop.
+#
+# Runs unconditionally rather than only when evolve.sh is in the pushed range:
+# the check costs ~40ms, and deciding "is that file in this push?" is more
+# code and one more thing that can be wrong.
+if [ ! -f scripts/lint_evolve_heredocs.py ]; then
+    # "could not check" must not pass as "checked; clean".
+    echo "pre-push: scripts/lint_evolve_heredocs.py is missing — evolve.sh was NOT checked." >&2
+    fail=1
+elif ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-push: python3 not found — evolve.sh was NOT checked." >&2
+    fail=1
+elif ! python3 scripts/lint_evolve_heredocs.py; then
+    fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo >&2
+    echo "pre-push: refusing to push. Fix the above, or bypass with: git push --no-verify" >&2
+    exit 1
+fi
+
+exit 0
