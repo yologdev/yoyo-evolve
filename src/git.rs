@@ -127,14 +127,12 @@ pub fn run_git(args: &[&str]) -> Result<String, String> {
 /// The test safety guard checks `dir` (not `cwd`) against the project root.
 pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     #[cfg(test)]
-    if let Some(cmd) = args.first() {
-        if destructive_guard(args, dir).is_some() {
-            panic!(
-                "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
-                 root during tests. Use a temp directory or mock instead.",
-                cmd
-            );
-        }
+    if let Some(cmd) = destructive_guard(args, dir) {
+        panic!(
+            "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+             root during tests. Use a temp directory or mock instead.",
+            cmd
+        );
     }
     match std::process::Command::new("git")
         .arg("-C")
@@ -479,12 +477,20 @@ pub fn parse_status_files(porcelain: &str) -> Vec<(String, String)> {
     porcelain
         .lines()
         .filter_map(|line| {
-            if line.len() < 4 {
-                return None;
-            }
-            let status = line[..2].trim().to_string();
-            // Porcelain format: XY <space> filename (or XY <space> old -> new for renames)
-            let filename = line[3..].trim().to_string();
+            // Porcelain format: XY <space> filename (or XY <space> old -> new for
+            // renames) — two status *characters*, a separator, then the path.
+            // Cut on char boundaries, never byte offsets: a line whose first
+            // character is multi-byte makes `line[..2]` slice inside a UTF-8
+            // character and panic (#250's rule). Real git emits ASCII status
+            // codes, so the old byte form was safe only by an assumption about
+            // this parser's input that its signature never stated.
+            let mut offsets = line.char_indices().map(|(i, _)| i);
+            offsets.next()?; // X
+            offsets.next()?; // Y
+            let status_end = offsets.next()?; // separator
+            let path_start = offsets.next()?; // first char of the path
+            let status = line[..status_end].trim().to_string();
+            let filename = line[path_start..].trim().to_string();
             if filename.is_empty() {
                 return None;
             }
@@ -1795,6 +1801,64 @@ stash@{1}: On feature: def5678 wip stuff";
         assert_eq!(files[0], ("M".to_string(), "src/main.rs".to_string()));
         assert_eq!(files[1], ("??".to_string(), "new_file.rs".to_string()));
         assert_eq!(files[2], ("D".to_string(), "deleted.rs".to_string()));
+    }
+
+    #[test]
+    fn destructive_guard_sees_the_verb_behind_leading_global_flags() {
+        // Round 62's h1: the guard used to read `args.first()`, so any git
+        // global flag before the verb hid it. Emission point: the Option the
+        // caller (`run_git`) branches on.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(
+            destructive_guard(&["-c", "user.email=x", "commit", "-m", "m"], root),
+            Some("commit")
+        );
+        // `--git-dir=`/`--work-tree=` can't be resolved here, so the guard keeps
+        // the caller's cwd and fails closed rather than waving the call through.
+        assert_eq!(
+            destructive_guard(&["--git-dir=/tmp/x", "reset", "--hard"], root),
+            Some("reset")
+        );
+        // `-C .` resolves back onto the project root — still blocked.
+        assert_eq!(destructive_guard(&["-C", ".", "push"], root), Some("push"));
+    }
+
+    #[test]
+    fn destructive_guard_allows_dash_c_retarget_outside_the_project_root() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let tmp = std::env::temp_dir();
+        let tmp = tmp.to_str().expect("temp dir path is utf-8");
+        assert!(destructive_guard(&["-C", tmp, "commit", "-m", "m"], root).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "destructive command 'commit'")]
+    fn run_git_panics_on_flag_prefixed_destructive_from_project_root() {
+        let _ = run_git(&["-c", "user.email=x", "commit", "-m", "blind round 62"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "destructive command 'commit'")]
+    fn run_git_in_dir_panic_names_the_verb_not_the_leading_flag() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let _ = run_git_in_dir(root, &["-c", "user.email=x", "commit", "-m", "x"]);
+    }
+
+    #[test]
+    fn test_parse_status_files_multibyte_line_does_not_panic() {
+        // Round 62's h2: `line[..2]` sliced inside a multi-byte first character.
+        // Emission point: the vec a caller receives.
+        assert_eq!(
+            parse_status_files("→→ x.rs\n"),
+            vec![("→→".to_string(), "x.rs".to_string())]
+        );
+        // ≥4 bytes but <4 chars — too short to be a porcelain entry, skipped.
+        assert_eq!(parse_status_files("✓✓✓\n"), Vec::<(String, String)>::new());
+        // The live shape is unchanged: ASCII status code, non-ASCII path.
+        assert_eq!(
+            parse_status_files(" M src/café.rs\n"),
+            vec![("M".to_string(), "src/café.rs".to_string())]
+        );
     }
 
     #[test]
