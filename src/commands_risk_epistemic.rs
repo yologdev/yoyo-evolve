@@ -40,6 +40,60 @@ pub(crate) const W_STALE: f64 = 0.5;
 /// A file last seen this many snapshots ago (or more) counts as stale.
 pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
 
+/// Saturating ceiling of the staleness contribution — see [`stale_weight`].
+///
+/// **Judgment threshold, not a measurement**, in the same spirit as
+/// `MIN_FORECAST_OPPORTUNITIES` and `NARROW_OUTCOME_MAX`. It is set equal to
+/// [`W_NEVER_GRADED`] deliberately: maximal staleness may *match* but never
+/// *outrank* "predicted and never graded at all", because those are different
+/// facts and the second is the darker one — a file the model has claimed
+/// things about that no outcome ever tested is blinder than one that was
+/// graded once, long ago.
+pub(crate) const W_STALE_MAX: f64 = 2.0;
+
+/// Excess (snapshots past [`STALE_SNAPSHOT_GAP`]) at which the staleness
+/// contribution has closed half the distance from [`W_STALE`] to
+/// [`W_STALE_MAX`].
+///
+/// **Judgment threshold, not a measurement.** 50 was chosen so that the live
+/// spread observed on Day 171 (files last seen 6, 49 and 161 snapshots ago)
+/// lands on visibly different scores at the one-decimal precision the report
+/// prints, without any single ancient file running away with the ranking.
+const STALE_HALF_SATURATION: f64 = 50.0;
+
+/// Staleness contribution for a file last seen `snapshots_ago` snapshots ago.
+///
+/// Why this is magnitude-scaled rather than a binary step (Day 171): once
+/// #726 removed the `reactive/emerging` disagreement signal — correctly, it
+/// was measured at 0% recall — `W_STALE` was the only signal still firing for
+/// files that *had* been graded, and it fires identically for every one of
+/// them. The live report returned ten entries all scoring exactly 0.5, so the
+/// score column did no work and the entire visible order came from the
+/// tie-break, which is the *reactive* risk model's ordering — precisely the
+/// attention this ranking exists to correct. The information was already in
+/// the data and already printed in the reason line: 6 snapshots ago and 161
+/// snapshots ago are not the same amount of dark.
+///
+/// Shape: `0.0` below the threshold, exactly [`W_STALE`] *at* the threshold
+/// (so the previous floor is preserved), then a hyperbolic approach to
+/// [`W_STALE_MAX`] that saturates rather than running away. Monotone
+/// non-decreasing and bounded for every input, including `usize::MAX`.
+pub(crate) fn stale_weight(snapshots_ago: usize) -> f64 {
+    if snapshots_ago < STALE_SNAPSHOT_GAP {
+        return 0.0;
+    }
+    let excess = (snapshots_ago - STALE_SNAPSHOT_GAP) as f64;
+    // 1 - 1/(1 + excess/half) is 0 at excess 0 and approaches 1 from below.
+    let approach = 1.0 - 1.0 / (1.0 + excess / STALE_HALF_SATURATION);
+    let w = W_STALE + (W_STALE_MAX - W_STALE) * approach;
+    // Belt and braces: never exceed the documented ceiling, never emit NaN.
+    if w.is_nan() {
+        W_STALE
+    } else {
+        w.min(W_STALE_MAX)
+    }
+}
+
 /// Negative weight applied when a file has ≥1 **graded** entry in the
 /// experiment ledger (`dreams/experiments.jsonl`): I deliberately aimed a
 /// session at this file, committed a guess about it, and graded that guess.
@@ -693,7 +747,10 @@ pub(crate) fn compute_epistemic_ranking(
         let snapshots_ago = last_index - s.last_seen_index;
         let graded_since = graded_day.is_some_and(|d| d >= s.last_seen_day);
         if snapshots_ago >= STALE_SNAPSHOT_GAP && !graded_since {
-            score += W_STALE;
+            // Magnitude-scaled since Day 171: the guard is unchanged (a file
+            // with a graded event since is not stale), but *how* stale now
+            // depends on how long it has been unobserved.
+            score += stale_weight(snapshots_ago);
             reasons.push(format!(
                 "last seen {snapshots_ago} snapshots ago, no graded event since"
             ));
@@ -1113,10 +1170,13 @@ mod tests {
 
     #[test]
     fn test_score_is_sum_of_signals() {
-        // e.rs: never graded (2.0) + stale, seen only in the first of 7
-        // snapshots with no graded event since (0.5).
+        // e.rs: never graded (2.0) + stale, seen only in the first of 6
+        // snapshots with no graded event since. The gap is exactly
+        // STALE_SNAPSHOT_GAP (5), which is the anchor point where the
+        // magnitude-scaled `stale_weight` returns exactly W_STALE — so this
+        // fixture still pins the sum of the two named consts.
         let mut snapshots = vec![snap(100, &[], &["src/e.rs"])];
-        for d in 101..107 {
+        for d in 101..106 {
             snapshots.push(snap(d, &["src/other.rs"], &[]));
         }
         let ranking = compute_epistemic_ranking(&snapshots, &[], &[], &[]);
