@@ -1,0 +1,265 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the scanner.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -rn "… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "significant_braces\|Br… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "significant_braces" sr… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,180p' src/commands_r… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:20..240 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 10.1s (5 ✓)
+
+Now the call sites.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:300..350 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs:125..165 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs:225..270 ✓ (0ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Now the existing test table:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces_tabl… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:1200..1350 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.6s (2 ✓)
+
+Now I'll implement the state struct and scanner change.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (92 → 160 lines)
+  + /// The delimiter that closes a string literal which was still open at end of line.
+  + ///
+  + /// The `b` byte prefix (`b"…"`, `br#"…"#`) does not change the closer, so it needs no
+  + /// variant of its own.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum StringDelim {
+  +     /// A plain `"…"` string: closed by a `"` that is not backslash-escaped.
+  +     Normal,
+  +     /// A raw string `r"…"` / `r#"…"#`: closed by a `"` followed by exactly N `#`.
+  +     /// Raw strings have no escapes, so a `\` before the quote does not protect it.
+  +     Raw(usize),
+  + }
+  + 
+  + /// The facts [`significant_braces`] must carry from one line to the next.
+  + ///
+  + /// Both fields exist because Rust lets the two constructs span lines: `/* … */` block
+  + /// comments (#771 item 1) and string literals (#771 item 2). They are one struct rather
+  + /// than two out-parameters so a new carried fact does not churn every call site again.
+  + #[derive(Debug, Default, Clone)]
+  + pub(crate) struct BraceScanState {
+  ... (178 more lines)
+ ✓ (10.2s)
+  + /// The delimiter that closes a string literal which was still open at end of line.
+  + ///
+  + /// The `b` byte prefix (`b"…"`, `br#"…"#`) does not change the closer, so it needs no
+  + /// variant of its own.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum StringDelim {
+  +     /// A plain `"…"` string: closed by a `"` that is not backslash-escaped.
+  +     Normal,
+  ... (13 more lines)
+
+Expected — now the call sites.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (5 → 6 lines)
+        let mut end_line = decl_line;
+  -     let mut block_comment_depth = 0usize;
+  +     // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +     let mut scan = BraceScanState::default();
+    
+        for (i, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in significant_braces(line, &mut block_comment_depth) {
+  +         for ch in significant_braces(line, &mut scan) {
+ ✓ (10.2s)
+        let mut end_line = decl_line;
+  -     let mut block_comment_depth = 0usize;
+  +     // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +     let mut scan = BraceScanState::default();
+    
+        for (i, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in significant_braces(line, &mut block_comment_depth) {
+  +         for ch in significant_braces(line, &mut scan) {
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_move.rs:146:72
+    [1m[94m|[0m
+[1m[94m146[0m [1m[94m|[0m                     crate::commands_refactor::significant_braces(line, &mut block_comment_depth)
+    [1m[94m|[0m                     [1m[94m--------------------------------------------[0m       [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `&mut BraceScanState`, found `&mut usize`[0m
+    [1m[94m|[0m                     [1m[94m|[0m
+    [1m[94m|[0m                     [1m[94marguments to this function are incorrect[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected mutable reference `&mut [1m[35mcommands_refactor::BraceScanState[0m`
+               found mutable reference `&mut [1m[35musize[0m`
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_refactor.rs:192:15
+    [1m[94m|[0m
+[1m[94m192[0m [1m[94m|[0m pub(crate) fn significant_braces(line: &str, state: &mut BraceScanState) -> Vec<char> {
+    [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^[0m             [1m[94m--------------------------[0m
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/commands_move.rs:243:70
+    [1m[94m|[0m
+[1m[94m243[0m [1m[94m|[0m         for ch in crate::commands_refactor::significant_braces(line, &mut block_comment_depth) {
+    [1m[94m|[0m                   [1m[94m--------------------------------------------[0m       [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `&mut BraceScanState`, found `&mut usize`[0m
+    [1m[94m|[0m                   [1m[94m|[0m
+    [1m[94m|[0m                   [1m[94marguments to this function are incorrect[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected mutable reference `&mut [1m[35mcommands_refactor::BraceScanState[0m`
+               found mutable referen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+I need to update the remaining call sites in commands_move.rs and the test table.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs (6 → 4 lines)
+  -             // Per scan, not per line: a `/* … */` may span lines.
+  -             let mut block_comment_depth = 0usize;
+  +             // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +             let mut scan = crate::commands_refactor::BraceScanState::default();
+                for (j, line) in lines.iter().enumerate().skip(i) {
+  -                 for ch in
+  -                     crate::commands_refactor::significant_braces(line, &mut block_comment_depth)
+  -                 {
+  +                 for ch in crate::commands_refactor::significant_braces(line, &mut scan) {
+ ✓ (10.1s)
+  -             // Per scan, not per line: a `/* … */` may span lines.
+  -             let mut block_comment_depth = 0usize;
+  +             // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +             let mut scan = crate::commands_refactor::BraceScanState::default();
+                for (j, line) in lines.iter().enumerate().skip(i) {
+  -                 for ch in
+  -                     crate::commands_refactor::significant_braces(line, &mut block_comment_depth)
+  -                 {
+  +                 for ch in crate::commands_refactor::significant_braces(line, &mut scan) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_move.rs (4 → 4 lines)
+  -     // Per scan, not per line: a `/* … */` may span lines.
+  -     let mut block_comment_depth = 0usize;
+  +     // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +     let mut scan = crate::commands_refactor::BraceScanState::default();
+        for (j, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in crate::commands_refactor::significant_braces(line, &mut block_comment_depth) {
+  +         for ch in crate::commands_refactor::significant_braces(line, &mut scan) {
+ ✓ (10.2s)
+  -     // Per scan, not per line: a `/* … */` may span lines.
+  -     let mut block_comment_depth = 0usize;
+  +     // Per scan, not per line: a `/* … */` or a string literal may span lines.
+  +     let mut scan = crate::commands_refactor::BraceScanState::default();
+        for (j, line) in lines.iter().enumerate().skip(decl_line) {
+  -         for ch in crate::commands_refactor::significant_braces(line, &mut block_comment_depth) {
+  +         for ch in crate::commands_refactor::significant_braces(line, &mut scan) {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.0s (2 ✓)
+
+Now the test table — existing rows stay verbatim; only the driver changes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (6 → 108 lines)
+  -         for (line, mut state, expected, expected_state) in cases {
+  +         for (line, mut depth, expected, expected_state) in cases {
+  +             let mut state = BraceScanState {
+  +                 block_comment_depth: depth,
+  +                 open_string: None,
+  +             };
+                let got = significant_braces(line, &mut state);
+                assert_eq!(got, expected, "braces for line: {line:?}");
+  -             assert_eq!(state, expected_state, "block-comment state after: {line:?}");
+  +             depth = state.block_comment_depth;
+  +             assert_eq!(depth, expected_state, "block-comment state after: {line:?}");
+  +             assert!(
+  +                 state.open_string.is_none(),
+  +                 "no string should still be open after: {line:?}"
+  +             );
+  +         }
+  +     }
+  + 
+  +     // --- #771 item 2: string literals that span lines ---
+  + 
+  ... (90 more lines)
+ ✓ (15.8s)
+  -         for (line, mut state, expected, expected_state) in cases {
+  +         for (line, mut depth, expected, expected_state) in cases {
+  +             let mut state = BraceScanState {
+  +                 block_comment_depth: depth,
+  +                 open_string: None,
+  +             };
+                let got = significant_braces(line, &mut state);
+                assert_eq!(got, expected, "braces for line: {line:?}");
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (3 → 4 lines)
+            // Each case is a *sequence* of lines run through one carried state, because the
+            // defect only exists across lines: (label, lines, expected braces per line).
+  -         let cases: Vec<(&str, Vec<&str>, Vec<Vec<char>>)> = vec![
+  +         type Case = (&'static str, Vec<&'static str>, Vec<Vec<char>>);
+  +         let cases: Vec<Case> = vec![
+ ✓ (1m 19s)
+            // Each case is a *sequence* of lines run through one carried state, because the
+            // defect only exists across lines: (label, lines, expected braces per line).
+  -         let cases: Vec<(&str, Vec<&str>, Vec<Vec<char>>)> = vec![
+  +         type Case = (&'static str, Vec<&'static str>, Vec<Vec<char>>);
+  +         let cases: Vec<Case> = vec![
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (146ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 43s (3 ✓)
+
+Unit layer green. Now the emission-point tests.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:1442..1467 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (7 → 79 lines)
+            let source = "fn tricky3() {\n    let x = 1; // }\n}\n";
+            let (start, end, _) = find_symbol_block(source, "tricky3").unwrap();
+            assert_eq!((start, end), (0, 2));
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_symbol_moves_whole_symbol_with_brace_in_multiline_string() {
+  +         // Emission-point test for #771 item 2: the user receives two files, so assert on
+  +         // both. Before the carried string state, the bare `}` line inside the literal
+  +         // ended the block and `/extract` wrote a truncated fn to the target while
+  +         // leaving the tail behind in the source — both files wrong.
+  +         let dir = TempDir::new().unwrap();
+  +         let src = dir.path().join("src.rs");
+  +         let dst = dir.path().join("dst.rs");
+  +         std::fs::write(
+  +             &src,
+  +             "fn keep() {}\n\nfn tricky4() {\n    let s = \"open\n}\nend\";\n    let x = 1;\n}\n",
+  +         )
+  +         .unwrap();
+  + 
+  ... (57 more lines)
+ ✓ (1m 18s)
+            let source = "fn tricky3() {\n    let x = 1; // }\n}\n";
+            let (start, end, _) = find_symbol_block(source, "tricky3").unwrap();
+            assert_eq!((start, end), (0, 2));
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_symbol_moves_whole_symbol_with_brace_in_multiline_string() {
+  +         // Emission-point test for #771 item 2: the user receives two files, so assert on
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (262ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 38s (3 ✓)
+
+Both layers green. Now CLAUDE.md — the two bullets that state item 2 as open.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "item 2" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (21ms)
+  2 tools completed in 24.5s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
