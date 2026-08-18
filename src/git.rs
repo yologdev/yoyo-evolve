@@ -26,6 +26,48 @@ const DESTRUCTIVE_GIT_COMMANDS: &[&str] = &[
     // (commit, push, reset, checkout, revert) that caused the original incident.
 ];
 
+/// Locate the git subcommand in an argv and resolve the directory the
+/// invocation actually targets, skipping any leading *global* flags.
+///
+/// The subcommand is NOT simply `args[0]`: git accepts globals before the verb
+/// (`git -c k=v commit`, `git -C dir reset`), so a positional match reads the
+/// flag and silently concludes the call is harmless. Returns `None` when the
+/// argv carries no subcommand at all (empty, or flags only).
+///
+/// Directory resolution follows git's own semantics closely enough to avoid a
+/// false positive: `-C <dir>` is applied cumulatively and relative to the
+/// directory resolved so far, so `git -C /tmp/x commit` is correctly seen as
+/// targeting `/tmp/x` rather than the project root. `--git-dir`/`--work-tree`
+/// also move the repo, but where they point cannot be resolved this cheaply —
+/// those deliberately leave the directory alone so the caller **fails closed**
+/// on the project root rather than being waved through.
+#[cfg(test)]
+fn resolve_git_invocation<'a>(
+    args: &'a [&'a str],
+    cwd: &std::path::Path,
+) -> Option<(&'a str, std::path::PathBuf)> {
+    let mut dir = cwd.to_path_buf();
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        if !arg.starts_with('-') {
+            return Some((arg, dir));
+        }
+        match *arg {
+            // Redirecting flag with a separate value.
+            "-C" => {
+                dir = dir.join(args.get(i + 1)?);
+                i += 2;
+            }
+            // Globals that consume a separate value but don't move the repo.
+            "-c" | "--exec-path" | "--namespace" => i += 2,
+            // Everything else (including `--git-dir=…`/`--work-tree=…`) is a
+            // valueless or unresolvable global: skip it, keep `dir` as-is.
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 /// Check whether a git invocation targets a destructive subcommand and is
 /// running from the project root (i.e., the real repo, not a temp dir).
 /// Returns `Some(subcommand)` when the call should be blocked, `None` when safe.
@@ -34,10 +76,11 @@ const DESTRUCTIVE_GIT_COMMANDS: &[&str] = &[
 /// (which is process-global and causes flaky races under parallel test execution).
 #[cfg(test)]
 fn destructive_guard<'a>(args: &'a [&'a str], cwd: &std::path::Path) -> Option<&'a str> {
-    let subcmd = args.first()?;
-    if !DESTRUCTIVE_GIT_COMMANDS.contains(subcmd) {
+    let (subcmd, target) = resolve_git_invocation(args, cwd)?;
+    if !DESTRUCTIVE_GIT_COMMANDS.contains(&subcmd) {
         return None;
     }
+    let cwd = target.as_path();
     // Compare the supplied working dir against the compile-time project root.
     // If they match, we're in the real repo — block it.
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
