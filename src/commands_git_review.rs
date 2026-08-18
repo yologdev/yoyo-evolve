@@ -832,6 +832,7 @@ pub fn extract_review_json(response: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+    use serial_test::serial;
 
     #[test]
     fn build_review_prompt_contains_label() {
@@ -966,6 +967,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_build_review_content_existing_file() {
         // Use CARGO_MANIFEST_DIR for an absolute path to avoid CWD races
         // with other tests that call set_current_dir

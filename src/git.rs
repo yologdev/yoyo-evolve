@@ -979,6 +979,7 @@ pub fn file_change_counts(days: u32) -> Vec<(String, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_run_git_valid_args() {
@@ -1735,6 +1736,7 @@ stash@{1}: On feature: def5678 wip stuff";
     }
 
     #[test]
+    #[serial]
     fn destructive_guard_allows_destructive_in_temp_dir() {
         // Pass a temp directory as cwd — destructive commands should be allowed.
         // No std::env::set_current_dir needed — that was the source of the race.

@@ -1738,6 +1738,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_wizard_saves_key_when_confirmed() {
         let tmp_dir = tempfile::Builder::new()
             .prefix("yoyo_test_wizard_key_yes")
@@ -1770,6 +1771,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_wizard_declines_key_and_prints_export_instructions() {
         let tmp_dir = tempfile::Builder::new()
             .prefix("yoyo_test_wizard_key_no")
