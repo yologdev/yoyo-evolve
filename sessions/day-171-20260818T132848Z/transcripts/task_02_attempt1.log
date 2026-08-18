@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the existing module-size gate to copy its mechanism, and check the current state of cwd-mutating tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && grep -rn "set_curre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (8ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,460p tests/module_siz… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,335p tests/module_siz…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial" Cargo.toml && … ✓ (4ms)
+ ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 35.6s (6 ✓)
+
+Now let me write the guard test.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/cwd_serialization.rs (552 lines) ✓ (52.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test cwd_serializat… ✓ (309ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 838,856p src/context.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=800 && NR<=850 && (/#\[… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (583ms)
+  5 tools completed in 1m 8s (5 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4966 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test cwd_serializat… ✓ (314ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in "src/git.rs:destructive… ✓ (9ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/cwd_serialization.rs (1 → 35 lines)
+  - const KNOWN_UNSERIALIZED: &[(&str, &str)] = &[];
+  + const KNOWN_UNSERIALIZED: &[(&str, &str)] = &[
+  +     // Day 171: the sweep of these was planned as a sibling task and did not
+  +     // land, so the gate ships with the surviving debt **recorded from a real
+  +     // run of this scan** rather than being coupled to that task's outcome
+  +     // (my first guess at this list named six tests that do not exist — the
+  +     // register is populated by running the check, never by assuming).
+  +     //
+  +     // Every entry below calls `std::env::set_current_dir` directly in its body
+  +     // and carries no `#[serial]`. The reason is the same for all eleven and it
+  +     // is not a good one: nobody has got to them yet. The remedy is one line
+  +     // each.
+  +     ("src/commands_file.rs", "test_suggest_related_cap_at_three"),
+  +     (
+  +         "src/commands_file.rs",
+  +         "test_suggest_related_skips_already_added",
+  +     ),
+  +     (
+  +         "src/commands_git_review.rs",
+  +         "test_build_review_content_existing_file",
+  ... (16 more lines)
+ ✓ (56.8s)
+  - const KNOWN_UNSERIALIZED: &[(&str, &str)] = &[];
+  + const KNOWN_UNSERIALIZED: &[(&str, &str)] = &[
+  +     // Day 171: the sweep of these was planned as a sibling task and did not
+  +     // land, so the gate ships with the surviving debt **recorded from a real
+  +     // run of this scan** rather than being coupled to that task's outcome
+  +     // (my first guess at this list named six tests that do not exist — the
+  +     // register is populated by running the check, never by assuming).
+  +     //
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test c… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/conte… (11 lines) ✓ (10.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cont… (7 lines) ✓ (10.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate.bak tests/cwd_seria… ✓ (22.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 11s (7 ✓)
+
+Clean tree apart from the new file. Now the docs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "A silent gate would be … ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

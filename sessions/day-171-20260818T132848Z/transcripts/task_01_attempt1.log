@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the claim — find the cwd-mutating tests and which carry #[serial].
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial_test::serial\|u… ✓ (13ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Let me mechanically identify every cwd-mutating test and whether it's serialized.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/s… (35 lines) ✓ (220ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 /tmp/scan.py > /tmp/scan… ✓ (223ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/git.rs src/commands… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "==… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 25.0s (4 ✓)
+
+The task's premise is partly stale — several of those tests were already fixed by removing cwd use. Let me verify each named test precisely.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for t in test_compute_self_writt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== setup_git_repo callers… ✓ (5ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Let me build a transitive scanner — helpers that chdir, and every test that calls them.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/s… (52 lines) ✓ (563ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found 5 real ones — including src/commands_git.rs::handle_undo_dispatches_last_commit, which the task did not name. Let me verify it.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2612,2640p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2725,2790p' src/commands… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+handle_undo_dispatches_last_commit is a scanner false positive — it only mentions the helper in a comment. Let me strip comments and re-run to get the honest list.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (594ms)
+
+  watch: no files changed this turn — skipping
+
