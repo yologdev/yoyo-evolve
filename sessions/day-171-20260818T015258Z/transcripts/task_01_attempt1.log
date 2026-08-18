@@ -1,0 +1,174 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and picking one small, concrete improvement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_changes\|Sessio… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "files_written\|record_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces\|in_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,200p' src/commands_re… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "significant_braces(" s… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1260p' src/commands… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 25.7s (7 ✓)
+
+Found it: #771 item 1 — nested block comments. significant_braces uses a bool, so /* /* */ */ ends at the first */. Small, contained fix. Test first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (36 → 47 lines)
+        #[test]
+        fn significant_braces_table() {
+  -         // (line, incoming block-comment state) -> (expected braces, outgoing state)
+  -         let cases: Vec<(&str, bool, Vec<char>, bool)> = vec![
+  +         // (line, incoming block-comment depth) -> (expected braces, outgoing depth)
+  +         let cases: Vec<(&str, usize, Vec<char>, usize)> = vec![
+                // plain control flow is untouched
+  -             ("if x { y } else {", false, vec!['{', '}', '{'], false),
+  +             ("if x { y } else {", 0, vec!['{', '}', '{'], 0),
+                // braces in a string literal
+  -             (r#"    println!("}");"#, false, vec![], false),
+  -             (r#"    println!("{");"#, false, vec![], false),
+  +             (r#"    println!("}");"#, 0, vec![], 0),
+  +             (r#"    println!("{");"#, 0, vec![], 0),
+                // escaped quote does not end the string, so the `}` stays inside it
+  -             (r#"    let s = "\"}";"#, false, vec![], false),
+  +             (r#"    let s = "\"}";"#, 0, vec![], 0),
+                // trailing line comment
+  -             ("    let x = 1; // }", false, vec![], false),
+  -             ("    } // { not real", false, vec!['}'], false),
+  ... (49 more lines)
+ ✓ (17.1s)
+        #[test]
+        fn significant_braces_table() {
+  -         // (line, incoming block-comment state) -> (expected braces, outgoing state)
+  -         let cases: Vec<(&str, bool, Vec<char>, bool)> = vec![
+  +         // (line, incoming block-comment depth) -> (expected braces, outgoing depth)
+  +         let cases: Vec<(&str, usize, Vec<char>, usize)> = vec![
+                // plain control flow is untouched
+  -             ("if x { y } else {", false, vec!['{', '}', '{'], false),
+  ... (13 more lines)
+
+Test fails as expected. Now the implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,126p' src/commands_r… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:102..126 ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+    [1m[94m--> [0msrc/commands_refactor.rs:1251:48
+     [1m[94m|[0m
+[1m[94m1251[0m [1m[94m|[0m             let got = significant_braces(line, &mut state);
+     [1m[94m|[0m                       [1m[94m------------------[0m       [1m[91m^^^^^^^^^^[0m [1m[91mexpected `&mut bool`, found `&mut usize`[0m
+     [1m[94m|[0m                       [1m[94m|[0m
+     [1m[94m|[0m                       [1m[94marguments to this function are incorrect[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: expected mutable reference `&mut [1m[35mbool[0m`
+                found mutable reference `&mut [1m[35musize[0m`
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/commands_refactor.rs:125:15
+     [1m[94m|[0m
+[1m[94m 125[0m [1m[94m|[0m pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+     [1m[94m|[0m               [1m[92m^^^^^^^^^^^^^^^^^^[0m             [1m[94m---------------------------[0m
+
+[1mFor more information about this error, try `rustc --explain E0308`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+I need to finish the implementation half — the test is written against the new usize depth signature, but significant_braces still takes &mut bool. Let me complete the change.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (1 → 4 lines)
+  - /// `in_block_comment` carries `/* … */` state across lines and is updated in place.
+  + /// `block_comment_depth` carries `/* … */` state across lines and is updated in place.
+  + /// It is a **depth**, not a flag, because Rust block comments nest: `/* /* */ */` is one
+  + /// comment, and the first `*/` closes only the innermost `/*` (#771 item 1). `0` means
+  + /// "not in a comment"; a stray `*/` at depth 0 is ignored rather than underflowing.
+ ✓ (12.5s)
+  - /// `in_block_comment` carries `/* … */` state across lines and is updated in place.
+  + /// `block_comment_depth` carries `/* … */` state across lines and is updated in place.
+  + /// It is a **depth**, not a flag, because Rust block comments nest: `/* /* */ */` is one
+  + /// comment, and the first `*/` closes only the innermost `/*` (#771 item 1). `0` means
+  + /// "not in a comment"; a stray `*/` at depth 0 is ignored rather than underflowing.
+
+Now the doc line about nesting being unhandled, and the signature/body:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (5 → 4 lines)
+  - /// multi-line ones. Deliberately **not** handled: a string literal that spans lines
+  - /// (the rest of that line is skipped, but the next line is scanned as ordinary code)
+  - /// and nested `/* /* */ */` block comments (Rust allows nesting; the first `*/` ends
+  - /// the comment here). Both are recorded in the follow-up issue rather than in prose
+  - /// that reads as complete.
+  + /// multi-line ones **including nested ones** (#771 item 1). Deliberately **not** handled:
+  + /// a string literal that spans lines (the rest of that line is skipped, but the next line
+  + /// is scanned as ordinary code). That one is recorded in the follow-up issue rather than
+  + /// in prose that reads as complete.
+ ✓ (12.5s)
+  - /// multi-line ones. Deliberately **not** handled: a string literal that spans lines
+  - /// (the rest of that line is skipped, but the next line is scanned as ordinary code)
+  - /// and nested `/* /* */ */` block comments (Rust allows nesting; the first `*/` ends
+  - /// the comment here). Both are recorded in the follow-up issue rather than in prose
+  - /// that reads as complete.
+  + /// multi-line ones **including nested ones** (#771 item 1). Deliberately **not** handled:
+  + /// a string literal that spans lines (the rest of that line is skipped, but the next line
+  + /// is scanned as ordinary code). That one is recorded in the follow-up issue rather than
+  + /// in prose that reads as complete.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (1 → 1 lines)
+  - pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+  + pub(crate) fn significant_braces(line: &str, block_comment_depth: &mut usize) -> Vec<char> {
+ ✓ (12.4s)
+  - pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+  + pub(crate) fn significant_braces(line: &str, block_comment_depth: &mut usize) -> Vec<char> {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.3s (2 ✓)
+
+Now the scanner body — the in-comment branch must also recognise a nested /*:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (9 → 13 lines)
+  -         if *in_block_comment {
+  +         if *block_comment_depth > 0 {
+                if c == '*' && chars.get(i + 1) == Some(&'/') {
+  -                 *in_block_comment = false;
+  +                 *block_comment_depth -= 1;
+  +                 i += 2;
+  +             } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+  +                 // Rust block comments nest — this opens an inner one (#771 item 1).
+  +                 *block_comment_depth += 1;
+                    i += 2;
+                } else {
+                    i += 1;
+ ✓ (12.2s)
+  -         if *in_block_comment {
+  +         if *block_comment_depth > 0 {
+                if c == '*' && chars.get(i + 1) == Some(&'/') {
+  -                 *in_block_comment = false;
+  +                 *block_comment_depth -= 1;
+  +                 i += 2;
+  +             } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+  +                 // Rust block comments nest — this opens an inner one (#771 item 1).
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (1 → 1 lines)
+  -             *in_block_comment = true;
+  +             *block_comment_depth = 1;
+ ✓ (12.5s)
+  -             *in_block_comment = true;
+  +             *block_comment_depth = 1;
+  2 tools completed in 28.4s (2 ✓)
+
+The scanner compiles. Now the three call sites that own the state:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "in_block_comment" src/c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let mut in_block_comme… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '236,244p' src/commands_m… ✓ (4ms)
+  3 tools completed in 7.4s (3 ✓)
+
+All three call sites updated. Now add an emission-point test — the layer that matters, since /extract writes two files:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn find_symbol_block_ig… ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+
