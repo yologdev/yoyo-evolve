@@ -13,36 +13,106 @@
 
 set -uo pipefail
 
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-cd "$repo_root" || exit 0
+if ! repo_root=$(git rev-parse --show-toplevel 2>&1); then
+    # Fail closed, and say why. "Could not check" must never pass as
+    # "checked; clean" — that is the whole point of this file.
+    echo "pre-push: cannot locate the work tree ($repo_root) — nothing was checked." >&2
+    exit 1
+fi
+if [ -z "$repo_root" ] || ! cd "$repo_root"; then
+    echo "pre-push: cannot enter '${repo_root:-<empty>}' — nothing was checked." >&2
+    exit 1
+fi
 
-fail=0
+fail=0        # a check ran and found a defect
+unchecked=0   # a check could not run at all — a different thing, see below
 
 # ── scripts/evolve.sh: apostrophe inside ${VAR:+...} / ${VAR:-...} ──
 #
 # Bash interprets single quotes inside a parameter-expansion word, so one
-# apostrophe there yields "bad substitution: no closing }" and kills evolve.sh
-# BEFORE any agent runs — the whole session is lost, not one task. It has
-# landed four times (cb9d9b0, 25f4e90, 9847db2, d93e4f65). CI does catch it,
-# but only after the push, which is exactly the event this is meant to stop.
+# apostrophe there yields "bad substitution: no closing }" and evolve.sh dies
+# at that heredoc, mid-session — agents before it have already spent their
+# budget and every phase after it never runs. It has landed twice (988975d9,
+# d93e4f65) across four red sessions; scripts/lint_evolve_heredocs.py holds
+# the verified history. CI runs the same lint, but only after the push, which
+# is the event this exists to prevent.
 #
-# Runs unconditionally rather than only when evolve.sh is in the pushed range:
-# the check costs ~40ms, and deciding "is that file in this push?" is more
-# code and one more thing that can be wrong.
+# Checks the TIP COMMIT OF EACH PUSHED REF, not the working tree. Git supplies
+# those refs on stdin. Linting the tree was the first version of this hook and
+# it was wrong in both directions: it blocked a clean push over an unrelated
+# dirty file, and — the one that matters — it passed a push whose commit was
+# broken while the tree had already been fixed but not staged, which is
+# exactly the state you occupy while fixing this very bug. Tips only, not
+# every commit in the range: CI and the evolve cron both run the tip, so an
+# intermediate bad commit whose successor fixes it is harmless, and one python
+# call per ref keeps this inside the scope rule above.
+lint_blob() {
+    # $1 = git object to read scripts/evolve.sh from, $2 = human label
+    local obj="$1" label="$2" tmp out rc
+    if ! git cat-file -e "${obj}:scripts/evolve.sh" 2>/dev/null; then
+        return 0    # this ref carries no evolve.sh — nothing to check
+    fi
+    tmp=$(mktemp) || { echo "pre-push: mktemp failed — $label NOT checked." >&2; unchecked=1; return 0; }
+    if ! git show "${obj}:scripts/evolve.sh" > "$tmp" 2>/dev/null; then
+        echo "pre-push: could not read scripts/evolve.sh from $label — NOT checked." >&2
+        unchecked=1; rm -f "$tmp"; return 0
+    fi
+    out=$(python3 scripts/lint_evolve_heredocs.py "$tmp" --label "scripts/evolve.sh ($label)" 2>&1)
+    rc=$?
+    rm -f "$tmp"
+    case "$rc" in
+        0) ;;
+        1) [ -n "$out" ] && printf '%s\n' "$out" >&2; fail=1 ;;
+        *) # Exit 2 is the linter's own "could not check"; anything else is the
+           # linter itself breaking. Both mean unverified, never clean.
+           [ -n "$out" ] && printf '%s\n' "$out" >&2
+           [ -n "$out" ] || echo "pre-push: linter exited $rc with no output — $label NOT checked." >&2
+           unchecked=1 ;;
+    esac
+}
+
 if [ ! -f scripts/lint_evolve_heredocs.py ]; then
-    # "could not check" must not pass as "checked; clean".
     echo "pre-push: scripts/lint_evolve_heredocs.py is missing — evolve.sh was NOT checked." >&2
-    fail=1
+    unchecked=1
 elif ! command -v python3 >/dev/null 2>&1; then
     echo "pre-push: python3 not found — evolve.sh was NOT checked." >&2
-    fail=1
-elif ! python3 scripts/lint_evolve_heredocs.py; then
-    fail=1
+    unchecked=1
+else
+    refs=0
+    while read -r _local_ref local_sha _remote_ref _remote_sha; do
+        [ -z "${local_sha:-}" ] && continue
+        case "$local_sha" in *[!0]*) ;; *) continue ;; esac   # all-zero = deletion
+        refs=$((refs + 1))
+        lint_blob "$local_sha" "${_local_ref:-$local_sha}"
+    done
+    if [ "$refs" -eq 0 ]; then
+        # No refs on stdin: either a no-op push or a manual run of this hook.
+        # Fall back to the working tree and SAY that is what was checked, so
+        # the output never implies more coverage than it had.
+        echo "pre-push: no refs on stdin — checking the working tree instead." >&2
+        out=$(python3 scripts/lint_evolve_heredocs.py 2>&1); rc=$?
+        case "$rc" in
+            0) ;;
+            1) [ -n "$out" ] && printf '%s\n' "$out" >&2; fail=1 ;;
+            *) [ -n "$out" ] && printf '%s\n' "$out" >&2
+               [ -n "$out" ] || echo "pre-push: linter exited $rc with no output — NOT checked." >&2
+               unchecked=1 ;;
+        esac
+    fi
 fi
 
 if [ "$fail" -ne 0 ]; then
     echo >&2
     echo "pre-push: refusing to push. Fix the above, or bypass with: git push --no-verify" >&2
+    exit 1
+fi
+if [ "$unchecked" -ne 0 ]; then
+    echo >&2
+    # Deliberately NOT the same sentence as a real violation: here --no-verify
+    # would push an UNVERIFIED evolve.sh, which is not a choice the user can
+    # make knowingly if the message pretends a defect was found.
+    echo "pre-push: refusing — the check did not run, so scripts/evolve.sh is UNVERIFIED." >&2
+    echo "          Fix the environment; --no-verify would push it unchecked." >&2
     exit 1
 fi
 
