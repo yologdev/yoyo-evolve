@@ -1580,13 +1580,6 @@ pub fn detect_watch_all_phases_for_dir(dir: &std::path::Path) -> Option<Vec<Stri
     }
 }
 
-/// Auto-detect separate lint and test commands for two-phase watch.
-/// Thin wrapper around [`detect_watch_all_phases_for_dir`] using the current working directory.
-pub fn detect_watch_all_phases() -> Option<Vec<String>> {
-    let dir = std::env::current_dir().unwrap_or_default();
-    detect_watch_all_phases_for_dir(&dir)
-}
-
 /// Watch subcommand names for tab completion.
 pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all", "lint"];
 
@@ -1609,14 +1602,36 @@ pub fn watch_near_miss(arg: &str) -> Option<&'static str> {
     crate::commands::closest_match(arg, WATCH_SUBCOMMANDS, 2)
 }
 
+/// Auto-detect a lint-only command for the given directory.
+/// Thin dir-taking sibling of the cwd-reading detection used by `/watch lint`.
+pub fn detect_watch_lint_command_for_dir(dir: &std::path::Path) -> Option<String> {
+    let project_type = detect_project_type(dir);
+    lint_command_for_project(&project_type, LintStrictness::Default).map(|(label, _)| label)
+}
+
 /// Handle the /watch command: toggle auto-test-on-edit mode.
+///
+/// Thin wrapper that resolves the current working directory and delegates to
+/// [`handle_watch_in`], which is the dir-taking seam. Behaviour is unchanged:
+/// project-type detection has always read the process cwd here.
 pub fn handle_watch(input: &str) {
+    let dir = std::env::current_dir().unwrap_or_default();
+    handle_watch_in(&dir, input);
+}
+
+/// Handle the /watch command against an explicit project directory.
+///
+/// Exists so tests can exercise `/watch`, `/watch all` and `/watch lint`
+/// without moving the process CWD (#780) — the only reason those tests ever
+/// moved the cwd was to let project-type detection see a
+/// `Cargo.toml`.
+pub(crate) fn handle_watch_in(dir: &std::path::Path, input: &str) {
     let arg = input.strip_prefix("/watch").unwrap_or("").trim();
 
     match arg {
         "" | "all" => {
             // Auto-detect lint+test as separate phases
-            match detect_watch_all_phases() {
+            match detect_watch_all_phases_for_dir(dir) {
                 Some(phases) => {
                     let display = phases.join(" && ");
                     let phase_refs: Vec<&str> = phases.iter().map(|s| s.as_str()).collect();
@@ -1663,10 +1678,8 @@ pub fn handle_watch(input: &str) {
         },
         "lint" => {
             // Auto-detect lint-only command
-            let dir = std::env::current_dir().unwrap_or_default();
-            let project_type = detect_project_type(&dir);
-            match lint_command_for_project(&project_type, LintStrictness::Default) {
-                Some((lint_label, _)) => {
+            match detect_watch_lint_command_for_dir(dir) {
+                Some(lint_label) => {
                     set_watch_command(&lint_label);
                     println!("{GREEN}  👀 Watch set to: {lint_label}{RESET}\n");
                 }
@@ -2334,19 +2347,16 @@ mod tests {
     #[test]
     fn handle_watch_all_sets_combined_command() {
         with_clean_watch_state(|| {
-            // Create a temp Rust project so the test doesn't depend on CWD
-            let tmp = std::env::temp_dir().join("yoyo_test_watch_all_combined");
-            let _ = std::fs::create_dir_all(&tmp);
+            // A temp Rust project, so project-type detection sees a Cargo.toml
+            // without the test having to move the process CWD (#780).
+            let tmp = tempfile::TempDir::new().expect("create temp dir");
             std::fs::write(
-                tmp.join("Cargo.toml"),
+                tmp.path().join("Cargo.toml"),
                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
             )
             .expect("write temp Cargo.toml");
 
-            let orig = std::env::current_dir().expect("get cwd");
-            std::env::set_current_dir(&tmp).expect("set cwd to temp");
-
-            handle_watch("/watch all");
+            handle_watch_in(tmp.path(), "/watch all");
             let cmd = get_watch_command();
             assert!(
                 cmd.is_some(),
@@ -2374,9 +2384,6 @@ mod tests {
                 "second phase should be test: {}",
                 phases[1]
             );
-
-            std::env::set_current_dir(&orig).expect("restore cwd");
-            let _ = std::fs::remove_dir_all(&tmp);
         });
     }
 
@@ -2392,19 +2399,16 @@ mod tests {
     #[test]
     fn handle_watch_lint_sets_lint_only_command() {
         with_clean_watch_state(|| {
-            // Create a temp Rust project so the test doesn't depend on CWD
-            let tmp = std::env::temp_dir().join("yoyo_test_watch_lint_only");
-            let _ = std::fs::create_dir_all(&tmp);
+            // A temp Rust project, so project-type detection sees a Cargo.toml
+            // without the test having to move the process CWD (#780).
+            let tmp = tempfile::TempDir::new().expect("create temp dir");
             std::fs::write(
-                tmp.join("Cargo.toml"),
+                tmp.path().join("Cargo.toml"),
                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
             )
             .expect("write temp Cargo.toml");
 
-            let orig = std::env::current_dir().expect("get cwd");
-            std::env::set_current_dir(&tmp).expect("set cwd to temp");
-
-            handle_watch("/watch lint");
+            handle_watch_in(tmp.path(), "/watch lint");
             let cmd = get_watch_command();
             assert!(
                 cmd.is_some(),
@@ -2419,9 +2423,6 @@ mod tests {
                 !cmd.contains("cargo test"),
                 "watch lint should NOT include test: {cmd}"
             );
-
-            std::env::set_current_dir(&orig).expect("restore cwd");
-            let _ = std::fs::remove_dir_all(&tmp);
         });
     }
 
@@ -2429,19 +2430,16 @@ mod tests {
     #[test]
     fn handle_watch_bare_sets_lint_and_test() {
         with_clean_watch_state(|| {
-            // Create a temp Rust project so the test doesn't depend on CWD
-            let tmp = std::env::temp_dir().join("yoyo_test_watch_bare");
-            let _ = std::fs::create_dir_all(&tmp);
+            // A temp Rust project, so project-type detection sees a Cargo.toml
+            // without the test having to move the process CWD (#780).
+            let tmp = tempfile::TempDir::new().expect("create temp dir");
             std::fs::write(
-                tmp.join("Cargo.toml"),
+                tmp.path().join("Cargo.toml"),
                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
             )
             .expect("write temp Cargo.toml");
 
-            let orig = std::env::current_dir().expect("get cwd");
-            std::env::set_current_dir(&tmp).expect("set cwd to temp");
-
-            handle_watch("/watch");
+            handle_watch_in(tmp.path(), "/watch");
             let cmd = get_watch_command();
             assert!(
                 cmd.is_some(),
@@ -2462,9 +2460,6 @@ mod tests {
                 2,
                 "bare /watch should set 2 phases: {phases:?}"
             );
-
-            std::env::set_current_dir(&orig).expect("restore cwd");
-            let _ = std::fs::remove_dir_all(&tmp);
         });
     }
 
