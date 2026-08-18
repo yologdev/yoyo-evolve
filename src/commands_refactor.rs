@@ -99,24 +99,89 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
     }
 }
 
+/// The delimiter that closes a string literal which was still open at end of line.
+///
+/// The `b` byte prefix (`b"…"`, `br#"…"#`) does not change the closer, so it needs no
+/// variant of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringDelim {
+    /// A plain `"…"` string: closed by a `"` that is not backslash-escaped.
+    Normal,
+    /// A raw string `r"…"` / `r#"…"#`: closed by a `"` followed by exactly N `#`.
+    /// Raw strings have no escapes, so a `\` before the quote does not protect it.
+    Raw(usize),
+}
+
+/// The facts [`significant_braces`] must carry from one line to the next.
+///
+/// Both fields exist because Rust lets the two constructs span lines: `/* … */` block
+/// comments (#771 item 1) and string literals (#771 item 2). They are one struct rather
+/// than two out-parameters so a new carried fact does not churn every call site again.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BraceScanState {
+    /// `/* … */` nesting depth. `0` means "not in a comment"; a stray `*/` at depth 0 is
+    /// ignored rather than underflowing.
+    pub(crate) block_comment_depth: usize,
+    /// `Some(delim)` when a string literal opened on an earlier line and has not closed.
+    pub(crate) open_string: Option<StringDelim>,
+}
+
+/// Scan for the closer of an open string starting at `from`, returning the index just
+/// past it, or `None` when the closer is not on this line.
+///
+/// Never indexes a `&str` by byte — the caller hands over a `Vec<char>` slice.
+fn close_open_string(chars: &[char], from: usize, delim: StringDelim) -> Option<usize> {
+    let mut j = from;
+    match delim {
+        StringDelim::Normal => {
+            while j < chars.len() {
+                if chars[j] == '\\' {
+                    // Escape: skip the escaped char. A trailing `\` escapes the newline,
+                    // which just means the string is still open — j runs off the end.
+                    j += 2;
+                } else if chars[j] == '"' {
+                    return Some(j + 1);
+                } else {
+                    j += 1;
+                }
+            }
+            None
+        }
+        StringDelim::Raw(hashes) => {
+            while j < chars.len() {
+                if chars[j] == '"' && (1..=hashes).all(|k| chars.get(j + k) == Some(&'#')) {
+                    return Some(j + 1 + hashes);
+                }
+                j += 1;
+            }
+            None
+        }
+    }
+}
+
 /// Return the structurally significant `{` / `}` characters of `line`, in order,
 /// skipping any that appear inside string literals, char literals, or comments.
 ///
-/// `block_comment_depth` carries `/* … */` state across lines and is updated in place.
-/// It is a **depth**, not a flag, because Rust block comments nest: `/* /* */ */` is one
-/// comment, and the first `*/` closes only the innermost `/*` (#771 item 1). `0` means
-/// "not in a comment"; a stray `*/` at depth 0 is ignored rather than underflowing.
-/// Braces are returned **in order** rather than as an open/close count, because a line
-/// like `} fn other() {` both closes a block and opens one and the caller's depth
-/// machine must see those in sequence.
+/// `state` carries the two facts that can span lines and is updated in place: the
+/// `/* … */` nesting **depth** (a depth, not a flag, because Rust block comments nest:
+/// `/* /* */ */` is one comment and the first `*/` closes only the innermost `/*`,
+/// #771 item 1) and the delimiter of a string literal left open at end of line
+/// (#771 item 2). Braces are returned **in order** rather than as an open/close count,
+/// because a line like `} fn other() {` both closes a block and opens one and the
+/// caller's depth machine must see those in sequence.
 ///
 /// Handles: `"…"` strings with `\` escapes, raw strings `r"…"` / `r#"…"#` (any hash
 /// count, plus the `b` byte prefix), `'x'` char literals *without* mistaking a lifetime
-/// `&'a str` for one, `//` line comments, and `/* … */` block comments including
-/// multi-line ones **including nested ones** (#771 item 1). Deliberately **not** handled:
-/// a string literal that spans lines (the rest of that line is skipped, but the next line
-/// is scanned as ordinary code). That one is recorded in the follow-up issue rather than
-/// in prose that reads as complete.
+/// `&'a str` for one, `//` line comments, `/* … */` block comments including multi-line
+/// and nested ones (#771 item 1), and — since #771 item 2 — string literals that **span
+/// lines**, both plain and raw-with-N-hashes: every brace between the opening delimiter
+/// and its closer is inert however many lines apart they are, and ordinary scanning
+/// resumes on the same line just past the closer.
+///
+/// Still **not** handled, stated rather than papered over: this is a brace scanner, not a
+/// Rust lexer. It does not know about `#[cfg]`-disabled code, macro token trees with
+/// unbalanced braces, or nested `{}` inside a format-string's `{…}` argument capture —
+/// all of those still count as ordinary code.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
 ///
@@ -124,21 +189,33 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
 /// `find_method_in_impl` in `commands_move.rs` used to count braces with no
 /// string/comment state at all, which is the same data-corruption class through
 /// `/move` that #770 fixed here (#771 item 3). One scanner, one set of table tests.
-pub(crate) fn significant_braces(line: &str, block_comment_depth: &mut usize) -> Vec<char> {
+pub(crate) fn significant_braces(line: &str, state: &mut BraceScanState) -> Vec<char> {
     let chars: Vec<char> = line.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
 
+    // A string opened on an earlier line: find its closer before anything else, because
+    // until then every character on this line — braces included — is string content.
+    if let Some(delim) = state.open_string {
+        match close_open_string(&chars, 0, delim) {
+            Some(after) => {
+                state.open_string = None;
+                i = after;
+            }
+            None => return out,
+        }
+    }
+
     while i < chars.len() {
         let c = chars[i];
 
-        if *block_comment_depth > 0 {
+        if state.block_comment_depth > 0 {
             if c == '*' && chars.get(i + 1) == Some(&'/') {
-                *block_comment_depth -= 1;
+                state.block_comment_depth -= 1;
                 i += 2;
             } else if c == '/' && chars.get(i + 1) == Some(&'*') {
                 // Rust block comments nest — this opens an inner one (#771 item 1).
-                *block_comment_depth += 1;
+                state.block_comment_depth += 1;
                 i += 2;
             } else {
                 i += 1;
@@ -151,45 +228,36 @@ pub(crate) fn significant_braces(line: &str, block_comment_depth: &mut usize) ->
             break;
         }
         if c == '/' && chars.get(i + 1) == Some(&'*') {
-            *block_comment_depth = 1;
+            state.block_comment_depth = 1;
             i += 2;
             continue;
         }
 
-        if let Some((hashes, mut j)) = raw_string_open(&chars, i) {
-            // Scan for a closing `"` followed by exactly `hashes` `#`.
-            loop {
-                match chars.get(j) {
-                    None => break, // unterminated on this line
-                    Some('"') => {
-                        let closed = (1..=hashes).all(|k| chars.get(j + k) == Some(&'#'));
-                        if closed {
-                            j += 1 + hashes;
-                            break;
-                        }
-                        j += 1;
-                    }
-                    Some(_) => j += 1,
+        if let Some((hashes, j)) = raw_string_open(&chars, i) {
+            match close_open_string(&chars, j, StringDelim::Raw(hashes)) {
+                Some(after) => {
+                    i = after;
+                    continue;
+                }
+                None => {
+                    // Spans lines (#771 item 2): remember the closer we owe.
+                    state.open_string = Some(StringDelim::Raw(hashes));
+                    break;
                 }
             }
-            i = j;
-            continue;
         }
 
         if c == '"' {
-            let mut j = i + 1;
-            while j < chars.len() {
-                if chars[j] == '\\' {
-                    j += 2;
-                } else if chars[j] == '"' {
-                    j += 1;
+            match close_open_string(&chars, i + 1, StringDelim::Normal) {
+                Some(after) => {
+                    i = after;
+                    continue;
+                }
+                None => {
+                    state.open_string = Some(StringDelim::Normal);
                     break;
-                } else {
-                    j += 1;
                 }
             }
-            i = j;
-            continue;
         }
 
         if c == '\'' {
@@ -310,10 +378,11 @@ pub fn find_symbol_block(source: &str, symbol: &str) -> Option<(usize, usize, St
     let mut depth: i32 = 0;
     let mut found_open = false;
     let mut end_line = decl_line;
-    let mut block_comment_depth = 0usize;
+    // Per scan, not per line: a `/* … */` or a string literal may span lines.
+    let mut scan = BraceScanState::default();
 
     for (i, line) in lines.iter().enumerate().skip(decl_line) {
-        for ch in significant_braces(line, &mut block_comment_depth) {
+        for ch in significant_braces(line, &mut scan) {
             if ch == '{' {
                 depth += 1;
                 found_open = true;
@@ -1253,11 +1322,114 @@ fn process_data() {
             ("    let s = \"✓}\"; {", 0, vec!['{'], 0),
         ];
 
-        for (line, mut state, expected, expected_state) in cases {
+        for (line, mut depth, expected, expected_state) in cases {
+            let mut state = BraceScanState {
+                block_comment_depth: depth,
+                open_string: None,
+            };
             let got = significant_braces(line, &mut state);
             assert_eq!(got, expected, "braces for line: {line:?}");
-            assert_eq!(state, expected_state, "block-comment state after: {line:?}");
+            depth = state.block_comment_depth;
+            assert_eq!(depth, expected_state, "block-comment state after: {line:?}");
+            assert!(
+                state.open_string.is_none(),
+                "no string should still be open after: {line:?}"
+            );
         }
+    }
+
+    // --- #771 item 2: string literals that span lines ---
+
+    #[test]
+    fn significant_braces_multiline_string_table() {
+        // Each case is a *sequence* of lines run through one carried state, because the
+        // defect only exists across lines: (label, lines, expected braces per line).
+        type Case = (&'static str, Vec<&'static str>, Vec<Vec<char>>);
+        let cases: Vec<Case> = vec![
+            (
+                "plain multi-line string: braces inert until the closer",
+                vec![
+                    r#"    let s = "open {"#,
+                    "    middle }",
+                    r#"    end";"#,
+                    "    fn after() {",
+                ],
+                vec![vec![], vec![], vec![], vec!['{']],
+            ),
+            (
+                "raw multi-line string with one hash",
+                vec![r##"    let s = r#"{ } ""##, "    still inside", r##"    "#;"##],
+                vec![vec![], vec![], vec![]],
+            ),
+            (
+                "raw multi-line string with two hashes: a lone `\"#` does not close it",
+                vec![
+                    r###"    let s = r##"}"###,
+                    r###"    "# still inside {"###,
+                    r###"    "##; }"###,
+                ],
+                vec![vec![], vec![], vec!['}']],
+            ),
+            (
+                "regression: a string closing on the same line behaves exactly as before",
+                vec![r#"    let s = "}"; {"#, "    }"],
+                vec![vec!['{'], vec!['}']],
+            ),
+            (
+                "resume guard: a `}` after the closer on the closing line is emitted",
+                vec![r#"    let s = "open"#, r#"    end"; }"#],
+                vec![vec![], vec!['}']],
+            ),
+            (
+                "an escaped quote on a continuation line does not close the string",
+                vec![
+                    r#"    let s = "open"#,
+                    r#"    still \" inside {"#,
+                    r#"    end"; }"#,
+                ],
+                vec![vec![], vec![], vec!['}']],
+            ),
+            (
+                "a trailing backslash escapes the newline: still open",
+                vec![r#"    let s = "open \"#, "    } still inside", r#"    end";"#],
+                vec![vec![], vec![], vec![]],
+            ),
+            (
+                "a brace after a multi-line string on the opening line's own tail",
+                vec![r#"    let s = "a"; if x { let t = "open"#, r#"    end"; }"#],
+                vec![vec!['{'], vec!['}']],
+            ),
+        ];
+
+        for (label, lines, expected) in cases {
+            let mut state = BraceScanState::default();
+            let got: Vec<Vec<char>> = lines
+                .iter()
+                .map(|l| significant_braces(l, &mut state))
+                .collect();
+            assert_eq!(got, expected, "{label}: lines {lines:?}");
+        }
+    }
+
+    #[test]
+    fn find_symbol_block_ignores_brace_in_multiline_string() {
+        // The `}` on its own line is string content, not the end of the fn.
+        let source = "fn tricky4() {\n    let s = \"open\n}\nend\";\n    let x = 1;\n}\n";
+        let (start, end, block) = find_symbol_block(source, "tricky4").unwrap();
+        assert_eq!((start, end), (0, 5), "block should span the whole fn");
+        assert!(block.contains("let x = 1;"), "block: {block:?}");
+    }
+
+    #[test]
+    fn find_symbol_block_open_brace_in_multiline_string_does_not_swallow_next_fn() {
+        let source =
+            "fn tricky5() {\n    let s = \"open\n{\nend\";\n    let x = 1;\n}\n\nfn after() {}\n";
+        let (start, end, block) = find_symbol_block(source, "tricky5").unwrap();
+        assert_eq!((start, end), (0, 5));
+        assert!(
+            !block.contains("fn after"),
+            "must not swallow the following item: {block:?}"
+        );
     }
 
     #[test]
@@ -1277,6 +1449,78 @@ fn process_data() {
         let source = "fn tricky3() {\n    let x = 1; // }\n}\n";
         let (start, end, _) = find_symbol_block(source, "tricky3").unwrap();
         assert_eq!((start, end), (0, 2));
+    }
+
+    #[test]
+    fn extract_symbol_moves_whole_symbol_with_brace_in_multiline_string() {
+        // Emission-point test for #771 item 2: the user receives two files, so assert on
+        // both. Before the carried string state, the bare `}` line inside the literal
+        // ended the block and `/extract` wrote a truncated fn to the target while
+        // leaving the tail behind in the source — both files wrong.
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.rs");
+        let dst = dir.path().join("dst.rs");
+        std::fs::write(
+            &src,
+            "fn keep() {}\n\nfn tricky4() {\n    let s = \"open\n}\nend\";\n    let x = 1;\n}\n",
+        )
+        .unwrap();
+
+        let res = extract_symbol(src.to_str().unwrap(), dst.to_str().unwrap(), "tricky4");
+        assert!(res.is_ok(), "extract failed: {res:?}");
+
+        let target = std::fs::read_to_string(&dst).unwrap();
+        assert!(target.contains("fn tricky4()"), "target: {target:?}");
+        assert!(target.contains("let x = 1;"), "target: {target:?}");
+        assert!(
+            target.trim_end().ends_with('}'),
+            "target must include the closing brace: {target:?}"
+        );
+
+        let remaining = std::fs::read_to_string(&src).unwrap();
+        assert!(
+            !remaining.contains("fn tricky4"),
+            "source still has the symbol: {remaining:?}"
+        );
+        assert!(
+            !remaining.contains("let x = 1;"),
+            "source kept part of the moved fn: {remaining:?}"
+        );
+        assert!(remaining.contains("fn keep()"), "source: {remaining:?}");
+        assert_eq!(
+            remaining.matches('{').count(),
+            remaining.matches('}').count(),
+            "source left with unbalanced braces: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn extract_symbol_open_brace_in_multiline_string_leaves_following_fn_in_source() {
+        // The over-long direction: a `{` inside a multi-line string must not make the
+        // block run on and swallow the next item into the target.
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.rs");
+        let dst = dir.path().join("dst.rs");
+        std::fs::write(
+            &src,
+            "fn tricky5() {\n    let s = \"open\n{\nend\";\n    let x = 1;\n}\n\nfn after() {}\n",
+        )
+        .unwrap();
+
+        let res = extract_symbol(src.to_str().unwrap(), dst.to_str().unwrap(), "tricky5");
+        assert!(res.is_ok(), "extract failed: {res:?}");
+
+        let remaining = std::fs::read_to_string(&src).unwrap();
+        assert!(
+            remaining.contains("fn after() {}"),
+            "following item was swallowed out of the source: {remaining:?}"
+        );
+        let target = std::fs::read_to_string(&dst).unwrap();
+        assert!(
+            !target.contains("fn after"),
+            "target swallowed the following item: {target:?}"
+        );
+        assert!(target.contains("let x = 1;"), "target: {target:?}");
     }
 
     #[test]
