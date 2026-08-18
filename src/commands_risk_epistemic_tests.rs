@@ -6,6 +6,135 @@
 //! names, same fixtures; the only edits are the `use super::*;` lines becoming
 //! absolute paths. Test paths are now
 //! `commands_risk_epistemic_tests::{reason_truncation_tests,study_tier_tests}::…`.
+//!
+//! Day 171 added a third module, `stale_weight_tests`, here rather than in the
+//! parent for the same reason: the parent is un-grandfathered against
+//! `MAX_MODULE_LINES = 2000`, so only the const, the function and its doc
+//! comment landed there.
+
+#[cfg(test)]
+mod stale_weight_tests {
+    use crate::commands_risk_epistemic::*;
+
+    /// Below the threshold the contribution is 0.0 — byte-identical to the
+    /// pre-Day-171 binary step, which is the half of the old behaviour that
+    /// was correct: a recently-seen file is not stale at all.
+    #[test]
+    fn below_the_threshold_contributes_nothing() {
+        for gap in 0..STALE_SNAPSHOT_GAP {
+            assert_eq!(
+                stale_weight(gap),
+                0.0,
+                "gap {gap} is below STALE_SNAPSHOT_GAP and must not be stale"
+            );
+        }
+    }
+
+    /// The backward-compatibility anchor: *at* the threshold the function
+    /// returns exactly `W_STALE`, so the old floor is preserved and the
+    /// `test_score_is_sum_of_signals` fixture in the parent still holds.
+    #[test]
+    fn at_the_threshold_returns_exactly_w_stale() {
+        assert_eq!(stale_weight(STALE_SNAPSHOT_GAP), W_STALE);
+    }
+
+    /// Monotone non-decreasing over a wide sweep, including the boundary and
+    /// the saturating tail.
+    #[test]
+    fn is_monotone_non_decreasing() {
+        let mut prev = stale_weight(0);
+        for gap in [
+            0usize,
+            1,
+            4,
+            5,
+            6,
+            7,
+            10,
+            25,
+            49,
+            50,
+            55,
+            100,
+            161,
+            169,
+            500,
+            5_000,
+            1_000_000,
+            usize::MAX,
+        ] {
+            let w = stale_weight(gap);
+            assert!(
+                w >= prev,
+                "stale_weight({gap}) = {w} decreased below the previous value {prev}"
+            );
+            prev = w;
+        }
+    }
+
+    /// Bounded by `W_STALE_MAX` for every input, including `usize::MAX`, and
+    /// never NaN. The bound is what keeps `W_NEVER_GRADED = 2.0` worth at
+    /// least as much as maximal staleness: "never graded at all" and "graded
+    /// long ago" are different facts and the first is the darker one.
+    #[test]
+    fn is_bounded_by_w_stale_max_and_never_nan() {
+        for gap in [
+            0usize,
+            STALE_SNAPSHOT_GAP,
+            STALE_SNAPSHOT_GAP + 1,
+            1_000,
+            usize::MAX / 2,
+            usize::MAX - 1,
+            usize::MAX,
+        ] {
+            let w = stale_weight(gap);
+            assert!(!w.is_nan(), "stale_weight({gap}) produced NaN");
+            assert!(
+                w <= W_STALE_MAX,
+                "stale_weight({gap}) = {w} exceeded W_STALE_MAX {W_STALE_MAX}"
+            );
+            assert!(
+                w <= W_NEVER_GRADED,
+                "maximal staleness outranked never-graded"
+            );
+        }
+    }
+
+    /// Regression guard tied to the defect this landed for: the three gaps
+    /// observed live in `yoyo risk epistemic` at 06:47 on Day 171 all scored
+    /// an identical 0.5 (W_STALE-only, after #726 removed the last
+    /// discriminating signal). They must now be strictly ordered.
+    #[test]
+    fn the_live_day_171_gaps_are_strictly_discriminated() {
+        let a = stale_weight(6);
+        let b = stale_weight(49);
+        let c = stale_weight(161);
+        assert!(
+            a < b,
+            "stale_weight(6) = {a} must be below stale_weight(49) = {b}"
+        );
+        assert!(
+            b < c,
+            "stale_weight(49) = {b} must be below stale_weight(161) = {c}"
+        );
+        // And all three sit inside the documented band.
+        for (gap, w) in [(6, a), (49, b), (161, c)] {
+            assert!(
+                (W_STALE..=W_STALE_MAX).contains(&w),
+                "stale_weight({gap}) = {w} left the [W_STALE, W_STALE_MAX] band"
+            );
+        }
+    }
+
+    /// The other half of the same defect: `src/git.rs` (169 snapshots ago)
+    /// must out-score `src/commands_risk.rs` (6 snapshots ago). That is the
+    /// success criterion the task stated in advance, expressed at the level
+    /// of the function that decides it.
+    #[test]
+    fn an_older_file_outscores_a_recent_one() {
+        assert!(stale_weight(169) > stale_weight(6));
+    }
+}
 
 #[cfg(test)]
 mod reason_truncation_tests {
