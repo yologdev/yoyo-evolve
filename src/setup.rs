@@ -281,10 +281,30 @@ pub fn user_config_display_path() -> String {
 }
 
 /// Run the interactive setup wizard, reading from `reader` and writing to `writer`.
-/// This is the testable core — the public `run_setup_wizard()` wraps it with stdin/stdout.
+/// This is the cwd-resolving wrapper: it reads the process cwd once and hands it to
+/// [`run_wizard_interactive_in`]. Behaviour is byte-identical to the pre-seam function.
 ///
 /// Returns `Some(WizardResult)` on success, `None` if the user cancels (Ctrl-C / empty input).
 pub fn run_wizard_interactive<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Option<WizardResult> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    run_wizard_interactive_in(&cwd, reader, writer)
+}
+
+/// Directory-taking seam for the interactive setup wizard: `project_dir` is where the
+/// `SaveLocation::Project` arm writes `.yoyo.toml`, instead of the process cwd.
+/// This is the testable core — the public `run_setup_wizard()` wraps it with stdin/stdout
+/// via [`run_wizard_interactive`].
+///
+/// Tests must call this rather than moving the process with `std::env::set_current_dir`:
+/// `#[serial]` only orders `#[serial]` tests against each other, so a plain `#[test]`
+/// elsewhere that chdirs can move the cwd out from under a wizard test mid-run (#780).
+///
+/// Returns `Some(WizardResult)` on success, `None` if the user cancels (Ctrl-C / empty input).
+pub fn run_wizard_interactive_in<R: BufRead, W: Write>(
+    project_dir: &std::path::Path,
     reader: &mut R,
     writer: &mut W,
 ) -> Option<WizardResult> {
@@ -624,7 +644,7 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
 
     match save_location {
         SaveLocation::Project => {
-            let target = std::env::current_dir().unwrap_or_default();
+            let target = project_dir.to_path_buf();
             let existed = target.join(".yoyo.toml").exists();
             match save_config_to_file(&target, provider, &model, base_url.as_deref(), key_arg) {
                 Ok(path) => {
@@ -1738,23 +1758,19 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_wizard_saves_key_when_confirmed() {
         let tmp_dir = tempfile::Builder::new()
             .prefix("yoyo_test_wizard_key_yes")
             .tempdir()
             .unwrap();
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
 
         // minimax (11), key, default model, save to project (1), save key = y
         let input = "11\nsk-minimax-secret\n\n1\ny\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
-        let result = run_wizard_interactive(&mut reader, &mut output);
+        let result = run_wizard_interactive_in(tmp_dir.path(), &mut reader, &mut output);
 
         let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).ok();
-        std::env::set_current_dir(prev_cwd).unwrap();
 
         assert!(result.is_some());
         let content = content.expect("config should have been written");
@@ -1771,23 +1787,19 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_wizard_declines_key_and_prints_export_instructions() {
         let tmp_dir = tempfile::Builder::new()
             .prefix("yoyo_test_wizard_key_no")
             .tempdir()
             .unwrap();
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
 
         // minimax (11), key, default model, save to project (1), save key = n
         let input = "11\nsk-minimax-secret\n\n1\nn\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
-        let result = run_wizard_interactive(&mut reader, &mut output);
+        let result = run_wizard_interactive_in(tmp_dir.path(), &mut reader, &mut output);
 
         let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).ok();
-        std::env::set_current_dir(prev_cwd).unwrap();
 
         assert!(result.is_some());
         let content = content.expect("config should have been written");
