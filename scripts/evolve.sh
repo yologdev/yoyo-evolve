@@ -1243,7 +1243,7 @@ classes want OPPOSITE responses — do not apply one to the other:
   "Task reverted (no progress — likely blocked, NOT too large): X"
       the agent exited without a diff. A smaller version stalls identically.
       Name the blocker BEFORE re-planning anything like it.
-The receipt BODY holds what a title cannot: the evaluator's verdict with its
+The receipt BODY holds what a title cannot: the evaluator verdict with its
 per-check reasons, the error details, and the original task spec. If you are about
 to plan anything resembling one of these, read it first — it usually names the exact
 reason the last attempt died:
