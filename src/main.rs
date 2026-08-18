@@ -458,6 +458,32 @@ fn looks_like_slash_command(input: &str) -> bool {
     matches!(input.trim_start().chars().next(), Some('/'))
 }
 
+/// Per-iteration stop/continue decision for piped mode's auto-continue loop
+/// (#794 half (b)).
+///
+/// Pure on purpose: the loop body it guards is async and does network I/O, so
+/// this is the only part of the loop that can be driven by a test. Every input
+/// is a stop condition copied from the REPL's `while` guard
+/// (`src/repl.rs`, the auto-continue block) — none of them are dropped:
+///
+/// * `opted_in`   — `cli::is_continue_on_silence()`. Piped mode's loop is
+///   gated on the existing opt-in flag rather than on REPL parity; see the
+///   comment at the call site for why.
+/// * `count`/`max` — the bounded budget from `repl::get_max_auto_continues`.
+/// * `had_error`  — `last_tool_error` or `last_api_error` from the last turn.
+/// * `budget_exhausted` — `prompt_budget::session_budget_exhausted(30)`.
+/// * `predicate`  — `repl::should_auto_continue(..)`, the shared decision.
+fn piped_should_continue(
+    opted_in: bool,
+    count: u32,
+    max: u32,
+    had_error: bool,
+    budget_exhausted: bool,
+    predicate: bool,
+) -> bool {
+    opted_in && count < max && !had_error && !budget_exhausted && predicate
+}
+
 async fn run_piped_mode(
     agent_config: &mut AgentConfig,
     agent: &mut Agent,
@@ -528,6 +554,7 @@ async fn run_piped_mode(
 
     let mut session_total = Usage::default();
     let prompt_start = Instant::now();
+    let edits_before = session_changes.edit_count();
     let initial = run_prompt_with_changes(
         agent,
         input,
@@ -537,7 +564,7 @@ async fn run_piped_mode(
     )
     .await;
     // Fallback retry for piped mode
-    let (response, should_exit_error) = try_fallback_prompt(
+    let (mut response, should_exit_error) = try_fallback_prompt(
         agent_config,
         agent,
         FallbackRetry::Text(input),
@@ -545,6 +572,97 @@ async fn run_piped_mode(
         initial,
     )
     .await;
+
+    // ── Auto-continue (#794 half (b)) ────────────────────────────────────
+    //
+    // Every agent in `scripts/evolve.sh` runs THIS path, not the REPL: the
+    // prompt arrives on stdin, so `run_repl` is never reached and the only
+    // reader of `cli::is_continue_on_silence()` used to live inside the REPL
+    // loop. The flag was set and never read.
+    //
+    // This is a deliberate duplicate of the REPL's *sequencing*, not a hoist
+    // of its loop: that loop is entangled with REPL-only state (turn_count,
+    // TurnSnapshot, handle_post_prompt, spawn_tracker) which piped mode does
+    // not have. What is SHARED is the decision — `should_auto_continue` and
+    // `get_max_auto_continues` are called here, so the two paths cannot
+    // disagree about *whether* to continue. Please don't "fix" the ~20 lines
+    // of duplicated sequencing by dragging the REPL loop out; the bodies
+    // genuinely differ.
+    //
+    // Why the gate is narrower than REPL parity: full parity would let the
+    // `looks_incomplete` / follow-up-queue branches fire for every existing
+    // `yoyo -p` user, turning one-turn scripts into multi-turn ones with no
+    // opt-in — an evolve-loop convenience shipped as a product default, which
+    // is #448 verbatim. So the LOOP is gated on `--continue-on-silence`
+    // (default OFF, unchanged); once opted in, the full predicate runs, so
+    // queue-pending and `looks_incomplete` do drive continuation. Widening
+    // the gate to unconditional parity is a separate, arguable task.
+    if !should_exit_error {
+        let opted_in = cli::is_continue_on_silence();
+        let piped_file_config = crate::config::load_config_file().0;
+        let max_continues = crate::repl::get_max_auto_continues(
+            &piped_file_config,
+            crate::commands::is_plan_apply_active(),
+        );
+        let mut auto_continue_count: u32 = 0;
+        let mut last_text = response.text.clone();
+        let mut had_error = response.last_tool_error.is_some() || response.last_api_error.is_some();
+        // Weaker signal than a real tool-call count, pending #794 half (a):
+        // an edit-tracker bump only sees write-class tools, so a turn that
+        // only read files reads as "no tools ran" here.
+        let mut used_tools = session_changes.edit_count() > edits_before;
+
+        while piped_should_continue(
+            opted_in,
+            auto_continue_count,
+            max_continues,
+            had_error,
+            crate::prompt_budget::session_budget_exhausted(30),
+            crate::repl::should_auto_continue(
+                &last_text,
+                agent.follow_up_queue_len(),
+                used_tools,
+                opted_in,
+            ),
+        ) {
+            auto_continue_count += 1;
+            if !print_mode && !format::is_quiet() {
+                eprintln!(
+                    "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{max_continues} \
+                     — more work pending)...{RESET}"
+                );
+            }
+
+            let cont_edits_before = session_changes.edit_count();
+            let cont_outcome = prompt::run_prompt_auto_retry(
+                agent,
+                "Continue with the remaining work. Pick up where you left off.",
+                &mut session_total,
+                &agent_config.model,
+                // The caller's own tracker — a fresh SessionChanges here is
+                // #678's defect verbatim.
+                &session_changes,
+            )
+            .await;
+
+            last_text = cont_outcome.text.clone();
+            had_error =
+                cont_outcome.last_tool_error.is_some() || cont_outcome.last_api_error.is_some();
+            used_tools = session_changes.edit_count() > cont_edits_before;
+
+            // Accumulate so `emit_output` (and `--output` / `--output-format
+            // json`) report the whole turn, not just its first slice.
+            if !cont_outcome.text.trim().is_empty() {
+                if !response.text.is_empty() {
+                    response.text.push_str("\n\n");
+                }
+                response.text.push_str(&cont_outcome.text);
+            }
+            response.last_tool_error = cont_outcome.last_tool_error;
+            response.last_tool_name = cont_outcome.last_tool_name;
+            response.last_api_error = cont_outcome.last_api_error;
+        }
+    }
 
     // Run watch command after prompt if active (auto lint/test loop)
     if !should_exit_error {
@@ -1543,6 +1661,68 @@ mod tests {
                  and --output-format json both read it."
             );
         }
+    }
+
+    // --- piped-mode auto-continue gate (#794 half (b)) ---
+
+    /// Every stop condition, tested independently: each `false`/exceeded input
+    /// alone must stop the loop, and all-true must continue. This is the only
+    /// part of the piped auto-continue loop that can be driven by a test — the
+    /// loop body is async and does network I/O.
+    #[test]
+    fn piped_should_continue_requires_every_condition() {
+        // All conditions met -> continue.
+        assert!(piped_should_continue(true, 0, 5, false, false, true));
+        assert!(piped_should_continue(true, 4, 5, false, false, true));
+
+        // Not opted in -> never continues, whatever else is true.
+        assert!(!piped_should_continue(false, 0, 5, false, false, true));
+
+        // Budget spent: count == max stops, and so does count > max.
+        assert!(!piped_should_continue(true, 5, 5, false, false, true));
+        assert!(!piped_should_continue(true, 6, 5, false, false, true));
+        // max == 0 (auto_continue disabled in config) stops immediately.
+        assert!(!piped_should_continue(true, 0, 0, false, false, true));
+
+        // An error on the previous turn stops.
+        assert!(!piped_should_continue(true, 0, 5, true, false, true));
+
+        // A spent session wall-clock budget stops.
+        assert!(!piped_should_continue(true, 0, 5, false, true, true));
+
+        // The shared predicate says there's nothing pending -> stop.
+        assert!(!piped_should_continue(true, 0, 5, false, false, false));
+    }
+
+    /// Source-level connectivity check: the piped path must still consult the
+    /// shared `should_auto_continue` decision.
+    ///
+    /// **This is a weak test and says so.** It only proves the identifier
+    /// appears in `run_piped_mode`'s body — it cannot prove the call is
+    /// reached, correctly gated, or correctly bounded. It exists to catch
+    /// silent deletion of the wiring (the exact failure #794 documented: an
+    /// `AtomicBool` set and never read), nothing more. The needle is built at
+    /// runtime so this test's own source can't satisfy it.
+    #[test]
+    fn test_piped_mode_consults_the_shared_auto_continue_decision() {
+        let src = include_str!("main.rs");
+        let start = src
+            .find("async fn run_piped_mode(")
+            .expect("run_piped_mode should exist in main.rs");
+        // Bound the search at the next top-level `\n}` so we're reading this
+        // function's body and not the whole file.
+        let body = &src[start..];
+        let end = body.find("\n}\n").map(|i| i + 2).unwrap_or(body.len());
+        let body = &body[..end];
+
+        let needle = format!("{}{}", "should_auto_continue", "(");
+        assert!(
+            body.contains(&needle),
+            "run_piped_mode no longer calls `{needle})`. Piped mode is the path \
+             every evolve-loop agent takes (stdin is not a terminal), so without \
+             this call `--continue-on-silence` is a flag that is set and never \
+             read (#794)."
+        );
     }
 
     // --- looks_like_slash_command edge case tests ---
