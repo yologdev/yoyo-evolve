@@ -1,0 +1,309 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of src/watch.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/wa… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1610,1720p src/watch.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1612..1652 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.5s (3 ✓)
+
+Now the three tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:2330..2480 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tempfile" Cargo.toml &&… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+Now the edit. First the seam:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (8 → 30 lines)
+  + /// Auto-detect a lint-only command for the given directory.
+  + /// Thin dir-taking sibling of the cwd-reading detection used by `/watch lint`.
+  + pub fn detect_watch_lint_command_for_dir(dir: &std::path::Path) -> Option<String> {
+  +     let project_type = detect_project_type(dir);
+  +     lint_command_for_project(&project_type, LintStrictness::Default).map(|(label, _)| label)
+  + }
+  + 
+    /// Handle the /watch command: toggle auto-test-on-edit mode.
+  + ///
+  + /// Thin wrapper that resolves the current working directory and delegates to
+  + /// [`handle_watch_in`], which is the dir-taking seam. Behaviour is unchanged:
+  + /// project-type detection has always read the process cwd here.
+    pub fn handle_watch(input: &str) {
+  +     let dir = std::env::current_dir().unwrap_or_default();
+  +     handle_watch_in(&dir, input);
+  + }
+  + 
+  + /// Handle the /watch command against an explicit project directory.
+  + ///
+  + /// Exists so tests can exercise `/watch`, `/watch all` and `/watch lint`
+  ... (11 more lines)
+ ✓ (19.6s)
+  + /// Auto-detect a lint-only command for the given directory.
+  + /// Thin dir-taking sibling of the cwd-reading detection used by `/watch lint`.
+  + pub fn detect_watch_lint_command_for_dir(dir: &std::path::Path) -> Option<String> {
+  +     let project_type = detect_project_type(dir);
+  +     lint_command_for_project(&project_type, LintStrictness::Default).map(|(label, _)| label)
+  + }
+  + 
+    /// Handle the /watch command: toggle auto-test-on-edit mode.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_watch_all_phase… ✓ (8ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (9 → 7 lines)
+            "lint" => {
+                // Auto-detect lint-only command
+  -             let dir = std::env::current_dir().unwrap_or_default();
+  -             let project_type = detect_project_type(&dir);
+  -             match lint_command_for_project(&project_type, LintStrictness::Default) {
+  -                 Some((lint_label, _)) => {
+  +             match detect_watch_lint_command_for_dir(dir) {
+  +                 Some(lint_label) => {
+                        set_watch_command(&lint_label);
+                        println!("{GREEN}  👀 Watch set to: {lint_label}{RESET}\n");
+                    }
+ ✓ (19.5s)
+            "lint" => {
+                // Auto-detect lint-only command
+  -             let dir = std::env::current_dir().unwrap_or_default();
+  -             let project_type = detect_project_type(&dir);
+  -             match lint_command_for_project(&project_type, LintStrictness::Default) {
+  -                 Some((lint_label, _)) => {
+  +             match detect_watch_lint_command_for_dir(dir) {
+  +                 Some(lint_label) => {
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_watch_all_phases… ✓ (3ms)
+  4 tools completed in 51.4s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `detect_watch_all_phases` is never used[0m
+    [1m[94m--> [0msrc/watch.rs:1585:8
+     [1m[94m|[0m
+[1m[94m1585[0m [1m[94m|[0m pub fn detect_watch_all_phases() -> Option<Vec<String>> {
+     [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1578..1592 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (8 → 1 lines)
+  - /// Auto-detect separate lint and test commands for two-phase watch.
+  - /// Thin wrapper around [`detect_watch_all_phases_for_dir`] using the current working directory.
+  - pub fn detect_watch_all_phases() -> Option<Vec<String>> {
+  -     let dir = std::env::current_dir().unwrap_or_default();
+  -     detect_watch_all_phases_for_dir(&dir)
+  - }
+  - 
+    /// Watch subcommand names for tab completion.
+ ✓ (1m 39s)
+  - /// Auto-detect separate lint and test commands for two-phase watch.
+  - /// Thin wrapper around [`detect_watch_all_phases_for_dir`] using the current working directory.
+  - pub fn detect_watch_all_phases() -> Option<Vec<String>> {
+  -     let dir = std::env::current_dir().unwrap_or_default();
+  -     detect_watch_all_phases_for_dir(&dir)
+  - }
+  - 
+    /// Watch subcommand names for tab completion.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/wa… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 45s (3 ✓)
+
+Now rewriting the three tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (13 → 10 lines)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_all_combined");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  +                 tmp.path().join("Cargo.toml"),
+                    "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+                )
+                .expect("write temp Cargo.toml");
+  - 
+  -             let orig = std::env::current_dir().expect("get cwd");
+  -             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+    
+  -             handle_watch("/watch all");
+  +             handle_watch_in(tmp.path(), "/watch all");
+ ✓ (12.5s)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_all_combined");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (10 → 7 lines)
+                    "second phase should be test: {}",
+                    phases[1]
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+ ✓ (1m 39s)
+                    "second phase should be test: {}",
+                    phases[1]
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (13 → 10 lines)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_lint_only");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  +                 tmp.path().join("Cargo.toml"),
+                    "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+                )
+                .expect("write temp Cargo.toml");
+  - 
+  -             let orig = std::env::current_dir().expect("get cwd");
+  -             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+    
+  -             handle_watch("/watch lint");
+  +             handle_watch_in(tmp.path(), "/watch lint");
+ ✓ (12.4s)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_lint_only");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (9 → 6 lines)
+                    !cmd.contains("cargo test"),
+                    "watch lint should NOT include test: {cmd}"
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+ ✓ (1m 38s)
+                    !cmd.contains("cargo test"),
+                    "watch lint should NOT include test: {cmd}"
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (13 → 10 lines)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_bare");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  +                 tmp.path().join("Cargo.toml"),
+                    "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+                )
+                .expect("write temp Cargo.toml");
+  - 
+  -             let orig = std::env::current_dir().expect("get cwd");
+  -             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+    
+  -             handle_watch("/watch");
+  +             handle_watch_in(tmp.path(), "/watch");
+ ✓ (12.4s)
+  -             // Create a temp Rust project so the test doesn't depend on CWD
+  -             let tmp = std::env::temp_dir().join("yoyo_test_watch_bare");
+  -             let _ = std::fs::create_dir_all(&tmp);
+  +             // A temp Rust project, so project-type detection sees a Cargo.toml
+  +             // without the test having to move the process CWD (#780).
+  +             let tmp = tempfile::TempDir::new().expect("create temp dir");
+                std::fs::write(
+  -                 tmp.join("Cargo.toml"),
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (10 → 7 lines)
+                    2,
+                    "bare /watch should set 2 phases: {phases:?}"
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+ ✓ (1m 39s)
+                    2,
+                    "bare /watch should set 2 phases: {phases:?}"
+                );
+  - 
+  -             std::env::set_current_dir(&orig).expect("restore cwd");
+  -             let _ = std::fs::remove_dir_all(&tmp);
+            });
+        }
+  6 tools completed in 5m 58s (6 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (194ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ratchet fired — my extraction shrank src/watch.rs by 5 lines. Paying it down:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/watch.rs", 3477' t… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/watch.rs", 3477),
+  +     ("src/watch.rs", 3472),
+ ✓ (57.2s)
+  -     ("src/watch.rs", 3477),
+  +     ("src/watch.rs", 3472),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && grep -n "set_curren… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 3 lines)
+    /// without moving the process CWD (#780) — the only reason those tests ever
+  - /// touched `set_current_dir` was to let project-type detection see a
+  + /// moved the cwd was to let project-type detection see a
+    /// `Cargo.toml`.
+ ✓ (1m 39s)
+    /// without moving the process CWD (#780) — the only reason those tests ever
+  - /// touched `set_current_dir` was to let project-type detection see a
+  + /// moved the cwd was to let project-type detection see a
+    /// `Cargo.toml`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && echo "grep count: $… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (56.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.5s)
+  7 tools completed in 4m 49s (7 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
