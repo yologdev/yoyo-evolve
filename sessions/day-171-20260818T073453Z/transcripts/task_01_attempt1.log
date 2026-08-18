@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "W_STALE\|STALE_SNAPSHOT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi… ✓ (6ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,70p src/commands_risk_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 670,720p src/commands_ris… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "score" src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_ENTRY_RE\|EPI… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n ":.1}\|:.2}\|:>5" src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/commands_risk_e… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 27.0s (8 ✓)
+
+Now the pure function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 56 lines)
+    /// A file last seen this many snapshots ago (or more) counts as stale.
+    pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
+  + 
+  + /// Saturating ceiling of the staleness contribution — see [`stale_weight`].
+  + ///
+  + /// **Judgment threshold, not a measurement**, in the same spirit as
+  + /// `MIN_FORECAST_OPPORTUNITIES` and `NARROW_OUTCOME_MAX`. It is set equal to
+  + /// [`W_NEVER_GRADED`] deliberately: maximal staleness may *match* but never
+  + /// *outrank* "predicted and never graded at all", because those are different
+  + /// facts and the second is the darker one — a file the model has claimed
+  + /// things about that no outcome ever tested is blinder than one that was
+  + /// graded once, long ago.
+  + pub(crate) const W_STALE_MAX: f64 = 2.0;
+  + 
+  + /// Excess (snapshots past [`STALE_SNAPSHOT_GAP`]) at which the staleness
+  + /// contribution has closed half the distance from [`W_STALE`] to
+  + /// [`W_STALE_MAX`].
+  + ///
+  + /// **Judgment threshold, not a measurement.** 50 was chosen so that the live
+  + /// spread observed on Day 171 (files last seen 6, 49 and 161 snapshots ago)
+  ... (36 more lines)
+ ✓ (20.8s)
+    /// A file last seen this many snapshots ago (or more) counts as stale.
+    pub(crate) const STALE_SNAPSHOT_GAP: usize = 5;
+  + 
+  + /// Saturating ceiling of the staleness contribution — see [`stale_weight`].
+  + ///
+  + /// **Judgment threshold, not a measurement**, in the same spirit as
+  + /// `MIN_FORECAST_OPPORTUNITIES` and `NARROW_OUTCOME_MAX`. It is set equal to
+  + /// [`W_NEVER_GRADED`] deliberately: maximal staleness may *match* but never
+  ... (13 more lines)
+
+Expected — the consumer goes in the same edit. Wiring the call site now:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 5 lines)
+            if snapshots_ago >= STALE_SNAPSHOT_GAP && !graded_since {
+  -             score += W_STALE;
+  +             // Magnitude-scaled since Day 171: the guard is unchanged (a file
+  +             // with a graded event since is not stale), but *how* stale now
+  +             // depends on how long it has been unobserved.
+  +             score += stale_weight(snapshots_ago);
+ ✓ (1m 36s)
+            if snapshots_ago >= STALE_SNAPSHOT_GAP && !graded_since {
+  -             score += W_STALE;
+  +             // Magnitude-scaled since Day 171: the guard is unchanged (a file
+  +             // with a graded event since is not stale), but *how* stale now
+  +             // depends on how long it has been unobserved.
+  +             score += stale_weight(snapshots_ago);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (51.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 32s (2 ✓)
+
+Exactly the fixture the task predicted. Adjusting the fixture's gap to the threshold, not the assertion:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (6 → 9 lines)
+        #[test]
+        fn test_score_is_sum_of_signals() {
+  -         // e.rs: never graded (2.0) + stale, seen only in the first of 7
+  -         // snapshots with no graded event since (0.5).
+  +         // e.rs: never graded (2.0) + stale, seen only in the first of 6
+  +         // snapshots with no graded event since. The gap is exactly
+  +         // STALE_SNAPSHOT_GAP (5), which is the anchor point where the
+  +         // magnitude-scaled `stale_weight` returns exactly W_STALE — so this
+  +         // fixture still pins the sum of the two named consts.
+            let mut snapshots = vec![snap(100, &[], &["src/e.rs"])];
+  -         for d in 101..107 {
+  +         for d in 101..106 {
+ ✓ (1m 41s)
+        #[test]
+        fn test_score_is_sum_of_signals() {
+  -         // e.rs: never graded (2.0) + stale, seen only in the first of 7
+  -         // snapshots with no graded event since (0.5).
+  +         // e.rs: never graded (2.0) + stale, seen only in the first of 6
+  +         // snapshots with no graded event since. The gap is exactly
+  +         // STALE_SNAPSHOT_GAP (5), which is the anchor point where the
+  +         // magnitude-scaled `stale_weight` returns exactly W_STALE — so this
+  ... (4 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

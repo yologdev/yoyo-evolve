@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at what landed and add the two missing pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "W_STALE\|STALE_SNAPSHOT… ✓ (3ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,100p src/commands_risk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_risk_epist… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,12p src/commands_risk_e… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic_tests.rs (10 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 9.0s (6 ✓)
+
+Now add the table tests for stale_weight.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic_tests.rs (3 → 107 lines)
+    //! `commands_risk_epistemic_tests::{reason_truncation_tests,study_tier_tests}::…`.
+  + //!
+  + //! Day 171 added a third module, `stale_weight_tests`, here rather than in the
+  + //! parent for the same reason: the parent is un-grandfathered against
+  + //! `MAX_MODULE_LINES = 2000`, so only the const, the function and its doc
+  + //! comment landed there.
+  + 
+  + #[cfg(test)]
+  + mod stale_weight_tests {
+  +     use crate::commands_risk_epistemic::*;
+  + 
+  +     /// Below the threshold the contribution is 0.0 — byte-identical to the
+  +     /// pre-Day-171 binary step, which is the half of the old behaviour that
+  +     /// was correct: a recently-seen file is not stale at all.
+  +     #[test]
+  +     fn below_the_threshold_contributes_nothing() {
+  +         for gap in 0..STALE_SNAPSHOT_GAP {
+  +             assert_eq!(
+  +                 stale_weight(gap),
+  +                 0.0,
+  ... (87 more lines)
+ ✓ (1m 42s)
+    //! `commands_risk_epistemic_tests::{reason_truncation_tests,study_tier_tests}::…`.
+  + //!
+  + //! Day 171 added a third module, `stale_weight_tests`, here rather than in the
+  + //! parent for the same reason: the parent is un-grandfathered against
+  + //! `MAX_MODULE_LINES = 2000`, so only the const, the function and its doc
+  + //! comment landed there.
+  + 
+  + #[cfg(test)]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test stale_we… ✓ (23.7s)
+  2 tools completed in 2m 12s (2 ✓)
+
+All 6 pass. Now the CLAUDE.md docs update.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "W_STALE\|STALE_SNAPSHOT… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - signals: predicted-but-never-graded (`W_NEVER_GRADED`), stale snapshot presence (`W_STALE`/`STALE_SNAPSHOT_GAP`), and the two study-history discounts
+  + signals: predicted-but-never-graded (`W_NEVER_GRADED`), **magnitude-scaled** staleness (`stale_weight`, floor `W_STALE` at `STALE_SNAPSHOT_GAP`, saturating ceiling `W_STALE_MAX` — Day 171, see below), and the two study-history discounts
+ ✓ (1m 18s)
+  - signals: predicted-but-never-graded (`W_NEVER_GRADED`), stale snapshot presence (`W_STALE`/`STALE_SNAPSHOT_GAP`), and the two study-history discounts
+  + signals: predicted-but-never-graded (`W_NEVER_GRADED`), **magnitude-scaled** staleness (`stale_weight`, floor `W_STALE` at `STALE_SNAPSHOT_GAP`, saturating ceiling `W_STALE_MAX` — Day 171, see below), and the two study-history discounts
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (821ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SCORE_EPSILON" src/comm… ✓ (51ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Weights, the never-forecast section (`commands_risk_neverforecast.rs`) and `EPISTEMIC_TOP_N` were deliberately left untouched.
+  + Weights, the never-forecast section (`commands_risk_neverforecast.rs`) and `EPISTEMIC_TOP_N` were deliberately left untouched. Day 171: the staleness signal is **magnitude-scaled** instead of a binary step — the pure `stale_weight(snapshots_ago) -> f64` replaces the old `if snapshots_ago >= STALE_SNAPSHOT_GAP { score += W_STALE }` at the one call site, under the same unchanged `!graded_since` guard (a file with a graded event since is still not stale). The measured reason it landed: run live at 06:47 on Day 171, **all ten ranked entries scored exactly 0.5 with the identical reason shape** — every one of them a `W_STALE`-only score, because `W_NEVER_GRADED` fires for nobody (every scored file has been graded at least once) and `W_DISAGREE`, the only other discriminating signal, was correctly removed by #726. So the score column did no work at all and the entire visible order came from the *reactive risk model's* tie-break — which is exactly the attention this ranking exists to correct (Day 149). The information was already in the data and already printed: the reason lines said `6` vs `161`, a ~27× difference in how long the file had gone unobserved, scoring identically. Shape: `0.0` below `STALE_SNAPSHOT_GAP` (byte-identical to before — a recently-seen file is not stale), **exactly `W_STALE` at** the threshold (the backward-compatibility anchor, so the pre-existing `test_score_is_sum_of_signals` fixture keeps asserting `W_NEVER_GRADED + W_STALE` — its gap was moved to the threshold rather than the assertion weakened), then growing monotonically toward a saturating ceiling `W_STALE_MAX = 2.0` as `W_STALE + (W_STALE_MAX - W_STALE) * (1 - 1/(1 + excess/STALE_HALF_SATURATION))`. **All three of `W_STALE`, `W_STALE_MAX` and `STALE_HALF_SATURATION = 50.0` are judgment thresholds, not measurements** — nothing measured says a file unseen 55 snapshots is worth exactly half the climb; the shape is chosen for the two properties that *are* argued: it saturates rather than running away (one ancient file cannot dominate the ranking) and its ceiling equals `W_NEVER_GRADED`, so "never graded at all" is never outranked by "graded long ago" — different facts, and the first is the darker one. Pinned by table tests in `commands_risk_epistemic_tests::stale_weight_tests` (0.0 below the threshold, exact `W_STALE` at it, monotone non-decreasing across a sweep, bounded and non-NaN for every input **including `usize::MAX`**, and the live 6/49/161 gaps strictly ordered as a regression guard tied to this defect). Verified live after the change: scores span **1.2–1.6** over the same ten files and `src/git.rs` (169 snapshots ago) now leads where it was 8th, while `src/commands_risk.rs` (6 snapshots ago) has dropped off the shown slice from 1st — the success criterion the task stated in advance. **Stated plainly:** scores print at one decimal, so five of the current ten still *display* as `1.6` while differing underneath; the tie-break note fires on `SCORE_EPSILON = 1e-6` against the real values, not the rendered ones, so the displayed ties are a rendering artefact and the tie-break is firing far less often than the output suggests. Row/header shapes are byte-identical, so `EPISTEMIC_ENTRY_RE` / `EPISTEMIC_STALE_RE` still match and the never-forecast hard-stop is intact (`python3 scripts/extract_trajectory.py --test` passes). No new persistence, no ledger field, nothing back-filled.
+ ✓ (57.1s)
+  - Weights, the never-forecast section (`commands_risk_neverforecast.rs`) and `EPISTEMIC_TOP_N` were deliberately left untouched.
+  + Weights, the never-forecast section (`commands_risk_neverforecast.rs`) and `EPISTEMIC_TOP_N` were deliberately left untouched. Day 171: the staleness signal is **magnitude-scaled** instead of a binary step — the pure `stale_weight(snapshots_ago) -> f64` replaces the old `if snapshots_ago >= STALE_SNAPSHOT_GAP { score += W_STALE }` at the one call site, under the same unchanged `!graded_since` guard (a file with a graded event since is still not stale). The measured reason it landed: run live at 06:47 on Day 171, **all ten ranked entries scored exactly 0.5 with the identical reason shape** — every one of them a `W_STALE`-only score, because `W_NEVER_GRADED` fires for nobody (every scored file has been graded at least once) and `W_DISAGREE`, the only other discriminating signal, was correctly removed by #726. So the score column did no work at all and the entire visible order came from the *reactive risk model's* tie-break — which is exactly the attention this ranking exists to correct (Day 149). The information was already in the data and already printed: the reason lines said `6` vs `161`, a ~27× difference in how long the file had gone unobserved, scoring identically. Shape: `0.0` below `STALE_SNAPSHOT_GAP` (byte-identical to before — a recently-seen file is not stale), **exactly `W_STALE` at** the threshold (the backward-compatibility anchor, so the pre-existing `test_score_is_sum_of_signals` fixture keeps asserting `W_NEVER_GRADED + W_STALE` — its gap was moved to the threshold rather than the assertion weakened), then growing monotonically toward a saturating ceiling `W_STALE_MAX = 2.0` as `W_STALE + (W_STALE_MAX - W_STALE) * (1 - 1/(1 + excess/STALE_HALF_SATURATION))`. **All three of `W_STALE`, `W_STALE_MAX` and `STALE_HALF_SATURATION = 50.0` are judgment thresholds, not measurements** — nothing measured says a file unseen 55 snapshots is worth exactly half the climb; the shape is chosen for the two properties that *are* argued: it saturates rather than running away (one ancient file cannot dominate the ranking) and its ceiling equals `W_NEVER_GRADED`, so "never graded at all" is never outranked by "graded long ago" — different facts, and the first is the darker one. Pinned by table tests in `commands_risk_epistemic_tests::stale_weight_tests` (0.0 below the threshold, exact `W_STALE` at it, monotone non-decreasing across a sweep, bounded and non-NaN for every input **including `usize::MAX`**, and the live 6/49/161 gaps strictly ordered as a regression guard tied to this defect). Verified live after the change: scores span **1.2–1.6** over the same ten files and `src/git.rs` (169 snapshots ago) now leads where it was 8th, while `src/commands_risk.rs` (6 snapshots ago) has dropped off the shown slice from 1st — the success criterion the task stated in advance. **Stated plainly:** scores print at one decimal, so five of the current ten still *display* as `1.6` while differing underneath; the tie-break note fires on `SCORE_EPSILON = 1e-6` against the real values, not the rendered ones, so the displayed ties are a rendering artefact and the tie-break is firing far less often than the output suggests. Row/header shapes are byte-identical, so `EPISTEMIC_ENTRY_RE` / `EPISTEMIC_STALE_RE` still match and the never-forecast hard-stop is intact (`python3 scripts/extract_trajectory.py --test` passes). No new persistence, no ledger field, nothing back-filled.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.3s)
+  6 tools completed in 2m 58s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
