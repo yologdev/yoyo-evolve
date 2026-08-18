@@ -102,7 +102,10 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
 /// Return the structurally significant `{` / `}` characters of `line`, in order,
 /// skipping any that appear inside string literals, char literals, or comments.
 ///
-/// `in_block_comment` carries `/* … */` state across lines and is updated in place.
+/// `block_comment_depth` carries `/* … */` state across lines and is updated in place.
+/// It is a **depth**, not a flag, because Rust block comments nest: `/* /* */ */` is one
+/// comment, and the first `*/` closes only the innermost `/*` (#771 item 1). `0` means
+/// "not in a comment"; a stray `*/` at depth 0 is ignored rather than underflowing.
 /// Braces are returned **in order** rather than as an open/close count, because a line
 /// like `} fn other() {` both closes a block and opens one and the caller's depth
 /// machine must see those in sequence.
@@ -110,11 +113,10 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
 /// Handles: `"…"` strings with `\` escapes, raw strings `r"…"` / `r#"…"#` (any hash
 /// count, plus the `b` byte prefix), `'x'` char literals *without* mistaking a lifetime
 /// `&'a str` for one, `//` line comments, and `/* … */` block comments including
-/// multi-line ones. Deliberately **not** handled: a string literal that spans lines
-/// (the rest of that line is skipped, but the next line is scanned as ordinary code)
-/// and nested `/* /* */ */` block comments (Rust allows nesting; the first `*/` ends
-/// the comment here). Both are recorded in the follow-up issue rather than in prose
-/// that reads as complete.
+/// multi-line ones **including nested ones** (#771 item 1). Deliberately **not** handled:
+/// a string literal that spans lines (the rest of that line is skipped, but the next line
+/// is scanned as ordinary code). That one is recorded in the follow-up issue rather than
+/// in prose that reads as complete.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
 ///
@@ -122,7 +124,7 @@ fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
 /// `find_method_in_impl` in `commands_move.rs` used to count braces with no
 /// string/comment state at all, which is the same data-corruption class through
 /// `/move` that #770 fixed here (#771 item 3). One scanner, one set of table tests.
-pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec<char> {
+pub(crate) fn significant_braces(line: &str, block_comment_depth: &mut usize) -> Vec<char> {
     let chars: Vec<char> = line.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -130,9 +132,13 @@ pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec
     while i < chars.len() {
         let c = chars[i];
 
-        if *in_block_comment {
+        if *block_comment_depth > 0 {
             if c == '*' && chars.get(i + 1) == Some(&'/') {
-                *in_block_comment = false;
+                *block_comment_depth -= 1;
+                i += 2;
+            } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+                // Rust block comments nest — this opens an inner one (#771 item 1).
+                *block_comment_depth += 1;
                 i += 2;
             } else {
                 i += 1;
@@ -145,7 +151,7 @@ pub(crate) fn significant_braces(line: &str, in_block_comment: &mut bool) -> Vec
             break;
         }
         if c == '/' && chars.get(i + 1) == Some(&'*') {
-            *in_block_comment = true;
+            *block_comment_depth = 1;
             i += 2;
             continue;
         }
@@ -304,10 +310,10 @@ pub fn find_symbol_block(source: &str, symbol: &str) -> Option<(usize, usize, St
     let mut depth: i32 = 0;
     let mut found_open = false;
     let mut end_line = decl_line;
-    let mut in_block_comment = false;
+    let mut block_comment_depth = 0usize;
 
     for (i, line) in lines.iter().enumerate().skip(decl_line) {
-        for ch in significant_braces(line, &mut in_block_comment) {
+        for ch in significant_braces(line, &mut block_comment_depth) {
             if ch == '{' {
                 depth += 1;
                 found_open = true;
@@ -1201,39 +1207,50 @@ fn process_data() {
 
     #[test]
     fn significant_braces_table() {
-        // (line, incoming block-comment state) -> (expected braces, outgoing state)
-        let cases: Vec<(&str, bool, Vec<char>, bool)> = vec![
+        // (line, incoming block-comment depth) -> (expected braces, outgoing depth)
+        let cases: Vec<(&str, usize, Vec<char>, usize)> = vec![
             // plain control flow is untouched
-            ("if x { y } else {", false, vec!['{', '}', '{'], false),
+            ("if x { y } else {", 0, vec!['{', '}', '{'], 0),
             // braces in a string literal
-            (r#"    println!("}");"#, false, vec![], false),
-            (r#"    println!("{");"#, false, vec![], false),
+            (r#"    println!("}");"#, 0, vec![], 0),
+            (r#"    println!("{");"#, 0, vec![], 0),
             // escaped quote does not end the string, so the `}` stays inside it
-            (r#"    let s = "\"}";"#, false, vec![], false),
+            (r#"    let s = "\"}";"#, 0, vec![], 0),
             // trailing line comment
-            ("    let x = 1; // }", false, vec![], false),
-            ("    } // { not real", false, vec!['}'], false),
+            ("    let x = 1; // }", 0, vec![], 0),
+            ("    } // { not real", 0, vec!['}'], 0),
             // block comment opening and closing on one line
-            ("    /* } */ let y = 2; {", false, vec!['{'], false),
+            ("    /* } */ let y = 2; {", 0, vec!['{'], 0),
             // block comment spanning lines
-            ("    /* start {", false, vec![], true),
-            ("       still } inside", true, vec![], true),
-            ("       end */ }", true, vec!['}'], false),
+            ("    /* start {", 0, vec![], 1),
+            ("       still } inside", 1, vec![], 1),
+            ("       end */ }", 1, vec!['}'], 0),
+            // #771 item 1: Rust block comments NEST. The first `*/` closes only the
+            // innermost one, so the trailing `}` is still commented out.
+            ("    /* /* } */ } */ {", 0, vec!['{'], 0),
+            ("    /* outer /* inner */ still } inside", 0, vec![], 1),
+            ("    /* a /* b", 0, vec![], 2),
+            ("       still } commented */ }", 2, vec![], 1),
+            ("       out */ }", 1, vec!['}'], 0),
+            // an unbalanced `*/` must not underflow the depth
+            ("    */ }", 0, vec!['}'], 0),
+            // a `/*` inside a string does not open a comment
+            (r#"    let s = "/*"; {"#, 0, vec!['{'], 0),
             // lifetimes must NOT be read as char literals (#759's trap)
-            ("fn f<'a>(x: &'a str) -> &'a str {", false, vec!['{'], false),
+            ("fn f<'a>(x: &'a str) -> &'a str {", 0, vec!['{'], 0),
             // real char literals are skipped
-            ("    let c = '{';", false, vec![], false),
-            (r"    let c = '\'';", false, vec![], false),
-            (r"    let c = '\u{7d}'; {", false, vec!['{'], false),
+            ("    let c = '{';", 0, vec![], 0),
+            (r"    let c = '\'';", 0, vec![], 0),
+            (r"    let c = '\u{7d}'; {", 0, vec!['{'], 0),
             // raw strings, with and without hashes
-            (r##"    let s = r#"}"#; {"##, false, vec!['{'], false),
-            (r#"    let s = r"}";"#, false, vec![], false),
-            (r##"    let s = br#"{"#;"##, false, vec![], false),
+            (r##"    let s = r#"}"#; {"##, 0, vec!['{'], 0),
+            (r#"    let s = r"}";"#, 0, vec![], 0),
+            (r##"    let s = br#"{"#;"##, 0, vec![], 0),
             // `r` that is merely the tail of an identifier is not a raw string
-            (r#"    let ptr = "x"; {"#, false, vec!['{'], false),
+            (r#"    let ptr = "x"; {"#, 0, vec!['{'], 0),
             // multi-byte input must not panic
-            ("    // café — résumé }", false, vec![], false),
-            ("    let s = \"✓}\"; {", false, vec!['{'], false),
+            ("    // café — résumé }", 0, vec![], 0),
+            ("    let s = \"✓}\"; {", 0, vec!['{'], 0),
         ];
 
         for (line, mut state, expected, expected_state) in cases {

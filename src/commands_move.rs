@@ -140,9 +140,9 @@ pub fn find_impl_blocks(source: &str, type_name: &str) -> Vec<(usize, usize, Str
             let mut found_open = false;
             let mut end = i;
             // Per scan, not per line: a `/* … */` may span lines.
-            let mut in_block_comment = false;
+            let mut block_comment_depth = 0usize;
             for (j, line) in lines.iter().enumerate().skip(i) {
-                for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment)
+                for ch in crate::commands_refactor::significant_braces(line, &mut block_comment_depth)
                 {
                     if ch == '{' {
                         depth += 1;
@@ -237,9 +237,9 @@ pub fn find_method_in_impl(
     let mut found_open = false;
     let mut end = decl_line;
     // Per scan, not per line: a `/* … */` may span lines.
-    let mut in_block_comment = false;
+    let mut block_comment_depth = 0usize;
     for (j, line) in lines.iter().enumerate().skip(decl_line) {
-        for ch in crate::commands_refactor::significant_braces(line, &mut in_block_comment) {
+        for ch in crate::commands_refactor::significant_braces(line, &mut block_comment_depth) {
             if ch == '{' {
                 depth += 1;
                 found_open = true;
