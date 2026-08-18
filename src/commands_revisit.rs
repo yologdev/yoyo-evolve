@@ -510,13 +510,7 @@ fn revisit_list_at(path: &Path) -> String {
 /// not be resolved: the entry is still added (the command stays usable offline)
 /// with the old `(issue #N)` placeholder, and the returned message *says* the
 /// title is a placeholder and the issue was never verified to exist.
-fn revisit_add_at(
-    path: &Path,
-    number: u64,
-    title: Option<&str>,
-    reason: &str,
-    day: u64,
-) -> String {
+fn revisit_add_at(path: &Path, number: u64, title: Option<&str>, reason: &str, day: u64) -> String {
     let mut candidates = match load_revisit_list_from(path) {
         Ok(c) => c,
         Err(e) => return corrupt_file_message(&e, path),
@@ -541,9 +535,9 @@ fn revisit_add_at(
 
     match save_revisit_list_to(path, &candidates) {
         Ok(()) => match title {
-            Some(t) => format!(
-                "{GREEN}  ✓ Added #{number} — {t}{RESET}\n  {DIM}Reason: {reason}{RESET}"
-            ),
+            Some(t) => {
+                format!("{GREEN}  ✓ Added #{number} — {t}{RESET}\n  {DIM}Reason: {reason}{RESET}")
+            }
             None => format!(
                 "{GREEN}  ✓ Added #{number} to revisit list.{RESET}\n  \
                  {DIM}Reason: {reason}{RESET}\n  \
@@ -981,6 +975,90 @@ mod tests {
         // Duplicate add is still refused.
         let dup = revisit_add_at(&path, 42, None, "again", 165);
         assert!(dup.contains("already on the revisit list"), "{dup}");
+    }
+
+    /// The pure half of #741: an empty or absent title is *not* a title.
+    /// Table-driven so the malformed cases sit next to the good one.
+    #[test]
+    fn test_parse_issue_title_table() {
+        let cases: &[(&str, Option<&str>)] = &[
+            // (json fixture, expected Ok title — None means Err)
+            (r#"{"title":"Fix the thing"}"#, Some("Fix the thing")),
+            // gh pretty-prints; surrounding whitespace is trimmed, not stored.
+            (r#"{"title":"  padded  "}"#, Some("padded")),
+            // Empty / blank titles are an absence, never Ok("").
+            (r#"{"title":""}"#, None),
+            (r#"{"title":"   "}"#, None),
+            // Missing key, wrong type, JSON null — all absences.
+            (r#"{"number":7}"#, None),
+            (r#"{"title":null}"#, None),
+            (r#"{"title":42}"#, None),
+            // Malformed JSON must be an error, not a panic.
+            (r#"{"title":"unterminated"#, None),
+            ("", None),
+            ("not json at all", None),
+        ];
+
+        for (json, expected) in cases {
+            match (parse_issue_title(json), expected) {
+                (Ok(got), Some(want)) => assert_eq!(&got, want, "fixture: {json}"),
+                (Err(e), None) => assert!(!e.is_empty(), "error must say something: {json}"),
+                (Ok(got), None) => panic!("expected Err for {json}, got Ok({got:?})"),
+                (Err(e), Some(want)) => panic!("expected Ok({want:?}) for {json}, got Err({e})"),
+            }
+        }
+    }
+
+    /// Emission point: the string a caller receives when the title resolved.
+    #[test]
+    fn test_add_with_resolved_title_prints_and_stores_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        std::fs::write(&path, "[]").unwrap();
+
+        let out = revisit_add_at(&path, 741, Some("Real issue title"), "now feasible", 170);
+        assert!(out.contains("✓ Added #741"), "{out}");
+        assert!(out.contains("Real issue title"), "{out}");
+        assert!(
+            !out.contains("(issue #741)"),
+            "a resolved title must not carry the placeholder: {out}"
+        );
+        assert!(
+            !out.contains("not verified"),
+            "a resolved title must not claim the issue is unverified: {out}"
+        );
+
+        let loaded = load_revisit_list_from(&path).unwrap();
+        assert_eq!(loaded[0].title, "Real issue title");
+    }
+
+    /// Emission point: the degraded string must admit both things it does not
+    /// know — the title is a placeholder, and the issue was never verified.
+    #[test]
+    fn test_add_without_title_admits_placeholder_and_missing_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("revisit.json");
+        std::fs::write(&path, "[]").unwrap();
+
+        let out = revisit_add_at(&path, 999999, None, "worth another look", 170);
+        // The entry is still added — /revisit add stays usable offline.
+        let loaded = load_revisit_list_from(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].title, "(issue #999999)");
+
+        assert!(out.contains("✓ Added #999999"), "{out}");
+        assert!(
+            out.contains("could not fetch the title"),
+            "must say the title lookup failed: {out}"
+        );
+        assert!(
+            out.contains("(issue #999999)") && out.contains("placeholder"),
+            "must name the stored placeholder verbatim: {out}"
+        );
+        assert!(
+            out.contains("not verified to exist"),
+            "must say the issue was never verified: {out}"
+        );
     }
 
     #[test]
