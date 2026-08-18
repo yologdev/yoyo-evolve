@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of src/setup.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/se…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,300p src/setup.rs && … ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 278,292p src/setup.rs && … ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:1740..1810 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7.1s (4 ✓)
+
+Now Step 1 — the dir-taking seam.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:282..292 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (9 → 29 lines)
+    /// Run the interactive setup wizard, reading from `reader` and writing to `writer`.
+  - /// This is the testable core — the public `run_setup_wizard()` wraps it with stdin/stdout.
+  + /// This is the cwd-resolving wrapper: it reads the process cwd once and hands it to
+  + /// [`run_wizard_interactive_in`]. Behaviour is byte-identical to the pre-seam function.
+    ///
+    /// Returns `Some(WizardResult)` on success, `None` if the user cancels (Ctrl-C / empty input).
+    pub fn run_wizard_interactive<R: BufRead, W: Write>(
+  +     reader: &mut R,
+  +     writer: &mut W,
+  + ) -> Option<WizardResult> {
+  +     let cwd = std::env::current_dir().unwrap_or_default();
+  +     run_wizard_interactive_in(&cwd, reader, writer)
+  + }
+  + 
+  + /// Directory-taking seam for the interactive setup wizard: `project_dir` is where the
+  + /// `SaveLocation::Project` arm writes `.yoyo.toml`, instead of the process cwd.
+  + /// This is the testable core — the public `run_setup_wizard()` wraps it with stdin/stdout
+  + /// via [`run_wizard_interactive`].
+  + ///
+  + /// Tests must call this rather than moving the process with `std::env::set_current_dir`:
+  ... (9 more lines)
+ ✓ (20.0s)
+    /// Run the interactive setup wizard, reading from `reader` and writing to `writer`.
+  - /// This is the testable core — the public `run_setup_wizard()` wraps it with stdin/stdout.
+  + /// This is the cwd-resolving wrapper: it reads the process cwd once and hands it to
+  + /// [`run_wizard_interactive_in`]. Behaviour is byte-identical to the pre-seam function.
+    ///
+    /// Returns `Some(WizardResult)` on success, `None` if the user cancels (Ctrl-C / empty input).
+    pub fn run_wizard_interactive<R: BufRead, W: Write>(
+  +     reader: &mut R,
+  ... (13 more lines)
+  2 tools completed in 29.8s (2 ✓)
+
+Expected — the consumer lands next.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (2 → 2 lines)
+            SaveLocation::Project => {
+  -             let target = std::env::current_dir().unwrap_or_default();
+  +             let target = project_dir.to_path_buf();
+ ✓ (1m 42s)
+            SaveLocation::Project => {
+  -             let target = std::env::current_dir().unwrap_or_default();
+  +             let target = project_dir.to_path_buf();
+
+Now Step 2 — the two tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (18 → 14 lines)
+        #[test]
+  -     #[serial]
+        fn test_wizard_saves_key_when_confirmed() {
+            let tmp_dir = tempfile::Builder::new()
+                .prefix("yoyo_test_wizard_key_yes")
+                .tempdir()
+                .unwrap();
+  -         let prev_cwd = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(tmp_dir.path()).unwrap();
+    
+            // minimax (11), key, default model, save to project (1), save key = y
+            let input = "11\nsk-minimax-secret\n\n1\ny\n";
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+  -         let result = run_wizard_interactive(&mut reader, &mut output);
+  +         let result = run_wizard_interactive_in(tmp_dir.path(), &mut reader, &mut output);
+    
+            let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).ok();
+  -         std::env::set_current_dir(prev_cwd).unwrap();
+ ✓ (1m 44s)
+        #[test]
+  -     #[serial]
+        fn test_wizard_saves_key_when_confirmed() {
+            let tmp_dir = tempfile::Builder::new()
+                .prefix("yoyo_test_wizard_key_yes")
+                .tempdir()
+                .unwrap();
+  -         let prev_cwd = std::env::current_dir().unwrap();
+  ... (11 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (18 → 14 lines)
+        #[test]
+  -     #[serial]
+        fn test_wizard_declines_key_and_prints_export_instructions() {
+            let tmp_dir = tempfile::Builder::new()
+                .prefix("yoyo_test_wizard_key_no")
+                .tempdir()
+                .unwrap();
+  -         let prev_cwd = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(tmp_dir.path()).unwrap();
+    
+            // minimax (11), key, default model, save to project (1), save key = n
+            let input = "11\nsk-minimax-secret\n\n1\nn\n";
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+  -         let result = run_wizard_interactive(&mut reader, &mut output);
+  +         let result = run_wizard_interactive_in(tmp_dir.path(), &mut reader, &mut output);
+    
+            let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).ok();
+  -         std::env::set_current_dir(prev_cwd).unwrap();
+ ✓ (1m 42s)
+        #[test]
+  -     #[serial]
+        fn test_wizard_declines_key_and_prints_export_instructions() {
+            let tmp_dir = tempfile::Builder::new()
+                .prefix("yoyo_test_wizard_key_no")
+                .tempdir()
+                .unwrap();
+  -         let prev_cwd = std::env::current_dir().unwrap();
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "movers: $(grep -c set_curr… ✓ (1.3s)
+  3 tools completed in 3m 36s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
