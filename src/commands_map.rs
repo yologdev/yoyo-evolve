@@ -394,6 +394,7 @@ pub fn handle_map(input: &str) {
 mod tests {
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
+    use serial_test::serial;
 
     /// The REPL tab-completion hint for `/map` must advertise only flags that
     /// `parse_map_args` actually accepts. It said `[path] [--depth N]` while no
@@ -604,6 +605,7 @@ mod tests {
 
     // ── ast-grep backend ───────────────────────────────────────────
 
+    #[serial]
     #[test]
     fn build_repo_map_with_regex_backend() {
         let (entries, backend) = build_repo_map_with_backend(Some("src/"), true, true);

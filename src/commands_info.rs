@@ -1615,6 +1615,7 @@ pub fn handle_tips() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use yoagent::provider::AnthropicProvider;
     use yoagent::{Agent, Usage};
 
@@ -2436,6 +2437,7 @@ More text.
         );
     }
 
+    #[serial]
     #[test]
     fn test_compute_self_written_temp_repo() {
         // Create a temp git repo with a known author to verify counting logic.
@@ -2731,6 +2733,7 @@ More text.
         }
     }
 
+    #[serial]
     #[test]
     fn test_generate_tips_includes_rust_hints() {
         // Build our own Rust project fixture instead of asserting about the

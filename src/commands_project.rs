@@ -1342,6 +1342,7 @@ fn build_risk_annotation_map() -> std::collections::HashMap<String, f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -2004,6 +2005,7 @@ mod tests {
 
     // ── tests migrated from commands.rs (Issue #260) ─────────────────
 
+    #[serial]
     #[test]
     fn test_detect_project_type_rust() {
         // Use CARGO_MANIFEST_DIR to avoid race with set_current_dir in other tests
@@ -2207,6 +2209,7 @@ mod tests {
         );
     }
 
+    #[serial]
     #[test]
     fn test_detect_project_name_rust() {
         // Use CARGO_MANIFEST_DIR to avoid race with set_current_dir in other tests
