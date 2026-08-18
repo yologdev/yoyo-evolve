@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the backlog item #793 — it's concrete, small, and verifiable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/*.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_suggest_related_sk… ✓ (3ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2690,2790p src/commands_f… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4.1s (3 ✓)
+
+Both confirmed: they mutate process cwd and lack #[serial]. Fixing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_skips_already_added() {
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_cap_at_three() {
+ ✓ (1m 44s)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_skips_already_added() {
+ ✓ (2m 43s)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_cap_at_three() {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 45s (2 ✓)
+
+Now let me verify the class is actually closed — walk back from every set_current_dir in src/ to its enclosing test fn:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B3 "fn test_suggest_rel… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+Concurrent edits raced — the second write overwrote the first. Applying the remaining one:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_skips_already_added() {
+ ✓ (1m 45s)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_skips_already_added() {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 53s (2 ✓)
+
+All 23 cwd-mutating tests in src/ now carry #[serial]; zero missing. Running the full gate:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (59.1s)
+  2 tools completed in 1m 2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_file.rs
+
