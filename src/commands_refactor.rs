@@ -1358,7 +1358,11 @@ fn process_data() {
             ),
             (
                 "raw multi-line string with one hash",
-                vec![r##"    let s = r#"{ } ""##, "    still inside", r##"    "#;"##],
+                vec![
+                    r##"    let s = r#"{ } ""##,
+                    "    still inside",
+                    r##"    "#;"##,
+                ],
                 vec![vec![], vec![], vec![]],
             ),
             (
@@ -1391,7 +1395,11 @@ fn process_data() {
             ),
             (
                 "a trailing backslash escapes the newline: still open",
-                vec![r#"    let s = "open \"#, "    } still inside", r#"    end";"#],
+                vec![
+                    r#"    let s = "open \"#,
+                    "    } still inside",
+                    r#"    end";"#,
+                ],
                 vec![vec![], vec![], vec![]],
             ),
             (
