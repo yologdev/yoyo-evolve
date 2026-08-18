@@ -2731,6 +2731,7 @@ diff --git a/clean.txt b/clean.txt
     }
 
     #[test]
+    #[serial]
     fn test_suggest_related_skips_already_added() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
@@ -2753,6 +2754,7 @@ diff --git a/clean.txt b/clean.txt
     }
 
     #[test]
+    #[serial]
     fn test_suggest_related_cap_at_three() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
