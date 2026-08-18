@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what the ledger says, and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 4000… (7 lines) ✓ (8ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (11 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 7341897b && echo… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,110p src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,470p src/git.rs && ec… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 468,500p src/git.rs && ec… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 110,150p src/git.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'MAX_MODULE_LINES\|git.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'run_git()\|src/git.rs' … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 40s (10 ✓)
+
+Now the fixes. First h2 (parse_status_files byte slicing):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (7 → 15 lines)
+            .filter_map(|line| {
+  -             if line.len() < 4 {
+  -                 return None;
+  -             }
+  -             let status = line[..2].trim().to_string();
+  -             // Porcelain format: XY <space> filename (or XY <space> old -> new for renames)
+  -             let filename = line[3..].trim().to_string();
+  +             // Porcelain format: XY <space> filename (or XY <space> old -> new for
+  +             // renames) — two status *characters*, a separator, then the path.
+  +             // Cut on char boundaries, never byte offsets: a line whose first
+  +             // character is multi-byte makes `line[..2]` slice inside a UTF-8
+  +             // character and panic (#250's rule). Real git emits ASCII status
+  +             // codes, so the old byte form was safe only by an assumption about
+  +             // this parser's input that its signature never stated.
+  +             let mut offsets = line.char_indices().map(|(i, _)| i);
+  +             offsets.next()?; // X
+  +             offsets.next()?; // Y
+  +             let status_end = offsets.next()?; // separator
+  +             let path_start = offsets.next()?; // first char of the path
+  +             let status = line[..status_end].trim().to_string();
+  ... (1 more lines)
+ ✓ (1m 26s)
+            .filter_map(|line| {
+  -             if line.len() < 4 {
+  -                 return None;
+  -             }
+  -             let status = line[..2].trim().to_string();
+  -             // Porcelain format: XY <space> filename (or XY <space> old -> new for renames)
+  -             let filename = line[3..].trim().to_string();
+  +             // Porcelain format: XY <space> filename (or XY <space> old -> new for
+  ... (13 more lines)
+
+Now the run_git_in_dir panic message (it named the leading flag, not the verb):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (10 → 8 lines)
+        #[cfg(test)]
+  -     if let Some(cmd) = args.first() {
+  -         if destructive_guard(args, dir).is_some() {
+  -             panic!(
+  -                 "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+  -                  root during tests. Use a temp directory or mock instead.",
+  -                 cmd
+  -             );
+  -         }
+  +     if let Some(cmd) = destructive_guard(args, dir) {
+  +         panic!(
+  +             "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+  +              root during tests. Use a temp directory or mock instead.",
+  +             cmd
+  +         );
+        }
+ ✓ (1m 24s)
+        #[cfg(test)]
+  -     if let Some(cmd) = args.first() {
+  -         if destructive_guard(args, dir).is_some() {
+  -             panic!(
+  -                 "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+  -                  root during tests. Use a temp directory or mock instead.",
+  -                 cmd
+  -             );
+  ... (8 more lines)
+
+Now the tests — asserting at the emission point (what a caller actually receives):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (2 → 60 lines)
+  +     #[test]
+  +     fn destructive_guard_sees_the_verb_behind_leading_global_flags() {
+  +         // Round 62's h1: the guard used to read `args.first()`, so any git
+  +         // global flag before the verb hid it. Emission point: the Option the
+  +         // caller (`run_git`) branches on.
+  +         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+  +         assert_eq!(
+  +             destructive_guard(&["-c", "user.email=x", "commit", "-m", "m"], root),
+  +             Some("commit")
+  +         );
+  +         // `--git-dir=`/`--work-tree=` can't be resolved here, so the guard keeps
+  +         // the caller's cwd and fails closed rather than waving the call through.
+  +         assert_eq!(
+  +             destructive_guard(&["--git-dir=/tmp/x", "reset", "--hard"], root),
+  +             Some("reset")
+  +         );
+  +         // `-C .` resolves back onto the project root — still blocked.
+  +         assert_eq!(destructive_guard(&["-C", ".", "push"], root), Some("push"));
+  +     }
+  + 
+  ... (40 more lines)
+ ✓ (1m 27s)
+  +     #[test]
+  +     fn destructive_guard_sees_the_verb_behind_leading_global_flags() {
+  +         // Round 62's h1: the guard used to read `args.first()`, so any git
+  +         // global flag before the verb hid it. Emission point: the Option the
+  +         // caller (`run_git`) branches on.
+  +         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+  +         assert_eq!(
+  +             destructive_guard(&["-c", "user.email=x", "commit", "-m", "m"], root),
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

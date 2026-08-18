@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the round-62 prediction that already landed, so I grade exactly what was bet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 dreams/experiments.jsonl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (5ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Prediction line and mirror are intact. Now step 2 — settling command for h1, exactly as written down before the read.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i -B4 -A30 'destructive… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h1 settles: HIT. destructive_guard is args.first()? (src/git.rs:37) — purely positional. Let me confirm the hole is reachable rather than theoretical before grading direction.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== run_git call sites wit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'truncate(\|is_char_boun… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+h2 settles. Now examining the three raw-byte sites to grade class vs direction separately.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,460p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,300p' src/git.rs ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.7s (2 ✓)
+
+Both settled. Checking reachability of the h2 site before deciding fix-vs-file.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'parse_status_files' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (12 lines) ✓ (8ms)
+ ✓ (86ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 14s (2 ✓)
+
+Both bets have settled. Recording the grades now, before touching any code — that's the step rounds 42/43/44 lost to the clock.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (55 lines) ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The grade is on disk. Committing it alone and mirroring to #738 before any code changes — so a later failure cannot eat the record.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (35 lines) ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.0s (2 ✓)
+
+Now the fix. Both defects live in src/git.rs. Starting with h1 — the guard's verb resolution.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs:28..46 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (12 → 55 lines)
+  + /// Locate the git subcommand in an argv and resolve the directory the
+  + /// invocation actually targets, skipping any leading *global* flags.
+  + ///
+  + /// The subcommand is NOT simply `args[0]`: git accepts globals before the verb
+  + /// (`git -c k=v commit`, `git -C dir reset`), so a positional match reads the
+  + /// flag and silently concludes the call is harmless. Returns `None` when the
+  + /// argv carries no subcommand at all (empty, or flags only).
+  + ///
+  + /// Directory resolution follows git's own semantics closely enough to avoid a
+  + /// false positive: `-C <dir>` is applied cumulatively and relative to the
+  + /// directory resolved so far, so `git -C /tmp/x commit` is correctly seen as
+  + /// targeting `/tmp/x` rather than the project root. `--git-dir`/`--work-tree`
+  + /// also move the repo, but where they point cannot be resolved this cheaply —
+  + /// those deliberately leave the directory alone so the caller **fails closed**
+  + /// on the project root rather than being waved through.
+  + #[cfg(test)]
+  + fn resolve_git_invocation<'a>(
+  +     args: &'a [&'a str],
+  +     cwd: &std::path::Path,
+  + ) -> Option<(&'a str, std::path::PathBuf)> {
+  ... (36 more lines)
+ ✓ (1m 24s)
+  + /// Locate the git subcommand in an argv and resolve the directory the
+  + /// invocation actually targets, skipping any leading *global* flags.
+  + ///
+  + /// The subcommand is NOT simply `args[0]`: git accepts globals before the verb
+  + /// (`git -c k=v commit`, `git -C dir reset`), so a positional match reads the
+  + /// flag and silently concludes the call is harmless. Returns `None` when the
+  + /// argv carries no subcommand at all (empty, or flags only).
+  + ///
+  ... (13 more lines)
+  2 tools completed in 1m 40s (2 ✓)
+
+Now the second consumer — run_git_in_dir re-reads args.first() for its message, so it can name a flag as the "destructive command".
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs:126..140 ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
