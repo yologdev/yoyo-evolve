@@ -15,6 +15,41 @@ const GOAL_FILE: &str = ".yoyo/goal.md";
 /// Verify command file path (project-local).
 const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only override for the directory goal files resolve against.
+    ///
+    /// Production always resolves relative to the process CWD, exactly as before —
+    /// this exists so tests can isolate without moving the process CWD (#780). A
+    /// `thread_local` and not a static/`OnceLock` on purpose: each test thread gets its
+    /// own, so it cannot leak across tests the way the process CWD does, which is the
+    /// whole defect. With no override set every path below is byte-identical to the
+    /// relative path it used before.
+    static GOAL_BASE_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Directory the goal files resolve against — the process CWD in production.
+fn goal_base() -> std::path::PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(d) = GOAL_BASE_DIR.with(|b| b.borrow().clone()) {
+            return d;
+        }
+    }
+    std::path::PathBuf::from(".")
+}
+
+/// Path to the goal file, rooted at [`goal_base`].
+fn goal_path() -> std::path::PathBuf {
+    goal_base().join(GOAL_FILE)
+}
+
+/// Path to the verify-command file, rooted at [`goal_base`].
+fn verify_path() -> std::path::PathBuf {
+    goal_base().join(VERIFY_FILE)
+}
+
 /// Maximum bytes of verify-command output that reach a prompt or the display.
 const VERIFY_OUTPUT_MAX: usize = 2000;
 
@@ -101,7 +136,7 @@ fn goal_for_prompt_in(dir: &Path) -> Option<String> {
 /// Thin wrapper over [`load_goal_in`] rooted at the process CWD — behaviour is
 /// byte-identical to before this seam existed.
 pub fn load_goal() -> Option<String> {
-    load_goal_in(Path::new("."))
+    load_goal_in(&goal_base())
 }
 
 /// Load the goal from `<dir>/.yoyo/goal.md`, if it exists.
@@ -127,7 +162,7 @@ pub fn load_goal_in(dir: &Path) -> Option<String> {
 
 /// Save a goal to `.yoyo/goal.md`, creating the directory if needed.
 fn save_goal(goal: &str) -> Result<(), String> {
-    let path = Path::new(GOAL_FILE);
+    let path = goal_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
@@ -138,7 +173,7 @@ fn save_goal(goal: &str) -> Result<(), String> {
 
 /// Remove the goal file.
 fn clear_goal() -> Result<(), String> {
-    let path = Path::new(GOAL_FILE);
+    let path = goal_path();
     if path.exists() {
         fs::remove_file(path).map_err(|e| format!("Failed to remove goal file: {e}"))?;
     }
@@ -149,7 +184,7 @@ fn clear_goal() -> Result<(), String> {
 
 /// Save a verification command to `.yoyo/goal_verify.md`.
 fn save_verify_command(cmd: &str) -> Result<(), String> {
-    let path = Path::new(VERIFY_FILE);
+    let path = verify_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
@@ -160,7 +195,7 @@ fn save_verify_command(cmd: &str) -> Result<(), String> {
 
 /// Load the verification command, if one is set.
 pub fn load_verify_command() -> Option<String> {
-    let path = Path::new(VERIFY_FILE);
+    let path = verify_path();
     if path.exists() {
         fs::read_to_string(path).ok().and_then(|s| {
             let trimmed = s.trim();
@@ -177,7 +212,7 @@ pub fn load_verify_command() -> Option<String> {
 
 /// Remove the verification command file.
 fn clear_verify_command() -> Result<(), String> {
-    let path = Path::new(VERIFY_FILE);
+    let path = verify_path();
     if path.exists() {
         fs::remove_file(path).map_err(|e| format!("Failed to remove verify file: {e}"))?;
     }
