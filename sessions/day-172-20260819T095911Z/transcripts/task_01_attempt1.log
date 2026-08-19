@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo, then pick one small concrete improvement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && ls src/ | head … ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 4000… (6 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config_paths.rs && gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "config_paths::" src/ |… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1040,1110p' src/config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/config_paths.… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'env::var("HOME")\|env:… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1049,1106p' src/config.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config.rs && grep -n "… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 4s (10 ✓)
+
+Found a real defect: XDG env vars that are empty or relative are accepted verbatim, producing a relative base dir silently resolved against the process cwd. Let me write the test first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/config.r… ✓ (5ms)
+
+Now the fix — a single pure predicate shared by all four resolution sites:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (30 → 72 lines)
+  + /// A base-directory environment value is usable only when it is non-empty
+  + /// **and** absolute.
+  + ///
+  + /// The XDG Base Directory spec states both rules: an unset *or empty*
+  + /// `XDG_*_HOME` must fall back to the `$HOME` default, and "if an
+  + /// implementation encounters a relative path in any of these variables it
+  + /// should consider the path invalid and ignore it".
+  + ///
+  + /// Both cases used to be accepted verbatim, and both fail the same way: they
+  + /// produce a **relative** base dir, which every later `join` resolves against
+  + /// the *process cwd* instead of the user's home. `XDG_CONFIG_HOME=""` made
+  + /// `user_config_path()` return `yoyo/config.toml` — so yoyo would read a file
+  + /// out of whatever repo it happened to be started in and treat it as the
+  + /// user's own XDG config, walking straight past the project-config trust
+  + /// boundary (#748/#749), and `history_file_path()` would scatter a
+  + /// `yoyo/history` directory into the cwd.
+  + ///
+  + /// Returning `None` here means "fall back", never "guess" — an unusable value
+  + /// is treated exactly like an unset one.
+  + fn usable_base_dir(value: Option<&str>) -> Option<&str> {
+  ... (71 more lines)
+ ✓ (1m 44s)
+  + /// A base-directory environment value is usable only when it is non-empty
+  + /// **and** absolute.
+  + ///
+  + /// The XDG Base Directory spec states both rules: an unset *or empty*
+  + /// `XDG_*_HOME` must fall back to the `$HOME` default, and "if an
+  + /// implementation encounters a relative path in any of these variables it
+  + /// should consider the path invalid and ignore it".
+  + ///
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
