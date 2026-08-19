@@ -1,0 +1,318 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code sites named in the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "edits" src/session.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_tool_arg_writes\… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs:1..101  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,300p;360,385p;1440,1… ✓ (1ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1478,1500p' src/prompt.r… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1483..1513  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream_json_changes_for… ✓ (1ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,365p' src/prompt.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 23.7s (8 ✓)
+
+Now the implementation. Step 1 — the counter:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (2 → 11 lines)
+        edits: Arc<AtomicUsize>,
+  +     /// Monotonic count of every tool call the session STARTED — write-class or
+  +     /// not. `bash`, `read_file`, `search`, `list_files`, `web_search` and
+  +     /// `sub_agent` all bump this and none of them bump `edits`, which is the
+  +     /// whole point: `should_auto_continue`'s `ran_tools` argument used to read
+  +     /// `edit_count()`, so it meant "this turn wrote a file" and could never
+  +     /// fire for a turn that ran ten read-only tools and then went quiet — the
+  +     /// exact abstention shape the gate was built for (#794 half (a)).
+  +     /// Shared with the vec via `Arc` so clones see the same counter.
+  +     tool_calls: Arc<AtomicUsize>,
+    }
+ ✓ (12.2s)
+        edits: Arc<AtomicUsize>,
+  +     /// Monotonic count of every tool call the session STARTED — write-class or
+  +     /// not. `bash`, `read_file`, `search`, `list_files`, `web_search` and
+  +     /// `sub_agent` all bump this and none of them bump `edits`, which is the
+  +     /// whole point: `should_auto_continue`'s `ran_tools` argument used to read
+  +     /// `edit_count()`, so it meant "this turn wrote a file" and could never
+  +     /// fire for a turn that ran ten read-only tools and then went quiet — the
+  +     /// exact abstention shape the gate was built for (#794 half (a)).
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (3 → 4 lines)
+                edits: Arc::new(AtomicUsize::new(0)),
+  +             tool_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+ ✓ (20.4s)
+                edits: Arc::new(AtomicUsize::new(0)),
+  +             tool_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+  2 tools completed in 36.3s (2 ✓)
+
+Now the accessors and clear():
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (12 → 28 lines)
+        /// Number of `record` calls since the last [`SessionChanges::clear`],
+  -     /// counting repeat edits of the same path. Use this — not
+  -     /// `snapshot().len()` — to ask "did this turn do work?".
+  +     /// counting repeat edits of the same path. Write-class tool calls only —
+  +     /// ask [`SessionChanges::tool_call_count`] whether the turn ran *any* tool.
+        pub fn edit_count(&self) -> usize {
+            self.edits.load(Ordering::Relaxed)
+  +     }
+  + 
+  +     /// Record that a tool call STARTED. Counts every tool, write-class or not,
+  +     /// and is bumped at `ToolExecutionStart` on both event paths in
+  +     /// `prompt.rs` — at Start, not End, so a tool that errors or never returns
+  +     /// still counts as "the turn did something".
+  +     pub fn record_tool_call(&self) {
+  +         self.tool_calls.fetch_add(1, Ordering::Relaxed);
+  +     }
+  + 
+  +     /// Number of tool calls started since the last [`SessionChanges::clear`].
+  +     /// Deliberately independent of [`SessionChanges::edit_count`]: a
+  +     /// `read_file` bumps this and not that, a `write_file` bumps both.
+  ... (10 more lines)
+ ✓ (20.2s)
+        /// Number of `record` calls since the last [`SessionChanges::clear`],
+  -     /// counting repeat edits of the same path. Use this — not
+  -     /// `snapshot().len()` — to ask "did this turn do work?".
+  +     /// counting repeat edits of the same path. Write-class tool calls only —
+  +     /// ask [`SessionChanges::tool_call_count`] whether the turn ran *any* tool.
+        pub fn edit_count(&self) -> usize {
+            self.edits.load(Ordering::Relaxed)
+  +     }
+  ... (13 more lines)
+
+Expected — consumers come next, same diff. Both ToolExecutionStart sites in prompt.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 7 lines)
+            // Track file modifications from write_file and edit_file
+            record_tool_arg_writes(&tool_name, &args, changes);
+  +         // #794 half (a): count EVERY tool call, write-class or not — this is
+  +         // what `should_auto_continue`'s `ran_tools` reads. Bumped at both
+  +         // ToolExecutionStart sites (here and `handle_stream_json_events`);
+  +         // a one-path sweep is what #786 had to come back and repair.
+  +         changes.record_tool_call();
+ ✓ (20.1s)
+            // Track file modifications from write_file and edit_file
+            record_tool_arg_writes(&tool_name, &args, changes);
+  +         // #794 half (a): count EVERY tool call, write-class or not — this is
+  +         // what `should_auto_continue`'s `ran_tools` reads. Bumped at both
+  +         // ToolExecutionStart sites (here and `handle_stream_json_events`);
+  +         // a one-path sweep is what #786 had to come back and repair.
+  +         changes.record_tool_call();
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: method `tool_call_count` is never used[0m
+   [1m[94m--> [0msrc/session.rs:109:12
+    [1m[94m|[0m
+[1m[94m 59[0m [1m[94m|[0m impl SessionChanges {
+    [1m[94m|[0m [1m[94m-------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m109[0m [1m[94m|[0m     pub fn tool_call_count(&self) -> usize {
+    [1m[94m|[0m            [1m[91m^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (2 → 5 lines)
+                            record_tool_arg_writes(tool_name, args, changes);
+  +                         // #794 half (a): the other half of the pair — count
+  +                         // every tool call, write-class or not.
+  +                         changes.record_tool_call();
+                            // Only pay the clone when audit logging is actually on.
+ ✓ (20.4s)
+                            record_tool_arg_writes(tool_name, args, changes);
+  +                         // #794 half (a): the other half of the pair — count
+  +                         // every tool call, write-class or not.
+  +                         changes.record_tool_call();
+                            // Only pay the clone when audit logging is actually on.
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two consumers. repl.rs first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1113,1120p;1310,1348p' s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1518..1540 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (7 → 14 lines)
+  - /// `used_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+  + /// `ran_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+    /// branch (issue #631): a turn that *did work* and then said nothing is the
+    /// abstention case — "no answer" — which today gets absorbed by the convenient
+    /// neighbour, "finished". With the flag on we make it an explicit third value
+    /// and continue. With the flag off this function is byte-identical to the old
+    /// two-argument version, which is the product-safety guarantee: providers that
+    /// legitimately finish quietly must not be looped by default.
+  + ///
+  + /// `ran_tools` means "this turn started at least one tool call, of any kind" —
+  + /// it is `SessionChanges::tool_call_count()`, not `edit_count()`. Until #794
+  + /// half (a) both call sites passed the edit counter, so the parameter really
+  + /// meant "this turn wrote a file": the branch fired for *wrote code, then went
+  + /// quiet* and could never fire for *ran ten read-only tools, then went quiet*,
+  + /// which is the abstention shape it was built for.
+ ✓ (19.9s)
+  - /// `used_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+  + /// `ran_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+    /// branch (issue #631): a turn that *did work* and then said nothing is the
+    /// abstention case — "no answer" — which today gets absorbed by the convenient
+    /// neighbour, "finished". With the flag on we make it an explicit third value
+    /// and continue. With the flag off this function is byte-identical to the old
+    /// two-argument version, which is the product-safety guarantee: providers that
+    /// legitimately finish quietly must not be looped by default.
+  ... (7 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (10 → 10 lines)
+  -     ran_tools: bool,
+  +     used_tools: bool,
+        continue_on_silence: bool,
+    ) -> bool {
+        if queue_pending > 0 || looks_incomplete(text) {
+  ···
+        // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
+        // (no tools) is NOT looped — that's a model declining to speak, not work
+        // left on the table.
+  -     continue_on_silence && ran_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+  +     continue_on_silence && used_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (10 → 10 lines)
+  -     used_tools: bool,
+  +     ran_tools: bool,
+        continue_on_silence: bool,
+    ) -> bool {
+        if queue_pending > 0 || looks_incomplete(text) {
+  ···
+        // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
+        // (no tools) is NOT looped — that's a model declining to speak, not work
+        // left on the table.
+  -     continue_on_silence && used_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+  +     continue_on_silence && ran_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+ ✓ (19.9s)
+  -     used_tools: bool,
+  +     ran_tools: bool,
+        continue_on_silence: bool,
+    ) -> bool {
+        if queue_pending > 0 || looks_incomplete(text) {
+  ···
+        // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
+        // (no tools) is NOT looped — that's a model declining to speak, not work
+  ... (3 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 1s (4 ✓, 1 ✗)
+
+Now the REPL call site rebind:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1120,1128p' src/repl.rs;… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1313..1323 ✓ (0ms)
+  2 tools completed in 2.1s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (3 → 4 lines)
+  -                     // Same tool-usage proxy the turn-end marker uses below:
+  -                     // the turn touched at least one file.
+  -                     session_changes.edit_count() > edits_before,
+  +                     // #794 half (a): a real tool-call count, not the edit
+  +                     // counter — a turn of read-only tools then silence is the
+  +                     // abstention case this gate exists for.
+  +                     session_changes.tool_call_count() > tools_before,
+ ✓ (12.2s)
+  -                     // Same tool-usage proxy the turn-end marker uses below:
+  -                     // the turn touched at least one file.
+  -                     session_changes.edit_count() > edits_before,
+  +                     // #794 half (a): a real tool-call count, not the edit
+  +                     // counter — a turn of read-only tools then silence is the
+  +                     // abstention case this gate exists for.
+  +                     session_changes.tool_call_count() > tools_before,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (1 → 4 lines)
+            let edits_before = session_changes.edit_count();
+  +         // #794 half (a): the auto-continue gate needs "did this turn run any
+  +         // tool", which the edit counter cannot answer.
+  +         let tools_before = session_changes.tool_call_count();
+ ✓ (1m 41s)
+            let edits_before = session_changes.edit_count();
+  +         // #794 half (a): the auto-continue gate needs "did this turn run any
+  +         // tool", which the edit counter cannot answer.
+  +         let tools_before = session_changes.tool_call_count();
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cont_edits_before\|edit… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '553,560p' src/main.rs; e… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (25ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (1 → 3 lines)
+  -     let edits_before = session_changes.edit_count();
+  +     // #794 half (a): the auto-continue gate needs "did this turn run any
+  +     // tool", which the edit counter cannot answer (it sees write-class only).
+  +     let tools_before = session_changes.tool_call_count();
+ ✓ (1m 43s)
+  -     let edits_before = session_changes.edit_count();
+  +     // #794 half (a): the auto-continue gate needs "did this turn run any
+  +     // tool", which the edit counter cannot answer (it sees write-class only).
+  +     let tools_before = session_changes.tool_call_count();
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 4m 2s (6 ✓)
+
+Now the tests. session.rs independence pins:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,440p' src/session.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs (35 → 2 lines)
+  -     #[test]
+  -     fn test_tool_call_count_and_edit_count_are_independent() {
+  -         // #794 half (a): collapsing these two IS the bug. A read-only tool
+  -         // bumps the tool counter and nothing else; a write bumps the edit
+  -         // counter and nothing else.
+  -         let changes = SessionChanges::new();
+  - 
+  -         changes.record_tool_call(); // e.g. read_file
+  -         changes.record_tool_call(); // e.g. bash
+  -         assert_eq!(changes.tool_call_count(), 2);
+  -         assert_eq!(changes.edit_count(), 0, "read-only tools write nothing");
+  -         assert!(changes.snapshot().is_empty(), "and touch no files");
+  - 
+  -         changes.record("src/main.rs", ChangeKind::Write);
+  -         assert_eq!(changes.edit_count(), 1);
+  -         assert_eq!(
+  -             changes.tool_call_count(),
+  -             2,
+  -             "record() is not a tool-call start — the prompt event path bumps \
+  -              that separately, so this must not double-count"
+  ... (15 more lines)
+ ✗ (2ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/session.rs.
+  2 tools completed in 7.5s (1 ✓, 1 ✗)
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two emission-point tests in prompt.rs — one per event path:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2341,2360p' src/prompt.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (46 lines) ✓ (21.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 21s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (59.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- --nocap… ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A6 "should_auto_continu… ✓ (9ms)
+  6 tools completed in 3m 1s (6 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+

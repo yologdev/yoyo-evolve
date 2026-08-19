@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc sync issue — the code is done, CLAUDE.md needs updating.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "used_tools\|edit_count\… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/session.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`prompt.rs\`" CLAUD… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/session.r… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*tool_call\|fn .*ra… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 16.5s (6 ✓)
+
+Now updating CLAUDE.md. Starting with the main.rs bullet (the directly false claim):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - widening the gate to unconditional parity is a separate, arguable task, filed rather than done. **Stated plainly — the `used_tools` signal here is the weaker one**: it is `session_changes.edit_count() > before`, which only sees write-class tools, so a continuation turn that merely *read* files reads as "no tools ran"; a real tool-call count is #794 half (a), which was reverted and refiled as **#795**.
+  + widening the gate to unconditional parity is a separate, arguable task, filed rather than done. Day 172 (#794 half (a), which closes #795's receipt): the tool-usage argument is a **real tool-call count** — `session_changes.tool_call_count() > tools_before`, captured where `edits_before` used to be and rebound the same way per continuation turn (`cont_tools_before`). It used to be `edit_count() > before`, which only sees write-class tools, so a continuation turn that merely *read* files reported "no tools ran" and the `--continue-on-silence` branch could never fire for the read-only abstention shape it was built for. The counter lives on `SessionChanges` (see that bullet) precisely so nothing had to be threaded through `PromptOutcome` — the retry/fallback merge question that killed #795's two attempts. **Still not true end-to-end, and deliberately so:** `scripts/evolve.sh` never passes `--continue-on-silence`, so no evolve-loop agent takes this branch today; wiring that flag up is a separate decision and remains open on **#794**.
+ ✓ (58.2s)
+  - widening the gate to unconditional parity is a separate, arguable task, filed rather than done. **Stated plainly — the `used_tools` signal here is the weaker one**: it is `session_changes.edit_count() > before`, which only sees write-class tools, so a continuation turn that merely *read* files reads as "no tools ran"; a real tool-call count is #794 half (a), which was reverted and refiled as **#795**.
+  + widening the gate to unconditional parity is a separate, arguable task, filed rather than done. Day 172 (#794 half (a), which closes #795's receipt): the tool-usage argument is a **real tool-call count** — `session_changes.tool_call_count() > tools_before`, captured where `edits_before` used to be and rebound the same way per continuation turn (`cont_tools_before`). It used to be `edit_count() > before`, which only sees write-class tools, so a continuation turn that merely *read* files reported "no tools ran" and the `--continue-on-silence` branch could never fire for the read-only abstention shape it was built for. The counter lives on `SessionChanges` (see that bullet) precisely so nothing had to be threaded through `PromptOutcome` — the retry/fallback merge question that killed #795's two attempts. **Still not true end-to-end, and deliberately so:** `scripts/evolve.sh` never passes `--continue-on-silence`, so no evolve-loop agent takes this branch today; wiring that flag up is a separate decision and remains open on **#794**.
+
+Now the session.rs bullet:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is.
+  + Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is. Day 172 (#794 half (a)): a **second, independent** monotonic counter sits beside it — `tool_calls: Arc<AtomicUsize>`, read via `tool_call_count()`, bumped by `record_tool_call()` and zeroed by the same `clear()`. It counts **every tool call the turn started**, write-class or not (`bash`, `read_file`, `search`, `web_search`, `sub_agent` included), which `edit_count()` structurally cannot: `edits` is bumped only by `record`, i.e. only by `write_file`/`edit_file`/`rename_symbol` writes. The two are pinned as independent by test (`test_tool_call_count_and_edit_count_are_independent` — a `record` does not bump `tool_call_count` and a `record_tool_call` does not bump `edit_count`), because collapsing them *is* the defect #794 half (a) fixed. `edit_count()` and `snapshot().len()` keep their exact prior meanings and every existing test is untouched; the tool-usage argument to `should_auto_continue` (in both `repl.rs` and `main.rs`) is the one thing that moved from `edit_count()` to `tool_call_count()` — the per-turn change summary and the turn-end `did_work` still read the edit counter, correctly, since those are questions about *edits*.
+ ✓ (58.9s)
+  - Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is.
+  + Why: the deduped length answers a *session-wide* question ("did the session grow its distinct-file set"), and `clear()` only fires from `/clear`, so turns 2..N editing the **same** file grew nothing and all three checks silently read as "no work" — the most common editing shape there is. Day 172 (#794 half (a)): a **second, independent** monotonic counter sits beside it — `tool_calls: Arc<AtomicUsize>`, read via `tool_call_count()`, bumped by `record_tool_call()` and zeroed by the same `clear()`. It counts **every tool call the turn started**, write-class or not (`bash`, `read_file`, `search`, `web_search`, `sub_agent` included), which `edit_count()` structurally cannot: `edits` is bumped only by `record`, i.e. only by `write_file`/`edit_file`/`rename_symbol` writes. The two are pinned as independent by test (`test_tool_call_count_and_edit_count_are_independent` — a `record` does not bump `tool_call_count` and a `record_tool_call` does not bump `edit_count`), because collapsing them *is* the defect #794 half (a) fixed. `edit_count()` and `snapshot().len()` keep their exact prior meanings and every existing test is untouched; the tool-usage argument to `should_auto_continue` (in both `repl.rs` and `main.rs`) is the one thing that moved from `edit_count()` to `tool_call_count()` — the per-turn change summary and the turn-end `did_work` still read the edit counter, correctly, since those are questions about *edits*.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '102p' CLAUDE.md | grep -… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the `used_tools` argument to `should_auto_continue` (the `--continue-on-silence` gate), and `did_work` (the turn-end marker).
+  + Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the tool-usage argument to `should_auto_continue` (the `--continue-on-silence` gate — since Day 172 that one reads `tool_call_count()` instead, see below), and `did_work` (the turn-end marker).
+ ✓ (58.6s)
+  - Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the `used_tools` argument to `should_auto_continue` (the `--continue-on-silence` gate), and `did_work` (the turn-end marker).
+  + Three **per-turn** checks in `repl.rs` now read the counter instead of that length: the per-turn change summary (`files_modified`), the tool-usage argument to `should_auto_continue` (the `--continue-on-silence` gate — since Day 172 that one reads `tool_call_count()` instead, see below), and `did_work` (the turn-end marker).
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 7s (3 ✓)
+
+Now the prompt.rs bullet:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - threaded from the **caller's own** tracker in `main.rs` (`run_single_prompt`, `run_piped_mode` — the single `SessionChanges::new()` binding each already had, moved above the stream-json early return; a throwaway tracker there would be #678's defect again).
+  + threaded from the **caller's own** tracker in `main.rs` (`run_single_prompt`, `run_piped_mode` — the single `SessionChanges::new()` binding each already had, moved above the stream-json early return; a throwaway tracker there would be #678's defect again). Day 172 (#794 half (a)): both `ToolExecutionStart` sites also call `changes.record_tool_call()` immediately beside `record_tool_arg_writes` — **both or neither**, the sweep #786 had to come back and repair. It is counted at **Start**, not End, deliberately: a tool that errors or never returns still means the turn did something. That counter is what the auto-continue gate reads (see the `session.rs` bullet); pinned at the emission point by `display_path_counts_a_read_only_tool_call` and `stream_json_counts_a_read_only_tool_call`, which drive a `read_file` start through each path and assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion.
+ ✓ (58.7s)
+  - threaded from the **caller's own** tracker in `main.rs` (`run_single_prompt`, `run_piped_mode` — the single `SessionChanges::new()` binding each already had, moved above the stream-json early return; a throwaway tracker there would be #678's defect again).
+  + threaded from the **caller's own** tracker in `main.rs` (`run_single_prompt`, `run_piped_mode` — the single `SessionChanges::new()` binding each already had, moved above the stream-json early return; a throwaway tracker there would be #678's defect again). Day 172 (#794 half (a)): both `ToolExecutionStart` sites also call `changes.record_tool_call()` immediately beside `record_tool_arg_writes` — **both or neither**, the sweep #786 had to come back and repair. It is counted at **Start**, not End, deliberately: a tool that errors or never returns still means the turn did something. That counter is what the auto-continue gate reads (see the `session.rs` bullet); pinned at the emission point by `display_path_counts_a_read_only_tool_call` and `stream_json_counts_a_read_only_tool_call`, which drive a `read_file` start through each path and assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion.
+
+Now the repl.rs bullet:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '97p' CLAUDE.md | grep -o… ✓ (232ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, used_tools, continue_on_silence)` — with `--continue-on-silence`
+  + Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, ran_tools, continue_on_silence)` (the parameter was named `used_tools` until Day 172) — with `--continue-on-silence`
+ ✓ (59.3s)
+  - Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, used_tools, continue_on_silence)` — with `--continue-on-silence`
+  + Day 150 added an **opt-in** fourth input, `should_auto_continue(text, queue_pending, ran_tools, continue_on_silence)` (the parameter was named `used_tools` until Day 172) — with `--continue-on-silence`
+  2 tools completed in 1m 3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
