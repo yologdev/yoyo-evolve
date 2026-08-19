@@ -192,7 +192,23 @@ pub(crate) struct ParsedSnapshot {
 
 /// Parse all snapshots from JSONL content.
 pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
+    parse_all_snapshots_counting(content).0
+}
+
+/// Same parse as [`parse_all_snapshots`], additionally returning how many
+/// **non-blank** lines failed `serde_json::from_str`. The sibling of
+/// [`parse_validation_events_counting`], for the other half of the prediction
+/// meter: a silently shrinking snapshot ledger makes "this file was never
+/// forecast" a claim about the reader, not about the model.
+///
+/// Scope, stated rather than implied (#764 is still open on the rest): the
+/// count is **JSON-parse failures only**. A line that is valid JSON but whose
+/// `top_10` is empty or missing is still skipped by the `!predicted.is_empty()`
+/// guard below and is **not** counted here — that is a different defect on the
+/// same issue, and calling it corruption would overstate what was measured.
+pub(crate) fn parse_all_snapshots_counting(content: &str) -> (Vec<ParsedSnapshot>, usize) {
     let mut snapshots = Vec::new();
+    let mut dropped = 0usize;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -200,7 +216,10 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
         }
         let val: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(_) => continue, // skip malformed lines
+            Err(_) => {
+                dropped += 1;
+                continue; // malformed line — counted, never silently absorbed
+            }
         };
         let day = val["day"].as_u64().unwrap_or(0);
         let git_hash = val["git_hash"].as_str().unwrap_or("unknown").to_string();
@@ -231,7 +250,7 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
             });
         }
     }
-    snapshots
+    (snapshots, dropped)
 }
 
 /// One failed CI run as reported by `gh run list --json ...`. This is the raw
