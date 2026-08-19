@@ -726,6 +726,16 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
                 )),
             }
         }
+        "continue_on_silence" => {
+            let lower = value.to_ascii_lowercase();
+            match lower.as_str() {
+                "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+                "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                _ => Err(format!(
+                    "invalid continue_on_silence value '{value}' — use true or false"
+                )),
+            }
+        }
         "max_auto_continues" => match value.parse::<u32>() {
             Ok(n) if n <= 20 => Ok(n.to_string()),
             Ok(n) => Err(format!("max_auto_continues {n} out of range (0-20)")),
@@ -1930,6 +1940,41 @@ env = { API_KEY = "secret" }
         let mut config = std::collections::HashMap::new();
         config.insert("auto_continue".to_string(), "true".to_string());
         assert!(parse_auto_continue_from_config(&config));
+    }
+
+    #[test]
+    fn continue_on_silence_defaults_to_false_when_key_absent() {
+        // Product-safe default: a user who never writes the key gets the
+        // byte-identical behaviour they had before the key existed.
+        let config = std::collections::HashMap::new();
+        assert!(!parse_continue_on_silence_from_config(&config));
+    }
+
+    #[test]
+    fn continue_on_silence_explicit_true() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("continue_on_silence".to_string(), "true".to_string());
+        assert!(parse_continue_on_silence_from_config(&config));
+    }
+
+    #[test]
+    fn continue_on_silence_explicit_false() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("continue_on_silence".to_string(), "false".to_string());
+        assert!(!parse_continue_on_silence_from_config(&config));
+    }
+
+    #[test]
+    fn validate_continue_on_silence_values() {
+        assert_eq!(
+            validate_config_value("continue_on_silence", "true"),
+            Ok("true".to_string())
+        );
+        assert_eq!(
+            validate_config_value("continue_on_silence", "false"),
+            Ok("false".to_string())
+        );
+        assert!(validate_config_value("continue_on_silence", "maybe").is_err());
     }
 
     #[test]
