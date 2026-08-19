@@ -541,6 +541,20 @@ pub fn parse_auto_continue_from_config(config: &std::collections::HashMap<String
     config_flag(config, "auto_continue", true)
 }
 
+/// Check whether continue-on-silence is enabled in the config.
+///
+/// Defaults to **false** when the key is absent — this is opt-in (issue #631),
+/// because yoyo cannot distinguish "stopped mid-work" from "finished quietly",
+/// and a default that loops on a quiet turn would be worse than the ambiguity
+/// it fixes. Setting `continue_on_silence = true` in `.yoyo.toml` is the
+/// non-flag door to the same switch `--continue-on-silence` throws (#794);
+/// the two sources are OR'd — there is no "off" flag.
+pub fn parse_continue_on_silence_from_config(
+    config: &std::collections::HashMap<String, String>,
+) -> bool {
+    config_flag(config, "continue_on_silence", false)
+}
+
 /// Parse `max_auto_continues` from the config map.
 ///
 /// Returns the configured value (clamped to 0-20) or `None` if the key
@@ -620,6 +634,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     (
         "max_auto_continues",
         "max auto-continue follow-ups per turn (0-20)",
+    ),
+    (
+        "continue_on_silence",
+        "continue after a tool-using turn that ends with almost no text (true/false)",
     ),
     ("lite", "enable lite mode for small/local LLMs (true/false)"),
     ("no_bell", "suppress terminal bell (true/false)"),
