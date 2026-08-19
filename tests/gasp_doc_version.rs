@@ -82,8 +82,9 @@ fn gasp_blocker_claim_names_the_pinned_yoagent_version() {
     let gasp = read(&root.join("src/gasp.rs"));
     let lock = read(&root.join("Cargo.lock"));
 
-    let locked = locked_yoagent_version(&lock)
-        .expect("no `yoagent` package version found in Cargo.lock — has the lockfile format changed?");
+    let locked = locked_yoagent_version(&lock).expect(
+        "no `yoagent` package version found in Cargo.lock — has the lockfile format changed?",
+    );
 
     let claimed = claimed_versions(&gasp);
 
@@ -125,7 +126,10 @@ name = "yoagent"
 version = "0.16.5"
 "#;
     assert_eq!(locked_yoagent_version(lock).as_deref(), Some("0.16.5"));
-    assert_eq!(locked_yoagent_version("name = \"other\"\nversion = \"1.0\""), None);
+    assert_eq!(
+        locked_yoagent_version("name = \"other\"\nversion = \"1.0\""),
+        None
+    );
 }
 
 #[test]
