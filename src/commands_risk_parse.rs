@@ -147,10 +147,16 @@ pub(crate) struct GradedEvent {
 }
 
 /// Parse graded events (day + graded file paths) from validation JSONL
-/// content. Defensive like every reader here: malformed lines are skipped,
-/// absent arrays yield empty path lists.
-pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
+/// content, returning the surviving events plus how many
+/// **non-blank** lines failed to parse as JSON. Blank lines and a trailing
+/// newline are normal JSONL, not corruption, so neither is counted.
+///
+/// Deliberately *not* counted (#764, still open on the same issue): a line that
+/// is valid JSON but missing `day` / `hits` / `surprises` is absorbed by the
+/// `unwrap_or` defaults below and reported as a healthy event.
+pub(crate) fn parse_graded_events_counting(content: &str) -> (Vec<GradedEvent>, usize) {
     let mut events = Vec::new();
+    let mut dropped = 0usize;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -158,7 +164,10 @@ pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
         }
         let val: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                dropped += 1;
+                continue; // malformed line — counted, never silently absorbed
+            }
         };
         let day = val["day"].as_u64().unwrap_or(0);
         let mut paths: Vec<String> = Vec::new();
@@ -169,7 +178,7 @@ pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
         }
         events.push(GradedEvent { day, paths });
     }
-    events
+    (events, dropped)
 }
 
 /// A parsed risk snapshot from the JSONL file.
@@ -295,6 +304,103 @@ pub(crate) fn read_snapshot_ledger(path: &std::path::Path) -> SnapshotLedger {
     };
     let (snapshots, dropped) = parse_all_snapshots_counting(&content);
     SnapshotLedger::Present { snapshots, dropped }
+}
+
+/// The three distinguishable states of the validation ledger read *as graded
+/// events* — the projection `/risk epistemic` consumes.
+///
+/// Sibling of [`ValidationLedger`] (same file, same JSONL) but a different
+/// projection: that one carries accuracy numbers, this one carries the graded
+/// file paths. Both exist because collapsing "missing" into "corrupt" into
+/// "clean but partly unparseable" is what #764 is about.
+pub(crate) enum GradedLedger {
+    /// The path does not exist. Nothing has ever been graded.
+    Missing,
+    /// The path exists but could not be read; the string names path + io error.
+    Unreadable(String),
+    /// The file was read. `dropped` counts non-blank lines that failed to
+    /// parse as JSON — `Present { events: [], dropped: n }` (everything
+    /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+    Present {
+        events: Vec<GradedEvent>,
+        dropped: usize,
+    },
+}
+
+/// Read the validation ledger as graded events, keeping missing / unreadable /
+/// present-with-dropped-lines distinct. See [`GradedLedger`].
+pub(crate) fn read_graded_ledger(path: &std::path::Path) -> GradedLedger {
+    if !path.exists() {
+        return GradedLedger::Missing;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            return GradedLedger::Unreadable(format!("could not read {}: {e}", path.display()))
+        }
+    };
+    let (events, dropped) = parse_graded_events_counting(&content);
+    GradedLedger::Present { events, dropped }
+}
+
+/// The honest lines `/risk epistemic` must print about the *state of the two
+/// ledger files it reads*, before the report computed from them.
+///
+/// Pure so the wording is asserted at the emission point; the I/O stays at the
+/// one call site in `commands_risk_epistemic::handle_risk_epistemic`.
+///
+/// Why this view needs it at all: both of its headline claims are statements
+/// about **absence** — "no column ever forecast this file" and "no graded event
+/// ever touched it". Both are computed by *subtracting* the ledgers from the
+/// scored file set, so a line that silently fails to parse does not shrink a
+/// denominator here, it **manufactures a blind spot**: a corrupt snapshot
+/// ledger makes every scored file read as never-forecast, and that list is what
+/// `scripts/extract_trajectory.py` hands the planner as "study these next".
+/// Before this, both files were read with a bare `unwrap_or_default()`, so an
+/// unreadable or corrupt ledger was indistinguishable from an empty one.
+///
+/// `None`-equivalent (no line) on the two states where the report below is
+/// already honest without one: a genuinely missing file and a clean read —
+/// matching the convention of `ledger_health_line` / `snapshot_health_line`
+/// in `commands_risk.rs`.
+pub(crate) fn epistemic_ledger_notes(
+    snapshot_path: &str,
+    snapshots: &SnapshotLedger,
+    graded_path: &str,
+    graded: &GradedLedger,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    match snapshots {
+        SnapshotLedger::Missing => {}
+        SnapshotLedger::Unreadable(msg) => notes.push(msg.clone()),
+        SnapshotLedger::Present { dropped: 0, .. } => {}
+        SnapshotLedger::Present { snapshots, dropped } if snapshots.is_empty() => {
+            notes.push(format!(
+                "{snapshot_path} exists but all {dropped} line(s) in it are unparseable — \
+                 the prediction ledger is corrupt, not absent, so every file below is \
+                 reported as never forecast whether or not it really is."
+            ));
+        }
+        SnapshotLedger::Present { dropped, .. } => notes.push(format!(
+            "{snapshot_path}: {dropped} unparseable line(s) skipped — files forecast only \
+             on those lines will be reported as never forecast below."
+        )),
+    }
+    match graded {
+        GradedLedger::Missing => {}
+        GradedLedger::Unreadable(msg) => notes.push(msg.clone()),
+        GradedLedger::Present { dropped: 0, .. } => {}
+        GradedLedger::Present { events, dropped } if events.is_empty() => notes.push(format!(
+            "{graded_path} exists but all {dropped} line(s) in it are unparseable — \
+             the grade ledger is corrupt, not absent, so the staleness and \
+             never-graded signals below are computed over no grades at all."
+        )),
+        GradedLedger::Present { dropped, .. } => notes.push(format!(
+            "{graded_path}: {dropped} unparseable line(s) skipped — the staleness and \
+             never-graded signals below cover only the rest of the ledger."
+        )),
+    }
+    notes
 }
 
 /// One failed CI run as reported by `gh run list --json ...`. This is the raw
@@ -745,5 +851,217 @@ mod tests {
         assert!(!ci_event_exists_for(content, 29148457259));
         assert!(!ci_event_exists_for("", 30051449447));
         assert!(!ci_event_exists_for("not json\n", 30051449447));
+    }
+
+    // ---- graded-event ledger (#764 remainder: the `/risk epistemic` reads) ----
+
+    fn graded_line(day: u64, hit: &str, surprise: &str) -> String {
+        format!(
+            r#"{{"day":{day},"hits":["{hit}"],"surprises":["{surprise}"],"accuracy_pct":50.0}}"#
+        )
+    }
+
+    #[test]
+    fn graded_counting_reports_unparseable_lines_and_ignores_blanks() {
+        // A trailing newline and whitespace-only lines are normal JSONL, not
+        // corruption — counting them would manufacture a warning on a healthy
+        // ledger. Garbage and truncated JSON are corruption and are counted.
+        let content = format!(
+            "\n{}\n   \nnot-json\n{}\n{{\"day\":9,\n",
+            graded_line(160, "src/a.rs", "src/b.rs"),
+            graded_line(161, "src/c.rs", "src/d.rs"),
+        );
+        let (events, dropped) = parse_graded_events_counting(&content);
+        assert_eq!(events.len(), 2, "valid lines still parse");
+        assert_eq!(events[0].day, 160);
+        assert_eq!(events[0].paths, vec!["src/a.rs", "src/b.rs"]);
+        assert_eq!(dropped, 2, "both the garbage and the truncated line count");
+    }
+
+    #[test]
+    fn read_graded_ledger_missing_path_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("never_written.jsonl");
+        assert!(matches!(read_graded_ledger(&path), GradedLedger::Missing));
+    }
+
+    #[test]
+    fn read_graded_ledger_reports_clean_present_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                graded_line(160, "src/a.rs", "src/b.rs"),
+                graded_line(161, "src/c.rs", "src/d.rs")
+            ),
+        )
+        .unwrap();
+        match read_graded_ledger(&path) {
+            GradedLedger::Present { events, dropped } => {
+                assert_eq!(events.len(), 2);
+                assert_eq!(dropped, 0);
+            }
+            _ => panic!("expected Present"),
+        }
+    }
+
+    #[test]
+    fn read_graded_ledger_all_corrupt_is_present_not_missing() {
+        // The sharp case: a file that exists and is entirely unparseable is a
+        // *different fact* from a file that was never written, and collapsing
+        // the two is exactly what #764 is about.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(&path, "garbage\nmore garbage\n").unwrap();
+        match read_graded_ledger(&path) {
+            GradedLedger::Present { events, dropped } => {
+                assert!(events.is_empty());
+                assert_eq!(dropped, 2);
+            }
+            other => panic!(
+                "expected Present, got {}",
+                match other {
+                    GradedLedger::Missing => "Missing",
+                    GradedLedger::Unreadable(_) => "Unreadable",
+                    GradedLedger::Present { .. } => unreachable!(),
+                }
+            ),
+        }
+    }
+
+    // ---- the lines `/risk epistemic` actually prints ----
+
+    fn clean_snapshots() -> SnapshotLedger {
+        SnapshotLedger::Present {
+            snapshots: Vec::new(),
+            dropped: 0,
+        }
+    }
+
+    fn clean_graded() -> GradedLedger {
+        GradedLedger::Present {
+            events: Vec::new(),
+            dropped: 0,
+        }
+    }
+
+    #[test]
+    fn epistemic_notes_are_silent_when_both_ledgers_are_clean_or_missing() {
+        // The common path must stay byte-identical to the pre-change output.
+        assert!(epistemic_ledger_notes(
+            "snaps.jsonl",
+            &clean_snapshots(),
+            "vals.jsonl",
+            &clean_graded()
+        )
+        .is_empty());
+        assert!(epistemic_ledger_notes(
+            "snaps.jsonl",
+            &SnapshotLedger::Missing,
+            "vals.jsonl",
+            &GradedLedger::Missing
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn epistemic_notes_name_a_corrupt_snapshot_ledger_and_its_consequence() {
+        let notes = epistemic_ledger_notes(
+            "snaps.jsonl",
+            &SnapshotLedger::Present {
+                snapshots: Vec::new(),
+                dropped: 3,
+            },
+            "vals.jsonl",
+            &clean_graded(),
+        );
+        assert_eq!(notes.len(), 1, "only the snapshot half should speak");
+        let note = &notes[0];
+        assert!(note.contains("snaps.jsonl"), "names the file: {note}");
+        assert!(note.contains('3'), "names the count: {note}");
+        // The whole point: an all-corrupt ledger must not read as an absent
+        // one, and the reader must be told what it does to the report below.
+        assert!(
+            note.contains("corrupt, not absent"),
+            "distinguishes corrupt from absent: {note}"
+        );
+        assert!(
+            note.contains("never forecast"),
+            "names the claim it undermines: {note}"
+        );
+    }
+
+    #[test]
+    fn epistemic_notes_name_a_corrupt_grade_ledger_and_its_consequence() {
+        let notes = epistemic_ledger_notes(
+            "snaps.jsonl",
+            &clean_snapshots(),
+            "vals.jsonl",
+            &GradedLedger::Present {
+                events: Vec::new(),
+                dropped: 2,
+            },
+        );
+        assert_eq!(notes.len(), 1, "only the grade half should speak");
+        let note = &notes[0];
+        assert!(note.contains("vals.jsonl"), "names the file: {note}");
+        assert!(note.contains('2'), "names the count: {note}");
+        assert!(
+            note.contains("corrupt, not absent"),
+            "distinguishes corrupt from absent: {note}"
+        );
+        assert!(
+            note.contains("never-graded"),
+            "names the signal it undermines: {note}"
+        );
+    }
+
+    #[test]
+    fn epistemic_notes_report_partial_corruption_in_both_ledgers() {
+        let notes = epistemic_ledger_notes(
+            "snaps.jsonl",
+            &SnapshotLedger::Present {
+                snapshots: vec![ParsedSnapshot {
+                    day: 1,
+                    git_hash: "abc".into(),
+                    ts: "2026-07-01T00:00:00Z".into(),
+                    predicted: vec!["src/a.rs".into()],
+                    emerging: Vec::new(),
+                }],
+                dropped: 1,
+            },
+            "vals.jsonl",
+            &GradedLedger::Present {
+                events: vec![GradedEvent {
+                    day: 1,
+                    paths: vec!["src/a.rs".into()],
+                }],
+                dropped: 4,
+            },
+        );
+        assert_eq!(notes.len(), 2, "both halves speak independently");
+        assert!(notes[0].contains("snaps.jsonl") && notes[0].contains('1'));
+        assert!(notes[1].contains("vals.jsonl") && notes[1].contains('4'));
+    }
+
+    #[test]
+    fn epistemic_notes_pass_through_an_unreadable_ledgers_own_message() {
+        // An unreadable file is neither missing nor corrupt: the io error is
+        // the most informative thing available, so it is surfaced verbatim.
+        let notes = epistemic_ledger_notes(
+            "snaps.jsonl",
+            &SnapshotLedger::Unreadable("could not read snaps.jsonl: denied".to_string()),
+            "vals.jsonl",
+            &GradedLedger::Unreadable("could not read vals.jsonl: denied".to_string()),
+        );
+        assert_eq!(
+            notes,
+            vec![
+                "could not read snaps.jsonl: denied".to_string(),
+                "could not read vals.jsonl: denied".to_string(),
+            ]
+        );
     }
 }

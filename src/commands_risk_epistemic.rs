@@ -1045,16 +1045,36 @@ pub(crate) fn format_epistemic_report(
 /// compute the ranking, print the report.
 pub(crate) fn handle_risk_epistemic() {
     use crate::commands_risk_snapshots::{
-        parse_all_snapshots, parse_graded_events, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
+        SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    };
+    use crate::format::{RESET, YELLOW};
+
+    // Both ledgers are read through their three-state readers rather than a
+    // bare `unwrap_or_default()`: this view's headline claims ("never
+    // forecast", "never graded") are computed by *subtracting* the ledgers
+    // from the scored file set, so a silently-dropped line does not shrink a
+    // denominator here — it manufactures a blind spot, and that list is what
+    // the trajectory extractor hands the planner as "study these next".
+    let snapshot_ledger = read_snapshot_ledger(std::path::Path::new(RISK_SNAPSHOT_PATH));
+    let graded_ledger = read_graded_ledger(std::path::Path::new(RISK_VALIDATION_PATH));
+    for note in epistemic_ledger_notes(
+        RISK_SNAPSHOT_PATH,
+        &snapshot_ledger,
+        RISK_VALIDATION_PATH,
+        &graded_ledger,
+    ) {
+        println!("  {YELLOW}⚠ {note}{RESET}");
+    }
+    let snapshots = match snapshot_ledger {
+        SnapshotLedger::Present { snapshots, .. } => snapshots,
+        _ => Vec::new(),
+    };
+    let events = match graded_ledger {
+        GradedLedger::Present { events, .. } => events,
+        _ => Vec::new(),
     };
 
-    let snapshot_content =
-        std::fs::read_to_string(std::path::Path::new(RISK_SNAPSHOT_PATH)).unwrap_or_default();
-    let validation_content =
-        std::fs::read_to_string(std::path::Path::new(RISK_VALIDATION_PATH)).unwrap_or_default();
-
-    let snapshots = parse_all_snapshots(&snapshot_content);
-    let events = parse_graded_events(&validation_content);
     // Study history — absent ledger is an honest empty, not an error.
     let experiment_content =
         std::fs::read_to_string(std::path::Path::new(EXPERIMENT_LEDGER_PATH)).unwrap_or_default();
