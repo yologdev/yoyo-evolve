@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll check the current state, then complete the missing pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 535,565p src/config.rs &&… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_auto_continue_fro… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1900,1940p src/config.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.8s (4 ✓)
+
+Now the three missing pieces. First, the test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 37 lines)
+  +     #[test]
+  +     fn continue_on_silence_defaults_to_false_when_key_absent() {
+  +         // Product-safe default: a user who never writes the key gets the
+  +         // byte-identical behaviour they had before the key existed.
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_continue_on_silence_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn continue_on_silence_explicit_true() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("continue_on_silence".to_string(), "true".to_string());
+  +         assert!(parse_continue_on_silence_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn continue_on_silence_explicit_false() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("continue_on_silence".to_string(), "false".to_string());
+  +         assert!(!parse_continue_on_silence_from_config(&config));
+  ... (17 more lines)
+ ✓ (1m 38s)
+  +     #[test]
+  +     fn continue_on_silence_defaults_to_false_when_key_absent() {
+  +         // Product-safe default: a user who never writes the key gets the
+  +         // byte-identical behaviour they had before the key existed.
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_continue_on_silence_from_config(&config));
+  +     }
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 655,700p src/config.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,790p src/config.rs ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (1 → 11 lines)
+  +         "continue_on_silence" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid continue_on_silence value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+            "max_auto_continues" => match value.parse::<u32>() {
+ ✓ (1m 42s)
+  +         "continue_on_silence" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid continue_on_silence value '{value}' — use true or false"
+  +                 )),
+  ... (3 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 32s (4 ✓)
+
+Now step 3 — the .yoyo.toml opt-in:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> .yoyo… (8 lines) ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib config:: 2>&1 |… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test config:: 2>&1 | tail … ✓ (170ms)
+  3 tools completed in 4.6s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

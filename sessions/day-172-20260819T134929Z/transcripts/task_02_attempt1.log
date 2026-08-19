@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact call sites named in the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 550,600p src/config.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1130,1195p src/cli.rs && … ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn config_flag" -A 12 s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config.rs\|cli.rs" test… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 16 lines)
+  + /// Check whether continue-on-silence is enabled in the config.
+  + ///
+  + /// Defaults to **false** when the key is absent — this is opt-in (issue #631),
+  + /// because yoyo cannot distinguish "stopped mid-work" from "finished quietly",
+  + /// and a default that loops on a quiet turn would be worse than the ambiguity
+  + /// it fixes. Setting `continue_on_silence = true` in `.yoyo.toml` is the
+  + /// non-flag door to the same switch `--continue-on-silence` throws (#794);
+  + /// the two sources are OR'd — there is no "off" flag.
+  + pub fn parse_continue_on_silence_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> bool {
+  +     config_flag(config, "continue_on_silence", false)
+  + }
+  + 
+    /// Parse `max_auto_continues` from the config map.
+    ///
+ ✓ (20.7s)
+  + /// Check whether continue-on-silence is enabled in the config.
+  + ///
+  + /// Defaults to **false** when the key is absent — this is opt-in (issue #631),
+  + /// because yoyo cannot distinguish "stopped mid-work" from "finished quietly",
+  + /// and a default that loops on a quiet turn would be worse than the ambiguity
+  + /// it fixes. Setting `continue_on_silence = true` in `.yoyo.toml` is the
+  + /// non-flag door to the same switch `--continue-on-silence` throws (#794);
+  + /// the two sources are OR'd — there is no "off" flag.
+  ... (8 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 8 lines)
+        (
+            "max_auto_continues",
+            "max auto-continue follow-ups per turn (0-20)",
+  +     ),
+  +     (
+  +         "continue_on_silence",
+  +         "continue after a tool-using turn that ends with almost no text (true/false)",
+        ),
+ ✓ (20.5s)
+        (
+            "max_auto_continues",
+            "max auto-continue follow-ups per turn (0-20)",
+  +     ),
+  +     (
+  +         "continue_on_silence",
+  +         "continue after a tool-using turn that ends with almost no text (true/false)",
+        ),
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 5s (6 ✓)
+
+Now the consumer in cli.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1170,1190p src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1176,1184p src/cli.rs | c… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1177 && NR<=1183 {print… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 13 lines)
+        // default that loops on them would be worse than the ambiguity it fixes.
+  -     if args.iter().any(|a| a == "--continue-on-silence") {
+  +     //
+  +     // Two sources reach this one switch (#794): the CLI flag, and the
+  +     // `continue_on_silence` config key. It is a plain OR — there is no "off"
+  +     // flag, so either source alone enables it and neither leaves it off,
+  +     // byte-identical to the pre-#794 default. The config door exists because
+  +     // some callers cannot pass a flag at all (an evolve-loop agent is piped
+  +     // by a protected script), and `.yoyo.toml` is a file the user authors.
+  +     if args.iter().any(|a| a == "--continue-on-silence")
+  +         || crate::config::parse_continue_on_silence_from_config(&file_config)
+  +     {
+            set_continue_on_silence();
+        }
+ ✓ (1m 42s)
+        // default that loops on them would be worse than the ambiguity it fixes.
+  -     if args.iter().any(|a| a == "--continue-on-silence") {
+  +     //
+  +     // Two sources reach this one switch (#794): the CLI flag, and the
+  +     // `continue_on_silence` config key. It is a plain OR — there is no "off"
+  +     // flag, so either source alone enables it and neither leaves it off,
+  +     // byte-identical to the pre-#794 default. The config door exists because
+  +     // some callers cannot pass a flag at all (an evolve-loop agent is piped
+  ... (6 more lines)
+  4 tools completed in 1m 53s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
