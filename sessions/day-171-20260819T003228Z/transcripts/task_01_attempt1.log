@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual state of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/commands_goal.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,600p src/commands_goa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 513,518p src/commands_goa… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 513,520p src/commands_goa… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:513..531 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 16.4s (6 ✓)
+
+Now let me make the changes. First, the base-dir override and path helpers:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (2 → 37 lines)
+    /// Verify command file path (project-local).
+    const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
+  + 
+  + #[cfg(test)]
+  + thread_local! {
+  +     /// Test-only override for the directory goal files resolve against.
+  +     ///
+  +     /// Production always resolves relative to the process CWD, exactly as before —
+  +     /// this exists so tests can isolate without moving the process CWD (#780). A
+  +     /// `thread_local` and not a static/`OnceLock` on purpose: each test thread gets its
+  +     /// own, so it cannot leak across tests the way the process CWD does, which is the
+  +     /// whole defect. With no override set every path below is byte-identical to the
+  +     /// relative path it used before.
+  +     static GOAL_BASE_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
+  +         const { std::cell::RefCell::new(None) };
+  + }
+  + 
+  + /// Directory the goal files resolve against — the process CWD in production.
+  + fn goal_base() -> std::path::PathBuf {
+  +     #[cfg(test)]
+  ... (17 more lines)
+ ✓ (16.0s)
+    /// Verify command file path (project-local).
+    const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
+  + 
+  + #[cfg(test)]
+  + thread_local! {
+  +     /// Test-only override for the directory goal files resolve against.
+  +     ///
+  +     /// Production always resolves relative to the process CWD, exactly as before —
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Path::new(GOAL_FILE)\|P… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (21ms)
+  3 tools completed in 22.7s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

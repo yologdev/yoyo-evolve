@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir\|GOAL_B… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_goal.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,230p src/commands_goa… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,630p src/commands_goa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 810,840p src/commands_goa… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 548,556p src/commands_goa… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:548..564 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 16.9s (8 ✓)
+
+Now step 3 — rewrite with_temp_dir to set the override instead of chdir'ing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (12 → 19 lines)
+        use serial_test::serial;
+  -     use std::env;
+        use tempfile::TempDir;
+    
+  -     /// Helper: run a test body with CWD set to a temp directory.
+  +     /// Helper: run a test body with the goal files rooted at a temp directory.
+  +     ///
+  +     /// This sets the thread-local [`GOAL_BASE_DIR`] override — it does **not**
+  +     /// move the process CWD (#780). The override is per-thread, so it cannot
+  +     /// leak into a test running in parallel the way a `set_current_dir` does.
+  +     /// The override is cleared before the guard is dropped even if the body
+  +     /// panics, so one failing test cannot re-root a later one at a deleted dir.
+        fn with_temp_dir<F: FnOnce()>(f: F) {
+            let tmp = TempDir::new().expect("create temp dir");
+  -         let prev = env::current_dir().expect("get cwd");
+  -         env::set_current_dir(tmp.path()).expect("set cwd");
+  -         f();
+  -         env::set_current_dir(prev).expect("restore cwd");
+  +         GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(tmp.path().to_path_buf()));
+  +         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+  ... (5 more lines)
+ ✓ (1m 17s)
+        use serial_test::serial;
+  -     use std::env;
+        use tempfile::TempDir;
+    
+  -     /// Helper: run a test body with CWD set to a temp directory.
+  +     /// Helper: run a test body with the goal files rooted at a temp directory.
+  +     ///
+  +     /// This sets the thread-local [`GOAL_BASE_DIR`] override — it does **not**
+  ... (13 more lines)
+
+Now step 4 — the test bodies that reference relative paths directly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Path::new("\.yoyo")\|Pa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co… ✓ (8.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (1 → 1 lines)
+  -     /// leak into a test running in parallel the way a `set_current_dir` does.
+  +     /// leak into a test running in parallel the way a process-wide chdir does.
+ ✓ (1m 16s)
+  -     /// leak into a test running in parallel the way a `set_current_dir` does.
+  +     /// leak into a test running in parallel the way a process-wide chdir does.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_goal 2… ✓ (115ms)
+  5 tools completed in 1m 36s (5 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4968 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_goal 2>&1 | … ✓ (157ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 700 930 950 1070 1085 1… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,145p src/commands_goa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"check"' src/commands_g… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,400p src/commands_goa… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 18.8s (5 ✓)
+
+Confirmed — goal_for_prompt() was a missed site (step 2 was incomplete). Fixing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (1 → 1 lines)
+  -     goal_for_prompt_in(Path::new("."))
+  +     goal_for_prompt_in(&goal_base())
+ ✓ (1m 19s)
+  -     goal_for_prompt_in(Path::new("."))
+  +     goal_for_prompt_in(&goal_base())
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR<548' src/commands_goal.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 24s (2 ✓)
+
+All non-test path constructions now route through the helpers. Running the full check:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_goal 2>&1 | … ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co… ✓ (11ms)
+  3 tools completed in 9.5s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
