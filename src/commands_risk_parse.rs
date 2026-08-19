@@ -253,6 +253,50 @@ pub(crate) fn parse_all_snapshots_counting(content: &str) -> (Vec<ParsedSnapshot
     (snapshots, dropped)
 }
 
+/// The three distinguishable states of the snapshot ledger on disk — the
+/// prediction half of the meter, mirroring [`ValidationLedger`] (the grade
+/// half). Same reason for existing: `read_to_string(..).unwrap_or_default()`
+/// reported a missing file, an unreadable file and a wholly corrupt file as
+/// the same empty string, so a confident per-signal breakdown could be
+/// printed over an unknown fraction of the recorded predictions.
+///
+/// **Not covered** (same limits as the sibling, #764 stays open on both): a
+/// line that is valid JSON but missing fields is still absorbed by the
+/// parser's `unwrap_or` defaults, and a line whose `top_10` array is empty is
+/// dropped from `snapshots` *without* being counted — it parsed fine, it just
+/// carried no prediction, so calling it corruption would overstate what was
+/// measured.
+pub(crate) enum SnapshotLedger {
+    /// The path does not exist. No snapshot has ever been recorded.
+    Missing,
+    /// The path exists but could not be read; the string names path + io error.
+    Unreadable(String),
+    /// The file was read. `dropped` counts non-blank lines that failed to
+    /// parse as JSON — `Present { snapshots: [], dropped: n }` (everything
+    /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+    Present {
+        snapshots: Vec<ParsedSnapshot>,
+        dropped: usize,
+    },
+}
+
+/// Read the snapshot ledger, keeping missing / unreadable / present-with-
+/// dropped-lines distinct. See [`SnapshotLedger`] for what is and isn't
+/// covered.
+pub(crate) fn read_snapshot_ledger(path: &std::path::Path) -> SnapshotLedger {
+    if !path.exists() {
+        return SnapshotLedger::Missing;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            return SnapshotLedger::Unreadable(format!("could not read {}: {e}", path.display()))
+        }
+    };
+    let (snapshots, dropped) = parse_all_snapshots_counting(&content);
+    SnapshotLedger::Present { snapshots, dropped }
+}
+
 /// One failed CI run as reported by `gh run list --json ...`. This is the raw
 /// failure-day evidence the risk meter has been throwing away: CI already
 /// decided the outcome was red, so no commit-message heuristic is needed.

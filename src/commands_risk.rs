@@ -12,9 +12,9 @@ use crate::format::*;
 pub(crate) use crate::commands_risk_snapshots::{
     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
     ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
-    parse_failed_ci_runs, parse_validation_events, read_validation_ledger,
+    parse_failed_ci_runs, parse_validation_events, read_snapshot_ledger, read_validation_ledger,
     risk_autosnapshot_enabled, snapshot_before, write_risk_snapshot_to, write_validation_event,
-    ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    SnapshotLedger, ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.
@@ -1191,6 +1191,33 @@ fn ledger_health_line(ledger: &ValidationLedger) -> Option<String> {
     }
 }
 
+/// One honest line about the *state of the snapshot ledger file itself* — the
+/// prediction half of the meter, the sibling of [`ledger_health_line`] (the
+/// grade half). `None` on the two states where the report below is already
+/// honest without it: a genuinely missing file (no snapshot has been recorded,
+/// which the no-data copy covers) and a clean read.
+///
+/// It exists because the per-signal breakdown printed further down attributes
+/// hits to signals recorded *in these snapshots*. If lines were dropped, that
+/// breakdown covers an unknown fraction of the recorded predictions and says
+/// so nowhere — a confident number over a silently shrunken denominator.
+fn snapshot_health_line(ledger: &SnapshotLedger) -> Option<String> {
+    match ledger {
+        SnapshotLedger::Missing => None,
+        SnapshotLedger::Unreadable(msg) => Some(msg.clone()),
+        SnapshotLedger::Present { dropped: 0, .. } => None,
+        SnapshotLedger::Present { snapshots, dropped } if snapshots.is_empty() => Some(format!(
+            "{RISK_SNAPSHOT_PATH} exists but all {dropped} line(s) in it are unparseable — \
+             the prediction ledger is corrupt, not absent, so the per-signal breakdown \
+             below covers no predictions at all."
+        )),
+        SnapshotLedger::Present { dropped, .. } => Some(format!(
+            "{RISK_SNAPSHOT_PATH}: {dropped} unparseable line(s) skipped — \
+             the per-signal breakdown below covers only the rest of the predictions."
+        )),
+    }
+}
+
 /// Handle the `/risk accuracy` subcommand.
 fn handle_risk_accuracy() {
     // Read the ledger through the three-state reader so a corrupt file can't
@@ -1221,7 +1248,13 @@ fn handle_risk_accuracy() {
     if let Some(note) = emerging_track_record_note() {
         println!("  {DIM}emerging {note}{RESET}");
     }
-    // Section 2: Per-signal breakdown
+    // Section 2: Per-signal breakdown. The snapshot ledger is read through its
+    // own three-state reader so dropped prediction lines are reported rather
+    // than silently shrinking the denominator this breakdown is computed over.
+    let snapshot_ledger = read_snapshot_ledger(std::path::Path::new(RISK_SNAPSHOT_PATH));
+    if let Some(line) = snapshot_health_line(&snapshot_ledger) {
+        println!("  {YELLOW}⚠ {line}{RESET}");
+    }
     let snapshot_content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
     let validation_content = std::fs::read_to_string(RISK_VALIDATION_PATH).unwrap_or_default();
     let learned_weights = load_learned_weights();
@@ -2852,6 +2885,77 @@ mod tests {
         assert_eq!(
             ledger_health_line(&ledger).as_deref(),
             Some("could not read foo.jsonl: nope")
+        );
+    }
+
+    /// Build a `ParsedSnapshot` with just enough fields to stand in as one
+    /// surviving prediction line.
+    fn snapshot_fixture(day: u64) -> crate::commands_risk_snapshots::ParsedSnapshot {
+        crate::commands_risk_snapshots::ParsedSnapshot {
+            day,
+            git_hash: "abc1234".to_string(),
+            ts: "2026-08-19T21:00:00Z".to_string(),
+            predicted: vec!["src/commands_risk.rs".to_string()],
+            emerging: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn snapshot_health_line_says_nothing_on_a_healthy_or_missing_ledger() {
+        // Both quiet states, pinned together: the common path must stay
+        // byte-identical to the output before the snapshot reader existed.
+        assert_eq!(snapshot_health_line(&SnapshotLedger::Missing), None);
+        assert_eq!(
+            snapshot_health_line(&SnapshotLedger::Present {
+                snapshots: vec![snapshot_fixture(170)],
+                dropped: 0,
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn snapshot_health_line_names_the_path_and_count_on_partial_corruption() {
+        let line = snapshot_health_line(&SnapshotLedger::Present {
+            snapshots: vec![snapshot_fixture(170)],
+            dropped: 2,
+        })
+        .expect("dropped > 0 must be reported");
+        assert!(line.contains(RISK_SNAPSHOT_PATH), "names the path: {line:?}");
+        assert!(line.contains('2'), "names how many were dropped: {line:?}");
+        assert!(
+            line.contains("only the rest"),
+            "says the breakdown below is partial: {line:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_health_line_all_corrupt_names_the_path_and_denies_it_is_missing() {
+        // The sharp case: the file exists and nothing in it parsed, so the
+        // per-signal breakdown underneath is computed over zero predictions.
+        let line = snapshot_health_line(&SnapshotLedger::Present {
+            snapshots: Vec::new(),
+            dropped: 5,
+        })
+        .expect("all-corrupt must be reported");
+        assert!(line.contains(RISK_SNAPSHOT_PATH), "names the path: {line:?}");
+        assert!(line.contains('5'), "names the line count: {line:?}");
+        assert!(
+            line.contains("exists"),
+            "asserts the file is present, not absent: {line:?}"
+        );
+        assert!(
+            line.contains("no predictions"),
+            "says what the breakdown below actually covers: {line:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_health_line_passes_the_unreadable_message_through() {
+        let ledger = SnapshotLedger::Unreadable("could not read snaps.jsonl: nope".to_string());
+        assert_eq!(
+            snapshot_health_line(&ledger).as_deref(),
+            Some("could not read snaps.jsonl: nope")
         );
     }
 
