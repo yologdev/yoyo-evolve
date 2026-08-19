@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual state of the file and the ground truth.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/gasp.rs && ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A1 'name = "yoagent"' Carg… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+The tool output compressor elided lines — reading directly instead.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (45 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "0\.16\.3\|0\.16\.4\|0\.… ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Confirmed both false claims. Now verifying the ground truth myself before writing a correction.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -d ~/.cargo/registry/src/*/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '234,246p' src/gasp.rs ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+My counts (1 file each) disagree with the task's stated counts (4/8/5). I must record what I actually observe, so let me dig.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && R=~/.cargo/registry/src/index.cr… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three appear in yoagent-0.16.5/src/gasp.rs on what looks like a re-export line. That reachability is the load-bearing fact — verifying it directly.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && R=~/.cargo/registry/src/index.cr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && R=~/.cargo/registry/src/index.cr… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.9s (2 ✓)
+
+Ground truth is now exact, and it reconciles with the task's counts (task summed both crates; I'll record both parts precisely):
+
+• All three are **pub use-re-exported** from yoagent::gasp (0.16.5 src/gasp.rs:68-76) → nameable as yoagent::gasp::ProjectRef. That's the decisive reachability fact.
+• Defined in yoagent-state-0.4.1: ProjectRef 3, ArtifactRef 7, PatchStatus 4 files (+1 re-export file each = the task's 4/8/5).
+
+Writing the guard test first so I can watch it fail before the marker exists.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -25 tests/system_prompt_cho… ✓ (3ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_doc_version.rs (143 lines) ✓ (54.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Now let me watch it fail before the marker exists — a guard nobody has seen fire is untested.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test gasp_doc_versi… ✓ (170ms)
+
+Guard fires correctly with zero markers. Now Step 1 — the module-doc correction.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (5 → 40 lines)
+  - //! `task-result` is **still only in `tools/gasp-emit`**, and the reason is that
+  - //! it is *unreachable* from yoyo rather than merely unwritten: it names
+  - //! `ProjectRef`, `ArtifactRef` and `PatchStatus`, none of which appear anywhere
+  - //! in the published yoagent 0.16.3 source (verified by grepping the crate — no
+  - //! matches), so there is nothing here to call. `session_end` is the odd one of
+  + //! `task-result` is **still only in `tools/gasp-emit`** — unported, but **not
+  + //! blocked**. Read that as two separate facts, because conflating them cost
+  + //! five sessions.
+  + //!
+  + //! <!-- yoagent-version-claim: 0.16.5 -->
+  + //!
+  + //! This paragraph used to say `task-result` was *unreachable* from yoyo,
+  + //! because it names `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of
+  + //! which appear anywhere in the published yoagent 0.16.3 source". That claim
+  + //! was **true against 0.16.3 and went stale** when the pin moved: `Cargo.lock`
+  + //! now resolves yoagent **0.16.5**, and all three types are re-exported from
+  + //! `yoagent::gasp` there, so they are nameable as `yoagent::gasp::ProjectRef`
+  + //! and friends. It is left recorded rather than silently deleted because the
+  + //! stale sentence is *why* #765, #782, #785, #787 and #789 each opened this
+  + //! file, believed an authoritative "impossible", and exited without a diff.
+  ... (25 more lines)
+ ✓ (58.1s)
+  - //! `task-result` is **still only in `tools/gasp-emit`**, and the reason is that
+  - //! it is *unreachable* from yoyo rather than merely unwritten: it names
+  - //! `ProjectRef`, `ArtifactRef` and `PatchStatus`, none of which appear anywhere
+  - //! in the published yoagent 0.16.3 source (verified by grepping the crate — no
+  - //! matches), so there is nothing here to call. `session_end` is the odd one of
+  + //! `task-result` is **still only in `tools/gasp-emit`** — unported, but **not
+  + //! blocked**. Read that as two separate facts, because conflating them cost
+  + //! five sessions.
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
