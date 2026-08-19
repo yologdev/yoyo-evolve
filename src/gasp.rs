@@ -11,11 +11,46 @@
 //! Ported from the sidecar, and **only these three arms**: `session-start`
 //! (`session_start`), `task` (`task_planned`) and `session-end`
 //! (`session_end`), plus the `ensure_goal` helper the first two share.
-//! `task-result` is **still only in `tools/gasp-emit`**, and the reason is that
-//! it is *unreachable* from yoyo rather than merely unwritten: it names
-//! `ProjectRef`, `ArtifactRef` and `PatchStatus`, none of which appear anywhere
-//! in the published yoagent 0.16.3 source (verified by grepping the crate — no
-//! matches), so there is nothing here to call. `session_end` is the odd one of
+//! `task-result` is **still only in `tools/gasp-emit`** — unported, but **not
+//! blocked**. Read that as two separate facts, because conflating them cost
+//! five sessions.
+//!
+//! <!-- yoagent-version-claim: 0.16.5 -->
+//!
+//! This paragraph used to say `task-result` was *unreachable* from yoyo,
+//! because it names `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of
+//! which appear anywhere in the published yoagent 0.16.3 source". That claim
+//! was **true against 0.16.3 and went stale** when the pin moved: `Cargo.lock`
+//! now resolves yoagent **0.16.5**, and all three types are re-exported from
+//! `yoagent::gasp` there, so they are nameable as `yoagent::gasp::ProjectRef`
+//! and friends. It is left recorded rather than silently deleted because the
+//! stale sentence is *why* #765, #782, #785, #787 and #789 each opened this
+//! file, believed an authoritative "impossible", and exited without a diff.
+//!
+//! How that was re-checked this session, so the next reader can redo it in ten
+//! seconds instead of trusting this sentence:
+//! ```text
+//! $ grep -A1 'name = "yoagent"' Cargo.lock            → version = "0.16.5"
+//! $ R=~/.cargo/registry/src/index.crates.io-*/
+//! $ grep -rn 'ProjectRef' $R/yoagent-0.16.5/src/      → src/gasp.rs:72 (pub use)
+//! ```
+//! Counts: each of the three appears in **1** file of `yoagent-0.16.5/src/` —
+//! the `pub use yoagent_state::{…}` re-export block at `src/gasp.rs:68-76`,
+//! which is the fact that matters — and they are *defined* in
+//! `yoagent-state-0.4.1` (`ProjectRef` 3 files, `ArtifactRef` 7,
+//! `PatchStatus` 4). A combined count across both crates is therefore 4/8/5;
+//! both denominators are named here so a future re-check that greps only one
+//! crate does not read its own result as a contradiction.
+//!
+//! The marker line above is pinned to `Cargo.lock` by
+//! `tests/gasp_doc_version.rs`, which fails if the pin moves without this
+//! analysis being re-run. That guard is the reason this correction cannot go
+//! stale the way the last one did.
+//!
+//! What is still true: `task-result` is **not ported**, and porting it is out
+//! of scope here. It needs `patch.base_project_ref`, `patch.artifacts` and
+//! `update_patch_status(…, PatchStatus::Promoted, …)`
+//! (`tools/gasp-emit/src/main.rs:166-268`). `session_end` is the odd one of
 //! the three: it has no store-generic `*_in` body, because `commit_run` /
 //! `release_lease` are `GitEventStore` *inherent* methods rather than
 //! `EventStore` trait methods, so it cannot be driven against a scratch store
