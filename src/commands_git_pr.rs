@@ -142,6 +142,38 @@ pub fn parse_pr_args(arg: &str) -> PrSubcommand {
     }
 }
 
+/// The usage block printed when `/pr` cannot parse its arguments.
+///
+/// Kept as one pure function so the text can be asserted in a test. It
+/// documents **both** accepted shapes: the verb-first forms, which are the
+/// vocabulary `commands::PR_SUBCOMMANDS` offers at the `/pr <Tab>` prompt, and
+/// the older number-first forms, which still parse. Before this the block
+/// listed only the number-first forms, so a user who tab-completed `/pr view`
+/// and then mistyped was shown a vocabulary that did not contain the word the
+/// completion had just handed them — the same three-source disagreement shape
+/// as #745 (`/test` args) and #767 (`/ast` path).
+pub(crate) fn pr_usage_text() -> String {
+    let mut out = String::from("  usage: /pr                        List open pull requests\n");
+    for line in [
+        "         /pr list                   List open pull requests",
+        "         /pr view <n>               View details of a specific PR",
+        "         /pr diff <n>               Show the diff of a PR",
+        "         /pr review <n> [--post]    AI code review (--post adds inline comments)",
+        "         /pr comment <n> <text>     Add a comment to a PR",
+        "         /pr checkout <n>           Checkout a PR locally",
+        "         /pr create [--draft]       Create PR with AI-generated description",
+        "",
+        "  The number-first forms are also accepted:",
+        "         /pr <number>               View details of a specific PR",
+        "         /pr <number> diff|review|checkout",
+        "         /pr <number> comment <text>",
+    ] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage, model: &str) {
     let arg = input.strip_prefix("/pr").unwrap_or("").trim();
     match parse_pr_args(arg) {
@@ -386,15 +418,7 @@ pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage
             }
         }
         PrSubcommand::Help => {
-            println!("{DIM}  usage: /pr                         List open pull requests");
-            println!(
-                "         /pr create [--draft]        Create PR with AI-generated description"
-            );
-            println!("         /pr <number>                View details of a specific PR");
-            println!("         /pr <number> diff           Show the diff of a PR");
-            println!("         /pr <number> review         AI-powered code review of a PR");
-            println!("         /pr <number> comment <text> Add a comment to a PR");
-            println!("         /pr <number> checkout       Checkout a PR locally{RESET}\n");
+            println!("{DIM}{}{RESET}\n", pr_usage_text());
         }
     }
 }
@@ -408,6 +432,28 @@ mod tests {
     fn parse_pr_args_empty_is_list() {
         assert_eq!(parse_pr_args(""), PrSubcommand::List);
         assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+    }
+
+    #[test]
+    /// The usage block a user hits after a typo must name every verb the
+    /// `/pr <Tab>` completion offers. `PR_SUBCOMMANDS` is the authority here —
+    /// read from the const, never hand-copied — so adding an eighth verb fails
+    /// this test instead of silently leaving the usage text behind.
+    fn pr_usage_text_documents_every_completion_verb() {
+        let usage = pr_usage_text();
+        for verb in crate::commands::PR_SUBCOMMANDS {
+            assert!(
+                usage.contains(&format!("/pr {verb}")),
+                "/pr usage block does not document the completion verb `{verb}`:\n{usage}"
+            );
+        }
+        // The older number-first shape still parses, so it stays documented.
+        assert!(
+            usage.contains("/pr <number>"),
+            "/pr usage block dropped the number-first forms, which still parse:\n{usage}"
+        );
+        // --post is a real flag of `review` and was absent from the old block.
+        assert!(usage.contains("--post"), "/pr usage block omits --post");
     }
 
     /// A representative verb-first invocation for every token in
