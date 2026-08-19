@@ -1,0 +1,211 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_graded_events\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "read_snapshot_ledger\|… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_validation_histor… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1035,1100p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_health_line" -A … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,320p src/commands_ris… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,615p src/commands_ris… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_parse.rs… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,35p src/commands_risk_p… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 33s (10 ✓)
+
+Now I'll implement. First the parse module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (11 → 26 lines)
+    pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
+  +     parse_graded_events_counting(content).0
+  + }
+  + 
+  + /// Same parse as [`parse_graded_events`], additionally returning how many
+  + /// **non-blank** lines failed to parse as JSON. Blank lines and a trailing
+  + /// newline are normal JSONL, not corruption, so neither is counted.
+  + ///
+  + /// Deliberately *not* counted (#764, still open on the same issue): a line that
+  + /// is valid JSON but missing `day` / `hits` / `surprises` is absorbed by the
+  + /// `unwrap_or` defaults below and reported as a healthy event.
+  + pub(crate) fn parse_graded_events_counting(content: &str) -> (Vec<GradedEvent>, usize) {
+        let mut events = Vec::new();
+  +     let mut dropped = 0usize;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+  ···
+            }
+            let val: serde_json::Value = match serde_json::from_str(trimmed) {
+  ... (7 more lines)
+ ✓ (14.2s)
+    pub(crate) fn parse_graded_events(content: &str) -> Vec<GradedEvent> {
+  +     parse_graded_events_counting(content).0
+  + }
+  + 
+  + /// Same parse as [`parse_graded_events`], additionally returning how many
+  + /// **non-blank** lines failed to parse as JSON. Blank lines and a trailing
+  + /// newline are normal JSONL, not corruption, so neither is counted.
+  + ///
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,195p src/commands_ris… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (6 → 6 lines)
+            events.push(GradedEvent { day, paths });
+        }
+  -     events
+  +     (events, dropped)
+    }
+    
+    /// A parsed risk snapshot from the JSONL file.
+ ✓ (1m 58s)
+            events.push(GradedEvent { day, paths });
+        }
+  -     events
+  +     (events, dropped)
+    }
+    
+    /// A parsed risk snapshot from the JSONL file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SnapshotLedger::Present… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 310,316p src/commands_ris… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (5 → 100 lines)
+        let (snapshots, dropped) = parse_all_snapshots_counting(&content);
+        SnapshotLedger::Present { snapshots, dropped }
+  + }
+  + 
+  + /// The three distinguishable states of the validation ledger read *as graded
+  + /// events* — the projection `/risk epistemic` consumes.
+  + ///
+  + /// Sibling of [`ValidationLedger`] (same file, same JSONL) but a different
+  + /// projection: that one carries accuracy numbers, this one carries the graded
+  + /// file paths. Both exist because collapsing "missing" into "corrupt" into
+  + /// "clean but partly unparseable" is what #764 is about.
+  + pub(crate) enum GradedLedger {
+  +     /// The path does not exist. Nothing has ever been graded.
+  +     Missing,
+  +     /// The path exists but could not be read; the string names path + io error.
+  +     Unreadable(String),
+  +     /// The file was read. `dropped` counts non-blank lines that failed to
+  +     /// parse as JSON — `Present { events: [], dropped: n }` (everything
+  +     /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+  +     Present {
+  ... (80 more lines)
+ ✓ (21.1s)
+        let (snapshots, dropped) = parse_all_snapshots_counting(&content);
+        SnapshotLedger::Present { snapshots, dropped }
+  + }
+  + 
+  + /// The three distinguishable states of the validation ledger read *as graded
+  + /// events* — the projection `/risk epistemic` consumes.
+  + ///
+  + /// Sibling of [`ValidationLedger`] (same file, same JSONL) but a different
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 50s (5 ✓)
+
+Expected — now the consumer, in the same edit. Re-export first, then the call site:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (6 → 6 lines)
+    pub(crate) use crate::commands_risk_parse::{
+  -     ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, read_snapshot_ledger, read_validation_ledger,
+  -     snapshot_before, GradedEvent, ParsedSnapshot, SnapshotLedger, ValidationEvent,
+  -     ValidationLedger,
+  +     ci_event_exists_for, epistemic_ledger_notes, load_validation_history_from, parse_all_snapshots,
+  +     parse_failed_ci_runs, parse_graded_events, parse_validation_events, read_graded_ledger,
+  +     read_snapshot_ledger, read_validation_ledger, snapshot_before, GradedEvent, GradedLedger,
+  +     ParsedSnapshot, SnapshotLedger, ValidationEvent, ValidationLedger,
+    };
+ ✓ (21.6s)
+    pub(crate) use crate::commands_risk_parse::{
+  -     ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
+  -     parse_graded_events, parse_validation_events, read_snapshot_ledger, read_validation_ledger,
+  -     snapshot_before, GradedEvent, ParsedSnapshot, SnapshotLedger, ValidationEvent,
+  -     ValidationLedger,
+  +     ci_event_exists_for, epistemic_ledger_notes, load_validation_history_from, parse_all_snapshots,
+  +     parse_failed_ci_runs, parse_graded_events, parse_validation_events, read_graded_ledger,
+  +     read_snapshot_ledger, read_validation_ledger, snapshot_before, GradedEvent, GradedLedger,
+  +     ParsedSnapshot, SnapshotLedger, ValidationEvent, ValidationLedger,
+    };
+
+Now the actual call site in handle_risk_epistemic:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (13 → 33 lines)
+    pub(crate) fn handle_risk_epistemic() {
+        use crate::commands_risk_snapshots::{
+  -         parse_all_snapshots, parse_graded_events, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +         epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
+  +         SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        };
+  +     use crate::format::{RESET, YELLOW};
+    
+  -     let snapshot_content =
+  -         std::fs::read_to_string(std::path::Path::new(RISK_SNAPSHOT_PATH)).unwrap_or_default();
+  -     let validation_content =
+  -         std::fs::read_to_string(std::path::Path::new(RISK_VALIDATION_PATH)).unwrap_or_default();
+  +     // Both ledgers are read through their three-state readers rather than a
+  +     // bare `unwrap_or_default()`: this view's headline claims ("never
+  +     // forecast", "never graded") are computed by *subtracting* the ledgers
+  +     // from the scored file set, so a silently-dropped line does not shrink a
+  +     // denominator here — it manufactures a blind spot, and that list is what
+  +     // the trajectory extractor hands the planner as "study these next".
+  +     let snapshot_ledger = read_snapshot_ledger(std::path::Path::new(RISK_SNAPSHOT_PATH));
+  +     let graded_ledger = read_graded_ledger(std::path::Path::new(RISK_VALIDATION_PATH));
+  ... (20 more lines)
+ ✓ (21.4s)
+    pub(crate) fn handle_risk_epistemic() {
+        use crate::commands_risk_snapshots::{
+  -         parse_all_snapshots, parse_graded_events, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +         epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
+  +         SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        };
+  +     use crate::format::{RESET, YELLOW};
+    
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 149,158p src/commands_ris… ✓ (4ms)
+  3 tools completed in 30.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=148 && NR<=162 {printf … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (5 → 3 lines)
+    /// Parse graded events (day + graded file paths) from validation JSONL
+  - /// content. Defensive like every reader here: malformed lines are skipped,
+  - /// absent arrays yield empty path lists.
+  - /// Parse graded events, additionally returning how many
+  + /// content, returning the surviving events plus how many
+    /// **non-blank** lines failed to parse as JSON. Blank lines and a trailing
+ ✓ (14.2s)
+    /// Parse graded events (day + graded file paths) from validation JSONL
+  - /// content. Defensive like every reader here: malformed lines are skipped,
+  - /// absent arrays yield empty path lists.
+  - /// Parse graded events, additionally returning how many
+  + /// content, returning the surviving events plus how many
+    /// **non-blank** lines failed to parse as JSON. Blank lines and a trailing
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -     parse_failed_ci_runs, parse_graded_events, parse_validation_events, read_graded_ledger,
+  +     parse_failed_ci_runs, parse_validation_events, read_graded_ledger,
+ ✓ (2m 5s)
+  -     parse_failed_ci_runs, parse_graded_events, parse_validation_events, read_graded_ledger,
+  +     parse_failed_ci_runs, parse_validation_events, read_graded_ledger,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (180ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 31s (4 ✓)
+
+Now tests. Let me find the test module in the parse file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=845 && NR<=853 {printf … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (220 lines) ✓ (21.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25
