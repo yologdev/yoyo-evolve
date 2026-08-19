@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll examine the diff and check for the key concern: does parse_all_snapshots_counting have a consumer in this diff?
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "parse_all_snapshots_co… ✓ (8ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/commands_ri… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 27.6s (3 ✓)
+
+Key finding confirmed. Let me verify the one blocking uncertainty — whether anything anywhere reads the new count.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 190,200p src/commands_ris… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 12s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 24s (2 ✓)
+
+**Verdict: FAIL** — written to session_plan/eval_task_1.md.
+
+The decisive evidence:
+
+• grep -rn parse_all_snapshots_counting src/ tests/ returns exactly two hits: the definition (line 209) and the wrapper parse_all_snapshots (line 195), which discards the whole point of the new function with .0.
+• `git show HEAD | grep -c '^+.*#\[test\]'` → 0. No test asserts the new counting behavior.
+• Net effect: the dropped counter is computed and immediately thrown away. yoyo's observable behavior is byte-identical to before the commit.
+
+This is the "definition without its consumer" shape the project ranks first among failure modes (#618/#653/#658). It slipped past clippy's -D dead-code only because the wrapper calls the function and drops the tuple's second element — locally plausible, globally inert.
+
+It also contradicts the convention the diff's own doc comment invokes: the sibling it names, parse_validation_events_counting, landed with read_validation_ledger, a handle_risk_accuracy consumer that prints a ledger-health line, and unit tests — all in one diff, with "the consumer landed in the same diff (no definition without its consumer)" stated verbatim.
+
+The smallest fix that would flip this to PASS: thread the count into an actual reader (a snapshot-side analogue of ledger_health_line, or at minimum a test pinning dropped on a malformed-snapshot fixture the way lines 352–379 already do for the validation half).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
