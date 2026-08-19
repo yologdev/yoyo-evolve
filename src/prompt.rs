@@ -370,6 +370,11 @@ impl PromptEventState {
     ) {
         // Track file modifications from write_file and edit_file
         record_tool_arg_writes(&tool_name, &args, changes);
+        // #794 half (a): count EVERY tool call, write-class or not — this is
+        // what `should_auto_continue`'s `ran_tools` reads. Bumped at both
+        // ToolExecutionStart sites (here and `handle_stream_json_events`);
+        // a one-path sweep is what #786 had to come back and repair.
+        changes.record_tool_call();
         // Stop spinner on first activity
         if let Some(s) = self.spinner.take() {
             s.stop();
@@ -1486,6 +1491,9 @@ async fn handle_stream_json_events(
                         // helper the display path uses — never a second match on
                         // the same tool names.
                         record_tool_arg_writes(tool_name, args, changes);
+                        // #794 half (a): the other half of the pair — count
+                        // every tool call, write-class or not.
+                        changes.record_tool_call();
                         // Only pay the clone when audit logging is actually on.
                         if is_audit_enabled() {
                             audit_inflight.insert(
@@ -2394,6 +2402,42 @@ mod tests {
         assert_eq!(snapshot[0].path, "src/new.rs");
         assert_eq!(snapshot[0].kind, ChangeKind::Write);
         assert_eq!(changes.edit_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_json_counts_a_read_only_tool_call() {
+        // #794 half (a), stated at the emission point: a read-only tool must
+        // bump the tool-call counter and NOT the edit counter. The
+        // auto-continue gate reads the first of those; before this it read the
+        // second, so "ran ten read-only tools, then went quiet" was invisible.
+        let changes = stream_json_changes_for(vec![tool_start(
+            "call-1",
+            "read_file",
+            serde_json::json!({ "path": "src/main.rs" }),
+        )])
+        .await;
+
+        assert_eq!(changes.tool_call_count(), 1, "the turn ran a tool");
+        assert_eq!(changes.edit_count(), 0, "and wrote nothing");
+        assert!(changes.snapshot().is_empty());
+    }
+
+    #[test]
+    fn display_path_counts_a_read_only_tool_call() {
+        // The sibling half: the same assertion on the display event path.
+        // Both paths or neither — a one-path sweep is what #786 had to repair.
+        let changes = SessionChanges::new();
+        let mut state = PromptEventState::new();
+        state.handle_tool_execution_start(
+            "call-1".to_string(),
+            "read_file".to_string(),
+            serde_json::json!({ "path": "src/main.rs" }),
+            &changes,
+        );
+
+        assert_eq!(changes.tool_call_count(), 1, "the turn ran a tool");
+        assert_eq!(changes.edit_count(), 0, "and wrote nothing");
+        assert!(changes.snapshot().is_empty());
     }
 
     #[tokio::test]

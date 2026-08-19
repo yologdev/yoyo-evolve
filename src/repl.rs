@@ -1115,6 +1115,9 @@ pub async fn run_repl(
             .map(|c| c.path.clone())
             .collect();
         let edits_before = session_changes.edit_count();
+        // #794 half (a): the auto-continue gate needs "did this turn run any
+        // tool", which the edit counter cannot answer.
+        let tools_before = session_changes.tool_call_count();
         let mut turn_snap = TurnSnapshot::new();
         for path in &changes_before {
             turn_snap.snapshot_file(path);
@@ -1314,9 +1317,10 @@ pub async fn run_repl(
                 && should_auto_continue(
                     &last_text,
                     agent.follow_up_queue_len(),
-                    // Same tool-usage proxy the turn-end marker uses below:
-                    // the turn touched at least one file.
-                    session_changes.edit_count() > edits_before,
+                    // #794 half (a): a real tool-call count, not the edit
+                    // counter — a turn of read-only tools then silence is the
+                    // abstention case this gate exists for.
+                    session_changes.tool_call_count() > tools_before,
                     crate::cli::is_continue_on_silence(),
                 )
                 && !crate::prompt_budget::session_budget_exhausted(30)
@@ -1522,13 +1526,20 @@ pub(crate) fn get_max_auto_continues(
 /// tells us nothing about whether the model finished, so we fall back to the
 /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
 ///
-/// `used_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
+/// `ran_tools` + `continue_on_silence` add the opt-in `--continue-on-silence`
 /// branch (issue #631): a turn that *did work* and then said nothing is the
 /// abstention case — "no answer" — which today gets absorbed by the convenient
 /// neighbour, "finished". With the flag on we make it an explicit third value
 /// and continue. With the flag off this function is byte-identical to the old
 /// two-argument version, which is the product-safety guarantee: providers that
 /// legitimately finish quietly must not be looped by default.
+///
+/// `ran_tools` means "this turn started at least one tool call, of any kind" —
+/// it is `SessionChanges::tool_call_count()`, not `edit_count()`. Until #794
+/// half (a) both call sites passed the edit counter, so the parameter really
+/// meant "this turn wrote a file": the branch fired for *wrote code, then went
+/// quiet* and could never fire for *ran ten read-only tools, then went quiet*,
+/// which is the abstention shape it was built for.
 ///
 /// Deliberately pure — the flag is read at the call site, never from global
 /// state in here, so the whole truth table stays unit-testable. The caller also
@@ -1537,7 +1548,7 @@ pub(crate) fn get_max_auto_continues(
 pub(crate) fn should_auto_continue(
     text: &str,
     queue_pending: usize,
-    used_tools: bool,
+    ran_tools: bool,
     continue_on_silence: bool,
 ) -> bool {
     if queue_pending > 0 || looks_incomplete(text) {
@@ -1546,7 +1557,7 @@ pub(crate) fn should_auto_continue(
     // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
     // (no tools) is NOT looped — that's a model declining to speak, not work
     // left on the table.
-    continue_on_silence && used_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+    continue_on_silence && ran_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
 }
 
 /// Why a turn ended, as far as yoyo can tell.

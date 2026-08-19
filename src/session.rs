@@ -22,6 +22,15 @@ pub struct SessionChanges {
     /// where the two disagree (#774). Shared with the vec via `Arc` so clones
     /// see the same counter.
     edits: Arc<AtomicUsize>,
+    /// Monotonic count of every tool call the session STARTED — write-class or
+    /// not. `bash`, `read_file`, `search`, `list_files`, `web_search` and
+    /// `sub_agent` all bump this and none of them bump `edits`, which is the
+    /// whole point: `should_auto_continue`'s `ran_tools` argument used to read
+    /// `edit_count()`, so it meant "this turn wrote a file" and could never
+    /// fire for a turn that ran ten read-only tools and then went quiet — the
+    /// exact abstention shape the gate was built for (#794 half (a)).
+    /// Shared with the vec via `Arc` so clones see the same counter.
+    tool_calls: Arc<AtomicUsize>,
 }
 
 /// A single file modification event.
@@ -53,6 +62,7 @@ impl SessionChanges {
         Self {
             inner: Arc::new(Mutex::new(Vec::new())),
             edits: Arc::new(AtomicUsize::new(0)),
+            tool_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -79,16 +89,32 @@ impl SessionChanges {
     }
 
     /// Number of `record` calls since the last [`SessionChanges::clear`],
-    /// counting repeat edits of the same path. Use this — not
-    /// `snapshot().len()` — to ask "did this turn do work?".
+    /// counting repeat edits of the same path. Write-class tool calls only —
+    /// ask [`SessionChanges::tool_call_count`] whether the turn ran *any* tool.
     pub fn edit_count(&self) -> usize {
         self.edits.load(Ordering::Relaxed)
+    }
+
+    /// Record that a tool call STARTED. Counts every tool, write-class or not,
+    /// and is bumped at `ToolExecutionStart` on both event paths in
+    /// `prompt.rs` — at Start, not End, so a tool that errors or never returns
+    /// still counts as "the turn did something".
+    pub fn record_tool_call(&self) {
+        self.tool_calls.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Number of tool calls started since the last [`SessionChanges::clear`].
+    /// Deliberately independent of [`SessionChanges::edit_count`]: a
+    /// `read_file` bumps this and not that, a `write_file` bumps both.
+    pub fn tool_call_count(&self) -> usize {
+        self.tool_calls.load(Ordering::Relaxed)
     }
 
     /// Clear all tracked changes.
     pub fn clear(&self) {
         lock_or_recover(&self.inner).clear();
         self.edits.store(0, Ordering::Relaxed);
+        self.tool_calls.store(0, Ordering::Relaxed);
     }
 
     /// Return a JSON summary of file changes for `--json` output.
@@ -395,6 +421,40 @@ mod tests {
         changes.record("src/cli.rs", ChangeKind::Edit);
         assert_eq!(changes.edit_count(), 2);
         assert_eq!(changes.snapshot().len(), 2);
+    }
+
+    #[test]
+    fn test_tool_call_count_and_edit_count_are_independent() {
+        // #794 half (a): collapsing these two IS the bug. A read-only tool
+        // bumps the tool counter and nothing else; a write bumps the edit
+        // counter and nothing else.
+        let changes = SessionChanges::new();
+
+        changes.record_tool_call(); // e.g. read_file
+        changes.record_tool_call(); // e.g. bash
+        assert_eq!(changes.tool_call_count(), 2);
+        assert_eq!(changes.edit_count(), 0, "read-only tools write nothing");
+        assert!(changes.snapshot().is_empty(), "and touch no files");
+
+        changes.record("src/main.rs", ChangeKind::Write);
+        assert_eq!(changes.edit_count(), 1);
+        assert_eq!(changes.snapshot().len(), 1);
+        assert_eq!(
+            changes.tool_call_count(),
+            2,
+            "record() is not a tool-call start — prompt.rs bumps that \
+             separately at ToolExecutionStart, so this must not double-count"
+        );
+    }
+
+    #[test]
+    fn test_clear_resets_tool_call_count() {
+        let changes = SessionChanges::new();
+        changes.record_tool_call();
+        changes.record("src/main.rs", ChangeKind::Write);
+        changes.clear();
+        assert_eq!(changes.tool_call_count(), 0);
+        assert_eq!(changes.edit_count(), 0);
     }
 
     #[test]

@@ -554,7 +554,9 @@ async fn run_piped_mode(
 
     let mut session_total = Usage::default();
     let prompt_start = Instant::now();
-    let edits_before = session_changes.edit_count();
+    // #794 half (a): the auto-continue gate needs "did this turn run any
+    // tool", which the edit counter cannot answer (it sees write-class only).
+    let tools_before = session_changes.tool_call_count();
     let initial = run_prompt_with_changes(
         agent,
         input,
@@ -607,10 +609,10 @@ async fn run_piped_mode(
         let mut auto_continue_count: u32 = 0;
         let mut last_text = response.text.clone();
         let mut had_error = response.last_tool_error.is_some() || response.last_api_error.is_some();
-        // Weaker signal than a real tool-call count, pending #794 half (a):
-        // an edit-tracker bump only sees write-class tools, so a turn that
-        // only read files reads as "no tools ran" here.
-        let mut used_tools = session_changes.edit_count() > edits_before;
+        // #794 half (a): a real tool-call count. The edit tracker only sees
+        // write-class tools, so a turn that only READ files used to read as
+        // "no tools ran" here — the abstention shape this gate exists for.
+        let mut ran_tools = session_changes.tool_call_count() > tools_before;
 
         while piped_should_continue(
             opted_in,
@@ -621,7 +623,7 @@ async fn run_piped_mode(
             crate::repl::should_auto_continue(
                 &last_text,
                 agent.follow_up_queue_len(),
-                used_tools,
+                ran_tools,
                 opted_in,
             ),
         ) {
@@ -633,7 +635,7 @@ async fn run_piped_mode(
                 );
             }
 
-            let cont_edits_before = session_changes.edit_count();
+            let cont_tools_before = session_changes.tool_call_count();
             let cont_outcome = prompt::run_prompt_auto_retry(
                 agent,
                 "Continue with the remaining work. Pick up where you left off.",
@@ -648,7 +650,7 @@ async fn run_piped_mode(
             last_text = cont_outcome.text.clone();
             had_error =
                 cont_outcome.last_tool_error.is_some() || cont_outcome.last_api_error.is_some();
-            used_tools = session_changes.edit_count() > cont_edits_before;
+            ran_tools = session_changes.tool_call_count() > cont_tools_before;
 
             // Accumulate so `emit_output` (and `--output` / `--output-format
             // json`) report the whole turn, not just its first slice.
