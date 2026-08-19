@@ -120,7 +120,7 @@ fn truncate_goal_for_prompt(goal: &str) -> String {
 /// Prompt call sites must use this instead of [`load_goal`]; display call sites
 /// must not.
 pub fn goal_for_prompt() -> Option<String> {
-    goal_for_prompt_in(Path::new("."))
+    goal_for_prompt_in(&goal_base())
 }
 
 /// Load the goal under `dir` for **prompt** use, capped by [`GOAL_PROMPT_MAX_BYTES`].
@@ -549,16 +549,23 @@ pub fn handle_goal(input: &str) -> CommandResult {
 mod tests {
     use super::*;
     use serial_test::serial;
-    use std::env;
     use tempfile::TempDir;
 
-    /// Helper: run a test body with CWD set to a temp directory.
+    /// Helper: run a test body with the goal files rooted at a temp directory.
+    ///
+    /// This sets the thread-local [`GOAL_BASE_DIR`] override — it does **not**
+    /// move the process CWD (#780). The override is per-thread, so it cannot
+    /// leak into a test running in parallel the way a process-wide chdir does.
+    /// The override is cleared before the guard is dropped even if the body
+    /// panics, so one failing test cannot re-root a later one at a deleted dir.
     fn with_temp_dir<F: FnOnce()>(f: F) {
         let tmp = TempDir::new().expect("create temp dir");
-        let prev = env::current_dir().expect("get cwd");
-        env::set_current_dir(tmp.path()).expect("set cwd");
-        f();
-        env::set_current_dir(prev).expect("restore cwd");
+        GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(tmp.path().to_path_buf()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        GOAL_BASE_DIR.with(|b| *b.borrow_mut() = None);
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
     }
 
     #[test]
@@ -584,10 +591,10 @@ mod tests {
     #[serial]
     fn test_save_creates_directory() {
         with_temp_dir(|| {
-            assert!(!Path::new(".yoyo").exists());
+            assert!(!goal_base().join(".yoyo").exists());
             save_goal("test goal").unwrap();
-            assert!(Path::new(".yoyo").exists());
-            assert!(Path::new(GOAL_FILE).exists());
+            assert!(goal_base().join(".yoyo").exists());
+            assert!(goal_path().exists());
         });
     }
 
@@ -615,8 +622,8 @@ mod tests {
     #[serial]
     fn test_load_goal_empty_file() {
         with_temp_dir(|| {
-            fs::create_dir_all(".yoyo").unwrap();
-            fs::write(GOAL_FILE, "   \n  \n").unwrap();
+            fs::create_dir_all(goal_base().join(".yoyo")).unwrap();
+            fs::write(goal_path(), "   \n  \n").unwrap();
             assert!(load_goal().is_none());
         });
     }
@@ -825,7 +832,7 @@ mod tests {
             assert!(load_verify_command().is_some());
             clear_verify_command().unwrap();
             assert!(load_verify_command().is_none());
-            assert!(!Path::new(VERIFY_FILE).exists());
+            assert!(!verify_path().exists());
         });
     }
 
