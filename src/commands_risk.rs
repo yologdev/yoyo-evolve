@@ -2921,7 +2921,10 @@ mod tests {
             dropped: 2,
         })
         .expect("dropped > 0 must be reported");
-        assert!(line.contains(RISK_SNAPSHOT_PATH), "names the path: {line:?}");
+        assert!(
+            line.contains(RISK_SNAPSHOT_PATH),
+            "names the path: {line:?}"
+        );
         assert!(line.contains('2'), "names how many were dropped: {line:?}");
         assert!(
             line.contains("only the rest"),
@@ -2938,7 +2941,10 @@ mod tests {
             dropped: 5,
         })
         .expect("all-corrupt must be reported");
-        assert!(line.contains(RISK_SNAPSHOT_PATH), "names the path: {line:?}");
+        assert!(
+            line.contains(RISK_SNAPSHOT_PATH),
+            "names the path: {line:?}"
+        );
         assert!(line.contains('5'), "names the line count: {line:?}");
         assert!(
             line.contains("exists"),

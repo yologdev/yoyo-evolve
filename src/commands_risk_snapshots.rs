@@ -606,7 +606,8 @@ fn auto_validate_after_failure_to(
 pub(crate) use crate::commands_risk_parse::{
     ci_event_exists_for, load_validation_history_from, parse_all_snapshots, parse_failed_ci_runs,
     parse_graded_events, parse_validation_events, read_snapshot_ledger, read_validation_ledger,
-    snapshot_before, GradedEvent, ParsedSnapshot, SnapshotLedger, ValidationEvent, ValidationLedger,
+    snapshot_before, GradedEvent, ParsedSnapshot, SnapshotLedger, ValidationEvent,
+    ValidationLedger,
 };
 
 #[cfg(test)]
