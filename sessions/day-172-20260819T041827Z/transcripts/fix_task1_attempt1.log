@@ -1,0 +1,170 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small, concrete improvement and commit it. Let me start by checking state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && ls src/ | head … ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PR_SUBCOMMANDS" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "dir_restrictions" src/… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 190,205p src/commands.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 145,240p src/commands_git… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,145p src/commands_git_p… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PrSubcommand::Help" -A … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 30.6s (8 ✓)
+
+Found a concrete defect: /pr's usage block documents only the number-first forms, while PR_SUBCOMMANDS (tab completion) and the parser both support verb-first. Let me confirm the third surface.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=771 && NR<=800' src/hel… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:771..801 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs:378..406 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12.2s (4 ✓)
+
+Now the fix — extract the usage text into a pure function that documents both forms, and pin it against PR_SUBCOMMANDS.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs (11 → 3 lines)
+            PrSubcommand::Help => {
+  -             println!("{DIM}  usage: /pr                         List open pull requests");
+  -             println!(
+  -                 "         /pr create [--draft]        Create PR with AI-generated description"
+  -             );
+  -             println!("         /pr <number>                View details of a specific PR");
+  -             println!("         /pr <number> diff           Show the diff of a PR");
+  -             println!("         /pr <number> review         AI-powered code review of a PR");
+  -             println!("         /pr <number> comment <text> Add a comment to a PR");
+  -             println!("         /pr <number> checkout       Checkout a PR locally{RESET}\n");
+  +             println!("{DIM}{}{RESET}\n", pr_usage_text());
+            }
+ ✓ (12.2s)
+            PrSubcommand::Help => {
+  -             println!("{DIM}  usage: /pr                         List open pull requests");
+  -             println!(
+  -                 "         /pr create [--draft]        Create PR with AI-generated description"
+  -             );
+  -             println!("         /pr <number>                View details of a specific PR");
+  -             println!("         /pr <number> diff           Show the diff of a PR");
+  -             println!("         /pr <number> review         AI-powered code review of a PR");
+  ... (4 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `pr_usage_text` in this scope[0m
+   [1m[94m--> [0msrc/commands_git_pr.rs:389:42
+    [1m[94m|[0m
+[1m[94m389[0m [1m[94m|[0m             println!("{DIM}{}{RESET}\n", pr_usage_text());
+    [1m[94m|[0m                                          [1m[91m^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The call site is in place but the function itself isn't defined yet. Adding it now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs (1 → 33 lines)
+  + /// The usage block printed when `/pr` cannot parse its arguments.
+  + ///
+  + /// Kept as one pure function so the text can be asserted in a test. It
+  + /// documents **both** accepted shapes: the verb-first forms, which are the
+  + /// vocabulary `commands::PR_SUBCOMMANDS` offers at the `/pr <Tab>` prompt, and
+  + /// the older number-first forms, which still parse. Before this the block
+  + /// listed only the number-first forms, so a user who tab-completed `/pr view`
+  + /// and then mistyped was shown a vocabulary that did not contain the word the
+  + /// completion had just handed them — the same three-source disagreement shape
+  + /// as #745 (`/test` args) and #767 (`/ast` path).
+  + pub(crate) fn pr_usage_text() -> String {
+  +     let mut out = String::from("  usage: /pr                        List open pull requests\n");
+  +     for line in [
+  +         "         /pr list                   List open pull requests",
+  +         "         /pr view <n>               View details of a specific PR",
+  +         "         /pr diff <n>               Show the diff of a PR",
+  +         "         /pr review <n> [--post]    AI code review (--post adds inline comments)",
+  +         "         /pr comment <n> <text>     Add a comment to a PR",
+  +         "         /pr checkout <n>           Checkout a PR locally",
+  +         "         /pr create [--draft]       Create PR with AI-generated description",
+  ... (13 more lines)
+ ✓ (1m 42s)
+  + /// The usage block printed when `/pr` cannot parse its arguments.
+  + ///
+  + /// Kept as one pure function so the text can be asserted in a test. It
+  + /// documents **both** accepted shapes: the verb-first forms, which are the
+  + /// vocabulary `commands::PR_SUBCOMMANDS` offers at the `/pr <Tab>` prompt, and
+  + /// the older number-first forms, which still parse. Before this the block
+  + /// listed only the number-first forms, so a user who tab-completed `/pr view`
+  + /// and then mistyped was shown a vocabulary that did not contain the word the
+  ... (13 more lines)
+
+Now the drift-guard test pinning it against PR_SUBCOMMANDS:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '432,442p' src/commands_g… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_pr.rs (5 → 27 lines)
+        fn parse_pr_args_empty_is_list() {
+            assert_eq!(parse_pr_args(""), PrSubcommand::List);
+            assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+  +     }
+  + 
+  +     #[test]
+  +     /// The usage block a user hits after a typo must name every verb the
+  +     /// `/pr <Tab>` completion offers. `PR_SUBCOMMANDS` is the authority here —
+  +     /// read from the const, never hand-copied — so adding an eighth verb fails
+  +     /// this test instead of silently leaving the usage text behind.
+  +     fn pr_usage_text_documents_every_completion_verb() {
+  +         let usage = pr_usage_text();
+  +         for verb in crate::commands::PR_SUBCOMMANDS {
+  +             assert!(
+  +                 usage.contains(&format!("/pr {verb}")),
+  +                 "/pr usage block does not document the completion verb `{verb}`:\n{usage}"
+  +             );
+  +         }
+  +         // The older number-first shape still parses, so it stays documented.
+  +         assert!(
+  ... (7 more lines)
+ ✓ (1m 42s)
+        fn parse_pr_args_empty_is_list() {
+            assert_eq!(parse_pr_args(""), PrSubcommand::List);
+            assert_eq!(parse_pr_args("  "), PrSubcommand::List);
+  +     }
+  + 
+  +     #[test]
+  +     /// The usage block a user hits after a typo must name every verb the
+  +     /// `/pr <Tab>` completion offers. `PR_SUBCOMMANDS` is the authority here —
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (59.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 2s (5 ✓)
+
+All green. Verifying the guard is non-vacuous, then documenting and committing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash -q && cargo test pr_us… ✓ (23.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_git_pr.rs /tmp/p… ✓ (48.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 17s (2 ✓)
+
+The guard genuinely fires. Now the doc note and commit.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#757" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`commands_goal.rs\`… ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
