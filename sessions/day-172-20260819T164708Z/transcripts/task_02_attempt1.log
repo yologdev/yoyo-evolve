@@ -1,0 +1,274 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the ledger to understand the null-round lines, then the existing parser.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (29ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 49.6s (4 ✓)
+
+(round, target) is the key that actually works — (round, day) false-positives round 43 (started day 165, graded day 166). Let me look at the code.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tally_hypothesis_famili… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,470p src/commands_ris… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 470,560p src/commands_ris… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_epistemic_repor… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 26.4s (4 ✓)
+
+Now the implementation. First the pure half:
+
+  error: tool call(s) with unusable arguments, not executed: `read_file` ({"path": "/home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs", "offset": 300, , "limit": 32})
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,135p src/commands_ris… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the implementation:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 102 lines)
+  + /// A blind round that was *started* and never graded — an `experiment` line
+  + /// with no `experiment_result` line under the same composite key.
+  + ///
+  + /// `round` is `Option` on purpose: the seven earliest rounds (days 150–153)
+  + /// predate the `round` field entirely and carry `None`, which is a real key
+  + /// component here, not a parse failure.
+  + #[derive(Debug, Clone, PartialEq, Eq, Default)]
+  + pub(crate) struct UngradedRound {
+  +     /// Hand-assigned round number, or `None` for the pre-`round`-field rounds.
+  +     pub(crate) round: Option<i64>,
+  +     /// Day the round was started. Display only — never part of the key, see
+  +     /// [`ungraded_rounds`].
+  +     pub(crate) day: Option<i64>,
+  +     /// The file the round studied. Half of the composite key.
+  +     pub(crate) target: String,
+  + }
+  + 
+  + /// The result of scanning the ledger for started-but-never-graded rounds.
+  + /// The excluded count is carried beside the findings so an unkeyable line is
+  + /// *counted* rather than silently dropped (Day 144: absence gets its own name).
+  ... (82 more lines)
+ ✓ (20.2s)
+  + /// A blind round that was *started* and never graded — an `experiment` line
+  + /// with no `experiment_result` line under the same composite key.
+  + ///
+  + /// `round` is `Option` on purpose: the seven earliest rounds (days 150–153)
+  + /// predate the `round` field entirely and carry `None`, which is a real key
+  + /// component here, not a parse failure.
+  + #[derive(Debug, Clone, PartialEq, Eq, Default)]
+  + pub(crate) struct UngradedRound {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the consumer, in the same diff:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 7 lines)
+        /// existed. Counted and disclosed, never back-filled — rewriting history
+        /// in the ledger would manufacture evidence.
+        pub(crate) experiments_without_hypotheses: usize,
+  +     /// Rounds started and never graded — see [`ungraded_rounds`]. Detection
+  +     /// only: the meter says a round is owed, it does not grade it.
+  +     pub(crate) ungraded: UngradedScan,
+    }
+ ✓ (20.3s)
+        /// existed. Counted and disclosed, never back-filled — rewriting history
+        /// in the ledger would manufacture evidence.
+        pub(crate) experiments_without_hypotheses: usize,
+  +     /// Rounds started and never graded — see [`ungraded_rounds`]. Detection
+  +     /// only: the meter says a round is owed, it does not grade it.
+  +     pub(crate) ungraded: UngradedScan,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 6 lines)
+        /// Nothing to say at all — no graded hypotheses and no predating results.
+        pub(crate) fn is_empty(&self) -> bool {
+  -         self.total_graded() == 0 && self.experiments_without_hypotheses == 0
+  +         self.total_graded() == 0
+  +             && self.experiments_without_hypotheses == 0
+  +             && self.ungraded.ungraded.is_empty()
+        }
+ ✓ (20.3s)
+        /// Nothing to say at all — no graded hypotheses and no predating results.
+        pub(crate) fn is_empty(&self) -> bool {
+  -         self.total_graded() == 0 && self.experiments_without_hypotheses == 0
+  +         self.total_graded() == 0
+  +             && self.experiments_without_hypotheses == 0
+  +             && self.ungraded.ungraded.is_empty()
+        }
+  2 tools completed in 47.1s (2 ✓)
+
+Now populate it in tally_hypothesis_families and render it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (7 → 10 lines)
+                out.experiments_without_hypotheses += 1;
+            }
+        }
+  + 
+  +     // Same ledger text, same read: which rounds were started and never graded.
+  +     out.ungraded = ungraded_rounds(ledger_text);
+    
+        out
+    }
+ ✓ (1m 53s)
+                out.experiments_without_hypotheses += 1;
+            }
+        }
+  + 
+  +     // Same ledger text, same read: which rounds were started and never graded.
+  +     out.ungraded = ungraded_rounds(ledger_text);
+    
+        out
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_ENTRY_RE\s*=\… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 51 lines)
+        out.push_str(&format!(
+            "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
+        ));
+  +     if let Some(line) = format_ungraded_rounds(&fam.ungraded) {
+  +         out.push_str(&line);
+  +     }
+        out
+  + }
+  + 
+  + /// One line naming the rounds that were started and never graded, or `None`
+  + /// when the ledger is clean — a clean ledger prints nothing, so the common
+  + /// path stays byte-identical.
+  + ///
+  + /// Detection only: this says a round is *owed*, it never grades one and never
+  + /// writes to the ledger. The wording deliberately contains no `never forecast`
+  + /// substring and matches neither of `scripts/extract_trajectory.py`'s row
+  + /// regexes, so the planner's collection (which has already hard-stopped above
+  + /// this block) is unaffected.
+  + fn format_ungraded_rounds(scan: &UngradedScan) -> Option<String> {
+  +     if scan.ungraded.is_empty() {
+  ... (31 more lines)
+ ✓ (1m 53s)
+        out.push_str(&format!(
+            "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
+        ));
+  +     if let Some(line) = format_ungraded_rounds(&fam.ungraded) {
+  +         out.push_str(&line);
+  +     }
+        out
+  + }
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (56.1s)
+  4 tools completed in 5m 11s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4977 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_client_headers_anthropic ......
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (198ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (169ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+Module-size gate — 64 lines over, past the grace band. I won't grandfather it; I'll follow the commands_risk_neverforecast.rs precedent and extract the detector into its own small sibling.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "UngradedRound\|Ungraded… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '285,388p' src/commands_r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '285,384p' src/commands_r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '665,709p' src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '665,707p' src/commands_r… ✓ (6ms)
+  5 tools completed in 13.3s (5 ✓)
+
+Both slices are clean. Building the new module:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && { cat <<'EOF… (22 lines) ✓ (9ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+New module written; now remove those slices from the parent (later range first) and wire it up.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,26p' src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '23,30p' src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (5.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (4.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (4.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^fn format_ungraded_ro… ✓ (9.5s)
+  7 tools completed in 46.8s (7 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (9.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Builds. Now the tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_risk_epist… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (155 lines) ✓ (22.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 52.8s (2 ✓)
+
+Now the emission-point test on format_experiment_families itself (private, so it lives in the parent's test module):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1755,1790p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (58 lines) ✓ (22.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_famil… ✓ (149ms)
+  3 tools completed in 41.1s (3 ✓)
+
+Now the full gate, plus the live proof:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 49s)
+
+  ✗ Watch still failing after 3 attempts — manual fix needed
+

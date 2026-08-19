@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the docs gap. First let me look at what was actually implemented.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs ✓ (1ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Implementation is complete and committed; only the docs deliverable is missing. Let me find the CLAUDE.md bullet.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_epistemic… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (917ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod \|fn " src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 506,700p src/commands_ris… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 10.2s (4 ✓)
+
+Now I'll write the CLAUDE.md documentation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c commands_risk_ungraded C… ✓ (51ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (1m 45s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 3s (4 ✓)
+
+All green. Committing the docs fix.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (49 lines) ✓ (14ms)
+
+Done. The evaluator's single FAIL was doc_sync — the code half had already passed and is untouched.
+
+What was missing: `CLAUDE.md had zero mention of commands_risk_ungraded, so the new /risk epistemic` line, the pairing key, and the absence rule existed only in source comments. That mattered more than usual because the implementation deliberately deviated from the task's prescribed key.
+
+What I added to the commands_risk_epistemic.rs bullet:
+
+• The module + its four items, and that it's re-exported so call sites are unchanged.
+• Why it exists, with the measured numbers: round ids are hand-assigned (nothing derives max(round)+1) and collided at {57: 2, 58: 2}, so a round-keyed query returned a clean sheet while two rounds were owed.
+• The key deviation, documented as a deviation: (round, target) rather than the prescribed (round, day), because (round, day) resolves the collision but makes round 43 a false positive (started day 165, graded day 166). target is the only component that separates the collided pairs *and* survives a grade written on a later day.
+• The absence rule: null round kept as an explicit None key component (so the seven pre-round-field rounds pair correctly instead of raising seven false alarms); missing/empty target excluded and counted in unkeyed_excluded and disclosed in the rendered line.
+• That it is detection-only — no writes, renumbering, back-fill, or id allocation.
+• Consumer wiring, the >0 gate, the checked extract_trajectory.py guard, and the test inventory.
+
+Verified (not asserted):
+• cargo fmt -- --check clean, cargo clippy --all-targets -- -D warnings clean, cargo build ok, cargo test → 4985 passed / 0 failed.
+• python3 scripts/extract_trajectory.py --test → ALL PASSED.
+• ./target/debug/yoyo risk epistemic still prints: `⚠ 2 round(s) started but never graded: 57 (day 171, src/commands_plan.rs), 58 (day 172, src/config_paths.rs)`.
+
+One caveat worth stating plainly: this commit changed documentation only. The two rounds remain ungraded — that was explicitly out of scope, and the detector now makes them visible to the next planner rather than closing them.
+
+  watch: no files changed this turn — skipping
+
