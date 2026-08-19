@@ -271,9 +271,27 @@ pub(crate) async fn tee_prompt_messages(
 //
 // LANDED HERE: `session-start`, `task` (plus the `ensure_goal` helper they
 // share) and, since Day 168, `session-end`. STILL ONLY IN `tools/gasp-emit`:
-// `task-result` — it names `ProjectRef`, `ArtifactRef` and `PatchStatus`, none
-// of which appear anywhere in the published yoagent 0.16.3 source (grepped, no
-// matches), so it is unreachable from yoyo today rather than merely unwritten.
+// `task-result` — UNPORTED, but **NOT BLOCKED**. Read those as two facts.
+//
+// This comment used to say `task-result` was *unreachable*, because it names
+// `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of which appear
+// anywhere in the published yoagent 0.16.3 source (grepped, no matches)". That
+// was true against 0.16.3 and went stale when the pin moved: `Cargo.lock` now
+// resolves yoagent 0.16.5, where all three are re-exported from
+// `yoagent::gasp`. Re-check in ten seconds rather than trusting this sentence:
+//
+//   $ grep -A1 'name = "yoagent"' Cargo.lock   → version = "0.16.5"
+//   $ grep -rn 'ProjectRef' ~/.cargo/registry/src/*/yoagent-0.16.5/src/
+//
+// (each of the three appears in the `pub use yoagent_state::{…}` re-export
+// block of `yoagent-0.16.5/src/gasp.rs`; they are *defined* in
+// `yoagent-state-0.4.1`, so a grep across both crates counts 4/8/5 files.)
+// The stale sentence is recorded rather than deleted because it is *why*
+// #765, #782, #785, #787 and #789 each opened this file, believed an
+// authoritative "impossible", and exited without a diff. The corrected claim
+// carries the `yoagent-version-claim` marker in the module doc above, pinned
+// to `Cargo.lock` by `tests/gasp_doc_version.rs`.
+//
 // This half is a prefix of the sequence, not a replacement for the sidecar.
 //
 // Everything below ships DORMANT: nothing calls `session_start` /
