@@ -1178,7 +1178,16 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // ends with no closing text as "stopped mid-work" and auto-continue it.
     // Off by default because some providers legitimately finish quietly, and a
     // default that loops on them would be worse than the ambiguity it fixes.
-    if args.iter().any(|a| a == "--continue-on-silence") {
+    //
+    // Two sources reach this one switch (#794): the CLI flag, and the
+    // `continue_on_silence` config key. It is a plain OR — there is no "off"
+    // flag, so either source alone enables it and neither leaves it off,
+    // byte-identical to the pre-#794 default. The config door exists because
+    // some callers cannot pass a flag at all (an evolve-loop agent is piped
+    // by a protected script), and `.yoyo.toml` is a file the user authors.
+    if args.iter().any(|a| a == "--continue-on-silence")
+        || crate::config::parse_continue_on_silence_from_config(&file_config)
+    {
         set_continue_on_silence();
     }
 
