@@ -29,6 +29,14 @@ pub(crate) use crate::commands_risk_neverforecast::{
     NEVER_FORECAST_SAMPLE,
 };
 
+// The started-but-never-graded detector lives in its own module for the same
+// reason (Day 172): this file was at the fatal 2000-line cap and the detector
+// had to land without raising the ceiling. Re-exported so call sites and tests
+// keep naming it through this module.
+pub(crate) use crate::commands_risk_ungraded::{
+    format_ungraded_rounds, ungraded_rounds, UngradedScan,
+};
+
 /// Weight for "predicted but never graded" — the strongest blindness signal:
 /// the model has made claims about this file that no outcome ever tested.
 pub(crate) const W_NEVER_GRADED: f64 = 2.0;
@@ -350,6 +358,9 @@ pub(crate) struct ExperimentFamilies {
     /// existed. Counted and disclosed, never back-filled — rewriting history
     /// in the ledger would manufacture evidence.
     pub(crate) experiments_without_hypotheses: usize,
+    /// Rounds started and never graded — see [`ungraded_rounds`]. Detection
+    /// only: the meter says a round is owed, it does not grade it.
+    pub(crate) ungraded: UngradedScan,
 }
 
 impl ExperimentFamilies {
@@ -362,7 +373,9 @@ impl ExperimentFamilies {
 
     /// Nothing to say at all — no graded hypotheses and no predating results.
     pub(crate) fn is_empty(&self) -> bool {
-        self.total_graded() == 0 && self.experiments_without_hypotheses == 0
+        self.total_graded() == 0
+            && self.experiments_without_hypotheses == 0
+            && self.ungraded.ungraded.is_empty()
     }
 }
 
@@ -462,6 +475,9 @@ pub(crate) fn tally_hypothesis_families(ledger_text: &str) -> ExperimentFamilies
         }
     }
 
+    // Same ledger text, same read: which rounds were started and never graded.
+    out.ungraded = ungraded_rounds(ledger_text);
+
     out
 }
 
@@ -547,6 +563,9 @@ fn format_experiment_families(fam: &ExperimentFamilies) -> String {
     out.push_str(&format!(
         "    {DIM}commonly have the defect — true of a stranger's file too, so it proves no self-model.{RESET}\n"
     ));
+    if let Some(line) = format_ungraded_rounds(&fam.ungraded) {
+        out.push_str(&line);
+    }
     out
 }
 
@@ -1754,6 +1773,60 @@ mod tests {
             report.contains("2 graded hypotheses"),
             "total counts the genre-prior entry: {report}"
         );
+    }
+
+    /// Emission point for the slip detector: the block a reader actually
+    /// receives names the owed rounds, and says nothing at all when the ledger
+    /// is clean. `tally_hypothesis_families` reads the same ledger text once,
+    /// so the detector rides the existing `/risk epistemic` surface.
+    #[test]
+    fn test_family_block_names_ungraded_rounds_and_is_silent_when_clean() {
+        let graded_round = concat!(
+            r#"{"type":"experiment","round":57,"day":169,"target":"src/docs.rs","hypotheses":[{"id":"h1","provenance":"file_specific","claim":"c"}]}"#,
+            "\n",
+            r#"{"type":"experiment_result","round":57,"day":169,"target":"src/docs.rs","graded":"hit","hypothesis_grades":[{"id":"h1","graded":"hit"}]}"#,
+            "\n",
+        );
+        // Clean ledger: the block renders, the warning does not.
+        let clean = format_experiment_families(&tally_hypothesis_families(graded_round));
+        assert!(clean.contains("chosen-experiment record"), "{clean}");
+        assert!(
+            !clean.contains("never graded"),
+            "a clean ledger prints no warning: {clean}"
+        );
+
+        // Same ledger plus the colliding round 57 that was never graded.
+        let slipped = format!(
+            concat!(
+                "{}",
+                r#"{{"type":"experiment","round":57,"day":171,"target":"src/commands_plan.rs"}}"#,
+                "\n",
+                r#"{{"type":"experiment","round":58,"day":172,"target":"src/config_paths.rs"}}"#,
+                "\n",
+            ),
+            graded_round
+        );
+        let report = format_experiment_families(&tally_hypothesis_families(&slipped));
+        assert!(
+            report.contains("2 round(s) started but never graded"),
+            "{report}"
+        );
+        assert!(
+            report.contains("57 (day 171, src/commands_plan.rs)"),
+            "{report}"
+        );
+        assert!(
+            report.contains("58 (day 172, src/config_paths.rs)"),
+            "{report}"
+        );
+        // The graded twin is not reported as owed.
+        assert!(
+            !report.contains("57 (day 169"),
+            "the graded round 57 is not owed: {report}"
+        );
+        // Consumer guard: `scripts/extract_trajectory.py` hard-stops above this
+        // block on `never forecast` and matches rows on `N. path score` / `◦`.
+        assert!(!report.contains("never forecast"), "{report}");
     }
 
     /// `genre_prior` declared on the `experiment` line is the fallback when the

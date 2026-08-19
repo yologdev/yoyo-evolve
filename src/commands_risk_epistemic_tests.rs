@@ -495,3 +495,162 @@ mod study_tier_tests {
         }
     }
 }
+
+/// The ledger's own slip detector — [`crate::commands_risk_ungraded`].
+///
+/// Round ids in `dreams/experiments.jsonl` are hand-assigned and have collided
+/// (measured over the live ledger: `{57: 2, 58: 2}`), so a "which rounds lack a
+/// result" query keyed on `round` alone comes back empty while rounds are
+/// genuinely owed. These tests pin the composite key that fixes it.
+#[cfg(test)]
+mod ungraded_round_tests {
+    use crate::commands_risk_epistemic::{format_ungraded_rounds, ungraded_rounds};
+    use crate::commands_risk_ungraded::{UngradedRound, UngradedScan};
+
+    fn exp(round: &str, day: i64, target: &str) -> String {
+        format!(r#"{{"type":"experiment","round":{round},"day":{day},"target":"{target}"}}"#)
+    }
+    fn res(round: &str, day: i64, target: &str) -> String {
+        format!(
+            r#"{{"type":"experiment_result","round":{round},"day":{day},"target":"{target}","graded":"h1 HIT"}}"#
+        )
+    }
+
+    /// **The regression guard tied to the defect.** Round 57 appears twice —
+    /// day 169 on `src/docs.rs` (graded) and day 171 on `src/commands_plan.rs`
+    /// (not graded). Keyed on `round` alone the graded twin answers for its
+    /// namesake and this comes back empty; keyed on `(round, target)` exactly
+    /// the ungraded one is reported, and it is the *right* one.
+    #[test]
+    fn collided_round_id_reports_only_the_ungraded_twin() {
+        let ledger = [
+            exp("57", 169, "src/docs.rs"),
+            res("57", 169, "src/docs.rs"),
+            exp("57", 171, "src/commands_plan.rs"),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert_eq!(
+            scan.ungraded,
+            vec![UngradedRound {
+                round: Some(57),
+                day: Some(171),
+                target: "src/commands_plan.rs".to_string(),
+            }],
+            "the graded twin must not answer for its ungraded namesake"
+        );
+        assert_eq!(scan.unkeyed_excluded, 0);
+    }
+
+    /// A grade written the *next morning* is still a grade. This is why the key
+    /// is `(round, target)` and not `(round, day)`: live round 43 started on day
+    /// 165 and was graded on day 166, and `(round, day)` calls that ungraded.
+    #[test]
+    fn grade_written_on_a_later_day_still_counts() {
+        let ledger = [
+            exp("43", 165, "src/commands_lint.rs"),
+            res("43", 166, "src/commands_lint.rs"),
+        ]
+        .join("\n");
+        assert!(ungraded_rounds(&ledger).ungraded.is_empty());
+    }
+
+    #[test]
+    fn fully_graded_ledger_is_empty() {
+        let ledger = [
+            exp("1", 100, "src/a.rs"),
+            res("1", 100, "src/a.rs"),
+            exp("2", 101, "src/b.rs"),
+            res("2", 101, "src/b.rs"),
+        ]
+        .join("\n");
+        assert_eq!(ungraded_rounds(&ledger), UngradedScan::default());
+    }
+
+    /// A null `round` is a real key component, not a parse failure — the seven
+    /// pre-`round`-field rounds of days 150–153 pair with their results this
+    /// way instead of being reported as seven false alarms.
+    #[test]
+    fn null_round_pairs_by_target_and_is_not_a_false_alarm() {
+        let ledger = [
+            exp("null", 150, "src/commands_fork.rs"),
+            res("null", 150, "src/commands_fork.rs"),
+            exp("null", 152, "src/banner.rs"),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert_eq!(
+            scan.ungraded,
+            vec![UngradedRound {
+                round: None,
+                day: Some(152),
+                target: "src/banner.rs".to_string(),
+            }]
+        );
+    }
+
+    /// A line with no usable target cannot be keyed at all, so it is excluded
+    /// and *counted* — it never vanishes (Day 144).
+    #[test]
+    fn targetless_experiment_is_excluded_and_counted() {
+        let ledger = [
+            r#"{"type":"experiment","round":9,"day":170}"#.to_string(),
+            r#"{"type":"experiment","round":10,"day":170,"target":"   "}"#.to_string(),
+            exp("11", 170, "src/kept.rs"),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert_eq!(scan.unkeyed_excluded, 2);
+        assert_eq!(scan.ungraded.len(), 1);
+        assert_eq!(scan.ungraded[0].target, "src/kept.rs");
+    }
+
+    #[test]
+    fn malformed_and_empty_lines_contribute_nothing() {
+        let ledger = format!(
+            "not json\n\n   \n{{\"type\":\"experiment\",\"round\":1,\n{}\n{}",
+            exp("5", 160, "src/x.rs"),
+            res("5", 160, "src/x.rs")
+        );
+        assert!(ungraded_rounds(&ledger).ungraded.is_empty());
+        assert!(ungraded_rounds("").ungraded.is_empty());
+    }
+
+    // --- emission point: the string a reader actually receives ---------------
+
+    #[test]
+    fn rendered_line_names_the_rounds_and_their_targets() {
+        let scan = ungraded_rounds(
+            &[
+                exp("57", 169, "src/docs.rs"),
+                res("57", 169, "src/docs.rs"),
+                exp("57", 171, "src/commands_plan.rs"),
+                exp("58", 172, "src/config_paths.rs"),
+            ]
+            .join("\n"),
+        );
+        let line = format_ungraded_rounds(&scan).expect("two rounds are owed");
+        assert!(
+            line.contains("2 round(s) started but never graded"),
+            "{line}"
+        );
+        assert!(
+            line.contains("57 (day 171, src/commands_plan.rs)"),
+            "{line}"
+        );
+        assert!(line.contains("58 (day 172, src/config_paths.rs)"), "{line}");
+        // The graded twin's target must not be named as owed.
+        assert!(!line.contains("src/docs.rs"), "{line}");
+        // Consumer guard: invisible to `scripts/extract_trajectory.py`.
+        assert!(!line.contains("never forecast"), "{line}");
+    }
+
+    /// A clean ledger prints nothing at all, so the common path stays
+    /// byte-identical to before this detector existed.
+    #[test]
+    fn clean_ledger_renders_nothing() {
+        let scan =
+            ungraded_rounds(&[exp("1", 100, "src/a.rs"), res("1", 100, "src/a.rs")].join("\n"));
+        assert!(format_ungraded_rounds(&scan).is_none());
+    }
+}

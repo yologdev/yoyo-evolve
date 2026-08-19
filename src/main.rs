@@ -71,6 +71,7 @@ mod commands_risk_neverforecast;
 mod commands_risk_parse;
 mod commands_risk_report;
 mod commands_risk_snapshots;
+mod commands_risk_ungraded;
 mod commands_risk_weights;
 mod commands_run;
 mod commands_search;

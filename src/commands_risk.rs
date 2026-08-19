@@ -152,8 +152,11 @@ fn build_test_reference_map() -> std::collections::HashMap<String, u32> {
             let mut search_pos = 0;
             while let Some(idx) = trimmed[search_pos..].find("crate::") {
                 let abs_idx = search_pos + idx;
-                // Skip if this is part of a `use crate::` (already handled above)
-                if abs_idx >= 4 && &trimmed[abs_idx - 4..abs_idx] == "use " {
+                // Skip if this is part of a `use crate::` (already handled above).
+                // `ends_with` on the prefix, never `trimmed[abs_idx - 4..abs_idx]`:
+                // `abs_idx - 4` can land inside a multi-byte char (e.g. a line
+                // reading "… — [`crate::foo`]") and byte-slicing there panics.
+                if trimmed[..abs_idx].ends_with("use ") {
                     search_pos = abs_idx + 7;
                     continue;
                 }
