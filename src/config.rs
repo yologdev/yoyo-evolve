@@ -1056,35 +1056,77 @@ pub fn user_config_path() -> Option<std::path::PathBuf> {
     dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
 }
 
+/// A base-directory environment value is usable only when it is non-empty
+/// **and** absolute.
+///
+/// The XDG Base Directory spec states both rules: an unset *or empty*
+/// `XDG_*_HOME` must fall back to the `$HOME` default, and "if an
+/// implementation encounters a relative path in any of these variables it
+/// should consider the path invalid and ignore it".
+///
+/// Both cases used to be accepted verbatim, and both fail the same way: they
+/// produce a **relative** base dir, which every later `join` resolves against
+/// the *process cwd* instead of the user's home. `XDG_CONFIG_HOME=""` made
+/// `user_config_path()` return `yoyo/config.toml` — so yoyo would read a file
+/// out of whatever repo it happened to be started in and treat it as the
+/// user's own XDG config, walking straight past the project-config trust
+/// boundary (#748/#749), and `history_file_path()` would scatter a
+/// `yoyo/history` directory into the cwd.
+///
+/// Returning `None` here means "fall back", never "guess" — an unusable value
+/// is treated exactly like an unset one.
+fn usable_base_dir(value: Option<&str>) -> Option<&str> {
+    let value = value?;
+    if value.is_empty() || !std::path::Path::new(value).is_absolute() {
+        return None;
+    }
+    Some(value)
+}
+
+/// Resolve an XDG base dir from its env value, falling back to `$HOME` plus
+/// the given path segments when the env value is unset or unusable.
+///
+/// Pure: both env values are parameters, so the decision is table-testable
+/// without touching the process environment.
+fn xdg_base_dir(
+    xdg: Option<&str>,
+    home: Option<&str>,
+    home_fallback: &[&str],
+) -> Option<std::path::PathBuf> {
+    if let Some(dir) = usable_base_dir(xdg) {
+        return Some(std::path::PathBuf::from(dir));
+    }
+    let home = usable_base_dir(home)?;
+    let mut path = std::path::PathBuf::from(home);
+    for segment in home_fallback {
+        path.push(segment);
+    }
+    Some(path)
+}
+
+/// `$HOME` as a usable absolute base dir, or `None`.
+fn home_dir() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    usable_base_dir(Some(home.as_str())).map(std::path::PathBuf::from)
+}
+
 /// Home directory config path: `~/.yoyo.toml`.
 pub fn home_config_path() -> Option<std::path::PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| std::path::PathBuf::from(h).join(".yoyo.toml"))
+    home_dir().map(|h| h.join(".yoyo.toml"))
 }
 
 /// Best-effort XDG config dir (~/.config on Linux/macOS).
 fn dirs_hint() -> Option<std::path::PathBuf> {
-    std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| std::path::PathBuf::from(h).join(".config"))
-        })
+    let xdg = std::env::var("XDG_CONFIG_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    xdg_base_dir(xdg.as_deref(), home.as_deref(), &[".config"])
 }
 
 /// Best-effort XDG data dir (~/.local/share on Linux/macOS).
 fn data_dir_hint() -> Option<std::path::PathBuf> {
-    std::env::var("XDG_DATA_HOME")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
-        })
+    let xdg = std::env::var("XDG_DATA_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    xdg_base_dir(xdg.as_deref(), home.as_deref(), &[".local", "share"])
 }
 
 /// Get the path for the readline history file.
