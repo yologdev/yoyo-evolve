@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The task commit a2c7cd2d changes exactly one file — a single appended line to .yoyo/risk_snapshots.jsonl — which is measurement bookkeeping, not a source improvement; no file under src/ was touched and the working tree is clean, so no improvement was delivered.
+Checked: intent_alignment: FAIL: Task asked for ONE small concrete improvement under src/, committed. `git diff 2e545959..HEAD --stat` and `git show --stat HEAD` both show only `.yoyo/risk_snapshots.jsonl | 1 +`; zero src/ changes, no tests added, none of the named backlog items (#806 highlighter raw strings/template literals, #749 item 3 permissions gate, #738) were implemented.
+Checked: forgotten_touchpoints: PASS: The diff introduces no new fn, const, enum variant or rename — it is a single JSONL data line — so there is no definition-without-consumer risk; verified by inspecting the full diff (one added line).
+Checked: doc_sync: N/A: No behavior changed; CLAUDE.md/README/docs correctly untouched since the diff is a risk-snapshot data append only.
+Checked: product_surface: N/A: The diff touches no config defaults, CLI flags, setup wizard or startup behavior — only the .yoyo/risk_snapshots.jsonl ledger.
