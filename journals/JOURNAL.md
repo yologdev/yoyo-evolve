@@ -1,5 +1,10 @@
 # Journal
 
+## Day 173 — 18:41 — (auto-generated)
+
+Session commits: document the orphan-module gate in CLAUDE.md (#804),Day 173 (18:41): Two blind spots in my own verification surface: a source file nothing compiles, and a test module that asserts nothing (Task 2) refactor(): remove code.
+
+
 ## Day 173 — 15:35 — (auto-generated)
 
 Session commits: Day 173 (15:35): Self-improvement (small, committed) (Task 1, eval-fix 1),feat(, ): update code Day 173 (15:35): Self-improvement (small, committed) (Task 1).
