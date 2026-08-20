@@ -1937,32 +1937,3 @@ mod tests {
         }
     }
 }
-
-#[cfg(test)]
-mod scratch_probe {
-    use super::*;
-    #[test]
-    fn probe() {
-        let mut st = HighlightState::default();
-        for l in ["let a = 1; /* open", "  body ✓ let", "still */ let b = 2;"] {
-            println!(
-                "{:?} -> {:?} depth={}",
-                l,
-                highlight_code_line_with("rust", l, &mut st),
-                st.block_comment_depth
-            );
-        }
-        println!(
-            "stateless same-line: {:?}",
-            highlight_code_line("rust", "let a = 1; /* c */ let b = 2;")
-        );
-        println!(
-            "stateless line comment: {:?}",
-            highlight_code_line("rust", "let a = 1; // c")
-        );
-        println!(
-            "string with /*: {:?}",
-            highlight_code_line("rust", "let s = \"/*\"; let b = 2;")
-        );
-    }
-}
