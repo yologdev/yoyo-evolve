@@ -918,7 +918,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ci_event_exists_for_present_and_absent() {        let content = concat!(
+    fn test_ci_event_exists_for_present_and_absent() {
+        let content = concat!(
             r#"{"ts":"2026-07-26T00:00:00Z","day":148,"trigger":"ci_harvest","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"ci_failure","ci_run_id":30051449447}"#,
             "\n"
         );
