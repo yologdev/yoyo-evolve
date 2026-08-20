@@ -1,0 +1,6 @@
+Verdict: FAIL
+Reason: The task produced no diff at all — `git status` is clean, HEAD is still Task 1's commit (fb60556e), and `src/gasp.rs` was last modified on Day 172 with no `task_result` function present. This is the sixth consecutive empty-diff abstention on #683 item (5), the exact failure mode the task description explicitly forbade.
+Checked: intent_alignment: FAIL: Ran `git status --porcelain`, `git diff`, `git diff --cached` and `git log --oneline -- src/gasp.rs`; nothing was written. `grep -n "task_result" src/gasp.rs` finds only the module-doc prose saying it is unported, so neither the port nor the fallback ("port the reachable part and write a dated version-pinned finding") was attempted.
+Checked: forgotten_touchpoints: FAIL: There are no new definitions to check because the diff is empty; the required `task_result` entry point, its pure helpers, the `#[allow(dead_code)]` naming items (3)+(7), and the CLAUDE.md bullet update were all omitted entirely.
+Checked: doc_sync: FAIL: CLAUDE.md and the `src/gasp.rs` module doc still assert "task-result is still only in tools/gasp-emit: unported"; the task required both to be updated in the same diff, and neither changed.
+Checked: product_surface: N/A: The diff is empty, so no config default, CLI flag, wizard or startup behavior was touched.
