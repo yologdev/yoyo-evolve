@@ -375,6 +375,14 @@ pub struct HighlightState {
     /// `/* … */` nesting depth. `0` means "not inside a block comment"; a stray `*/` at
     /// depth 0 is ignored rather than underflowing.
     pub block_comment_depth: usize,
+    /// A plain `"…"` string literal left open at the end of the previous line.
+    ///
+    /// Set only for languages where a bare double-quoted literal really does span lines
+    /// (see [`multiline_strings`] — Rust today). Rust **raw** strings (`r#"…"#`) and
+    /// JS template literals are deliberately not modelled; they are a later task, and
+    /// the sibling scanner in `commands_refactor::significant_braces` is the one that
+    /// carries the raw-string delimiter.
+    pub open_string: bool,
 }
 
 /// One stretch of a line, classified by the block-comment scanner.
@@ -384,6 +392,37 @@ enum SegmentKind {
     Code,
     /// Inside a `/* … */` block comment — emitted dim, never highlighted as code.
     Comment,
+    /// Inside a `"…"` string literal opened on an earlier line — emitted as a string,
+    /// so code-shaped text inside it (keywords, braces) is not highlighted as code.
+    Str,
+}
+
+/// Does a bare `"…"` literal in this language really span lines?
+///
+/// Rust: yes. In C/JS/Go a plain double-quoted string does not cross a newline (they
+/// use backticks, template literals, or a `\` continuation), so those languages keep
+/// their byte-identical single-line behavior rather than inheriting a Rust rule.
+fn multiline_strings(norm: &str) -> bool {
+    norm == "rust"
+}
+
+/// Find the end of a `"…"` string that an earlier line left open.
+///
+/// Returns the index **just past** the closing quote, or `None` when the line ends
+/// still inside the string. A `\` escapes the next character, so `\"` does not close
+/// and a trailing `\` (escaping the newline) simply runs off the end.
+fn close_open_string(chars: &[char]) -> Option<usize> {
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        if c == '\\' {
+            i += 1;
+        } else if c == '"' {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Split `chars` into code / block-comment stretches, updating the carried depth.
@@ -406,6 +445,20 @@ fn scan_block_comments(
     let mut segments: Vec<(SegmentKind, usize, usize)> = Vec::new();
     let mut seg_start = 0usize;
     let mut i = 0usize;
+
+    // A `"…"` string an earlier line left open: everything up to its closer is string
+    // content, so `/*`, `//` and keywords inside it are inert.
+    if state.open_string {
+        match close_open_string(chars) {
+            Some(end) => {
+                segments.push((SegmentKind::Str, 0, end));
+                state.open_string = false;
+                seg_start = end;
+                i = end;
+            }
+            None => return vec![(SegmentKind::Str, 0, len)],
+        }
+    }
 
     while i < len {
         if state.block_comment_depth > 0 {
@@ -450,14 +503,21 @@ fn scan_block_comments(
         if chars[i] == '"' || chars[i] == '\'' {
             let quote = chars[i];
             i += 1;
+            let mut closed = false;
             while i < len {
                 let c = chars[i];
                 i += 1;
                 if c == '\\' && i < len {
                     i += 1;
                 } else if c == quote {
+                    closed = true;
                     break;
                 }
+            }
+            // Ran off the end still inside a `"…"`: carry it to the next line, but only
+            // where such a literal really spans lines.
+            if !closed && quote == '"' && multiline_strings(norm) {
+                state.open_string = true;
             }
             continue;
         }
@@ -524,12 +584,14 @@ pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightSta
         Some(n) => n,
         None => {
             state.block_comment_depth = 0;
+            state.open_string = false;
             return format!("{DIM}{line}{RESET}");
         }
     };
 
     if !supports_block_comments(norm) {
         state.block_comment_depth = 0;
+        state.open_string = false;
         return highlight_normalized(norm, line);
     }
 
@@ -550,6 +612,7 @@ pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightSta
         let text: String = chars[start..end].iter().collect();
         match kind {
             SegmentKind::Comment => out.push_str(&format!("{DIM}{text}{RESET}")),
+            SegmentKind::Str => out.push_str(&format!("{GREEN}{text}{RESET}")),
             SegmentKind::Code => out.push_str(&highlight_normalized(norm, &text)),
         }
     }
@@ -1577,6 +1640,110 @@ mod tests {
     }
 
     // --- Spinner tests ---
+
+    // --- Multi-line string literals (cross-line state) ---
+
+    /// A Rust `"…"` left open at end of line keeps the *next* line inside the string:
+    /// the whole continuation line renders as a string, and code-shaped text inside it
+    /// (keywords, braces) is not highlighted as code.
+    #[test]
+    fn rust_string_spanning_lines_keeps_continuation_line_as_string() {
+        let mut st = HighlightState::default();
+
+        let l1 = highlight_code_line_with("rust", "let s = \"start {", &mut st);
+        assert!(
+            l1.contains(&format!("{BOLD_CYAN}let{RESET}")),
+            "opening line still highlights code: {l1:?}"
+        );
+        assert!(st.open_string, "line 1 leaves the string open");
+
+        let cont = "fn not really code {";
+        let l2 = highlight_code_line_with("rust", cont, &mut st);
+        assert_eq!(
+            l2,
+            format!("{GREEN}{cont}{RESET}"),
+            "the whole continuation line is string content"
+        );
+        assert!(
+            !l2.contains(&format!("{BOLD_CYAN}")),
+            "`fn` inside a string is not a keyword: {l2:?}"
+        );
+        assert!(st.open_string, "line 2 does not close the string");
+
+        let l3 = highlight_code_line_with("rust", "end\"; let x = 1;", &mut st);
+        assert!(
+            l3.starts_with(&format!("{GREEN}end\"{RESET}")),
+            "the closer ends the string segment: {l3:?}"
+        );
+        assert!(
+            l3.contains(&format!("{BOLD_CYAN}let{RESET}")),
+            "code after the closer is highlighted again: {l3:?}"
+        );
+        assert!(!st.open_string, "line 3 closes the string");
+    }
+
+    /// An escaped quote on a continuation line does not close the string, and a
+    /// trailing backslash (escaping the newline) leaves it open.
+    #[test]
+    fn rust_multiline_string_honours_escapes_on_continuation_lines() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("rust", "let s = \"a", &mut st);
+        assert!(st.open_string);
+
+        let cont = "still \\\" inside";
+        let out = highlight_code_line_with("rust", cont, &mut st);
+        assert_eq!(out, format!("{GREEN}{cont}{RESET}"), "got {out:?}");
+        assert!(st.open_string, "an escaped quote must not close the string");
+
+        highlight_code_line_with("rust", "done\"", &mut st);
+        assert!(!st.open_string);
+    }
+
+    /// A string that opens *and* closes on the same line is byte-identical to the
+    /// stateless rendering — the common case must not regress.
+    #[test]
+    fn rust_same_line_string_is_unchanged_by_the_carried_state() {
+        let mut st = HighlightState::default();
+        let line = "let s = \"hello\"; let n = 1;";
+        assert_eq!(
+            highlight_code_line_with("rust", line, &mut st),
+            highlight_code_line("rust", line)
+        );
+        assert!(!st.open_string);
+    }
+
+    /// Only Rust carries a `"` across lines. In C-family languages a plain string does
+    /// not span lines, so those languages stay byte-identical to before.
+    #[test]
+    fn non_rust_languages_do_not_carry_open_strings_across_lines() {
+        for lang in ["js", "go", "c", "python"] {
+            let mut st = HighlightState::default();
+            highlight_code_line_with(lang, "var s = \"unterminated", &mut st);
+            assert!(!st.open_string, "{lang} must not carry an open string");
+
+            let cont = "return 0;";
+            assert_eq!(
+                highlight_code_line_with(lang, cont, &mut st),
+                highlight_code_line(lang, cont),
+                "{lang} continuation line is unchanged"
+            );
+        }
+    }
+
+    /// A `/*` inside an open string is string content, not a block comment.
+    #[test]
+    fn block_comment_opener_inside_a_multiline_string_is_inert() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("rust", "let s = \"a", &mut st);
+        highlight_code_line_with("rust", "/* not a comment", &mut st);
+        assert_eq!(st.block_comment_depth, 0, "no comment was opened");
+        assert!(st.open_string);
+        let out = highlight_code_line_with("rust", "b\"; let x = 1;", &mut st);
+        assert!(
+            out.contains(&format!("{BOLD_CYAN}let{RESET}")),
+            "got {out:?}"
+        );
+    }
 }
 
 #[cfg(test)]
