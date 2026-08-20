@@ -91,6 +91,7 @@ const GRANDFATHERED_UNGRADED_ROUNDS: &[(&str, &str, usize, usize)] = &[
     // about, and the reason this gate exists.
     ("58", "src/config_paths.rs", 4, 0),
     // Day 171: 1 of 3 graded — the round ran out of clock mid-grade.
+    ("57", "src/commands_plan.rs", 3, 1),
     // Day 169: 1 of 3 graded.
     ("58", "src/update.rs", 3, 1),
     // Day 169: 1 of 2 graded.
