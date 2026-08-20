@@ -1742,7 +1742,10 @@ mod tests {
         let cont = "still \\\" inside";
         let out = highlight_code_line_with("rust", cont, &mut st);
         assert_eq!(out, format!("{GREEN}{cont}{RESET}"), "got {out:?}");
-        assert!(st.open_string.is_some(), "an escaped quote must not close the string");
+        assert!(
+            st.open_string.is_some(),
+            "an escaped quote must not close the string"
+        );
 
         highlight_code_line_with("rust", "done\"", &mut st);
         assert!(st.open_string.is_none());
@@ -1768,7 +1771,10 @@ mod tests {
         for lang in ["js", "go", "c", "python"] {
             let mut st = HighlightState::default();
             highlight_code_line_with(lang, "var s = \"unterminated", &mut st);
-            assert!(st.open_string.is_none(), "{lang} must not carry an open string");
+            assert!(
+                st.open_string.is_none(),
+                "{lang} must not carry an open string"
+            );
 
             let cont = "return 0;";
             assert_eq!(
@@ -1806,7 +1812,10 @@ mod tests {
     fn rust_raw_string_spanning_lines_keeps_string_colour_on_line_two() {
         let mut st = HighlightState::default();
         highlight_code_line_with("rust", "let s = r#\"a", &mut st);
-        assert!(st.open_string.is_some(), "line 1 leaves the raw string open");
+        assert!(
+            st.open_string.is_some(),
+            "line 1 leaves the raw string open"
+        );
 
         let line2 = "let x = 1; // not a comment";
         let out = highlight_code_line_with("rust", line2, &mut st);
@@ -1882,7 +1891,10 @@ mod tests {
         let mut js = HighlightState::default();
         highlight_code_line_with("js", "const s = `a", &mut js);
         highlight_code_line_with("js", "\\`still open", &mut js);
-        assert!(js.open_string.is_some(), "JS: an escaped backtick does not close");
+        assert!(
+            js.open_string.is_some(),
+            "JS: an escaped backtick does not close"
+        );
 
         let mut go = HighlightState::default();
         highlight_code_line_with("go", "s := `a", &mut go);
