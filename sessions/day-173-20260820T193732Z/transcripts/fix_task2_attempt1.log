@@ -1,0 +1,76 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to add the missing CLAUDE.md paragraph. Let me first confirm the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -ni "… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,90p tests/orphan_module… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,55p tests/orphan_module… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "presence is mechanicall… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 61p CLAUDE.md | cat -A | … ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 3 lines)
+  + **Orphan-module gate** (`tests/orphan_modules.rs`, Day 173, #804): the smallest of the three, in the same shape — walk `src/`, classify, fatal on the unnamed case, register for deliberate exceptions, ratchet the register. It exists because `src/commands_risk_families.rs` was a tracked, 296-line source file that **rustc never saw**: no `mod` declaration named it, so `cargo build`, `cargo test`, `clippy -D warnings` and `fmt --check` were all structurally blind to it, and it could be committed, reviewed and reported as a delivered extraction while never being part of the program. Every `*.rs` under `src/` must be named by some `mod NAME;` (`src/main.rs` is the crate root and reachable by definition; `src/x/mod.rs` is reached by `mod x;`). Two branches, running in opposite directions: an **un-registered file no `mod` reaches → fatal**, with both remedies verbatim (add `mod <name>;` to the right parent, usually `src/main.rs`, or paste the literal `("src/path.rs", "<reason>")` line) — the escape hatch is the point, **the gate does not forbid an uncompiled file, it forbids an unnamed one**; and a **registered file that is now reachable or has vanished → fatal**, the ratchet, since an exception list only pays itself down if improving is also a failure. The register (`REGISTERED_ORPHANS`) ships **empty** — the live orphan was **deleted, not registered** (it duplicated code already live and tested in `src/commands_risk_epistemic.rs`), because registering it would have laundered the exact defect the gate exists to catch. Decision and I/O are split as in the siblings: the pure, table-tested `classify(files, declared_mods, register)` with all filesystem walking at the single call site, and the fatal branch is proven against a **fabricated** file list rather than by planting a real orphan. **Three stated limits, printed on every passing run through a raw `std::io::stderr()` handle** (libtest discards macro output from passing tests) so "could not check" cannot read as "checked; clean": it matches `mod NAME;` **by name, not by resolved path**, so two files sharing a stem in different directories are indistinguishable and one declaration can vouch for the wrong file; it does **not** parse `#[cfg(...)]` or `#[path]`, so a `mod` behind a disabled feature counts as reachable — deliberate, since `src/gasp.rs` is `#[cfg(feature = "gasp")]` and genuinely *is* part of the crate, but it means "reachable" here means **declared**, not compiled in this configuration; and it says nothing about whether the code inside is *used* — clippy's `dead_code` covers that, once the file is compiled at all.
+  + 
+    To run the agent interactively:
+ ✓ (1m 0s)
+  + **Orphan-module gate** (`tests/orphan_modules.rs`, Day 173, #804): the smallest of the three, in the same shape — walk `src/`, classify, fatal on the unnamed case, register for deliberate exceptions, ratchet the register. It exists because `src/commands_risk_families.rs` was a tracked, 296-line source file that **rustc never saw**: no `mod` declaration named it, so `cargo build`, `cargo test`, `clippy -D warnings` and `fmt --check` were all structurally blind to it, and it could be committed, reviewed and reported as a delivered extraction while never being part of the program. Every `*.rs` under `src/` must be named by some `mod NAME;` (`src/main.rs` is the crate root and reachable by definition; `src/x/mod.rs` is reached by `mod x;`). Two branches, running in opposite directions: an **un-registered file no `mod` reaches → fatal**, with both remedies verbatim (add `mod <name>;` to the right parent, usually `src/main.rs`, or paste the literal `("src/path.rs", "<reason>")` line) — the escape hatch is the point, **the gate does not forbid an uncompiled file, it forbids an unnamed one**; and a **registered file that is now reachable or has vanished → fatal**, the ratchet, since an exception list only pays itself down if improving is also a failure. The register (`REGISTERED_ORPHANS`) ships **empty** — the live orphan was **deleted, not registered** (it duplicated code already live and tested in `src/commands_risk_epistemic.rs`), because registering it would have laundered the exact defect the gate exists to catch. Decision and I/O are split as in the siblings: the pure, table-tested `classify(files, declared_mods, register)` with all filesystem walking at the single call site, and the fatal branch is proven against a **fabricated** file list rather than by planting a real orphan. **Three stated limits, printed on every passing run through a raw `std::io::stderr()` handle** (libtest discards macro output from passing tests) so "could not check" cannot read as "checked; clean": it matches `mod NAME;` **by name, not by resolved path**, so two files sharing a stem in different directories are indistinguishable and one declaration can vouch for the wrong file; it does **not** parse `#[cfg(...)]` or `#[path]`, so a `mod` behind a disabled feature counts as reachable — deliberate, since `src/gasp.rs` is `#[cfg(feature = "gasp")]` and genuinely *is* part of the crate, but it means "reachable" here means **declared**, not compiled in this configuration; and it says nothing about whether the code inside is *used* — clippy's `dead_code` covers that, once the file is compiled at all.
+  + 
+    To run the agent interactively:
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 37s (6 ✓)
+
+Now verify the claims I made in that paragraph are accurate against the actual test file.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p tests/orphan_module… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR<=54{printf "%d| %s\n", N… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.3s (2 ✓)
+
+The paragraph matches the file. Now verify the full check suite.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "Orphan-module gate" CLA… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check; echo "fmt=… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (169ms)
+  3 tools completed in 14.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3; echo… ✓ (174ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (59.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test orphan_modules… ✓ (275ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && awk 'NR>… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (14 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 19s (5 ✓)
+
+Done. The evaluator's single FAIL was doc_sync — the required CLAUDE.md paragraph. That is now written and committed.
+
+**What I changed (this pass only):** one paragraph in `CLAUDE.md`, placed immediately after the "Blind-round grading gate" paragraph and before "To run the agent interactively" (line 62). Nothing in src/ or tests/ was touched — Parts A and B were already correct in a4ce5405 and the evaluator passed both.
+
+The paragraph follows the two siblings' register/ratchet vocabulary and states, in order: why the gate exists (src/commands_risk_families.rs was a tracked 296-line file rustc never saw, so all four checks were structurally blind to it); the reachability rule; the two opposite-direction fatal branches with both remedies; that REGISTERED_ORPHANS ships empty because the live orphan was deleted rather than laundered; the pure-classify/single-call-site split and the fabricated-file-list proof; and all three stated limits carried across verbatim from the test's own doc comment — name-not-path matching, no #[cfg]/#[path] parsing (so "reachable" means declared, with src/gasp.rs as the reason that is deliberate), and no claim about whether declared code is used.
+
+I verified each claim against the actual source of tests/orphan_modules.rs rather than from the task description — including that the scope note really is written through a raw std::io::stderr() handle and really does print on a passing run.
+
+**Verification run just now, all green:**
+• cargo fmt -- --check → 0
+• cargo clippy --all-targets -- -D warnings → 0
+• cargo build → 0
+• cargo test → 5010 passed, 0 failed (plus the integration binaries)
+• cargo test --test orphan_modules → 11 passed; the scope note prints `89 file(s) checked` on the passing run
+• grep -rn scratch_probe src/ → 0 matches
+• grep -ni "orphan" CLAUDE.md → hit at line 62
+
+Tree is clean; the fix is committed as 7a15a76a.
+
+One thing worth flagging rather than leaving implicit: the sizing guard held, but the class this task named is only half-closed. The gate catches a file nothing compiles; it does not catch a compiled test that asserts nothing. scratch_probe was found by a human evaluator reading a diff, not by anything I own — so the second specimen's failure mode still has no mechanical detector. I did not build one here (it would be well outside this task's scope and its sizing guard), but it is the honest residue.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
