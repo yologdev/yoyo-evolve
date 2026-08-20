@@ -1,0 +1,224 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null && … ✓ (5ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.6s (2 ✓)
+
+Tree is clean — nothing was committed. Let me quickly find one small, concrete improvement and build it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 01ff3470 | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Err(_) => \|unwrap_or_d… ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p src/commands_risk_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,270p src/commands_ris… ✓ (4ms)
+ ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 17.4s (5 ✓)
+
+Significant finding: every one of the 134 live ledger lines lacks `hit_count` and `total_changed`. Let me check how those fields are written and consumed.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "hit_count\|total_chang…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hits\|surprises\|accura… ✓ (5ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+The writer emits hits/surprises arrays but the reader reads scalar hit_count/total_changed. Let me check the consumers.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hit_count\|total_change…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hit_count\|total_change… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,270p src/commands_ris… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.5s (3 ✓)
+
+Let me verify this live against the real ledger.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (220ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The tool elided lines. Let me read the exact parse block.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=95 && NR<=125 {printf "… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My "missing field" finding was wrong — output elision hid lines 111–113, which derive the counts from the hits/surprises arrays. Good that I checked. Let me verify the real remaining gap from #764 item (1): valid JSON that isn't an event at all.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_health_line" src… ✓ (11ms)
+ ✓ (25ms)
+  2 tools completed in 26ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the verified gap is #764 item (1) — a line that is valid JSON but not a validation event silently becomes a phantom day=0, 0 hits / 0 changed, severity None event, i.e. an untagged failure-day row scoring 0%. Let me see the exact code and the all-corrupt test's assertions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=40 && NR<=95 {printf "%…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2855 && NR<=2900 {print… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=226 && NR<=246 {printf … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.8s (3 ✓)
+
+Confirmed: write_validation_event always emits day, hits, surprises, accuracy_pct — and all 134 live lines carry all four. Now implementing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (19 → 34 lines)
+  - /// **Deliberately NOT covered here** (still open on #764): a line that is
+  - /// *valid JSON but missing fields* is still absorbed by the `unwrap_or(0)` /
+  - /// `unwrap_or_default()` defaults below and counts as a healthy event. That is
+  - /// a different defect. The other readers in this module (`parse_graded_events`,
+  - /// `parse_all_snapshots`, `parse_failed_ci_runs`) and their ~10 call sites are
+  - /// untouched by this repair and still drop malformed lines silently.
+  + /// Day 173 closed the second half of #764 for *this* reader: a line that is
+  + /// valid JSON but is **not a validation event** (a bare scalar, an array, or an
+  + /// object missing the fields the reader consumes) used to be absorbed by the
+  + /// `unwrap_or(0)` / `unwrap_or_default()` defaults below and materialise a
+  + /// phantom `day 0, 0 hits / 0 changed, severity None` event — which is not a
+  + /// harmless zero: `is_green_event` reads a missing severity as *not green*, so
+  + /// the phantom landed in `failure_events` and pooled into `failure_hit_rate_pct`
+  + /// as a 0-hit sample, dragging the DREAM milestone's recall number down with a
+  + /// row nobody ever recorded. Such lines are now counted in `dropped` alongside
+  + /// the unparseable ones. See [`looks_like_validation_event`] for the exact
+  + /// predicate and what it deliberately does not check.
+  + ///
+  + /// **Still NOT covered here** (#764 stays open on it): the other readers in
+  + /// this module (`parse_graded_events_counting`, `parse_all_snapshots_counting`,
+  ... (21 more lines)
+ ✓ (1m 57s)
+  - /// **Deliberately NOT covered here** (still open on #764): a line that is
+  - /// *valid JSON but missing fields* is still absorbed by the `unwrap_or(0)` /
+  - /// `unwrap_or_default()` defaults below and counts as a healthy event. That is
+  - /// a different defect. The other readers in this module (`parse_graded_events`,
+  - /// `parse_all_snapshots`, `parse_failed_ci_runs`) and their ~10 call sites are
+  - /// untouched by this repair and still drop malformed lines silently.
+  + /// Day 173 closed the second half of #764 for *this* reader: a line that is
+  + /// valid JSON but is **not a validation event** (a bare scalar, an array, or an
+  ... (13 more lines)
+
+Now the predicate and its use in the parser:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (18 → 54 lines)
+  + /// Is this parsed JSON value shaped like a validation event?
+  + ///
+  + /// The rule is the *writer's* contract, not a guess:
+  + /// `commands_risk_snapshots::write_validation_event` always emits `day`,
+  + /// `hits`, `surprises` and `accuracy_pct` on every line it writes, and all 134
+  + /// lines in the live `.yoyo/risk_validations.jsonl` carry all four (measured
+  + /// Day 173 before this landed), so requiring them drops no real history. A
+  + /// value that is not an object — a bare `123`, `"note"`, `null`, or an array —
+  + /// fails on the first check.
+  + ///
+  + /// **What it deliberately does not do:** it checks *presence and JSON type*,
+  + /// never plausibility. An event claiming `accuracy_pct: -5000` with a `day` of
+  + /// zero passes exactly as an honest one does, and no cross-field agreement is
+  + /// verified (e.g. that `accuracy_pct` matches `hits / (hits + surprises)`).
+  + /// Shape is mechanically checkable; truthfulness is not, and a stricter claim
+  + /// here would be the "could not check" → "checked; clean" reading this module
+  + /// already refuses to make elsewhere.
+  + pub(crate) fn looks_like_validation_event(val: &serde_json::Value) -> bool {
+  +     let Some(obj) = val.as_object() else {
+  +         return false;
+  ... (28 more lines)
+ ✓ (1m 52s)
+  + /// Is this parsed JSON value shaped like a validation event?
+  + ///
+  + /// The rule is the *writer's* contract, not a guess:
+  + /// `commands_risk_snapshots::write_validation_event` always emits `day`,
+  + /// `hits`, `surprises` and `accuracy_pct` on every line it writes, and all 134
+  + /// lines in the live `.yoyo/risk_validations.jsonl` carry all four (measured
+  + /// Day 173 before this landed), so requiring them drops no real history. A
+  + /// value that is not an object — a bare `123`, `"note"`, `null`, or an array —
+  ... (13 more lines)
+
+Now update the health line wording so "unparseable" doesn't misdescribe the new cause:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (9 → 11 lines)
+            ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+  -             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+  +             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unusable \
+  +              (unparseable, or valid JSON that is not a validation event) — \
+                 the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+                 does not apply here."
+            )),
+            ValidationLedger::Present { dropped, .. } => Some(format!(
+  -             "{RISK_VALIDATION_PATH}: {dropped} unparseable line(s) skipped — \
+  +             "{RISK_VALIDATION_PATH}: {dropped} unusable line(s) skipped \
+  +              (unparseable, or valid JSON that is not a validation event) — \
+                 the numbers below cover only the rest of the ledger."
+            )),
+ ✓ (1m 53s)
+            ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+  -             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+  +             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unusable \
+  +              (unparseable, or valid JSON that is not a validation event) — \
+                 the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+                 does not apply here."
+            )),
+            ValidationLedger::Present { dropped, .. } => Some(format!(
+  ... (5 more lines)
+
+Now the tests. Let me find the existing test module in the parse file:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|fn parse_val… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=618 && NR<=660 {printf … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.5s (2 ✓)
+
+The existing fixture uses hit_count/total_changed scalars — fields the reader never reads and the writer never writes. Let me check its usages before correcting it.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "valid_line" src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=659 && NR<=700 {printf … ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+No test asserts those scalars — the fixture was pinning a shape no writer emits. Correcting it is part of the fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (7 → 99 lines)
+        /// One well-formed validation line, parameterised by day.
+  +     ///
+  +     /// Shaped like the lines `commands_risk_snapshots::write_validation_event`
+  +     /// actually writes: `hits` / `surprises` **arrays**, not the `hit_count` /
+  +     /// `total_changed` scalars this fixture used to carry. Those two are struct
+  +     /// fields the reader *derives* from the array lengths — no writer has ever
+  +     /// emitted them as JSON keys and none of the 134 lines in the live ledger
+  +     /// has one, so the old fixture pinned a shape that does not exist. The
+  +     /// array lengths below reproduce the numbers it meant (2 hits of 5 changed).
+        fn valid_line(day: u32) -> String {
+            format!(
+  -             r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+  +             r#"{{"day":{day},"hits":["src/a.rs","src/b.rs"],"surprises":["src/c.rs","src/d.rs","src/e.rs"],"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+            )
+  +     }
+  + 
+  +     #[test]
+  +     fn valid_line_fixture_parses_to_the_counts_it_claims() {
+  +         // Guards the fixture correction itself: if the reader ever stops
+  +         // deriving the counts from the arrays, this fails rather than every
+  ... (80 more lines)
