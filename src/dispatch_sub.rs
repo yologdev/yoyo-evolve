@@ -216,6 +216,16 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 crate::commands_lint::handle_lint(&input);
                 return Some(None);
             }
+            "security" => {
+                // Same "two doors, one works" shape as #745 (`/test` args), #767
+                // (`/ast` path) and `/def`: `/security` is a read-only dependency
+                // audit — exactly the thing a script or CI step wants to call
+                // non-interactively — but it had no CLI door, so `yoyo security`
+                // reached only the bare-word near-miss guard telling the caller to
+                // start a REPL. It takes no arguments, so nothing is forwarded.
+                crate::commands_lint::handle_security();
+                return Some(None);
+            }
             "test" => {
                 // #745: args after `yoyo test` used to be silently discarded and
                 // the full suite ran. Forward them verbatim.

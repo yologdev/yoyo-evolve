@@ -286,6 +286,10 @@ pub fn cli_help_text() -> String {
         s,
         "  lint              Run project linter (e.g. yoyo lint --strict, yoyo lint unsafe)"
     );
+    let _ = writeln!(
+        s,
+        "  security          Scan dependencies for known vulnerabilities (read-only)"
+    );
     let _ = writeln!(s, "  test              Run project test suite");
     let _ = writeln!(
         s,

@@ -42,6 +42,7 @@ pub const ROUTED_SUBCOMMANDS: &[&str] = &[
     "review",
     "risk",
     "run",
+    "security",
     "setup",
     "skill",
     "status",
