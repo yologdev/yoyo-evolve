@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::commands_refactor::{close_open_string, raw_string_open, StringDelim};
+
 fn normalize_lang(lang: &str) -> Option<&'static str> {
     // A fence tag may carry attributes: ```rust,ignore or ```rust no_run. Match on the
     // head only. This is the single seam every caller reaches the language table
@@ -362,29 +364,31 @@ fn block_comments_nest(norm: &str) -> bool {
 
 /// The facts the highlighter must carry from one line to the next.
 ///
-/// A struct with a named field rather than a bare `usize` so the multi-line **string**
-/// half can be added later without churning every call site — the same reasoning that
-/// produced `commands_refactor::BraceScanState`, whose block-comment rules this mirrors.
+/// A struct with named fields rather than a bare `usize` so a new carried fact does not
+/// churn every call site — the same reasoning that produced
+/// `commands_refactor::BraceScanState`, whose rules this mirrors.
 ///
-/// Two facts are carried today: the block-comment depth, and a plain `"…"` literal left
-/// open at the end of the previous line (Rust only — see [`multiline_strings`]).
-/// Still **not** carried, and deliberately so: Rust **raw** strings (`r#"…"#`) and JS
-/// template literals, which still end their run at the line end and so are mis-coloured
-/// from line 2. The sibling scanner `commands_refactor::significant_braces` is the one
-/// that models the raw-string delimiter.
+/// Two facts are carried: the block-comment depth, and the **delimiter** of a string
+/// literal left open at the end of the previous line. All three delimiter shapes that
+/// really span lines are modelled (#806): a plain `"…"` (Rust — see
+/// [`multiline_strings`]), a raw string `r"…"` / `r#"…"#` at any hash count (Rust), and
+/// a backtick literal (a JS/TS template literal or a Go raw string — see
+/// [`backtick_strings`]).
+///
+/// Still **not** modelled, stated rather than implied: `${…}` interpolation inside a JS
+/// template literal is string content here, not code, so an interpolated expression is
+/// not highlighted. This is a highlighter, not a lexer.
 #[derive(Debug, Default, Clone)]
 pub struct HighlightState {
     /// `/* … */` nesting depth. `0` means "not inside a block comment"; a stray `*/` at
     /// depth 0 is ignored rather than underflowing.
     pub block_comment_depth: usize,
-    /// A plain `"…"` string literal left open at the end of the previous line.
+    /// `Some(delim)` when a string literal opened on an earlier line and has not closed.
     ///
-    /// Set only for languages where a bare double-quoted literal really does span lines
-    /// (see [`multiline_strings`] — Rust today). Rust **raw** strings (`r#"…"#`) and
-    /// JS template literals are deliberately not modelled; they are a later task, and
-    /// the sibling scanner in `commands_refactor::significant_braces` is the one that
-    /// carries the raw-string delimiter.
-    pub open_string: bool,
+    /// The delimiter type is shared with `commands_refactor::significant_braces` rather
+    /// than restated here, so "what closes a raw string" has one implementation and one
+    /// table test — a second copy of that rule is how #759 outlived #770 by a day.
+    pub open_string: Option<crate::commands_refactor::StringDelim>,
 }
 
 /// One stretch of a line, classified by the block-comment scanner.
@@ -401,30 +405,30 @@ enum SegmentKind {
 
 /// Does a bare `"…"` literal in this language really span lines?
 ///
-/// Rust: yes. In C/JS/Go a plain double-quoted string does not cross a newline (they
-/// use backticks, template literals, or a `\` continuation), so those languages keep
-/// their byte-identical single-line behavior rather than inheriting a Rust rule.
+/// Rust: yes. In C/JS/Go a plain double-quoted string does not cross a newline (they use
+/// backticks, template literals, or a `\` continuation — see [`backtick_strings`] for the
+/// two that do), so those languages keep their byte-identical single-line behavior for
+/// this shape rather than inheriting a Rust rule.
 fn multiline_strings(norm: &str) -> bool {
     norm == "rust"
 }
 
-/// Find the end of a `"…"` string that an earlier line left open.
+/// Does a backtick open a literal that may span lines, and does it honour `\` escapes?
 ///
-/// Returns the index **just past** the closing quote, or `None` when the line ends
-/// still inside the string. A `\` escapes the next character, so `\"` does not close
-/// and a trailing `\` (escaping the newline) simply runs off the end.
-fn close_open_string(chars: &[char]) -> Option<usize> {
-    let mut i = 0usize;
-    while i < chars.len() {
-        let c = chars[i];
-        i += 1;
-        if c == '\\' {
-            i += 1;
-        } else if c == '"' {
-            return Some(i);
-        }
+/// `Some(true)` — JS/TS template literals: `` `…` `` spans lines and a `` \` `` does not
+/// close it. `Some(false)` — Go raw strings: same delimiter, spans lines, but no escapes
+/// at all, so a `\` before the backtick is literal content. `None` — every other
+/// language, where a backtick is an ordinary character (Rust, C, and the languages with
+/// no block comments, which never reach the stateful path).
+///
+/// Go is here rather than deferred because it is the same shape with the same symptom:
+/// fixing one and leaving its mirror twin is the split-fix this codebase keeps paying for.
+fn backtick_strings(norm: &str) -> Option<bool> {
+    match norm {
+        "js" => Some(true),
+        "go" => Some(false),
+        _ => None,
     }
-    None
 }
 
 /// Split `chars` into code / block-comment stretches, updating the carried depth.
@@ -436,7 +440,9 @@ fn close_open_string(chars: &[char]) -> Option<usize> {
 /// A `/*` inside a string or char literal does **not** open a comment: the scanner skips
 /// literals using the same model the per-line highlighter uses (a `"…"` run with `\`
 /// escapes, plus Rust char literals via `char_literal_len`), so the two agree about where
-/// code ends. Raw strings (`r#"…"#`) are not modelled here any more than they are there.
+/// code ends. Raw strings (`r#"…"#`) and backtick literals are skipped through the shared
+/// `raw_string_open` / `close_open_string` pair, and any of the three left open at end of
+/// line is recorded in `state.open_string` for the next line to close (#806).
 fn scan_block_comments(
     norm: &str,
     chars: &[char],
@@ -448,13 +454,15 @@ fn scan_block_comments(
     let mut seg_start = 0usize;
     let mut i = 0usize;
 
-    // A `"…"` string an earlier line left open: everything up to its closer is string
-    // content, so `/*`, `//` and keywords inside it are inert.
-    if state.open_string {
-        match close_open_string(chars) {
+    // A string an earlier line left open: everything up to its closer is string content,
+    // so `/*`, `//` and keywords inside it are inert. The closer rule is the shared one,
+    // so a raw string's `"#` and a template literal's backtick end here exactly where
+    // `significant_braces` would end them.
+    if let Some(delim) = state.open_string {
+        match close_open_string(chars, 0, delim) {
             Some(end) => {
                 segments.push((SegmentKind::Str, 0, end));
-                state.open_string = false;
+                state.open_string = None;
                 seg_start = end;
                 i = end;
             }
@@ -502,6 +510,37 @@ fn scan_block_comments(
             continue;
         }
 
+        // Rust raw string `r"…"` / `r#"…"#` (any hash count, `b` prefix allowed): no
+        // escapes, closed only by `"` + N `#`, and it may span lines (#806).
+        if norm == "rust" {
+            if let Some((hashes, body)) = raw_string_open(chars, i) {
+                let delim = StringDelim::Raw(hashes);
+                match close_open_string(chars, body, delim) {
+                    Some(end) => i = end,
+                    None => {
+                        state.open_string = Some(delim);
+                        i = len;
+                    }
+                }
+                continue;
+            }
+        }
+
+        // JS/TS template literal, or a Go raw string — same delimiter, both span lines.
+        if chars[i] == '`' {
+            if let Some(escapes) = backtick_strings(norm) {
+                let delim = StringDelim::Backtick { escapes };
+                match close_open_string(chars, i + 1, delim) {
+                    Some(end) => i = end,
+                    None => {
+                        state.open_string = Some(delim);
+                        i = len;
+                    }
+                }
+                continue;
+            }
+        }
+
         if chars[i] == '"' || chars[i] == '\'' {
             let quote = chars[i];
             i += 1;
@@ -519,7 +558,7 @@ fn scan_block_comments(
             // Ran off the end still inside a `"…"`: carry it to the next line, but only
             // where such a literal really spans lines.
             if !closed && quote == '"' && multiline_strings(norm) {
-                state.open_string = true;
+                state.open_string = Some(StringDelim::Normal);
             }
             continue;
         }
@@ -576,16 +615,17 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
 /// an underflow. Languages with no block comments (python, shell, yaml, toml, json) reset
 /// the depth to 0 and render exactly as the stateless path does.
 ///
-/// A plain `"…"` string literal left open at the end of the previous line is carried too,
-/// but **only** where such a literal really spans lines (`multiline_strings` — Rust
-/// today): its content up to the closing `"` is emitted string-coloured, so `/*`, `//`
-/// and keywords inside it are inert, and ordinary highlighting resumes just past the
-/// closer. Every other language resets the flag, so their output is byte-identical to
-/// the stateless path.
+/// A string literal left open at the end of the previous line is carried too, in all
+/// three shapes that really span lines (#806): a plain `"…"` where the language allows it
+/// (`multiline_strings` — Rust today), a Rust raw string `r"…"` / `r#"…"#` at any hash
+/// count, and a backtick literal (a JS/TS template literal or a Go raw string,
+/// `backtick_strings`). Its content up to the closer is emitted string-coloured, so `/*`,
+/// `//` and keywords inside it are inert, and ordinary highlighting resumes just past the
+/// closer on the same line. Every other language resets the field, so their output is
+/// byte-identical to the stateless path.
 ///
-/// **Still not handled, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template
-/// literals. Those still end their run at the line end, so one spanning lines is
-/// mis-coloured from its second line — a later session's work.
+/// **Still not handled, deliberately:** `${…}` interpolation inside a template literal is
+/// treated as string content, not code. This colours a whole line; it does not lex one.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
 pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightState) -> String {
@@ -593,14 +633,14 @@ pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightSta
         Some(n) => n,
         None => {
             state.block_comment_depth = 0;
-            state.open_string = false;
+            state.open_string = None;
             return format!("{DIM}{line}{RESET}");
         }
     };
 
     if !supports_block_comments(norm) {
         state.block_comment_depth = 0;
-        state.open_string = false;
+        state.open_string = None;
         return highlight_normalized(norm, line);
     }
 
@@ -1664,7 +1704,7 @@ mod tests {
             l1.contains(&format!("{BOLD_CYAN}let{RESET}")),
             "opening line still highlights code: {l1:?}"
         );
-        assert!(st.open_string, "line 1 leaves the string open");
+        assert!(st.open_string.is_some(), "line 1 leaves the string open");
 
         let cont = "fn not really code {";
         let l2 = highlight_code_line_with("rust", cont, &mut st);
@@ -1677,7 +1717,7 @@ mod tests {
             !l2.contains(&format!("{BOLD_CYAN}")),
             "`fn` inside a string is not a keyword: {l2:?}"
         );
-        assert!(st.open_string, "line 2 does not close the string");
+        assert!(st.open_string.is_some(), "line 2 does not close the string");
 
         let l3 = highlight_code_line_with("rust", "end\"; let x = 1;", &mut st);
         assert!(
@@ -1688,7 +1728,7 @@ mod tests {
             l3.contains(&format!("{BOLD_CYAN}let{RESET}")),
             "code after the closer is highlighted again: {l3:?}"
         );
-        assert!(!st.open_string, "line 3 closes the string");
+        assert!(st.open_string.is_none(), "line 3 closes the string");
     }
 
     /// An escaped quote on a continuation line does not close the string, and a
@@ -1697,15 +1737,15 @@ mod tests {
     fn rust_multiline_string_honours_escapes_on_continuation_lines() {
         let mut st = HighlightState::default();
         highlight_code_line_with("rust", "let s = \"a", &mut st);
-        assert!(st.open_string);
+        assert!(st.open_string.is_some());
 
         let cont = "still \\\" inside";
         let out = highlight_code_line_with("rust", cont, &mut st);
         assert_eq!(out, format!("{GREEN}{cont}{RESET}"), "got {out:?}");
-        assert!(st.open_string, "an escaped quote must not close the string");
+        assert!(st.open_string.is_some(), "an escaped quote must not close the string");
 
         highlight_code_line_with("rust", "done\"", &mut st);
-        assert!(!st.open_string);
+        assert!(st.open_string.is_none());
     }
 
     /// A string that opens *and* closes on the same line is byte-identical to the
@@ -1718,7 +1758,7 @@ mod tests {
             highlight_code_line_with("rust", line, &mut st),
             highlight_code_line("rust", line)
         );
-        assert!(!st.open_string);
+        assert!(st.open_string.is_none());
     }
 
     /// Only Rust carries a `"` across lines. In C-family languages a plain string does
@@ -1728,7 +1768,7 @@ mod tests {
         for lang in ["js", "go", "c", "python"] {
             let mut st = HighlightState::default();
             highlight_code_line_with(lang, "var s = \"unterminated", &mut st);
-            assert!(!st.open_string, "{lang} must not carry an open string");
+            assert!(st.open_string.is_none(), "{lang} must not carry an open string");
 
             let cont = "return 0;";
             assert_eq!(
@@ -1746,12 +1786,143 @@ mod tests {
         highlight_code_line_with("rust", "let s = \"a", &mut st);
         highlight_code_line_with("rust", "/* not a comment", &mut st);
         assert_eq!(st.block_comment_depth, 0, "no comment was opened");
-        assert!(st.open_string);
+        assert!(st.open_string.is_some());
         let out = highlight_code_line_with("rust", "b\"; let x = 1;", &mut st);
         assert!(
             out.contains(&format!("{BOLD_CYAN}let{RESET}")),
             "got {out:?}"
         );
+    }
+
+    // ---- #806: raw strings and backtick literals carried across lines ----------------
+    //
+    // Pinned at the **emission point** — every assertion is on the string a caller
+    // receives from `highlight_code_line_with`, not on the carried state one layer below
+    // it. The state is checked too, but it is never the whole test.
+
+    /// A Rust raw string opened on line 1 keeps string colour on line 2 (#806). Before
+    /// this, the run ended at the line end and line 2 was highlighted as code.
+    #[test]
+    fn rust_raw_string_spanning_lines_keeps_string_colour_on_line_two() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("rust", "let s = r#\"a", &mut st);
+        assert!(st.open_string.is_some(), "line 1 leaves the raw string open");
+
+        let line2 = "let x = 1; // not a comment";
+        let out = highlight_code_line_with("rust", line2, &mut st);
+        assert_eq!(
+            out,
+            format!("{GREEN}{line2}{RESET}"),
+            "line 2 is string content, keyword and `//` inert"
+        );
+
+        let out3 = highlight_code_line_with("rust", "b\"#; let y = 2;", &mut st);
+        assert!(st.open_string.is_none(), "line 3 closes the raw string");
+        assert!(
+            out3.contains(&format!("{BOLD_CYAN}let{RESET}")),
+            "code resumes just past the closer, got {out3:?}"
+        );
+    }
+
+    /// The hash count is part of the closer: a `"#` inside an `r##"…"##` does not end it.
+    #[test]
+    fn rust_raw_string_closer_honours_the_hash_count() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("rust", "let s = r##\"a", &mut st);
+        let line2 = "still \"# inside";
+        assert_eq!(
+            highlight_code_line_with("rust", line2, &mut st),
+            format!("{GREEN}{line2}{RESET}")
+        );
+        assert!(st.open_string.is_some(), "one `#` short does not close it");
+
+        highlight_code_line_with("rust", "b\"##;", &mut st);
+        assert!(st.open_string.is_none(), "two `#` closes it");
+    }
+
+    /// A JS template literal opened on line 1 keeps string colour on line 2 (#806).
+    #[test]
+    fn js_template_literal_spanning_lines_keeps_string_colour_on_line_two() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("js", "const s = `a", &mut st);
+        assert!(st.open_string.is_some(), "line 1 leaves the template open");
+
+        let line2 = "const x = 1; /* not a comment */";
+        let out = highlight_code_line_with("js", line2, &mut st);
+        assert_eq!(out, format!("{GREEN}{line2}{RESET}"));
+        assert_eq!(st.block_comment_depth, 0, "no comment was opened");
+
+        let out3 = highlight_code_line_with("js", "b`; const y = 2;", &mut st);
+        assert!(st.open_string.is_none(), "line 3 closes the template");
+        assert!(
+            out3.contains(&format!("{BOLD_CYAN}const{RESET}")),
+            "code resumes just past the backtick, got {out3:?}"
+        );
+    }
+
+    /// Go raw strings are the same shape and are carried too — fixing one and leaving
+    /// its mirror twin is the split-fix this codebase keeps paying for.
+    #[test]
+    fn go_raw_string_spanning_lines_keeps_string_colour_on_line_two() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("go", "s := `a", &mut st);
+        let line2 = "func not_a_keyword_here() {";
+        assert_eq!(
+            highlight_code_line_with("go", line2, &mut st),
+            format!("{GREEN}{line2}{RESET}")
+        );
+        highlight_code_line_with("go", "b`", &mut st);
+        assert!(st.open_string.is_none());
+    }
+
+    /// The escape rule differs between the two backtick languages, and that is the whole
+    /// reason `StringDelim::Backtick` carries a flag: JS honours `\``, Go has no escapes.
+    #[test]
+    fn backtick_escape_rule_differs_between_js_and_go() {
+        let mut js = HighlightState::default();
+        highlight_code_line_with("js", "const s = `a", &mut js);
+        highlight_code_line_with("js", "\\`still open", &mut js);
+        assert!(js.open_string.is_some(), "JS: an escaped backtick does not close");
+
+        let mut go = HighlightState::default();
+        highlight_code_line_with("go", "s := `a", &mut go);
+        highlight_code_line_with("go", "\\` closed", &mut go);
+        assert!(go.open_string.is_none(), "Go raw strings have no escapes");
+    }
+
+    /// A backtick is an ordinary character in Rust and C — no carry, no colour change.
+    #[test]
+    fn backtick_is_inert_in_languages_without_backtick_literals() {
+        for lang in ["rust", "c"] {
+            let mut st = HighlightState::default();
+            let line = "let x = 1; // see `foo`";
+            assert_eq!(
+                highlight_code_line_with(lang, line, &mut st),
+                highlight_code_line(lang, line),
+                "{lang} backtick line is unchanged"
+            );
+            assert!(st.open_string.is_none(), "{lang} must not carry a backtick");
+        }
+    }
+
+    /// The stateless path stays byte-identical for literals that open and close on one
+    /// line — the load-bearing promise that adding a carried fact changed nothing.
+    #[test]
+    fn single_line_raw_and_backtick_literals_are_byte_identical() {
+        for (lang, line) in [
+            ("rust", "let s = r#\"a }\"#; let n = 1;"),
+            ("rust", "let s = r\"plain\"; let n = 1;"),
+            ("js", "const s = `a ${b} c`; const n = 1;"),
+            ("go", "s := `raw`; n := 1"),
+        ] {
+            let mut st = HighlightState::default();
+            assert_eq!(
+                highlight_code_line_with(lang, line, &mut st),
+                highlight_code_line(lang, line),
+                "{lang}: {line}"
+            );
+            assert!(st.open_string.is_none(), "{lang}: {line}");
+        }
     }
 }
 

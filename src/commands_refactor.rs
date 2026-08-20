@@ -70,7 +70,11 @@ pub(crate) fn char_literal_len(chars: &[char], start: usize) -> Option<usize> {
 
 /// If a raw-string literal opens at `chars[start]` (an `r`, optionally preceded by a
 /// `b` byte-string prefix), return `(hash_count, index_just_after_the_opening_quote)`.
-fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+///
+/// `pub(crate)` because it has a second consumer: `format::highlight::scan_block_comments`
+/// needs the same opener rule to carry a raw string across lines (#806). A second copy of
+/// this rule is exactly how #759 outlived #770 by a day — one implementation, one table.
+pub(crate) fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
     if chars.get(start) != Some(&'r') {
         return None;
     }
@@ -110,6 +114,15 @@ pub(crate) enum StringDelim {
     /// A raw string `r"…"` / `r#"…"#`: closed by a `"` followed by exactly N `#`.
     /// Raw strings have no escapes, so a `\` before the quote does not protect it.
     Raw(usize),
+    /// A backtick-delimited literal that may span lines: a JS/TS template literal
+    /// (`` `…` ``) or a Go raw string. Closed by the next `` ` ``. `escapes` is true for
+    /// JS (a `` \` `` does not close) and false for Go, whose raw strings have no escapes
+    /// at all — the one place the two shapes actually differ.
+    ///
+    /// Produced only by `format::highlight` (#806). [`significant_braces`] is a Rust-only
+    /// scanner and never sets it; it lives here because the *closer* rule belongs beside
+    /// its two siblings rather than in a second scanner.
+    Backtick { escapes: bool },
 }
 
 /// The facts [`significant_braces`] must carry from one line to the next.
@@ -129,8 +142,11 @@ pub(crate) struct BraceScanState {
 /// Scan for the closer of an open string starting at `from`, returning the index just
 /// past it, or `None` when the closer is not on this line.
 ///
+/// `pub(crate)` for the same reason as [`raw_string_open`]: `format::highlight` carries
+/// the same three delimiters across lines (#806) and must close them by the same rule.
+///
 /// Never indexes a `&str` by byte — the caller hands over a `Vec<char>` slice.
-fn close_open_string(chars: &[char], from: usize, delim: StringDelim) -> Option<usize> {
+pub(crate) fn close_open_string(chars: &[char], from: usize, delim: StringDelim) -> Option<usize> {
     let mut j = from;
     match delim {
         StringDelim::Normal => {
@@ -153,6 +169,19 @@ fn close_open_string(chars: &[char], from: usize, delim: StringDelim) -> Option<
                     return Some(j + 1 + hashes);
                 }
                 j += 1;
+            }
+            None
+        }
+        StringDelim::Backtick { escapes } => {
+            while j < chars.len() {
+                if escapes && chars[j] == '\\' {
+                    // JS: `\` escapes the next char, so a `\`` does not close.
+                    j += 2;
+                } else if chars[j] == '`' {
+                    return Some(j + 1);
+                } else {
+                    j += 1;
+                }
             }
             None
         }
