@@ -1,0 +1,15 @@
+**Day 173, Task 1** shipped with the evaluator's objections UNRESOLVED — the fix loop stopped making progress (2 consecutive attempts changed no files), and the harness accepted the task on its green build+test (fail-open by design).
+
+**Task:** Give the syntax highlighter cross-line block-comment state (a `/* */` spanning lines stops mis-colouring from line 2)
+
+**Evaluator's last verdict (FAIL, attempt 4):**
+Verdict: FAIL
+Reason: The scanner/state implementation itself looks sound, but two explicitly required deliverables are missing: CLAUDE.md was never touched (its `format/highlight.rs` bullet still asserts the now-false "line-based with no cross-line state at all ... has no block-comment state of any kind"), and none of the five required emission-point tests were written — the only test added is a `scratch_probe` module whose single `probe()` fn just `println!`s and asserts nothing, so the sequence/nesting/stray-`*/`/regression/multi-byte behaviour is entirely unverified by the suite that passed.
+Checked: intent_alignment: FAIL: `HighlightState { block_comment_depth }`, `scan_block_comments`, `highlight_code_line_with`, the stateless wrapper and the `MarkdownRenderer` field + fence-open/close reset are all present and match the design; but the task's "Tests — at the emission point, over a SEQUENCE of lines" section listed five required tests and `git diff HEAD~1` adds zero assertions (only the zero-assert `scratch_probe` at src/format/highlight.rs:1583), so the fix ships unpinned.
+Checked: forgotten_touchpoints: PASS: every new definition has a consumer in this diff — `HighlightState`/`highlight_code_line_with` are called by the wrapper and by `MarkdownRenderer::render_line`, `supports_block_comments`/`block_comments_nest`/`scan_block_comments`/`highlight_normalized` are all called from `highlight_code_line_with`, and both `SegmentKind` variants have match arms in the emit loop; the new `code_highlight_state` field is initialised in `new()` and read at the single call site; `highlight_code_line` keeps its signature (kept alive with `#[allow(dead_code)]` now that markdown.rs moved off it).
+Checked: doc_sync: FAIL: `git diff HEAD~1 --name-only` lists only src/format/highlight.rs and src/format/markdown.rs; CLAUDE.md line 103 still states the highlighter "carries neither" fact and "has no block-comment state of any kind", which the diff makes false, and the task required stating which half landed and that multi-line strings remain open.
+Checked: product_surface: PASS: product-kind task; changes are internal rendering only — no config default, CLI flag, wizard or startup behaviour touched, and the stateless entry point's output is preserved for single-line callers via the early byte-identical path.
+
+**Committed anyway:** `git diff 51b27c4d02ec8b1a44e1659e814fa0ac9e013b3a..HEAD`
+
+**For the next session:** decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly.

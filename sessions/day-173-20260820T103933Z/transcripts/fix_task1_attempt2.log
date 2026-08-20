@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "HighlightState\|highli… ✓ (8ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Confirmed — nothing was implemented. Let me read the actual code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/format/highl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub fn\|^fn \|^const \… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:330..490 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/\*' src/format/highlig…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "in_code_block\|code_lan… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces\|Bra… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:100..275 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:588..658  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs:1..51 ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "markdown\|highlight" te… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|mod highlight\… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 35s (11 ✓)
+
+Now I'll implement. First, src/format/highlight.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (13 → 213 lines)
+  + /// Does this normalized language use `/* … */` block comments?
+  + ///
+  + /// Read off the [`normalize_lang`] result rather than a second language table: the
+  + /// `#` -comment languages (python, shell, yaml, toml) have no block comments at all, and
+  + /// json/yaml/toml take their own dedicated highlighters below.
+  + fn supports_block_comments(norm: &str) -> bool {
+  +     matches!(norm, "rust" | "js" | "go" | "c")
+  + }
+  + 
+  + /// Do this language's block comments **nest**?
+  + ///
+  + /// Rust's do: `/* /* */ */` is one comment and the first `*/` closes only the inner one.
+  + /// The other C-family languages here do not nest, so their depth never climbs past 1 and
+  + /// the first `*/` closes the comment.
+  + fn block_comments_nest(norm: &str) -> bool {
+  +     norm == "rust"
+  + }
+  + 
+  + /// The facts the highlighter must carry from one line to the next.
+  + ///
+  ... (194 more lines)
+ ✓ (1m 8s)
+  + /// Does this normalized language use `/* … */` block comments?
+  + ///
+  + /// Read off the [`normalize_lang`] result rather than a second language table: the
+  + /// `#` -comment languages (python, shell, yaml, toml) have no block comments at all, and
+  + /// json/yaml/toml take their own dedicated highlighters below.
+  + fn supports_block_comments(norm: &str) -> bool {
+  +     matches!(norm, "rust" | "js" | "go" | "c")
+  + }
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,575p' src/format/hig… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The refactor landed cleanly. Now the markdown renderer:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (3 → 9 lines)
+        /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
+        inline_carry: String,
+  +     /// Cross-line syntax-highlight state for the code block currently being rendered:
+  +     /// today just the `/* … */` block-comment depth, so a comment spanning lines is not
+  +     /// mis-coloured from its second line. Reset to `Default` on **both** fence open and
+  +     /// fence close — state leaking between two unrelated code blocks (or out of an
+  +     /// unclosed comment at the end of one) would be a new bug of the shape being fixed.
+  +     code_highlight_state: HighlightState,
+    }
+ ✓ (10.1s)
+        /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
+        inline_carry: String,
+  +     /// Cross-line syntax-highlight state for the code block currently being rendered:
+  +     /// today just the `/* … */` block-comment depth, so a comment spanning lines is not
+  +     /// mis-coloured from its second line. Reset to `Default` on **both** fence open and
+  +     /// fence close — state leaking between two unrelated code blocks (or out of an
+  +     /// unclosed comment at the end of one) would be a new bug of the shape being fixed.
+  +     code_highlight_state: HighlightState,
+    }
+
+Expected — the initializer and the call site still need updating.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (2 → 3 lines)
+                inline_carry: String::new(),
+  +             code_highlight_state: HighlightState::default(),
+            }
+ ✓ (14.2s)
+                inline_carry: String::new(),
+  +             code_highlight_state: HighlightState::default(),
+            }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the consumer (the call site plus both fence resets):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (2 → 5 lines)
+            if let Some(after_fence) = trimmed.strip_prefix("```") {
+  +             // Either direction across a fence starts a fresh highlight context: an
+  +             // unclosed `/* … */` in the block being left must not colour the next one.
+  +             self.code_highlight_state = HighlightState::default();
+                if self.in_code_block {
+ ✓ (1m 9s)
+            if let Some(after_fence) = trimmed.strip_prefix("```") {
+  +             // Either direction across a fence starts a fresh highlight context: an
+  +             // unclosed `/* … */` in the block being left must not colour the next one.
+  +             self.code_highlight_state = HighlightState::default();
+                if self.in_code_block {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/markdown.rs (8 → 15 lines)
+            if self.in_code_block {
+  -             // Code block content: syntax highlight if language is known, else dim
+  -             return if let Some(ref lang) = self.code_lang {
+  -                 highlight_code_line(lang, line)
+  +             // Code block content: syntax highlight if language is known, else dim.
+  +             // Split-borrow so the carried highlight state can be updated while the
+  +             // language string is still borrowed.
+  +             let Self {
+  +                 code_lang,
+  +                 code_highlight_state,
+  +                 ..
+  +             } = self;
+  +             return if let Some(lang) = code_lang.as_deref() {
+  +                 highlight_code_line_with(lang, line, code_highlight_state)
+                } else {
+                    format!("{DIM}{line}{RESET}")
+                };
+ ✓ (13.8s)
+            if self.in_code_block {
+  -             // Code block content: syntax highlight if language is known, else dim
+  -             return if let Some(ref lang) = self.code_lang {
+  -                 highlight_code_line(lang, line)
+  +             // Code block content: syntax highlight if language is known, else dim.
+  +             // Split-borrow so the carried highlight state can be updated while the
+  +             // language string is still borrowed.
+  +             let Self {
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "highlight_code_line" s… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 46s (3 ✓)
+
+highlight_code_line had exactly one in-tree consumer — the call site I just moved. The task requires keeping it, so I'll keep it public with a narrowly-scoped, explained allow:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (2 → 9 lines)
+    /// does.
+  + ///
+  + /// `#[allow(dead_code)]`: this is the module's stateless public entry point, and the one
+  + /// in-tree consumer (`MarkdownRenderer`) moved to [`highlight_code_line_with`] when the
+  + /// carried state landed. It is kept rather than deleted because it is the byte-identical
+  + /// baseline the regression tests below assert against — the load-bearing promise that
+  + /// adding state changed nothing for single-line callers.
+  + #[allow(dead_code)]
+    pub fn highlight_code_line(lang: &str, line: &str) -> String {
+ ✓ (1m 8s)
+    /// does.
+  + ///
+  + /// `#[allow(dead_code)]`: this is the module's stateless public entry point, and the one
+  + /// in-tree consumer (`MarkdownRenderer`) moved to [`highlight_code_line_with`] when the
+  + /// carried state landed. It is kept rather than deleted because it is the byte-identical
+  + /// baseline the regression tests below assert against — the load-bearing promise that
+  + /// adding state changed nothing for single-line callers.
+  + #[allow(dead_code)]
+    pub fn highlight_code_line(lang: &str, line: &str) -> String {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (123ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 12s (2 ✓)
+
+Builds. Now let me verify the actual behaviour empirically before writing tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (18 lines) ✓ (17.2s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
