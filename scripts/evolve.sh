@@ -2216,6 +2216,7 @@ BFIXEOF
     REVERT_CLASS=""         # title-visible revert class (planner reads titles only)
     EVAL_LOG=""
     BUDGET_UNVERIFIED=""  # set by the budget gates below; changes the accept wording only
+    EVAL_INFRA_WHY=""     # reset with it: a stale reason would mislabel the NEXT task
     EVAL_OVERRIDE_REASON=""  # set when a Checked FAIL overrides a summary PASS
     UNVERIFIED_REASON=""
     UNVERIFIED_FEEDBACK=""
@@ -2626,15 +2627,23 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
             break
         elif [ "$EVAL_EXIT" -eq 124 ]; then
             echo "    Evaluator: timed out — skipping eval (build+test passed)"
+            BUDGET_UNVERIFIED="eval_infra"
+            EVAL_INFRA_WHY="the evaluator timed out after ${EVAL_TIMEOUT}s"
             break
         elif grep -q '"type":"error"' "$EVAL_LOG" 2>/dev/null; then
             echo "    Evaluator: API error — skipping eval (build+test passed)"
+            BUDGET_UNVERIFIED="eval_infra"
+            EVAL_INFRA_WHY="the evaluator hit an API error"
             break
         elif [ -z "$EVAL_VERDICT" ]; then
             echo "    Evaluator: no verdict produced — skipping eval (build+test passed)"
+            BUDGET_UNVERIFIED="eval_infra"
+            EVAL_INFRA_WHY="the evaluator produced no verdict line"
             break
         else
             echo "    Evaluator: unrecognized verdict '$EVAL_VERDICT' — skipping eval (build+test passed)"
+            BUDGET_UNVERIFIED="eval_infra"
+            EVAL_INFRA_WHY="the evaluator emitted an unparseable verdict"
             break
         fi
 
@@ -2723,32 +2732,63 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
             fi
         fi
     else
-        if [ "$BUDGET_UNVERIFIED" = "eval_failed" ] || [ "$BUDGET_UNVERIFIED" = "no_progress" ]; then
+        if [ "$BUDGET_UNVERIFIED" = "eval_failed" ] || [ "$BUDGET_UNVERIFIED" = "no_progress" ] || [ "$BUDGET_UNVERIFIED" = "eval_infra" ]; then
             # The evaluator RAN and rejected; something other than a PASS ended
             # the fix loop. Saying "skipped" here was the review's finding #4 —
             # a softer rerun of the Day-160 "verified OK after three FAILs"
             # mislabel — so both stoppers get their own honest wording rather
             # than falling into the generic "budget exhausted" branch below,
             # which would be false twice over for a no-progress stop.
-            if [ "$BUDGET_UNVERIFIED" = "no_progress" ]; then
-                UNVERIFIED_WHY="the fix loop stopped making progress ($NO_PROGRESS_FIXES consecutive attempts changed no files)"
-            else
-                UNVERIFIED_WHY="the session budget ended the fix loop"
-            fi
-            echo "    Task $TASK_NUM: accepted UNVERIFIED ($UNVERIFIED_WHY; build+test passed, evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved)"
+            #
+            # eval_infra is the third stopper and the one that hid the longest:
+            # the evaluator did not object, it never rendered a verdict at all
+            # (timeout, API error, empty verdict, unparseable verdict). All four
+            # of those exits used to `break` with BUDGET_UNVERIFIED unset, so the
+            # task landed labelled "verified OK" — byte-identical to a task the
+            # evaluator actually PASSed — and filed no receipt, leaving no trace
+            # for any later session. Observed live 2026-08-19 22:59: "Evaluator:
+            # no verdict produced" followed by "Task 1: verified OK". Nothing
+            # judged that diff, and the log said it was verified.
+            #
+            # It stays fail-OPEN (the task keeps its green build+test, as
+            # before); only the label and the receipt change.
+            case "$BUDGET_UNVERIFIED" in
+                no_progress)
+                    UNVERIFIED_WHY="the fix loop stopped making progress ($NO_PROGRESS_FIXES consecutive attempts changed no files)"
+                    UNVERIFIED_STATE="evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved"
+                    UNVERIFIED_VERDICT_HEAD="**Evaluator's last verdict (FAIL, attempt ${EVAL_ATTEMPT}):**"
+                    UNVERIFIED_VERDICT_BODY="${UNVERIFIED_FEEDBACK:-${UNVERIFIED_REASON:-no reason captured}}"
+                    UNVERIFIED_NEXT="decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly."
+                    ;;
+                eval_infra)
+                    UNVERIFIED_WHY="${EVAL_INFRA_WHY:-the evaluator did not complete}"
+                    UNVERIFIED_STATE="evaluator rendered NO verdict — nothing judged this diff"
+                    UNVERIFIED_VERDICT_HEAD="**Evaluator verdict:** none — $UNVERIFIED_WHY, so this diff was never judged."
+                    UNVERIFIED_VERDICT_BODY="There is no objection to answer here; the gap is that nobody looked. The harness log for this session records the exit that ended the evaluation."
+                    UNVERIFIED_NEXT="review the committed diff yourself, since the evaluator never did. If it is fine, say so here and close. If it is not, fix it as a small follow-up task. Do not re-run the whole task blindly."
+                    ;;
+                *)
+                    UNVERIFIED_WHY="the session budget ended the fix loop"
+                    UNVERIFIED_STATE="evaluator FAILED ${EVAL_ATTEMPT}x — objections unresolved"
+                    UNVERIFIED_VERDICT_HEAD="**Evaluator's last verdict (FAIL, attempt ${EVAL_ATTEMPT}):**"
+                    UNVERIFIED_VERDICT_BODY="${UNVERIFIED_FEEDBACK:-${UNVERIFIED_REASON:-no reason captured}}"
+                    UNVERIFIED_NEXT="decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly."
+                    ;;
+            esac
+            echo "    Task $TASK_NUM: accepted UNVERIFIED ($UNVERIFIED_WHY; build+test passed, $UNVERIFIED_STATE)"
             # Carry the unresolved objection out of the session (see above).
             if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
                 refresh_gh_token
-                UNVERIFIED_BODY="**Day $DAY, Task $TASK_NUM** shipped with the evaluator's objections UNRESOLVED — $UNVERIFIED_WHY, and the harness accepted the task on its green build+test (fail-open by design).
+                UNVERIFIED_BODY="**Day $DAY, Task $TASK_NUM** shipped UNVERIFIED — $UNVERIFIED_WHY, and the harness accepted the task on its green build+test (fail-open by design).
 
 **Task:** $task_title
 
-**Evaluator's last verdict (FAIL, attempt ${EVAL_ATTEMPT}):**
-${UNVERIFIED_FEEDBACK:-${UNVERIFIED_REASON:-no reason captured}}
+$UNVERIFIED_VERDICT_HEAD
+$UNVERIFIED_VERDICT_BODY
 
 **Committed anyway:** \`git diff ${PRE_TASK_SHA}..HEAD\`
 
-**For the next session:** decide whether the objection still stands against the committed code. If it does, fix it as a small follow-up task; if the evaluator was wrong, say so here and close. Do not re-run the whole task blindly."
+**For the next session:** $UNVERIFIED_NEXT"
                 # Write the objection to session staging FIRST: that directory is
                 # pushed to the audit-log branch, so a failed `gh issue create`
                 # (expired token, rate limit) can no longer destroy the only copy
