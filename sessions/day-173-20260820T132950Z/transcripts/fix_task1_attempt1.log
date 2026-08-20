@@ -1,0 +1,130 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc claims. Let me look at the current state first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && sed -n 5… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 555,580p src/format/highl… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 580,590p src/format/highl… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 370,400p src/format/highl… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 355,392p src/format/highl… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:360..390 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:575..585 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 20.3s (7 ✓)
+
+Now the two doc-comment fixes:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (4 → 6 lines)
+  - /// Only the block-comment depth is carried today. Multi-line string literals are **not**
+  - /// handled: a `"` left open at end of line still ends the string run at the line end, so
+  - /// a string spanning lines is still mis-coloured from line 2. That is deliberately a
+  - /// later task, not an oversight.
+  + /// Two facts are carried today: the block-comment depth, and a plain `"…"` literal left
+  + /// open at the end of the previous line (Rust only — see [`multiline_strings`]).
+  + /// Still **not** carried, and deliberately so: Rust **raw** strings (`r#"…"#`) and JS
+  + /// template literals, which still end their run at the line end and so are mis-coloured
+  + /// from line 2. The sibling scanner `commands_refactor::significant_braces` is the one
+  + /// that models the raw-string delimiter.
+ ✓ (1m 42s)
+  - /// Only the block-comment depth is carried today. Multi-line string literals are **not**
+  - /// handled: a `"` left open at end of line still ends the string run at the line end, so
+  - /// a string spanning lines is still mis-coloured from line 2. That is deliberately a
+  - /// later task, not an oversight.
+  + /// Two facts are carried today: the block-comment depth, and a plain `"…"` literal left
+  + /// open at the end of the previous line (Rust only — see [`multiline_strings`]).
+  + /// Still **not** carried, and deliberately so: Rust **raw** strings (`r#"…"#`) and JS
+  + /// template literals, which still end their run at the line end and so are mis-coloured
+  + /// from line 2. The sibling scanner `commands_refactor::significant_braces` is the one
+  + /// that models the raw-string delimiter.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (3 → 10 lines)
+  - /// **Not handled, deliberately:** multi-line *string* literals. A `"` left open at end of
+  - /// line still ends its run at the line end, so a string spanning lines is mis-coloured
+  - /// from its second line — the sibling half of this fix, left for a later session.
+  + /// A plain `"…"` string literal left open at the end of the previous line is carried too,
+  + /// but **only** where such a literal really spans lines (`multiline_strings` — Rust
+  + /// today): its content up to the closing `"` is emitted string-coloured, so `/*`, `//`
+  + /// and keywords inside it are inert, and ordinary highlighting resumes just past the
+  + /// closer. Every other language resets the flag, so their output is byte-identical to
+  + /// the stateless path.
+  + ///
+  + /// **Still not handled, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template
+  + /// literals. Those still end their run at the line end, so one spanning lines is
+  + /// mis-coloured from its second line — a later session's work.
+ ✓ (1m 41s)
+  - /// **Not handled, deliberately:** multi-line *string* literals. A `"` left open at end of
+  - /// line still ends its run at the line end, so a string spanning lines is mis-coloured
+  - /// from its second line — the sibling half of this fix, left for a later session.
+  + /// A plain `"…"` string literal left open at the end of the previous line is carried too,
+  + /// but **only** where such a literal really spans lines (`multiline_strings` — Rust
+  + /// today): its content up to the closing `"` is emitted string-coloured, so `/*`, `//`
+  + /// and keywords inside it are inert, and ordinary highlighting resumes just past the
+  + /// closer. Every other language resets the flag, so their output is byte-identical to
+  ... (5 more lines)
+  2 tools completed in 3m 30s (2 ✓)
+
+Now the CLAUDE.md bullet:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no open-string state" C… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 -- src/form… ✓ (6ms)
+  2 tools completed in 4.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Doc comments are fixed. Now the stale CLAUDE.md claim:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && sed -n 363,37… ✓ (7ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Still open — the highlighter's own limitation, and it stays true after #771 closed:** this highlighter is **line-based with no cross-line state at all**, so a `/* … */` block comment spanning lines and a string literal spanning lines are both mis-coloured from the second line on. The gap to its sibling widened rather than closed: `significant_braces` now carries **both** facts across lines in a `BraceScanState` — a block-comment **depth** (#771 item 1, closed Day 171) and an open-string delimiter, plain or raw-with-N-hashes (#771 item 2, closed Day 171) — while the highlighter carries neither, so it has no block-comment state of any kind (nested or otherwise) and no open-string state. #771 was about the *scanner that rewrites files*; nothing in it touched this display path, and no fix here is claimed.
+  + **Cross-line state (Day 173) — the gap to its sibling is now mostly closed, and the residue is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Two Day-173 tasks carried the two facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines: (a) `block_comment_depth`, a **depth** not a bool, so Rust's nested `/* /* */ */` is one comment while the other C-family languages close on the first `*/`, and a stray `*/` at depth 0 is ordinary code rather than an underflow; (b) `open_string`, a plain `"…"` left open at end of line, set **only** where such a literal really spans lines (`multiline_strings` — Rust today), whose content is emitted string-coloured so `/*`, `//` and keywords inside it are inert and ordinary highlighting resumes just past the closer. `highlight_code_line(lang, line)` is kept as the stateless wrapper and **is** the byte-identity baseline the regression tests assert against: languages with no block comments (python, shell, yaml, toml, json) and every non-Rust language reset the carried flags, and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. **Still not carried, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template literals — those still end their run at the line end and so are mis-coloured from line 2; `commands_refactor::significant_braces` remains the only one of the two that models the raw-string delimiter, so the two are still not the same scanner and this is not a claim to lex Rust.
+ ✓ (57.6s)
+  - **Still open — the highlighter's own limitation, and it stays true after #771 closed:** this highlighter is **line-based with no cross-line state at all**, so a `/* … */` block comment spanning lines and a string literal spanning lines are both mis-coloured from the second line on. The gap to its sibling widened rather than closed: `significant_braces` now carries **both** facts across lines in a `BraceScanState` — a block-comment **depth** (#771 item 1, closed Day 171) and an open-string delimiter, plain or raw-with-N-hashes (#771 item 2, closed Day 171) — while the highlighter carries neither, so it has no block-comment state of any kind (nested or otherwise) and no open-string state. #771 was about the *scanner that rewrites files*; nothing in it touched this display path, and no fix here is claimed.
+  + **Cross-line state (Day 173) — the gap to its sibling is now mostly closed, and the residue is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Two Day-173 tasks carried the two facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines: (a) `block_comment_depth`, a **depth** not a bool, so Rust's nested `/* /* */ */` is one comment while the other C-family languages close on the first `*/`, and a stray `*/` at depth 0 is ordinary code rather than an underflow; (b) `open_string`, a plain `"…"` left open at end of line, set **only** where such a literal really spans lines (`multiline_strings` — Rust today), whose content is emitted string-coloured so `/*`, `//` and keywords inside it are inert and ordinary highlighting resumes just past the closer. `highlight_code_line(lang, line)` is kept as the stateless wrapper and **is** the byte-identity baseline the regression tests assert against: languages with no block comments (python, shell, yaml, toml, json) and every non-Rust language reset the carried flags, and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. **Still not carried, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template literals — those still end their run at the line end and so are mis-coloured from line 2; `commands_refactor::significant_braces` remains the only one of the two that models the raw-string delimiter, so the two are still not the same scanner and this is not a claim to lex Rust.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "saturating_sub\|depth =… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 462,500p src/format/highl… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 22s (4 ✓)
+
+Claims verified against the code. Running the full check suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (57.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (57.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (58.3s)
+  4 tools completed in 3m 2s (4 ✓)
+
+All green (5142 passed, 0 failed). Committing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (20ms)
+
+Done. Committed as da833c13.
+
+What the evaluator rejected: the code change in 38f9ac2c was accepted, but it shipped three doc sites asserting the opposite of what the code now does.
+
+What I fixed — docs only, no implementation change:
+
+1. HighlightState's struct doc (src/format/highlight.rs:369-372) — "Only the block-comment depth is carried today. Multi-line string literals are not handled" → now names both carried facts and narrows the residue to raw strings / JS template literals.
+2. highlight_code_line_with's doc (:577-579) — the "Not handled, deliberately: multi-line string literals" paragraph → replaced with a description of the open-string carry (Rust-only via multiline_strings, string-coloured content so /*////keywords inside are inert, resumes past the closer, other languages reset the flag and stay byte-identical) plus a "Still not handled" paragraph for raw strings and template literals.
+3. CLAUDE.md:103 — "line-based with no cross-line state at all … carries neither, so it has no block-comment state of any kind … and no open-string state" → replaced with the Day-173 state of both carries and the named residue.
+
+Claims verified before writing them, not assumed:
+• depth-not-bool nesting gated on block_comments_nest(norm) == (norm == "rust") (:358-360)
+• stray */ at depth 0 is ordinary code — it never enters the depth branch and falls through to i += 1 (:465-480), so no underflow
+• open_string set only under `multiline_strings(norm) (:518-521), reset on both non-block-comment early returns (:587, :594`)
+• the single-segment fast path that preserves byte-identity (`:582-585`)
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build all clean; cargo test = 5142 passed, 0 failed.
+
+One thing stated plainly: I did not re-verify the highlighter's rendered output for raw strings/template literals — I read the scanner and it has no state for either, which is what the "still not handled" text now claims.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
