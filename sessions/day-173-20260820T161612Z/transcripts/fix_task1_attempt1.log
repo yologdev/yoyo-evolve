@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo and the specific issues flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo.toml && echo "---BAK--… ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- .yoyo.toml .yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Still not carried" CLAU… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/commands_re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/format/high… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,440p' src/format/hig… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 38.0s (7 ✓)
+
+Now the two fixes. First, restore the config churn:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout HEAD~1 -- .yoyo.tom… ✓ (9ms)
+
+Both restored to their pre-task content. Now the CLAUDE.md bullet — the stale claim the evaluator flagged:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Cross-line state (Day 173) — the gap to its sibling is now mostly closed, and the residue is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Two Day-173 tasks carried the two facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines:
+  + **Cross-line state (Day 173) — the gap to its sibling is now closed for every delimiter class either of them models, and what is left out is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Three Day-173 tasks carried those facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines:
+ ✓ (59.9s)
+  - **Cross-line state (Day 173) — the gap to its sibling is now mostly closed, and the residue is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Two Day-173 tasks carried the two facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines:
+  + **Cross-line state (Day 173) — the gap to its sibling is now closed for every delimiter class either of them models, and what is left out is named rather than implied:** this highlighter used to be **line-based with no cross-line state at all**, so a `/* … */` block comment and a string literal spanning lines were both mis-coloured from the second line on, while `significant_braces` carried both facts in a `BraceScanState` (#771 items 1+2, Day 171 — but that issue was about the *scanner that rewrites files* and touched nothing on this display path). Three Day-173 tasks carried those facts over here into `HighlightState`, which `highlight_code_line_with(lang, line, &mut state)` threads across lines:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - and ordinary highlighting resumes just past the closer. `highlight_code_line(lang, line)` is kept as the stateless wrapper
+  + and ordinary highlighting resumes just past the closer. (c) Day 173 (#806) carried the remaining two delimiter classes — Rust **raw** strings (`r"…"` / `r#"…"#` at any hash count, `b` prefix allowed) and **backtick** literals — which turned that field from a `bool` into `Option<StringDelim>`, so the delimiter *type* is carried rather than merely the fact that something is open. It is **not** a third scanner: `commands_refactor::raw_string_open` and `close_open_string` were made `pub(crate)` with this consumer landing in the same diff, the highlighter's own private single-purpose `close_open_string` copy was **deleted**, and `StringDelim` grew one variant (`Backtick { escapes }`) whose match arm was added at the same time — the same one-rule-one-table discipline #759 used for `char_literal_len`. Backticks are gated per language by `backtick_strings(norm) -> Option<bool>`: `js` → spans lines and honours `` \` ``, `go` → spans lines with **no** escapes (a `\` before the closing backtick does not protect it, because Go's backtick literal is raw), everything else `None`, so a backtick in rust/c/python stays inert and those languages are byte-identical. **Still not carried, and this is the whole residue:** `${…}` interpolation inside a JS template literal is treated as string content, not code, so an interpolated expression is not highlighted — this colours a line, it does not lex one. `highlight_code_line(lang, line)` is kept as the stateless wrapper
+ ✓ (1m 1s)
+  - and ordinary highlighting resumes just past the closer. `highlight_code_line(lang, line)` is kept as the stateless wrapper
+  + and ordinary highlighting resumes just past the closer. (c) Day 173 (#806) carried the remaining two delimiter classes — Rust **raw** strings (`r"…"` / `r#"…"#` at any hash count, `b` prefix allowed) and **backtick** literals — which turned that field from a `bool` into `Option<StringDelim>`, so the delimiter *type* is carried rather than merely the fact that something is open. It is **not** a third scanner: `commands_refactor::raw_string_open` and `close_open_string` were made `pub(crate)` with this consumer landing in the same diff, the highlighter's own private single-purpose `close_open_string` copy was **deleted**, and `StringDelim` grew one variant (`Backtick { escapes }`) whose match arm was added at the same time — the same one-rule-one-table discipline #759 used for `char_literal_len`. Backticks are gated per language by `backtick_strings(norm) -> Option<bool>`: `js` → spans lines and honours `` \` ``, `go` → spans lines with **no** escapes (a `\` before the closing backtick does not protect it, because Go's backtick literal is raw), everything else `None`, so a backtick in rust/c/python stays inert and those languages are byte-identical. **Still not carried, and this is the whole residue:** `${…}` interpolation inside a JS template literal is treated as string content, not code, so an interpolated expression is not highlighted — this colours a line, it does not lex one. `highlight_code_line(lang, line)` is kept as the stateless wrapper
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 18s (2 ✓)
+
+Now remove the old, now-false residue sentence:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. **Still not carried, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template literals — those still end their run at the line end and so are mis-coloured from line 2; `commands_refactor::significant_braces` remains the only one of the two that models the raw-string delimiter, so the two are still not the same scanner and this is not a claim to lex Rust. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives
+  + and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives
+ ✓ (1m 1s)
+  - and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. **Still not carried, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template literals — those still end their run at the line end and so are mis-coloured from line 2; `commands_refactor::significant_braces` remains the only one of the two that models the raw-string delimiter, so the two are still not the same scanner and this is not a claim to lex Rust. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives
+  + and a line with no carried state and no block comment takes a single-segment fast path, so their output is byte-identical to the pre-state behaviour. Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '103p' CLAUDE.md | grep -… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, and unchanged python/js/shell single-quoted strings).
+  + Pinned at the **emission point**: tests call `highlight_code_line` / `highlight_code_line_with` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, unchanged python/js/shell single-quoted strings, and — for the cross-line half — line *sequences* driven through one carried state: a raw string's second line, an `r##"` hash count, a JS template literal, a Go raw string, the js-vs-go escape-rule difference, a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them).
+ ✓ (1m 1s)
+  - Pinned at the **emission point**: tests call `highlight_code_line` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, and unchanged python/js/shell single-quoted strings).
+  + Pinned at the **emission point**: tests call `highlight_code_line` / `highlight_code_line_with` and assert the string a caller receives (lifetime case, `'x'`/`'\n'` pass-through, unchanged python/js/shell single-quoted strings, and — for the cross-line half — line *sequences* driven through one carried state: a raw string's second line, an `r##"` hash count, a JS template literal, a Go raw string, the js-vs-go escape-rule difference, a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them).
+  3 tools completed in 2m 12s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I need to verify the CLAUDE.md claims I just wrote against the actual tests, check the sibling commands_refactor.rs bullet for the same stale claim, then verify and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*(" src/format/high…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "remains the only\|only … ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+My new text matches the real test names. Now the sibling bullet has the same stale claim — it says the highlighter has "no block-comment state at all":
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test; note the highlighter is line-based with no block-comment state at all, so it is *strictly more* limited than `significant_braces` — see that bullet.
+  + `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test. Day 173 (#806) extended that same sharing to the other two literal helpers rather than letting a copy grow back: `raw_string_open` and `close_open_string` are now `pub(crate)` as well, with `format::highlight` as their second consumer (its own private single-purpose `close_open_string` was deleted in that diff), and `StringDelim` gained a third variant `Backtick { escapes }` — JS/TS template literals honour `` \` ``, Go raw strings do not — which only the highlighter ever *opens*, since Rust has no backtick literal and `significant_braces` therefore never constructs one. **Superseded claim, recorded rather than erased:** this bullet used to say the highlighter is "line-based with no block-comment state at all, strictly more limited than `significant_braces`". That was true when written and has been false since Day 173 — the highlighter now carries block-comment depth and all three string delimiters in its own `HighlightState`. The two are still not one scanner (they answer different questions — which braces are structural, vs. which spans get string colour), but the literal-skipping rules underneath are shared code with one table, not two copies drifting.
+ ✓ (59.8s)
+  - `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test; note the highlighter is line-based with no block-comment state at all, so it is *strictly more* limited than `significant_braces` — see that bullet.
+  + `char_literal_len` therefore has two cross-module consumers (`significant_braces` here, the Rust arm of `highlight_code_line`) and one table test. Day 173 (#806) extended that same sharing to the other two literal helpers rather than letting a copy grow back: `raw_string_open` and `close_open_string` are now `pub(crate)` as well, with `format::highlight` as their second consumer (its own private single-purpose `close_open_string` was deleted in that diff), and `StringDelim` gained a third variant `Backtick { escapes }` — JS/TS template literals honour `` \` ``, Go raw strings do not — which only the highlighter ever *opens*, since Rust has no backtick literal and `significant_braces` therefore never constructs one. **Superseded claim, recorded rather than erased:** this bullet used to say the highlighter is "line-based with no block-comment state at all, strictly more limited than `significant_braces`". That was true when written and has been false since Day 173 — the highlighter now carries block-comment depth and all three string delimiters in its own `HighlightState`. The two are still not one scanner (they answer different questions — which braces are structural, vs. which spans get string colour), but the literal-skipping rules underneath are shared code with one table, not two copies drifting.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "template literal\|raw … ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1881,1935p' src/format/h… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 21s (3 ✓)
+
+There's a scratch_probe module at the end — likely leftover debug scaffolding from the rejected commit. Let me check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1927,1990p' src/format/h… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-existing from an earlier task, not this commit's churn — and "never delete existing tests" applies, so I'll leave it. Now verify:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (22.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 34s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…

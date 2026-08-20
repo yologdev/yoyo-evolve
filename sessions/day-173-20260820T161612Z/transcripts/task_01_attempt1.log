@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the top backlog item — #806 is small, concrete, and has a clear "done when". Let me check the current state of the highlighter.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HighlightState\|open_st… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:360..620 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:616..686  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "raw_string_open\|fn cha… ✓ (1ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:36..156 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/format/highl… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn supports_block_comme… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 17s (8 ✓)
+
+Now I'll make the change. First, extend the shared delimiter vocabulary in commands_refactor (one statement of the closer rule, not a second copy):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:150..195 ✓ (1ms)
+
+Now the edits to commands_refactor.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (3 → 7 lines)
+    /// If a raw-string literal opens at `chars[start]` (an `r`, optionally preceded by a
+    /// `b` byte-string prefix), return `(hash_count, index_just_after_the_opening_quote)`.
+  - fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+  + ///
+  + /// `pub(crate)` because it has a second consumer: `format::highlight::scan_block_comments`
+  + /// needs the same opener rule to carry a raw string across lines (#806). A second copy of
+  + /// this rule is exactly how #759 outlived #770 by a day — one implementation, one table.
+  + pub(crate) fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+ ✓ (2m 2s)
+    /// If a raw-string literal opens at `chars[start]` (an `r`, optionally preceded by a
+    /// `b` byte-string prefix), return `(hash_count, index_just_after_the_opening_quote)`.
+  - fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+  + ///
+  + /// `pub(crate)` because it has a second consumer: `format::highlight::scan_block_comments`
+  + /// needs the same opener rule to carry a raw string across lines (#806). A second copy of
+  + /// this rule is exactly how #759 outlived #770 by a day — one implementation, one table.
+  + pub(crate) fn raw_string_open(chars: &[char], start: usize) -> Option<(usize, usize)> {
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff .yoyo.toml .yoyo.toml.b… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.4s (2 ✓)
+
+Now add the backtick delimiter (JS template literals / Go raw strings) to the shared vocabulary:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (4 → 13 lines)
+        /// A raw string `r"…"` / `r#"…"#`: closed by a `"` followed by exactly N `#`.
+        /// Raw strings have no escapes, so a `\` before the quote does not protect it.
+        Raw(usize),
+  +     /// A backtick-delimited literal that may span lines: a JS/TS template literal
+  +     /// (`` `…` ``) or a Go raw string. Closed by the next `` ` ``. `escapes` is true for
+  +     /// JS (a `` \` `` does not close) and false for Go, whose raw strings have no escapes
+  +     /// at all — the one place the two shapes actually differ.
+  +     ///
+  +     /// Produced only by `format::highlight` (#806). [`significant_braces`] is a Rust-only
+  +     /// scanner and never sets it; it lives here because the *closer* rule belongs beside
+  +     /// its two siblings rather than in a second scanner.
+  +     Backtick { escapes: bool },
+    }
+ ✓ (12.7s)
+        /// A raw string `r"…"` / `r#"…"#`: closed by a `"` followed by exactly N `#`.
+        /// Raw strings have no escapes, so a `\` before the quote does not protect it.
+        Raw(usize),
+  +     /// A backtick-delimited literal that may span lines: a JS/TS template literal
+  +     /// (`` `…` ``) or a Go raw string. Closed by the next `` ` ``. `escapes` is true for
+  +     /// JS (a `` \` `` does not close) and false for Go, whose raw strings have no escapes
+  +     /// at all — the one place the two shapes actually differ.
+  +     ///
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (11 → 24 lines)
+                        return Some(j + 1 + hashes);
+                    }
+                    j += 1;
+  +             }
+  +             None
+  +         }
+  +         StringDelim::Backtick { escapes } => {
+  +             while j < chars.len() {
+  +                 if escapes && chars[j] == '\\' {
+  +                     // JS: `\` escapes the next char, so a `\`` does not close.
+  +                     j += 2;
+  +                 } else if chars[j] == '`' {
+  +                     return Some(j + 1);
+  +                 } else {
+  +                     j += 1;
+  +                 }
+                }
+                None
+            }
+ ✓ (20.7s)
+                        return Some(j + 1 + hashes);
+                    }
+                    j += 1;
+  +             }
+  +             None
+  +         }
+  +         StringDelim::Backtick { escapes } => {
+  +             while j < chars.len() {
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 52.6s (3 ✓)
+
+Now the highlighter side — the actual consumer:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (122 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (108 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.7s (2 ✓)
+
+Now update the two doc comments that named this as unfinished residue:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (9.8s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0600][0m[1m: cannot apply unary operator `!` to type `std::option::Option<commands_refactor::StringDelim>`[0m
+    [1m[94m--> [0msrc/format/highlight.rs:1707:9
+     [1m[94m|[0m
+[1m[94m1707[0m [1m[94m|[0m         assert!(st.open_string, "line 1 leaves the string open");
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mcannot apply unary operator `!`[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: `std::option::Option<commands_refactor::StringDelim>` does not implement `std::ops::Not`
+    [1m[94m--> [0m/rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/option.rs:597:0
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `std::option::Option<commands_refactor::StringDelim>` is defined in another crate
+
+[1m[91merror[E0600][0m[1m: cannot apply unary operator `!` to type `std::option::Option<commands_refactor::StringDelim>`[0m
+    [1m[94m--> [0msrc/format/highlight.rs:1720:9
+     [1m[94m|[0m
+[1m[94m1720[0m [1m[94m|[0m         assert!(st.open_string, "line 2 does not close the string");
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mcannot apply unary operator `!`[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: `std::option::Option<commands_refactor::StringDelim>` does not implement `std::ops::Not`
+    [1m[94m--> [0m/rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/option.rs:597:0
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `std::option::Option<commands_refactor::StringDelim>` is defined in another crate
+
+[1m[91merror[E0600][0m[1m: cannot apply unary operator `!` to type `std::option::Option<commands_refactor::StringDelim>`[0m
+    [1m[94m--> [0msrc/format/highlight.rs:1731:17
+     [1m[94m|[0m
+[1m[94m1731[0m [1m[94m|[0m         assert!(!st.open_string, "line 3 closes th...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "st.open_string" src/for… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (9.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.5s (2 ✓)
+
+Builds. Now the emission-point tests the issue asks for — a raw string and a JS template literal keeping string colour on line 2:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1755,1800p' src/format/h… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (154 lines) ✓ (140ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::highlight 2>&… ✓ (25.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo highlight … ✓ (153ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::hi… ✓ (149ms)
+  5 tools completed in 1m 15s (5 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
