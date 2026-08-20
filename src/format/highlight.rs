@@ -366,10 +366,12 @@ fn block_comments_nest(norm: &str) -> bool {
 /// half can be added later without churning every call site — the same reasoning that
 /// produced `commands_refactor::BraceScanState`, whose block-comment rules this mirrors.
 ///
-/// Only the block-comment depth is carried today. Multi-line string literals are **not**
-/// handled: a `"` left open at end of line still ends the string run at the line end, so
-/// a string spanning lines is still mis-coloured from line 2. That is deliberately a
-/// later task, not an oversight.
+/// Two facts are carried today: the block-comment depth, and a plain `"…"` literal left
+/// open at the end of the previous line (Rust only — see [`multiline_strings`]).
+/// Still **not** carried, and deliberately so: Rust **raw** strings (`r#"…"#`) and JS
+/// template literals, which still end their run at the line end and so are mis-coloured
+/// from line 2. The sibling scanner `commands_refactor::significant_braces` is the one
+/// that models the raw-string delimiter.
 #[derive(Debug, Default, Clone)]
 pub struct HighlightState {
     /// `/* … */` nesting depth. `0` means "not inside a block comment"; a stray `*/` at
@@ -574,9 +576,16 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
 /// an underflow. Languages with no block comments (python, shell, yaml, toml, json) reset
 /// the depth to 0 and render exactly as the stateless path does.
 ///
-/// **Not handled, deliberately:** multi-line *string* literals. A `"` left open at end of
-/// line still ends its run at the line end, so a string spanning lines is mis-coloured
-/// from its second line — the sibling half of this fix, left for a later session.
+/// A plain `"…"` string literal left open at the end of the previous line is carried too,
+/// but **only** where such a literal really spans lines (`multiline_strings` — Rust
+/// today): its content up to the closing `"` is emitted string-coloured, so `/*`, `//`
+/// and keywords inside it are inert, and ordinary highlighting resumes just past the
+/// closer. Every other language resets the flag, so their output is byte-identical to
+/// the stateless path.
+///
+/// **Still not handled, deliberately:** Rust **raw** strings (`r#"…"#`) and JS template
+/// literals. Those still end their run at the line end, so one spanning lines is
+/// mis-coloured from its second line — a later session's work.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
 pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightState) -> String {
