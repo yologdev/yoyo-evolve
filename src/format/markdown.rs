@@ -24,6 +24,12 @@ pub struct MarkdownRenderer {
     /// across streaming chunks ("**bo" + "ld**") still formats (#661).
     /// Bounded by `INLINE_CARRY_MAX`; a newline or `flush()` ends withholding.
     inline_carry: String,
+    /// Cross-line syntax-highlight state for the code block currently being rendered:
+    /// today just the `/* … */` block-comment depth, so a comment spanning lines is not
+    /// mis-coloured from its second line. Reset to `Default` on **both** fence open and
+    /// fence close — state leaking between two unrelated code blocks (or out of an
+    /// unclosed comment at the end of one) would be a new bug of the shape being fixed.
+    code_highlight_state: HighlightState,
 }
 
 /// Byte cap for `MarkdownRenderer::inline_carry` (#661). On overflow the
@@ -40,6 +46,7 @@ impl MarkdownRenderer {
             line_start: true,
             block_prefix_rendered: false,
             inline_carry: String::new(),
+            code_highlight_state: HighlightState::default(),
         }
     }
 
@@ -612,6 +619,9 @@ impl MarkdownRenderer {
 
         // Check for code fence (``` with optional language)
         if let Some(after_fence) = trimmed.strip_prefix("```") {
+            // Either direction across a fence starts a fresh highlight context: an
+            // unclosed `/* … */` in the block being left must not colour the next one.
+            self.code_highlight_state = HighlightState::default();
             if self.in_code_block {
                 // Closing fence
                 self.in_code_block = false;
@@ -631,9 +641,16 @@ impl MarkdownRenderer {
         }
 
         if self.in_code_block {
-            // Code block content: syntax highlight if language is known, else dim
-            return if let Some(ref lang) = self.code_lang {
-                highlight_code_line(lang, line)
+            // Code block content: syntax highlight if language is known, else dim.
+            // Split-borrow so the carried highlight state can be updated while the
+            // language string is still borrowed.
+            let Self {
+                code_lang,
+                code_highlight_state,
+                ..
+            } = self;
+            return if let Some(lang) = code_lang.as_deref() {
+                highlight_code_line_with(lang, line, code_highlight_state)
             } else {
                 format!("{DIM}{line}{RESET}")
             };

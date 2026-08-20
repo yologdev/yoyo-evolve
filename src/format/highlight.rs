@@ -342,18 +342,225 @@ fn comment_prefix(lang: &str) -> &'static str {
     }
 }
 
+/// Does this normalized language use `/* … */` block comments?
+///
+/// Read off the [`normalize_lang`] result rather than a second language table: the
+/// `#` -comment languages (python, shell, yaml, toml) have no block comments at all, and
+/// json/yaml/toml take their own dedicated highlighters below.
+fn supports_block_comments(norm: &str) -> bool {
+    matches!(norm, "rust" | "js" | "go" | "c")
+}
+
+/// Do this language's block comments **nest**?
+///
+/// Rust's do: `/* /* */ */` is one comment and the first `*/` closes only the inner one.
+/// The other C-family languages here do not nest, so their depth never climbs past 1 and
+/// the first `*/` closes the comment.
+fn block_comments_nest(norm: &str) -> bool {
+    norm == "rust"
+}
+
+/// The facts the highlighter must carry from one line to the next.
+///
+/// A struct with a named field rather than a bare `usize` so the multi-line **string**
+/// half can be added later without churning every call site — the same reasoning that
+/// produced `commands_refactor::BraceScanState`, whose block-comment rules this mirrors.
+///
+/// Only the block-comment depth is carried today. Multi-line string literals are **not**
+/// handled: a `"` left open at end of line still ends the string run at the line end, so
+/// a string spanning lines is still mis-coloured from line 2. That is deliberately a
+/// later task, not an oversight.
+#[derive(Debug, Default, Clone)]
+pub struct HighlightState {
+    /// `/* … */` nesting depth. `0` means "not inside a block comment"; a stray `*/` at
+    /// depth 0 is ignored rather than underflowing.
+    pub block_comment_depth: usize,
+}
+
+/// One stretch of a line, classified by the block-comment scanner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentKind {
+    /// Ordinary code — handed to the per-line highlighter.
+    Code,
+    /// Inside a `/* … */` block comment — emitted dim, never highlighted as code.
+    Comment,
+}
+
+/// Split `chars` into code / block-comment stretches, updating the carried depth.
+///
+/// Returns `(kind, start, end)` char-index ranges in order, covering the whole line.
+/// `//` line comments are left inside a `Code` stretch on purpose — the per-line
+/// highlighter already dims them, and duplicating that here would be a second rule.
+///
+/// A `/*` inside a string or char literal does **not** open a comment: the scanner skips
+/// literals using the same model the per-line highlighter uses (a `"…"` run with `\`
+/// escapes, plus Rust char literals via `char_literal_len`), so the two agree about where
+/// code ends. Raw strings (`r#"…"#`) are not modelled here any more than they are there.
+fn scan_block_comments(
+    norm: &str,
+    chars: &[char],
+    state: &mut HighlightState,
+) -> Vec<(SegmentKind, usize, usize)> {
+    let len = chars.len();
+    let nest = block_comments_nest(norm);
+    let mut segments: Vec<(SegmentKind, usize, usize)> = Vec::new();
+    let mut seg_start = 0usize;
+    let mut i = 0usize;
+
+    while i < len {
+        if state.block_comment_depth > 0 {
+            if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                state.block_comment_depth -= 1;
+                i += 2;
+                if state.block_comment_depth == 0 {
+                    segments.push((SegmentKind::Comment, seg_start, i));
+                    seg_start = i;
+                }
+            } else if nest && chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                state.block_comment_depth += 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        // A `//` line comment swallows the rest of the line; leave it as code so the
+        // per-line highlighter dims it exactly as it does today.
+        if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+            break;
+        }
+
+        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+            if seg_start < i {
+                segments.push((SegmentKind::Code, seg_start, i));
+            }
+            seg_start = i;
+            state.block_comment_depth = 1;
+            i += 2;
+            continue;
+        }
+
+        // Rust: a bare `'` is a lifetime tick, not a literal opener (#759).
+        if norm == "rust" && chars[i] == '\'' && !is_rust_char_literal(chars, i) {
+            i += 1;
+            continue;
+        }
+
+        if chars[i] == '"' || chars[i] == '\'' {
+            let quote = chars[i];
+            i += 1;
+            while i < len {
+                let c = chars[i];
+                i += 1;
+                if c == '\\' && i < len {
+                    i += 1;
+                } else if c == quote {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    if seg_start < len {
+        let kind = if state.block_comment_depth > 0 {
+            SegmentKind::Comment
+        } else {
+            SegmentKind::Code
+        };
+        segments.push((kind, seg_start, len));
+    }
+
+    segments
+}
+
 /// Apply syntax-aware ANSI highlighting to a single code line.
 ///
 /// Colorizes keywords (bold cyan), types (magenta), strings (green),
 /// comments (dim), and numbers (yellow).
 /// JSON keys are highlighted in cyan, YAML keys in bold yellow.
 /// Falls back to DIM when language is unrecognized.
+///
+/// Stateless: each call starts with a fresh [`HighlightState`], so a `/* … */` block
+/// comment that spans lines is only coloured correctly on its first line. Callers that
+/// render a whole code block line by line should use [`highlight_code_line_with`] and
+/// keep one state across the block — [`MarkdownRenderer`](crate::format::MarkdownRenderer)
+/// does.
+///
+/// `#[allow(dead_code)]`: this is the module's stateless public entry point, and the one
+/// in-tree consumer (`MarkdownRenderer`) moved to [`highlight_code_line_with`] when the
+/// carried state landed. It is kept rather than deleted because it is the byte-identical
+/// baseline the regression tests below assert against — the load-bearing promise that
+/// adding state changed nothing for single-line callers.
+#[allow(dead_code)]
 pub fn highlight_code_line(lang: &str, line: &str) -> String {
+    let mut state = HighlightState::default();
+    highlight_code_line_with(lang, line, &mut state)
+}
+
+/// Highlight one line, carrying block-comment state across lines in `state`.
+///
+/// On entry, a non-zero `state.block_comment_depth` means an earlier line opened a
+/// `/* … */` that has not closed: text is emitted comment-coloured up to the closing
+/// `*/` and ordinary highlighting resumes just past it on the same line; when the closer
+/// is not on this line the whole line is comment-coloured and the depth is carried on.
+///
+/// Nesting follows the language: for Rust an inner `/*` increments the depth and only
+/// depth 0 resumes code (`/* /* */ */` is one comment); the other C-family languages here
+/// do not nest, so the first `*/` closes. A stray `*/` at depth 0 is ordinary code, never
+/// an underflow. Languages with no block comments (python, shell, yaml, toml, json) reset
+/// the depth to 0 and render exactly as the stateless path does.
+///
+/// **Not handled, deliberately:** multi-line *string* literals. A `"` left open at end of
+/// line still ends its run at the line end, so a string spanning lines is mis-coloured
+/// from its second line — the sibling half of this fix, left for a later session.
+///
+/// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
+pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightState) -> String {
     let norm = match normalize_lang(lang) {
         Some(n) => n,
-        None => return format!("{DIM}{line}{RESET}"),
+        None => {
+            state.block_comment_depth = 0;
+            return format!("{DIM}{line}{RESET}");
+        }
     };
 
+    if !supports_block_comments(norm) {
+        state.block_comment_depth = 0;
+        return highlight_normalized(norm, line);
+    }
+
+    let chars: Vec<char> = line.chars().collect();
+    let segments = scan_block_comments(norm, &chars, state);
+
+    // No block comment anywhere on this line (and none carried in): one code segment
+    // covering everything, so the output is byte-identical to the pre-state behavior.
+    if segments.len() == 1 && segments[0] == (SegmentKind::Code, 0, chars.len()) {
+        return highlight_normalized(norm, line);
+    }
+
+    let mut out = String::with_capacity(line.len() + 64);
+    for (kind, start, end) in segments {
+        if start >= end {
+            continue;
+        }
+        let text: String = chars[start..end].iter().collect();
+        match kind {
+            SegmentKind::Comment => out.push_str(&format!("{DIM}{text}{RESET}")),
+            SegmentKind::Code => out.push_str(&highlight_normalized(norm, &text)),
+        }
+    }
+    out
+}
+
+/// Highlight one line of an already-normalized language, with no cross-line state.
+///
+/// This is the pre-existing per-line highlighter, unchanged; the block-comment-aware
+/// entry point above calls it once per code stretch of a line.
+fn highlight_normalized(norm: &str, line: &str) -> String {
     let cp = comment_prefix(norm);
     let trimmed = line.trim_start();
 
@@ -1372,3 +1579,18 @@ mod tests {
     // --- Spinner tests ---
 }
 
+
+#[cfg(test)]
+mod scratch_probe {
+    use super::*;
+    #[test]
+    fn probe() {
+        let mut st = HighlightState::default();
+        for l in ["let a = 1; /* open", "  body ✓ let", "still */ let b = 2;"] {
+            println!("{:?} -> {:?} depth={}", l, highlight_code_line_with("rust", l, &mut st), st.block_comment_depth);
+        }
+        println!("stateless same-line: {:?}", highlight_code_line("rust", "let a = 1; /* c */ let b = 2;"));
+        println!("stateless line comment: {:?}", highlight_code_line("rust", "let a = 1; // c"));
+        println!("string with /*: {:?}", highlight_code_line("rust", "let s = \"/*\"; let b = 2;"));
+    }
+}
