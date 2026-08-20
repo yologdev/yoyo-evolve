@@ -11,8 +11,9 @@ use crate::format::*;
 // module's own scoring/reporting code) remain unchanged.
 pub(crate) use crate::commands_risk_snapshots::{
     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
-    ci_event_exists_for, emerging_grade_of, load_validation_history_from, parse_all_snapshots,
-    parse_failed_ci_runs, parse_validation_events, read_snapshot_ledger, read_validation_ledger,
+    ci_event_exists_for, ci_payload_note, emerging_grade_of, load_validation_history_from,
+    parse_all_snapshots, parse_ci_run_payload, parse_failed_ci_runs, parse_validation_events,
+    read_snapshot_ledger, read_validation_ledger,
     risk_autosnapshot_enabled, snapshot_before, write_risk_snapshot_to, write_validation_event,
     SnapshotLedger, ValidationEvent, ValidationLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
 };
@@ -2448,6 +2449,10 @@ fn handle_risk_harvest() {
             return;
         }
     };
+    let payload = parse_ci_run_payload(&json);
+    if let Some(note) = ci_payload_note(&payload) {
+        println!("  {DIM}⚠ {note}{RESET}");
+    }
     let runs = parse_failed_ci_runs(&json);
     println!(
         "  Failed CI runs seen: {} (limit {CI_HARVEST_RUN_LIMIT})",

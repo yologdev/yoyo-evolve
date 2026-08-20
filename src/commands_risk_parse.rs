@@ -422,24 +422,71 @@ pub(crate) struct FailedCiRun {
 /// entries, and entries missing any *required* field (`databaseId` as a real
 /// number, `headSha`, `createdAt`) are skipped rather than guessed at. Only
 /// `displayTitle` is optional — it's cosmetic. Never panics.
+///
+/// Signature preserved for every existing caller and test; the states it
+/// flattens away live on [`CiRunPayload`] via [`parse_ci_run_payload`].
 pub(crate) fn parse_failed_ci_runs(json: &str) -> Vec<FailedCiRun> {
+    match parse_ci_run_payload(json) {
+        CiRunPayload::Present { runs, .. } => runs,
+        CiRunPayload::Unparseable | CiRunPayload::NotAnArray => Vec::new(),
+    }
+}
+
+/// The three distinguishable states of a `gh run list --json …` payload, in
+/// the same shape as [`ValidationLedger`] / [`SnapshotLedger`] / [`GradedLedger`]
+/// above — and for the same reason.
+///
+/// `parse_failed_ci_runs` returns a `Vec`, so *every* failure mode arrived at
+/// the one consumer (`/risk harvest`) as an empty or shortened list: a payload
+/// `gh` could not produce at all, a payload of the wrong shape, and a healthy
+/// payload whose individual entries were missing required fields all read as
+/// "fewer failed CI runs than there are". That is a shrinking denominator
+/// inside the meter that grades my own predictions — the defect I keep fixing
+/// elsewhere in this module — and the harvest banner printed `runs.len()` under
+/// the label "Failed CI runs seen", which was a count of runs *kept*.
+///
+/// What this does **not** do: it does not recover a dropped entry, and it makes
+/// no claim about entries that parsed. It only refuses to report a shortfall as
+/// a clean zero.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CiRunPayload {
+    /// The payload is not JSON at all (including an empty body).
+    Unparseable,
+    /// The payload is valid JSON but not the array `gh` documents.
+    NotAnArray,
+    /// The payload was an array. `dropped` counts entries that could not be
+    /// turned into a [`FailedCiRun`] — non-objects, and objects missing
+    /// `databaseId`/`headSha`/`createdAt`. `Present { runs: [], dropped: n }`
+    /// is a *different fact* from an empty array, never collapsed into it.
+    Present {
+        runs: Vec<FailedCiRun>,
+        dropped: usize,
+    },
+}
+
+/// Parse a `gh run list --json …` payload, keeping the three states distinct.
+/// Pure over a `&str`; never panics. See [`CiRunPayload`].
+pub(crate) fn parse_ci_run_payload(json: &str) -> CiRunPayload {
     let val: serde_json::Value = match serde_json::from_str(json.trim()) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(_) => return CiRunPayload::Unparseable,
     };
     let Some(arr) = val.as_array() else {
-        return Vec::new();
+        return CiRunPayload::NotAnArray;
     };
     let mut runs = Vec::new();
+    let mut dropped = 0usize;
     for entry in arr {
         let (Some(run_id), Some(head_sha), Some(created_at)) = (
             entry.get("databaseId").and_then(|v| v.as_u64()),
             entry.get("headSha").and_then(|v| v.as_str()),
             entry.get("createdAt").and_then(|v| v.as_str()),
         ) else {
+            dropped += 1;
             continue;
         };
         if head_sha.is_empty() || created_at.is_empty() {
+            dropped += 1;
             continue;
         }
         let title = entry
@@ -454,7 +501,36 @@ pub(crate) fn parse_failed_ci_runs(json: &str) -> Vec<FailedCiRun> {
             title,
         });
     }
-    runs
+    CiRunPayload::Present { runs, dropped }
+}
+
+/// One honest line about a CI payload that was not wholly healthy, or `None`
+/// when it was. Pure, so the string a caller prints is asserted directly.
+///
+/// The `None` case is the common path and keeps `/risk harvest` byte-identical
+/// to before. Every other branch says outright that the run count printed below
+/// is a count of runs *kept*, because the banner's own wording ("Failed CI runs
+/// seen") asserts more than it knows the moment anything was dropped.
+pub(crate) fn ci_payload_note(payload: &CiRunPayload) -> Option<String> {
+    match payload {
+        CiRunPayload::Unparseable => Some(
+            "`gh` returned a payload that is not JSON — this is a broken response, \
+             not an absence of failed CI runs; nothing below was harvested from it."
+                .to_string(),
+        ),
+        CiRunPayload::NotAnArray => Some(
+            "`gh` returned valid JSON that is not the documented array — this is an \
+             unexpected shape, not an absence of failed CI runs; nothing below was \
+             harvested from it."
+                .to_string(),
+        ),
+        CiRunPayload::Present { dropped: 0, .. } => None,
+        CiRunPayload::Present { runs, dropped } => Some(format!(
+            "{dropped} CI run entr(ies) skipped — missing databaseId/headSha/createdAt; \
+             the {} below is a count of runs kept, not of runs that failed.",
+            runs.len()
+        )),
+    }
 }
 
 /// Return true if a validation event for this CI run id was already recorded,
@@ -842,8 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ci_event_exists_for_present_and_absent() {
-        let content = concat!(
+    fn test_ci_event_exists_for_present_and_absent() {        let content = concat!(
             r#"{"ts":"2026-07-26T00:00:00Z","day":148,"trigger":"ci_harvest","hits":[],"surprises":["src/a.rs"],"accuracy_pct":0.0,"severity":"ci_failure","ci_run_id":30051449447}"#,
             "\n"
         );
