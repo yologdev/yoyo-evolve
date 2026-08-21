@@ -431,6 +431,69 @@ fn backtick_strings(norm: &str) -> Option<bool> {
     }
 }
 
+/// Split a string run into content and `${…}` interpolations (#806 residue).
+///
+/// Only a JS/TS template literal interpolates — `backtick_strings` also covers Go raw
+/// strings, which do not — so every other delimiter yields the single `Str` segment this
+/// used to push unconditionally, byte-identical to before. The `}` matching a `${` is
+/// found by brace depth within the run; an interpolation left unclosed at the end of the
+/// run stays string content, because guessing the other way would colour the remainder of
+/// a literal as code.
+///
+/// **Limits, stated rather than implied:** the depth scan does not skip braces inside a
+/// nested string or comment within the interpolation, and an interpolation that itself
+/// spans lines is not carried — both keep the pre-existing string colouring.
+fn push_string_run(
+    segments: &mut Vec<(SegmentKind, usize, usize)>,
+    chars: &[char],
+    start: usize,
+    end: usize,
+    delim: StringDelim,
+    norm: &str,
+) {
+    if !(norm == "js" && matches!(delim, StringDelim::Backtick { .. })) {
+        segments.push((SegmentKind::Str, start, end));
+        return;
+    }
+    let mut seg = start;
+    let mut i = start;
+    while i + 1 < end {
+        if chars[i] == '$' && chars[i + 1] == '{' {
+            if let Some(close) = matching_brace(chars, i + 1, end) {
+                if seg < i {
+                    segments.push((SegmentKind::Str, seg, i));
+                }
+                segments.push((SegmentKind::Code, i, close + 1));
+                seg = close + 1;
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if seg < end {
+        segments.push((SegmentKind::Str, seg, end));
+    }
+}
+
+/// Char index of the `}` matching the `{` at `open`, searching only within `..limit`.
+fn matching_brace(chars: &[char], open: usize, limit: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in chars.iter().enumerate().take(limit).skip(open) {
+        match c {
+            '{' => depth += 1,
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Split `chars` into code / block-comment stretches, updating the carried depth.
 ///
 /// Returns `(kind, start, end)` char-index ranges in order, covering the whole line.
@@ -461,12 +524,16 @@ fn scan_block_comments(
     if let Some(delim) = state.open_string {
         match close_open_string(chars, 0, delim) {
             Some(end) => {
-                segments.push((SegmentKind::Str, 0, end));
+                push_string_run(&mut segments, chars, 0, end, delim, norm);
                 state.open_string = None;
                 seg_start = end;
                 i = end;
             }
-            None => return vec![(SegmentKind::Str, 0, len)],
+            None => {
+                let mut only = Vec::new();
+                push_string_run(&mut only, chars, 0, len, delim, norm);
+                return only;
+            }
         }
     }
 
@@ -624,8 +691,11 @@ pub fn highlight_code_line(lang: &str, line: &str) -> String {
 /// closer on the same line. Every other language resets the field, so their output is
 /// byte-identical to the stateless path.
 ///
-/// **Still not handled, deliberately:** `${…}` interpolation inside a template literal is
-/// treated as string content, not code. This colours a whole line; it does not lex one.
+/// **`${…}` interpolation** inside a carried template literal is emitted as code, not
+/// string content (#806): the `${` … matching `}` span is highlighted normally, so an
+/// interpolated identifier stops wearing string colour. Its limits are named on
+/// [`push_string_run`] — nested strings/comments inside the interpolation are not skipped
+/// when matching the brace, and an interpolation spanning lines is not carried.
 ///
 /// Never indexes a `&str` by byte — it walks a `Vec<char>`, so multi-byte input is safe.
 pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightState) -> String {
@@ -1866,6 +1936,47 @@ mod tests {
         assert!(
             out3.contains(&format!("{BOLD_CYAN}const{RESET}")),
             "code resumes just past the backtick, got {out3:?}"
+        );
+    }
+
+    /// `${…}` inside a carried template literal is code, not string content (#806).
+    #[test]
+    fn js_template_interpolation_on_a_carried_line_is_not_string_coloured() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("js", "const s = `hello", &mut st);
+        let out = highlight_code_line_with("js", "${user} world`;", &mut st);
+
+        let user_at = out.find("user").expect("the identifier is still rendered");
+        let green_at = out
+            .find(GREEN.0)
+            .expect("` world` is still string content");
+        assert!(
+            user_at < green_at,
+            "the interpolation must be emitted before any green run, got {out:?}"
+        );
+        assert!(st.open_string.is_none(), "the literal closed on this line");
+    }
+
+    /// An unclosed `${` stays string content, and Go raw strings never interpolate —
+    /// both are the pre-#806 colouring, kept deliberately.
+    #[test]
+    fn interpolation_split_is_narrow() {
+        let mut st = HighlightState::default();
+        highlight_code_line_with("js", "const s = `a", &mut st);
+        let unclosed = "${user + 1";
+        assert_eq!(
+            highlight_code_line_with("js", unclosed, &mut st),
+            format!("{GREEN}{unclosed}{RESET}"),
+            "an unclosed interpolation is not guessed at"
+        );
+
+        let mut go = HighlightState::default();
+        highlight_code_line_with("go", "s := `a", &mut go);
+        let line = "${user} b";
+        assert_eq!(
+            highlight_code_line_with("go", line, &mut go),
+            format!("{GREEN}{line}{RESET}"),
+            "Go raw strings have no interpolation"
         );
     }
 
