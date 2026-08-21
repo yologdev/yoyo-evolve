@@ -6,6 +6,7 @@
 use crate::commands_risk::{
     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
 };
+use crate::commands_risk_accuracy::AccuracyStats;
 use crate::commands_risk_snapshots::{
     load_validation_history_from, parse_all_snapshots, parse_validation_events, snapshot_before,
     ParsedSnapshot, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
@@ -167,25 +168,56 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
 /// Returns `Some((hit_rate_pct, validation_count, trend_label))` when there are
 /// ≥2 validation entries in `.yoyo/risk_validations.jsonl`, or `None` if there
 /// isn't enough data yet. This keeps `/status` clean when no data exists.
-pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+pub(crate) fn prediction_accuracy_summary() -> Option<(String, usize, &'static str)> {
     prediction_accuracy_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
 }
 
+/// Pick the one honest headline number for an ambient one-line display.
+///
+/// **Never returns the blend.** `AccuracyStats::overall_hit_rate_pct` averages
+/// two opposite polarities — on a failure day a "hit" means a broken file WAS
+/// predicted (recall, higher is better), on a green day it means a flagged file
+/// changed and nothing broke (false-alarm evidence, lower is better). The struct's
+/// own doc calls that blend "semantically meaningless" and says the report leads
+/// with the separated numbers; `/status` was rendering it anyway, under the label
+/// "accuracy" (Day 142 split the polarities but this ambient caller kept reading
+/// the compat-only field).
+///
+/// Precedence is recall-first because recall is the meter the DREAM milestone is
+/// about, and it is the half that starves: it only grades on failure days. When
+/// no failure-day event exists we fall back to the green-day false-alarm rate —
+/// named as such, so a precision number can never be read as recall. Absence gets
+/// its own value: neither side graded → `None`, never `Some(0%)`.
+///
+/// The label is part of the returned string on purpose. Returning a bare `f64`
+/// is what let the caller print the wrong noun for 30+ days.
+fn prediction_headline(stats: &AccuracyStats) -> Option<String> {
+    if let Some(pct) = stats.failure_hit_rate_pct {
+        return Some(format!("{pct:.0}% recall"));
+    }
+    if let Some(pct) = stats.green_flagged_change_rate_pct {
+        return Some(format!("{pct:.0}% false-alarm rate"));
+    }
+    None
+}
+
 /// Inner implementation with configurable path (for testing).
-fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+fn prediction_accuracy_summary_from(
+    path: &std::path::Path,
+) -> Option<(String, usize, &'static str)> {
     let events = load_validation_history_from(path);
     if events.len() < 2 {
         return None;
     }
     let stats = compute_accuracy_stats(&events);
+    let headline = prediction_headline(&stats)?;
     let trend_label = match stats.trend {
         AccuracyTrend::Improving => "↑ improving",
         AccuracyTrend::Declining => "↓ declining",
         AccuracyTrend::Stable => "→ stable",
         AccuracyTrend::Insufficient => "? insufficient",
     };
-    let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
-    Some((hit_rate, stats.total_validations, trend_label))
+    Some((headline, stats.total_validations, trend_label))
 }
 
 /// Honest one-line note for `/status` when the prediction meter is
@@ -819,10 +851,69 @@ mod tests {
 
         let result = prediction_accuracy_summary_from(&path);
         assert!(result.is_some());
-        let (hit_rate, count, _trend) = result.unwrap();
+        let (headline, count, _trend) = result.unwrap();
         assert_eq!(count, 2);
-        // 3 hits out of 4 total changed = 75%
-        assert!((hit_rate - 75.0).abs() < 0.2);
+        // 3 hits out of 4 total changed = 75%. All four events are `watch_failure`,
+        // so this is failure-day RECALL and must be named as such — not "accuracy",
+        // which was the blended compat-only field this caller used to render.
+        assert_eq!(headline, "75% recall");
+    }
+
+    /// The defect this fix exists for: a ledger holding BOTH polarities used to
+    /// render the blended `overall_hit_rate_pct` under the label "accuracy".
+    /// Here the failure-day side is 0/2 (0% recall) and the green side is 2/2,
+    /// so the blend would be a reassuring 50% — a number describing nothing.
+    /// The headline must report the failure-day recall, and must say "recall".
+    #[test]
+    fn test_prediction_headline_reports_recall_not_the_blend() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let lines = [
+            r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+            r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"cli","severity":"watch_success","hits":["src/c.rs","src/d.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let (headline, _count, _trend) =
+            prediction_accuracy_summary_from(&path).expect("two events => Some");
+        assert_eq!(
+            headline, "0% recall",
+            "must render the failure-day recall, not the 50% polarity blend"
+        );
+        assert!(
+            !headline.contains("accuracy"),
+            "the blend's old label must not survive: {headline}"
+        );
+    }
+
+    /// Green-day-only ledger: recall is ungraded, so the fallback fires. It must
+    /// be NAMED false-alarm rate — a precision number silently printed as recall
+    /// is the exact misreading the polarity split (Day 142) exists to prevent.
+    #[test]
+    fn test_prediction_headline_names_the_green_only_fallback() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let line = r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"cli","severity":"watch_success","hits":["src/c.rs"],"surprises":["src/d.rs"],"predicted_count":10,"accuracy_pct":50.0}"#;
+        std::fs::write(&path, format!("{line}\n{line}\n")).expect("write");
+
+        let (headline, _count, _trend) =
+            prediction_accuracy_summary_from(&path).expect("two events => Some");
+        assert!(
+            headline.contains("false-alarm"),
+            "green-only headline must name itself: {headline}"
+        );
+        assert!(
+            !headline.contains("recall"),
+            "a green-day number must never be called recall: {headline}"
+        );
+    }
+
+    /// Absence gets its own value (Day 144): neither polarity graded → `None`,
+    /// never `Some("0% recall")`, which would assert a measurement never taken.
+    #[test]
+    fn test_prediction_headline_abstains_when_neither_side_graded() {
+        let stats = compute_accuracy_stats(&[]);
+        assert!(prediction_headline(&stats).is_none());
     }
 
     #[test]

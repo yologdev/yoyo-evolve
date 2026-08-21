@@ -236,8 +236,8 @@ pub fn handle_status(
         println!("  risk:    {}", risk_parts.join(" · "));
     }
     // Show prediction accuracy if enough data exists (ambient self-awareness)
-    if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
-        println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+    if let Some((headline, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+        println!("  predict: {headline} ({count} validations, {trend})");
     }
     // Show the risk-reflex effectiveness verdict once enough validation events
     // have accumulated (the dream question: is the reflex cutting failures?).
