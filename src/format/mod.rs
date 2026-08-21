@@ -284,6 +284,7 @@ mod cost;
 mod diff;
 /// Languages recognized for syntax highlighting.
 mod highlight;
+mod highlight_lang;
 mod markdown;
 mod output;
 mod tools;
