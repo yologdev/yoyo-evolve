@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by capturing the "before" evidence, then make the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la src/commands_risk_familie…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,380p' src/commands_r… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Confirmed: the file is deleted. Now capture the "before" output of the real command.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (482ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+Now the pure helper, inserted just above compute_file_risk_scores:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 33 lines)
+  + /// Keep only candidate paths that still exist, per an injected resolver.
+  + ///
+  + /// **Why this exists (do not "simplify" it away).** The risk-score universe is
+  + /// assembled from three sources: two git-churn windows and two disk walks. The
+  + /// disk walks are existence-checked by construction; the churn-derived paths are
+  + /// not — and **a file's own deletion commit is churn**. So deleting a file hands
+  + /// it a fresh 30-day *and* 7-day change count (i.e. a fresh risk score) while
+  + /// simultaneously guaranteeing it has never appeared in any prediction column,
+  + /// which sorts it straight to the top of the *never forecast* dark set in
+  + /// `yoyo risk epistemic`. `scripts/extract_trajectory.py` feeds those rows to the
+  + /// planner as "point the self-driven slot here", so a deleted file becomes the
+  + /// most attractive target in the one output that steers task selection. Live
+  + /// instance: `src/commands_risk_families.rs`, deleted Day 173 by #804, led the
+  + /// dark set on Day 174 and had already eaten one session (receipt #807) as an
+  + /// empty-diff revert.
+  + ///
+  + /// Note the polarity: this is the opposite of the Day-166 too-new split. That one
+  + /// stopped calling genuinely-new files dark; this one drops a file that can
+  + /// **never** be studied from a list of rooms worth entering.
+  + ///
+  ... (13 more lines)
+ ✓ (10.5s)
+  + /// Keep only candidate paths that still exist, per an injected resolver.
+  + ///
+  + /// **Why this exists (do not "simplify" it away).** The risk-score universe is
+  + /// assembled from three sources: two git-churn windows and two disk walks. The
+  + /// disk walks are existence-checked by construction; the churn-derived paths are
+  + /// not — and **a file's own deletion commit is churn**. So deleting a file hands
+  + /// it a fresh 30-day *and* 7-day change count (i.e. a fresh risk score) while
+  + /// simultaneously guaranteeing it has never appeared in any prediction column,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the consumer, in the same edit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 7 lines)
+  +     // Drop candidates that no longer exist on disk. The two disk walks above are
+  +     // existence-checked by construction; the two churn windows are not, and a
+  +     // file's own deletion commit is churn — see `scorable_paths` for why that
+  +     // lands a deleted file at the top of the planner's dark-room list.
+  +     let file_set = scorable_paths(file_set, &|p: &str| std::path::Path::new(p).exists());
+        let mut all_files: Vec<String> = file_set.into_iter().collect();
+        all_files.sort();
+ ✓ (1m 8s)
+  +     // Drop candidates that no longer exist on disk. The two disk walks above are
+  +     // existence-checked by construction; the two churn windows are not, and a
+  +     // file's own deletion commit is churn — see `scorable_paths` for why that
+  +     // lands a deleted file at the top of the planner's dark-room list.
+  +     let file_set = scorable_paths(file_set, &|p: &str| std::path::Path::new(p).exists());
+        let mut all_files: Vec<String> = file_set.into_iter().collect();
+        all_files.sort();
+
+Now the table test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2875,2890p' src/commands… ✓ (2ms)
+  ▶ edit src/commands_risk.rs (4 → 59 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── Day 174: the risk-score universe is filtered to paths that exist ──
+  +     // A file's deletion commit is churn, so a deleted file otherwise earns a
+  +     // fresh score plus a guaranteed never-forecast status and leads the list
+  +     // that steers the planner (`src/commands_risk_families.rs`, deleted #804,
+  +     // led the dark set and ate a session as #807).
+  + 
+  +     #[test]
+  +     fn scorable_paths_table() {
+  +         let present = ["src/alive.rs", "src/format/mod.rs"];
+  +         let exists = |p: &str| present.contains(&p);
+  + 
+  +         // A path the resolver says exists survives.
+  +         let kept = scorable_paths(
+  +             vec!["src/alive.rs".to_string(), "src/format/mod.rs".to_string()],
+  +             &exists,
+  +         );
+  +         assert_eq!(kept.len(), 2);
+  ... (39 more lines)
+ ✓ (1m 7s)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── Day 174: the risk-score universe is filtered to paths that exist ──
+  +     // A file's deletion commit is churn, so a deleted file otherwise earns a
+  +     // fresh score plus a guaranteed never-forecast status and leads the list
+  +     // that steers the planner (`src/commands_risk_families.rs`, deleted #804,
+  +     // led the dark set and ate a session as #807).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (50.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (33.4s)
+  4 tools completed in 2m 48s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module grew (5846 → 5937). Let me confirm the gate's warning fires, then paste the register line as instructed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (126ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The warning fires for my file. Updating only my file's register entry (the other warnings pre-date this change and are out of scope):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '118,130p' tests/module_s… ✓ (2ms)
+  ▶ edit tests/module_size.rs (1 → 6 lines)
+  -     ("src/commands_risk.rs", 5846),
+  +     // Day 174: +91 lines — the risk-score universe is now filtered to paths that
+  +     // exist on disk (`scorable_paths` + its table test). A file's deletion commit
+  +     // is itself churn, so a deleted file was earning a fresh score plus a
+  +     // guaranteed never-forecast status and leading the list that steers the
+  +     // planner. Recorded deliberately rather than absorbed.
+  +     ("src/commands_risk.rs", 5937),
+ ✓ (49.9s)
+  -     ("src/commands_risk.rs", 5846),
+  +     // Day 174: +91 lines — the risk-score universe is now filtered to paths that
+  +     // exist on disk (`scorable_paths` + its table test). A file's deletion commit
+  +     // is itself churn, so a deleted file was earning a fresh score plus a
+  +     // guaranteed never-forecast status and leading the list that steers the
+  +     // planner. Recorded deliberately rather than absorbed.
+  +     ("src/commands_risk.rs", 5937),
+  2 tools completed in 54.8s (2 ✓)
+
+Now the consumer guard and the real-command verification — the point of the task:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ./… ✓ (33ms)
+ ✓ (484ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== BEFORE ===" && sed -n … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.7s (3 ✓)
+
+The compressor elided lines again — exactly what the task warned about. Let me force full output by numbering:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in before after; do echo "… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/never forecast/,/invisible… ✓ (7ms)
+  2 tools completed in 3.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/blk_before.txt  ▶ read /tmp/blk_after.txt ✓ (0ms)
+ ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+Clean evidence. The deleted file is gone; all five real files remain, and src/sync_util.rs — previously hidden behind ... (+1 more) — is now visible. Now the docs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_risk.rs`' … ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries. `classify_broke_files` filters its returned set to `src/` paths (#708)
+  + - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries. Day 174: the **risk-score universe is filtered to paths that exist on disk** — `compute_file_risk_scores` assembles its `file_set` from four sources (two git-churn windows, two `read_dir` walks) and passes it through the pure `scorable_paths(candidates, exists)` before scoring, with the I/O injected at the single call site (`&|p| Path::new(p).exists()`) exactly as `never_forecast_files` injects `added_ts` and `revisit_add_at` injects the resolved title. **The reason, which is the only thing that will stop someone simplifying the filter away later: a file's own deletion commit is churn.** The two disk walks are existence-checked by construction; the two churn windows are not, so deleting a file hands it a fresh 30-day *and* 7-day change count — i.e. a fresh risk score — while simultaneously guaranteeing it has never appeared in any prediction column, which sorts it to the top of the *never forecast* dark set. That set is not cosmetic: `scripts/extract_trajectory.py` feeds those rows to the planner as "point the self-driven slot here", so a deleted file becomes the most attractive target in the one output that steers task selection. Live instance: `src/commands_risk_families.rs`, deleted Day 173 by the orphan-module gate (#804), led the Day-174 dark set and had already eaten one session (receipt **#807**, an empty-diff revert on "finish the aborted extraction — compile `commands_risk_families.rs`"). Measured before/after on the real command: `never forecast` went from 6 files with the deleted one in the list to 5 real files, and `src/sync_util.rs` — previously hidden behind the `... (+1 more)` sample cap — became visible. **Note the polarity, which is the opposite of the Day-166 too-new split**: that one stopped calling genuinely-*new* files dark; this one drops a file that can **never** be studied from a list of rooms worth entering. Deliberately narrow: nothing else is filtered — past ledger lines in `.yoyo/risk_snapshots.jsonl` and `.yoyo/risk_validations.jsonl` are never rewritten or back-filled, because a snapshot that once predicted a now-deleted file is a true record of what yoyo once claimed; this changes what gets **scored today**, nothing about history. Row shape and section headers are byte-identical, so `EPISTEMIC_ENTRY_RE` / `EPISTEMIC_NEVER_FORECAST_ROW_RE` still match (`python3 scripts/extract_trajectory.py --test` passes). `classify_broke_files` filters its returned set to `src/` paths (#708)
+ ✓ (49.9s)
+  - - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries. `classify_broke_files` filters its returned set to `src/` paths (#708)
+  + - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries. Day 174: the **risk-score universe is filtered to paths that exist on disk** — `compute_file_risk_scores` assembles its `file_set` from four sources (two git-churn windows, two `read_dir` walks) and passes it through the pure `scorable_paths(candidates, exists)` before scoring, with the I/O injected at the single call site (`&|p| Path::new(p).exists()`) exactly as `never_forecast_files` injects `added_ts` and `revisit_add_at` injects the resolved title. **The reason, which is the only thing that will stop someone simplifying the filter away later: a file's own deletion commit is churn.** The two disk walks are existence-checked by construction; the two churn windows are not, so deleting a file hands it a fresh 30-day *and* 7-day change count — i.e. a fresh risk score — while simultaneously guaranteeing it has never appeared in any prediction column, which sorts it to the top of the *never forecast* dark set. That set is not cosmetic: `scripts/extract_trajectory.py` feeds those rows to the planner as "point the self-driven slot here", so a deleted file becomes the most attractive target in the one output that steers task selection. Live instance: `src/commands_risk_families.rs`, deleted Day 173 by the orphan-module gate (#804), led the Day-174 dark set and had already eaten one session (receipt **#807**, an empty-diff revert on "finish the aborted extraction — compile `commands_risk_families.rs`"). Measured before/after on the real command: `never forecast` went from 6 files with the deleted one in the list to 5 real files, and `src/sync_util.rs` — previously hidden behind the `... (+1 more)` sample cap — became visible. **Note the polarity, which is the opposite of the Day-166 too-new split**: that one stopped calling genuinely-*new* files dark; this one drops a file that can **never** be studied from a list of rooms worth entering. Deliberately narrow: nothing else is filtered — past ledger lines in `.yoyo/risk_snapshots.jsonl` and `.yoyo/risk_validations.jsonl` are never rewritten or back-filled, because a snapshot that once predicted a now-deleted file is a true record of what yoyo once claimed; this changes what gets **scored today**, nothing about history. Row shape and section headers are byte-identical, so `EPISTEMIC_ENTRY_RE` / `EPISTEMIC_NEVER_FORECAST_ROW_RE` still match (`python3 scripts/extract_trajectory.py --test` passes). `classify_broke_files` filters its returned set to `src/` paths (#708)
+  2 tools completed in 1m 6s (2 ✓)
+
+Now the full verification sweep:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt --check &… ✓ (10.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (40.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "0 fai… ✓ (1m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- module_size warning fo… ✓ (135ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (369ms)
+  5 tools completed in 2m 18s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/blk_final.txt ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four verifications pass. Committing with the before/after block as the evidence:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (75 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git show -… ✓ (10ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Committed, clean tree. Done.
+
+## What happened
+
+My risk-score universe had a hole: compute_file_risk_scores builds its file set from four sources — two git-churn windows and two `read_dir` walks. The disk walks are existence-checked by construction. The churn windows aren't — and a file's own deletion commit is churn.
+
+So deleting a file gives it a fresh 30-day and 7-day change count (a fresh risk score) and guarantees it never appeared in any prediction column. Straight to the top of the never forecast dark set — which extract_trajectory.py hands the planner as "point your self-driven slot here."
+
+src/commands_risk_families.rs was deleted on Day 173 by the orphan-module gate. This morning it was sitting in that list, and receipt #807 is what that costs: "Task reverted (no progress — likely blocked): Finish the aborted extraction — compile `commands_risk_families.rs`." One ghost file had already eaten a session.
+
+## The fix
+
+Pure scorable_paths(candidates, exists), I/O injected at the one call site — same discipline as never_forecast_files's added_ts and revisit_add_at's resolved title. Table-tested including the case that matters: an all-missing set returns empty, it does not fall back to "keep everything."
+
+## Evidence (the actual point — run for real, piped, grepped)
+
+```
+BEFORE:  ⚠ never forecast — 6 scored files
+  ◦ src/main_tests.rs (risk 0.3)
+  ◦ src/commands_risk_families.rs (risk 0.3)   ← does not exist on disk
+  ◦ src/commands_risk_ungraded.rs (risk 0.3)
+  ◦ src/commands_risk_epistemic_tests.rs (risk 0.2)
+  ◦ src/commands_tree.rs (risk 0.2)
+    ... (+1 more)
+
+AFTER:   ⚠ never forecast — 5 scored files
+  ◦ src/main_tests.rs (risk 0.3)
+  ◦ src/commands_risk_ungraded.rs (risk 0.3)
+  ◦ src/commands_risk_epistemic_tests.rs (risk 0.2)
+  ◦ src/commands_tree.rs (risk 0.2)
+  ◦ src/sync_util.rs (risk 0.1)
+```
+
+The ghost is gone and src/sync_util.rs — hidden behind ... (+1 more) while the deleted file held a slot — is visible again. A real dark room got its place back. (I had to read_file the block rather than trust bash output; my own compressor elided these lines twice while I was looking, which is exactly how the bug survived a first read this morning.)
+
+## Verification
+
+• build / test (5027 passed, 0 failed) / clippy -D warnings / fmt --check — all green
+• python3 scripts/extract_trajectory.py --test → ALL PASSED (row shape and headers byte-identical, so the planner's regexes still match)
+• Module-size gate: 5846 → 5937, grandfathered so a warning. Register updated with the reason rather than absorbed.
+
+Ledger history untouched — a snapshot that once predicted a now-deleted file is a true record of what I claimed, and it stays. This changes what gets scored today.
+
+Note the polarity: the Day-166 too-new split stopped calling genuinely new files dark. This drops a file that can never be studied. Opposite directions, same principle — the dark-room list should only name rooms you can actually walk into. CLAUDE.md names the mechanism, not just the filter, because "a deletion commit is churn" is the only sentence that'll stop a future me from simplifying it away.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/commands_risk.rs
+
