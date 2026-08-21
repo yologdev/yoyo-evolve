@@ -48,10 +48,20 @@ pub(crate) const NARROW_OUTCOME_MAX: usize = 3;
 /// the separated `failure_hit_rate_pct` / `green_flagged_change_rate_pct`.
 pub(crate) struct AccuracyStats {
     pub(crate) total_validations: usize,
+    /// Pooled hit/changed totals across BOTH polarities, and the blended rate
+    /// derived from them. Kept for struct compatibility and asserted by tests;
+    /// **never rendered** since Day 174 (blind round 64), which is why all
+    /// three now carry the same `#[allow(dead_code)]` the blended emerging
+    /// pair below has carried since Day 142. The blend averages recall on
+    /// failure days with false-alarm evidence on green days, so it means
+    /// nothing — it used to be the headline of the summary box regardless.
+    #[allow(dead_code)]
     pub(crate) total_hits: usize,
+    #[allow(dead_code)]
     pub(crate) total_changed: usize,
     /// Blended hit rate across BOTH polarities. Kept for struct
     /// compatibility; the report leads with the separated numbers instead.
+    #[allow(dead_code)]
     pub(crate) overall_hit_rate_pct: f64,
     /// Number of failure-day events (severity ≠ `watch_success`).
     pub(crate) failure_samples: usize,
@@ -401,7 +411,24 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         );
     }
 
-    let hit_rate_rounded = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+    // The summary box's headline number. Day 174 (blind round 64): this used
+    // to render `overall_hit_rate_pct` — the blend this module's own doc (see
+    // `AccuracyStats`) calls semantically meaningless, because it averages
+    // recall on failure days with false-alarm evidence on green days. It was
+    // labelled "Hit rate" under a box titled "Risk Prediction Accuracy", so
+    // the single biggest number a reader sees was the one number Day 142 split
+    // apart precisely because it means nothing. `commands_risk_report.rs`
+    // documents its own headline as "never returns the blend" — true there and
+    // false for the box printed beside it. The box now leads with recall, the
+    // same polarity-separated number the prose above it leads with; absence
+    // keeps its own name rather than borrowing a 0% (Day 144).
+    let headline_str = match stats.failure_hit_rate_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!("{rounded:.0}% ({} events)", stats.failure_samples)
+        }
+        None => "(none graded)".to_string(),
+    };
 
     // Lead with the two separated polarity numbers — a "hit" means opposite
     // things on failure days (recall) and green days (false alarm), so the
@@ -559,19 +586,12 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
     report.push_str(&format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
          {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
-         {BOLD}  │{RESET} Hit rate:     {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Recall:       {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Best day:     {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
          {BOLD}  ╰────────────────────────────╯{RESET}\n",
-        stats.total_validations,
-        format!(
-            "{hit_rate_rounded:.0}% ({}/{})",
-            stats.total_hits, stats.total_changed
-        ),
-        trend_str,
-        best_str,
-        worst_str,
+        stats.total_validations, headline_str, trend_str, best_str, worst_str,
     ));
 
     // Per-severity breakdown — only shown once at least one event carries a
@@ -818,6 +838,16 @@ mod tests {
         assert!(
             !report.contains("of breakages were on the risk list"),
             "no recall percentage should be claimed with zero failure events: {report}"
+        );
+        // Day 174 (blind round 64): the summary box leads with recall, so with
+        // zero failure-day events its headline must ABSTAIN by name rather
+        // than borrow a 0% (Day-144 abstention discipline). Before this the
+        // box rendered the blended `overall_hit_rate_pct`, which on a
+        // green-only log is pure false-alarm evidence displayed under the
+        // label "Hit rate" — a number that could only be misread.
+        assert!(
+            report.contains("(none graded)"),
+            "green-only log must abstain in the box headline: {report}"
         );
     }
 
@@ -1327,7 +1357,18 @@ mod tests {
         assert!(report.contains("Risk Prediction Accuracy"));
         assert!(report.contains("12"));
         assert!(report.contains("58%"));
-        assert!(report.contains("7/12"));
+        // Day 174 (blind round 64): this line used to be
+        // `assert!(report.contains("7/12"))` — total_hits/total_changed, the
+        // blended pair from BOTH polarities, which the box rendered as its
+        // headline "Hit rate". That assertion pinned the defect as a green
+        // invariant (Day-148 lesson). The box now leads with recall, so the
+        // blend must be absent and the failure-day sample count present.
+        assert!(report.contains("Recall:"));
+        assert!(report.contains("12 events"));
+        assert!(
+            !report.contains("7/12"),
+            "the blended hits/changed pair must no longer be rendered: {report}"
+        );
         assert!(report.contains("Improving"));
         assert!(report.contains("Day 115"));
         assert!(report.contains("Day 108"));
