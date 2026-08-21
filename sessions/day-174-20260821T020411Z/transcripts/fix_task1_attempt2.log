@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format='%h %ad %s' --d… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evaluator is correct — nothing was committed. Let me find one small, real improvement fast. First, a targeted scan for a known bug class (byte indexing on strings):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.truncate(" src/ --in… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\[\.\.[a-z_0-9]*\]" sr… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,262p src/commands_spa… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=244 && NR<=258' src/com… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:240..265 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn backtick_strings" -A… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:1..46 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "highlight" tests/module… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_MODULE_LINES" tests… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:560..700 ✓ (1ms)
+  10 tools completed in 1m 14s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:456..571 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll implement the named residue from #806: ${…} interpolation inside carried JS template literals.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (11 → 15 lines)
+        if let Some(delim) = state.open_string {
+            match close_open_string(chars, 0, delim) {
+                Some(end) => {
+  -                 segments.push((SegmentKind::Str, 0, end));
+  +                 push_string_run(&mut segments, chars, 0, end, delim, norm);
+                    state.open_string = None;
+                    seg_start = end;
+                    i = end;
+                }
+  -             None => return vec![(SegmentKind::Str, 0, len)],
+  +             None => {
+  +                 let mut only = Vec::new();
+  +                 push_string_run(&mut only, chars, 0, len, delim, norm);
+  +                 return only;
+  +             }
+            }
+        }
+ ✓ (12.2s)
+        if let Some(delim) = state.open_string {
+            match close_open_string(chars, 0, delim) {
+                Some(end) => {
+  -                 segments.push((SegmentKind::Str, 0, end));
+  +                 push_string_run(&mut segments, chars, 0, end, delim, norm);
+                    state.open_string = None;
+                    seg_start = end;
+                    i = end;
+  ... (9 more lines)
+
+Now the helper (adding the consumer's definition in the same edit):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 64 lines)
+  + /// Split a string run into content and `${…}` interpolations (#806 residue).
+  + ///
+  + /// Only a JS/TS template literal interpolates — `backtick_strings` also covers Go raw
+  + /// strings, which do not — so every other delimiter yields the single `Str` segment this
+  + /// used to push unconditionally, byte-identical to before. The `}` matching a `${` is
+  + /// found by brace depth within the run; an interpolation left unclosed at the end of the
+  + /// run stays string content, because guessing the other way would colour the remainder of
+  + /// a literal as code.
+  + ///
+  + /// **Limits, stated rather than implied:** the depth scan does not skip braces inside a
+  + /// nested string or comment within the interpolation, and an interpolation that itself
+  + /// spans lines is not carried — both keep the pre-existing string colouring.
+  + fn push_string_run(
+  +     segments: &mut Vec<(SegmentKind, usize, usize)>,
+  +     chars: &[char],
+  +     start: usize,
+  +     end: usize,
+  +     delim: StringDelim,
+  +     norm: &str,
+  + ) {
+  ... (44 more lines)
+ ✓ (1m 50s)
+  + /// Split a string run into content and `${…}` interpolations (#806 residue).
+  + ///
+  + /// Only a JS/TS template literal interpolates — `backtick_strings` also covers Go raw
+  + /// strings, which do not — so every other delimiter yields the single `Str` segment this
+  + /// used to push unconditionally, byte-identical to before. The `}` matching a `${` is
+  + /// found by brace depth within the run; an interpolation left unclosed at the end of the
+  + /// run stays string content, because guessing the other way would colour the remainder of
+  + /// a literal as code.
+  ... (13 more lines)
+
+Now update the doc comment that declared this residue unhandled:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (2 → 5 lines)
+  - /// **Still not handled, deliberately:** `${…}` interpolation inside a template literal is
+  - /// treated as string content, not code. This colours a whole line; it does not lex one.
+  + /// **`${…}` interpolation** inside a carried template literal is emitted as code, not
+  + /// string content (#806): the `${` … matching `}` span is highlighted normally, so an
+  + /// interpolated identifier stops wearing string colour. Its limits are named on
+  + /// [`push_string_run`] — nested strings/comments inside the interpolation are not skipped
+  + /// when matching the brace, and an interpolation spanning lines is not carried.
+ ✓ (1m 46s)
+  - /// **Still not handled, deliberately:** `${…}` interpolation inside a template literal is
+  - /// treated as string content, not code. This colours a whole line; it does not lex one.
+  + /// **`${…}` interpolation** inside a carried template literal is emitted as code, not
+  + /// string content (#806): the `${` … matching `}` span is highlighted normally, so an
+  + /// interpolated identifier stops wearing string colour. Its limits are named on
+  + /// [`push_string_run`] — nested strings/comments inside the interpolation are not skipped
+  + /// when matching the brace, and an interpolation spanning lines is not carried.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn go_raw_string\|fn js… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:1920..1960 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 53s (3 ✓)
+
+Now the tests, at the emission point:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 1 lines) ✓ (1m 46s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 40 lines)
+  +     /// `${…}` inside a carried template literal is code, not string content (#806).
+  +     #[test]
+  +     fn js_template_interpolation_on_a_carried_line_is_not_string_coloured() {
+  +         let mut st = HighlightState::default();
+  +         highlight_code_line_with("js", "const s = `hello", &mut st);
+  +         let out = highlight_code_line_with("js", "${user} world`;", &mut st);
+  + 
+  +         let user_at = out.find("user").expect("the identifier is still rendered");
+  +         let green_at = out.find(GREEN).expect("` world` is still string content");
+  +         assert!(
+  +             user_at < green_at,
+  +             "the interpolation must be emitted before any green run, got {out:?}"
+  +         );
+  +         assert!(st.open_string.is_none(), "the literal closed on this line");
+  +     }
+  + 
+  +     /// An unclosed `${` stays string content, and Go raw strings never interpolate —
+  +     /// both are the pre-#806 colouring, kept deliberately.
+  +     #[test]
+  +     fn interpolation_split_is_narrow() {
+  ... (20 more lines)
+ ✓ (12.2s)
+  +     /// `${…}` inside a carried template literal is code, not string content (#806).
+  +     #[test]
+  +     fn js_template_interpolation_on_a_carried_line_is_not_string_coloured() {
+  +         let mut st = HighlightState::default();
+  +         highlight_code_line_with("js", "const s = `hello", &mut st);
+  +         let out = highlight_code_line_with("js", "${user} world`;", &mut st);
+  + 
+  +         let user_at = out.find("user").expect("the identifier is still rendered");
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 3 lines)
+  -         let green_at = out.find(GREEN).expect("` world` is still string content");
+  +         let green_at = out
+  +             .find(GREEN.0)
+  +             .expect("` world` is still string content");

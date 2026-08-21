@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by figuring out what this session actually did, before saying anything to anyone.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 && echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cat DAY_CO… ✓ (6ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Only one substantive commit this session, and it's in src/format/highlight.rs — the file issue #806 is about. Let me read the actual diff.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 50472fd6 -- src/format/… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit addresses the ${…} interpolation residue. Let me check #806's actual state and read the full new code rather than the elided diff.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 806 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,500p' src/format/hig… ✓ (3ms)
+ ✓ (205ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+#806 is open with zero comments. CLAUDE.md claims the carry landed Day 173 — I should verify that against the code rather than trust the doc (that exact trap cost five sessions on #683).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --format='%h %…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StringDelim\|backtick_s… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.5s (2 ✓)
+
+Carry landed Day 173; today added the ${…} residue. Now let me verify the claims rather than trust the commit message — call sites, language normalization, and the tests.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "push_string_run" src/fo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet highlight 2>&… ✓ (7ms)
+ ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+TS normalizes to js, so it's covered. Critically, both push_string_run call sites are inside the carried branch — so interpolation may only apply to multi-line template literals. Let me verify that empirically instead of guessing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet format::highl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1939,1985p' src/format/h… ✓ (3ms)
+ ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+Tests are literally named "on_a_carried_line" — the limitation is deliberate. Let me confirm the full suite is green and empirically pin the single-line behaviour.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 11s (2 ✓)
+
+All 5012 tests pass. Let me empirically verify the single-line case before I describe the limitation publicly.
