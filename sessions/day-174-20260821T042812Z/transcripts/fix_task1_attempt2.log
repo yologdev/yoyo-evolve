@@ -1,0 +1,350 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what was committed and what's actually in the repo.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluator is correct — that commit had zero src/ changes. I need to make a real improvement. Let me check the backlog items against the actual code (backlog claims are untrusted).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Backtick\|raw_string_op… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#806 is already landed (stale backlog item). Let me look at the one place I spotted a possible narrow gap — the backtick language gating.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,470p src/format/highl… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_validation_hist… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+Timeboxing the choice now. Let me check the one concrete residue I've confirmed exists — a silent-absorption reader still feeding a live report.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,200p src/commands_ris… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found a candidate. Let me verify the claim that overall_hit_rate_pct is documented as meaningless before acting on it.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "overall_hit_rate_pct" -… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified: the codebase documents overall_hit_rate_pct as "semantically meaningless" (blends two opposite polarities), yet /status's ambient summary renders exactly that. Let me see the consumer.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "prediction_accuracy_su… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Defect confirmed and it's live on /status: it prints predict: N% accuracy where N is the polarity-blended number the codebase itself calls "semantically meaningless". Let me see the exact structs and existing tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "failure_hit_rate_pct\|g… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Let me read the existing tests I'll need to keep working.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 790,850p src/commands_ris… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll implement. The fix: /status must render the polarity-separated number with its correct name, never the blend.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/commands_risk_r… ✓ (4ms)
+
+Now the fix:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (3 → 3 lines)
+    use crate::commands_risk::{
+  -     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
+  +     compute_accuracy_stats, compute_file_risk_scores, AccuracyStats, AccuracyTrend, FileRisk,
+    };
+ ✓ (11.7s)
+    use crate::commands_risk::{
+  -     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
+  +     compute_accuracy_stats, compute_file_risk_scores, AccuracyStats, AccuracyTrend, FileRisk,
+    };
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixing the import path, then implementing.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (2 → 3 lines)
+  -     compute_accuracy_stats, compute_file_risk_scores, AccuracyStats, AccuracyTrend, FileRisk,
+  +     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
+    };
+  + use crate::commands_risk_accuracy::AccuracyStats;
+ ✓ (13.3s)
+  -     compute_accuracy_stats, compute_file_risk_scores, AccuracyStats, AccuracyTrend, FileRisk,
+  +     compute_accuracy_stats, compute_file_risk_scores, AccuracyTrend, FileRisk,
+    };
+  + use crate::commands_risk_accuracy::AccuracyStats;
+
+Import resolves. Now the consumer lands in the same edit (per the no-dangling-definition rule):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (9 → 12 lines)
+    /// Inner implementation with configurable path (for testing).
+  - fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+  + fn prediction_accuracy_summary_from(
+  +     path: &std::path::Path,
+  + ) -> Option<(String, usize, &'static str)> {
+        let events = load_validation_history_from(path);
+        if events.len() < 2 {
+            return None;
+        }
+        let stats = compute_accuracy_stats(&events);
+  +     let headline = prediction_headline(&stats)?;
+        let trend_label = match stats.trend {
+            AccuracyTrend::Improving => "↑ improving",
+ ✓ (11.8s)
+    /// Inner implementation with configurable path (for testing).
+  - fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+  + fn prediction_accuracy_summary_from(
+  +     path: &std::path::Path,
+  + ) -> Option<(String, usize, &'static str)> {
+        let events = load_validation_history_from(path);
+        if events.len() < 2 {
+            return None;
+  ... (5 more lines)
+
+Now the public wrapper and the pure prediction_headline function it calls:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (3 → 32 lines)
+  - pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+  + pub(crate) fn prediction_accuracy_summary() -> Option<(String, usize, &'static str)> {
+        prediction_accuracy_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  + }
+  + 
+  + /// Pick the one honest headline number for an ambient one-line display.
+  + ///
+  + /// **Never returns the blend.** `AccuracyStats::overall_hit_rate_pct` averages
+  + /// two opposite polarities — on a failure day a "hit" means a broken file WAS
+  + /// predicted (recall, higher is better), on a green day it means a flagged file
+  + /// changed and nothing broke (false-alarm evidence, lower is better). The struct's
+  + /// own doc calls that blend "semantically meaningless" and says the report leads
+  + /// with the separated numbers; `/status` was rendering it anyway, under the label
+  + /// "accuracy" (Day 142 split the polarities but this ambient caller kept reading
+  + /// the compat-only field).
+  + ///
+  + /// Precedence is recall-first because recall is the meter the DREAM milestone is
+  + /// about, and it is the half that starves: it only grades on failure days. When
+  + /// no failure-day event exists we fall back to the green-day false-alarm rate —
+  + /// named as such, so a precision number can never be read as recall. Absence gets
+  ... (13 more lines)
+ ✓ (11.9s)
+  - pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+  + pub(crate) fn prediction_accuracy_summary() -> Option<(String, usize, &'static str)> {
+        prediction_accuracy_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  + }
+  + 
+  + /// Pick the one honest headline number for an ambient one-line display.
+  + ///
+  + /// **Never returns the blend.** `AccuracyStats::overall_hit_rate_pct` averages
+  ... (13 more lines)
+
+Good — errors are now only the two remaining call sites. Removing the dead blend computation:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 216,222p src/commands_ris… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (3 → 2 lines)
+  -     let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+  -     Some((hit_rate, stats.total_validations, trend_label))
+  +     Some((headline, stats.total_validations, trend_label))
+    }
+ ✓ (11.9s)
+  -     let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+  -     Some((hit_rate, stats.total_validations, trend_label))
+  +     Some((headline, stats.total_validations, trend_label))
+    }
+  2 tools completed in 16.8s (2 ✓)
+
+Library code compiles. Now the display site in commands_info.rs — the label must change too, since "accuracy" was the wrong noun:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (3 → 3 lines)
+  -     if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+  -         println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+  +     if let Some((headline, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+  +         println!("  predict: {headline} ({count} validations, {trend})");
+        }
+ ✓ (11.8s)
+  -     if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+  -         println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+  +     if let Some((headline, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+  +         println!("  predict: {headline} ({count} validations, {trend})");
+        }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only the existing test remains. Its events are all watch_failure, so 75% is now correctly named recall — I keep the test and strengthen its assertion rather than weaken it:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (4 → 6 lines)
+  -         let (hit_rate, count, _trend) = result.unwrap();
+  +         let (headline, count, _trend) = result.unwrap();
+            assert_eq!(count, 2);
+  -         // 3 hits out of 4 total changed = 75%
+  -         assert!((hit_rate - 75.0).abs() < 0.2);
+  +         // 3 hits out of 4 total changed = 75%. All four events are `watch_failure`,
+  +         // so this is failure-day RECALL and must be named as such — not "accuracy",
+  +         // which was the blended compat-only field this caller used to render.
+  +         assert_eq!(headline, "75% recall");
+ ✓ (1m 32s)
+  -         let (hit_rate, count, _trend) = result.unwrap();
+  +         let (headline, count, _trend) = result.unwrap();
+            assert_eq!(count, 2);
+  -         // 3 hits out of 4 total changed = 75%
+  -         assert!((hit_rate - 75.0).abs() < 0.2);
+  +         // 3 hits out of 4 total changed = 75%. All four events are `watch_failure`,
+  +         // so this is failure-day RECALL and must be named as such — not "accuracy",
+  +         // which was the blended compat-only field this caller used to render.
+  +         assert_eq!(headline, "75% recall");
+
+Auto-check passed. Now tests pinning the actual defect — that the blend can never be rendered, and that a green-only ledger is named correctly:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_prediction_accu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (4 → 59 lines)
+        }
+    
+  +     /// The defect this fix exists for: a ledger holding BOTH polarities used to
+  +     /// render the blended `overall_hit_rate_pct` under the label "accuracy".
+  +     /// Here the failure-day side is 0/2 (0% recall) and the green side is 2/2,
+  +     /// so the blend would be a reassuring 50% — a number describing nothing.
+  +     /// The headline must report the failure-day recall, and must say "recall".
+        #[test]
+  -     fn test_prediction_accuracy_summary_trend_improving() {
+  +     fn test_prediction_headline_reports_recall_not_the_blend() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("validations.jsonl");
+  +         let lines = [
+  +             r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+  +             r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"cli","severity":"watch_success","hits":["src/c.rs","src/d.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+  +         ];
+  +         std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+  + 
+  +         let (headline, _count, _trend) =
+  +             prediction_accuracy_summary_from(&path).expect("two events => Some");
+  ... (40 more lines)
+ ✓ (235ms)
+        }
+    
+  +     /// The defect this fix exists for: a ledger holding BOTH polarities used to
+  +     /// render the blended `overall_hit_rate_pct` under the label "accuracy".
+  +     /// Here the failure-day side is 0/2 (0% recall) and the green side is 2/2,
+  +     /// so the blend would be a reassuring 50% — a number describing nothing.
+  +     /// The headline must report the failure-day recall, and must say "recall".
+        #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.4s (2 ✓)
+
+I dropped the following test's signature in the replacement. Restoring it:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 934,948p src/commands_ris… ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unexpected closing delimiter: `}`[0m
+    [1m[94m--> [0msrc/commands_risk_report.rs:1165:1
+     [1m[94m|[0m
+[1m[94m 463[0m [1m[94m|[0m mod tests {
+     [1m[94m|[0m           [1m[94m-[0m [1m[94mthis delimiter might not be properly closed...[0m
+[1m[94m...[0m
+[1m[94m 939[0m [1m[94m|[0m     }
+     [1m[94m|[0m     [1m[94m-[0m [1m[94m...as it matches this but it has different indentation[0m
+[1m[94m...[0m
+[1m[94m1165[0m [1m[94m|[0m }
+     [1m[94m|[0m [1m[91m^[0m [1m[91munexpected closing delimiter[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The trend_improving test lost its signature line. Let me see the orphaned body:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 913,940p src/commands_ris… ✓ (3ms)
+
+Confirmed — the body survived intact, only its #[test] fn header was consumed. Restoring it verbatim:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_report.rs (6 → 7 lines)
+        }
+  - 
+    
+  +     #[test]
+  +     fn test_prediction_accuracy_summary_trend_improving() {
+            let dir = tempfile::tempdir().expect("create temp dir");
+            let path = dir.path().join("validations.jsonl");
+            // First entries low accuracy, later entries high — should show improving
+ ✓ (1m 35s)
+        }
+  - 
+    
+  +     #[test]
+  +     fn test_prediction_accuracy_summary_trend_improving() {
+            let dir = tempfile::tempdir().expect("create temp dir");
+            let path = dir.path().join("validations.jsonl");
+            // First entries low accuracy, later entries high — should show improving
+
+Auto-check passed. Now the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.9s)
+  2 tools completed in 1m 15s (2 ✓)
+
+All green: 5015 passed, 0 failed. Let me verify the new tests actually ran and confirm the behavior change on the real ledger:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prediction_headline 2… ✓ (166ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass. Let me confirm the real-world impact on the live ledger — what the old blend would have shown vs. the new headline:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk accurac… ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Live confirmation: recall is 22%, false-alarm 38% — the old blend averaged those two opposite polarities into a meaningless middle number labelled "accuracy". Now let me sync the docs, since /status behavior changed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "prediction_accuracy_sum… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`, `recall_coverage_note`
+  + `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary` (Day 174: returns a **named** headline string, never the blend — see below), `recall_coverage_note`
+ ✓ (1m 12s)
+  - `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`, `recall_coverage_note`
+  + `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary` (Day 174: returns a **named** headline string, never the blend — see below), `recall_coverage_note`
+  2 tools completed in 1m 17s (2 ✓)
+
+Now the substantive doc note, appended to that same bullet:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging track-record n… ✓ (3ms)
+
