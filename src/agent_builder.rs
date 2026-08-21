@@ -2352,6 +2352,7 @@ mod tests {
         // Simulate: response has no API error
         let response = PromptOutcome {
             text: "success".to_string(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,
@@ -2371,6 +2372,7 @@ mod tests {
 
         let response = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,
@@ -2399,6 +2401,7 @@ mod tests {
 
         let response = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,

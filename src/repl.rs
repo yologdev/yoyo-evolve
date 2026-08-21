@@ -1309,6 +1309,7 @@ pub async fn run_repl(
                 get_max_auto_continues(&repl_file_config, crate::commands::is_plan_apply_active());
             let mut auto_continue_count: u32 = 0;
             let mut last_text = outcome.text.clone();
+            let mut last_closing = outcome.text_since_last_tool.clone();
             let mut had_error =
                 outcome.last_tool_error.is_some() || outcome.last_api_error.is_some();
 
@@ -1316,6 +1317,10 @@ pub async fn run_repl(
                 && !had_error
                 && should_auto_continue(
                     &last_text,
+                    // #808: the silence branch judges CLOSING text, not the
+                    // whole turn — a pre-tool narration must not mask a
+                    // post-tool abstention.
+                    &last_closing,
                     agent.follow_up_queue_len(),
                     // #794 half (a): a real tool-call count, not the edit
                     // counter — a turn of read-only tools then silence is the
@@ -1374,6 +1379,7 @@ pub async fn run_repl(
 
                 // Update tracking for the next iteration
                 last_text = cont_outcome.text.clone();
+                last_closing = cont_outcome.text_since_last_tool.clone();
                 had_error =
                     cont_outcome.last_tool_error.is_some() || cont_outcome.last_api_error.is_some();
 
@@ -1545,8 +1551,21 @@ pub(crate) fn get_max_auto_continues(
 /// state in here, so the whole truth table stays unit-testable. The caller also
 /// owns the "no error" precondition (the loop already gates on `!had_error`)
 /// and the bounded budget (`get_max_auto_continues`).
+///
+/// `text` vs `text_since_last_tool` (#808): the two text arguments answer
+/// different questions and feed different branches. `text` is the WHOLE turn
+/// and feeds `looks_incomplete`, which scans the tail for unfinished-work
+/// shapes — unchanged, product-default behavior. `text_since_last_tool` is
+/// only what the model said AFTER its last tool result, and feeds the silence
+/// branch — because the abstention this branch exists for is *closing*
+/// silence, and an agent that narrates before every tool batch has a long
+/// `text` on every turn. Measured before the split: the branch fired 0 times
+/// in 11 opted-in sessions while the loop's A1/A2 phases abstained 16 times,
+/// every one with a narration like "Let me trace the mechanism." followed by
+/// one tool call and then nothing.
 pub(crate) fn should_auto_continue(
     text: &str,
+    text_since_last_tool: &str,
     queue_pending: usize,
     ran_tools: bool,
     continue_on_silence: bool,
@@ -1554,10 +1573,12 @@ pub(crate) fn should_auto_continue(
     if queue_pending > 0 || looks_incomplete(text) {
         return true;
     }
-    // Opt-in: tools ran, then silence. A plain chat turn that returns nothing
-    // (no tools) is NOT looped — that's a model declining to speak, not work
-    // left on the table.
-    continue_on_silence && ran_tools && text.trim().chars().count() < MIN_SUMMARY_CHARS
+    // Opt-in: tools ran, then CLOSING silence. A plain chat turn that returns
+    // nothing (no tools) is NOT looped — that's a model declining to speak,
+    // not work left on the table.
+    continue_on_silence
+        && ran_tools
+        && text_since_last_tool.trim().chars().count() < MIN_SUMMARY_CHARS
 }
 
 /// Why a turn ended, as far as yoyo can tell.
@@ -2794,7 +2815,7 @@ mod tests {
         // A non-empty follow-up queue overrides the text heuristic: "ok" is a
         // string looks_incomplete() returns false for, but pending work wins.
         assert!(!looks_incomplete("ok"));
-        assert!(should_auto_continue("ok", 1, false, false));
+        assert!(should_auto_continue("ok", "ok", 1, false, false));
     }
 
     #[test]
@@ -2802,14 +2823,22 @@ mod tests {
         // Empty queue → fall back to the heuristic, which fires on this phrase.
         let incomplete = "I've fixed the first file. Next, I'll update the remaining tests.";
         assert!(looks_incomplete(incomplete));
-        assert!(should_auto_continue(incomplete, 0, false, false));
+        assert!(should_auto_continue(
+            incomplete, incomplete, 0, false, false
+        ));
     }
 
     #[test]
     fn should_auto_continue_false_when_queue_empty_and_complete() {
         // Paired negative (Day 122): empty queue + complete-looking text → false.
         assert!(!looks_incomplete("short response"));
-        assert!(!should_auto_continue("short response", 0, false, false));
+        assert!(!should_auto_continue(
+            "short response",
+            "short response",
+            0,
+            false,
+            false
+        ));
     }
 
     /// The old two-argument behaviour, spelled out literally. This is what
@@ -2839,7 +2868,7 @@ mod tests {
                 for used_tools in [false, true] {
                     let expected = legacy_should_auto_continue(text, queue_pending);
                     assert_eq!(
-                        should_auto_continue(text, queue_pending, used_tools, false),
+                        should_auto_continue(text, text, queue_pending, used_tools, false),
                         expected,
                         "default-off must match legacy for \
                          (text={text:?}, queue={queue_pending}, tools={used_tools})"
@@ -2850,17 +2879,44 @@ mod tests {
     }
 
     #[test]
+    fn announced_intent_then_closing_silence_fires_the_gate_808() {
+        // The live A1 shape that produced 0 firings across 11 opted-in
+        // sessions: a long narration BEFORE the last tool ("Let me trace the
+        // mechanism."), then a tool, then nothing. Whole-turn text is far
+        // over MIN_SUMMARY_CHARS and trips no looks_incomplete phrase, but
+        // the closing text is empty — the gate must fire.
+        let whole_turn = "Confirmed a live defect. Let me trace the mechanism.";
+        assert!(
+            !looks_incomplete(whole_turn),
+            "precondition: this tail is not caught by the phrase list — if it              ever is, this test is pinning the wrong branch"
+        );
+        assert!(should_auto_continue(whole_turn, "", 0, true, true));
+
+        // Same turn with a real closing summary after the last tool: no fire.
+        assert!(!should_auto_continue(
+            whole_turn,
+            "Done — assessment written to session_plan/assessment.md.",
+            0,
+            true,
+            true
+        ));
+
+        // Off-mode unchanged: without the opt-in the closing text is ignored.
+        assert!(!should_auto_continue(whole_turn, "", 0, true, false));
+    }
+
+    #[test]
     fn should_auto_continue_on_silence_fires_only_after_tool_use() {
         // The abstention case: tools ran, then silence, nothing queued.
-        assert!(should_auto_continue("", 0, true, true));
-        assert!(should_auto_continue("   \n ", 0, true, true));
-        assert!(should_auto_continue("done", 0, true, true));
+        assert!(should_auto_continue("", "", 0, true, true));
+        assert!(should_auto_continue("   \n ", "   \n ", 0, true, true));
+        assert!(should_auto_continue("done", "done", 0, true, true));
 
         // A plain chat turn that returns nothing must NOT loop — no tools ran,
         // so there is no work left on the table, just a model declining to speak.
-        assert!(!should_auto_continue("", 0, false, true));
-        assert!(!should_auto_continue("   \n ", 0, false, true));
-        assert!(!should_auto_continue("ok", 0, false, true));
+        assert!(!should_auto_continue("", "", 0, false, true));
+        assert!(!should_auto_continue("   \n ", "   \n ", 0, false, true));
+        assert!(!should_auto_continue("ok", "ok", 0, false, true));
     }
 
     #[test]
@@ -2868,12 +2924,14 @@ mod tests {
         // Real closing prose → false even with the flag on and tools used.
         let complete = "Done — all tests pass and the build is green.";
         assert!(!looks_incomplete(complete));
-        assert!(!should_auto_continue(complete, 0, true, true));
+        assert!(!should_auto_continue(complete, complete, 0, true, true));
 
         // Pending queue still wins regardless of the flag or tool usage.
         for used_tools in [false, true] {
             for enabled in [false, true] {
-                assert!(should_auto_continue(complete, 1, used_tools, enabled));
+                assert!(should_auto_continue(
+                    complete, complete, 1, used_tools, enabled
+                ));
             }
         }
     }
@@ -2885,18 +2943,30 @@ mod tests {
         let at_boundary = "a".repeat(MIN_SUMMARY_CHARS);
         let under_boundary = "a".repeat(MIN_SUMMARY_CHARS - 1);
         assert_eq!(at_boundary.chars().count(), MIN_SUMMARY_CHARS);
-        assert!(!should_auto_continue(&at_boundary, 0, true, true));
-        assert!(should_auto_continue(&under_boundary, 0, true, true));
+        assert!(!should_auto_continue(
+            &at_boundary,
+            &at_boundary,
+            0,
+            true,
+            true
+        ));
+        assert!(should_auto_continue(
+            &under_boundary,
+            &under_boundary,
+            0,
+            true,
+            true
+        ));
 
         // Padding with whitespace doesn't buy length — it's trimmed first.
         let padded = format!("   {under_boundary}   ");
-        assert!(should_auto_continue(&padded, 0, true, true));
+        assert!(should_auto_continue(&padded, &padded, 0, true, true));
 
         // Multi-byte text at the boundary counts chars, not bytes (19 chars,
         // 57 bytes) — the byte count would clear the threshold, chars don't.
         let multibyte = "✓".repeat(MIN_SUMMARY_CHARS - 1);
         assert!(multibyte.len() > MIN_SUMMARY_CHARS);
-        assert!(should_auto_continue(&multibyte, 0, true, true));
+        assert!(should_auto_continue(&multibyte, &multibyte, 0, true, true));
     }
 
     #[test]
