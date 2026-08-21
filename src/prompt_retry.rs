@@ -427,7 +427,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     // `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` (#590).
     let provider = resolve_diagnostic_provider(crate::cli::configured_provider().as_deref(), model);
 
-    if lower.contains("401")
+    if contains_status_code(&lower, "401")
         || lower.contains("unauthorized")
         || lower.contains("invalid api key")
         || lower.contains("invalid_api_key")
@@ -461,7 +461,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         || lower.contains("budget exceeded")
         || lower.contains("quota exceeded")
         || lower.contains("payment required")
-        || lower.contains("402")
+        || contains_status_code(&lower, "402")
     {
         let dashboard = match provider.as_str() {
             "anthropic" => "https://console.anthropic.com/settings/billing",
@@ -488,7 +488,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     }
 
     // Rate limits — retriable (handled by auto-retry) but give the user context
-    if lower.contains("429")
+    if contains_status_code(&lower, "429")
         || lower.contains("rate limit")
         || lower.contains("rate_limit")
         || lower.contains("too many requests")
@@ -544,7 +544,10 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         return Some(msg);
     }
 
-    if lower.contains("403") || lower.contains("forbidden") || lower.contains("permission denied") {
+    if contains_status_code(&lower, "403")
+        || lower.contains("forbidden")
+        || lower.contains("permission denied")
+    {
         return Some(format!(
             "Access forbidden (403) from provider '{provider}'.\n\
              This usually means your API key doesn't have access to model '{model}'.\n\
@@ -590,6 +593,40 @@ fn resolve_diagnostic_provider(configured: Option<&str>, model: &str) -> String 
         Some(p) if !p.is_empty() => p.to_string(),
         _ => infer_provider_from_model(model),
     }
+}
+
+/// True when `code` (an HTTP status such as `"401"`) appears in `haystack` as a
+/// number in its own right, rather than as a run of digits inside a bigger one.
+///
+/// `diagnose_api_error` used to ask `lower.contains("401")` — a bare substring
+/// match on three digits, which is the most collidable shape there is inside an
+/// error string. Provider errors routinely carry *other* numbers: token counts
+/// (`"prompt is too long: 402134 tokens"`), request ids, retry-after
+/// milliseconds. Any of those flipped the diagnosis to a confident and wrong
+/// remediation, which in error-recovery code is worse than no diagnosis at all
+/// because the user acts on it — the overflow example above was told its
+/// credits were exhausted and that "retrying won't help", when the real fix is
+/// `/compact`.
+///
+/// The rule is a **digit** boundary, not a word boundary: `"401"` still matches
+/// in `"HTTP 401"`, `"status=401"`, `"(401)"` and `"401:"`, because only an
+/// adjacent ASCII digit means the code is part of a larger number.
+fn contains_status_code(haystack: &str, code: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    // `code` is ASCII digits, so every match starts on a 1-byte char — `start`
+    // and `start + 1` are always char boundaries and the slice below is safe.
+    while let Some(rel) = haystack[from..].find(code) {
+        let start = from + rel;
+        let end = start + code.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_digit();
+        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_digit();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }
 
 /// Infer the provider name from a model identifier.
@@ -1578,6 +1615,94 @@ mod tests {
         assert!(
             msg.contains("console.anthropic.com"),
             "should include Anthropic dashboard link: {msg}"
+        );
+    }
+
+    // ---- HTTP status codes must match as numbers, not as digit substrings ----
+    // Blind round 65 (Day 174). `diagnose_api_error` decided four of its five
+    // branches with `lower.contains("401")`-style bare substring matches. Every
+    // assertion below is at the EMISSION point: the string a caller receives.
+
+    #[test]
+    fn test_contains_status_code_requires_a_digit_boundary() {
+        // Fires: the code stands alone, whatever punctuation surrounds it.
+        for hay in [
+            "401",
+            "http 401",
+            "status=401",
+            "api error (401): invalid x-api-key",
+            "401: unauthorized",
+        ] {
+            assert!(
+                contains_status_code(hay, "401"),
+                "should match a standalone 401: {hay}"
+            );
+        }
+        // Does not fire: the digits are part of a larger number.
+        for hay in [
+            "prompt is too long: 402134 tokens",
+            "request id req_014011xyz",
+            "retry after 4290ms",
+            "4011",
+            "1401",
+        ] {
+            assert!(
+                !contains_status_code(hay, "401"),
+                "digits inside a bigger number must not match: {hay}"
+            );
+        }
+        assert!(!contains_status_code(
+            "prompt is too long: 402134 tokens",
+            "402"
+        ));
+        assert!(!contains_status_code("retry after 4290ms", "429"));
+        assert!(!contains_status_code("", "401"));
+    }
+
+    #[test]
+    fn test_overflow_token_count_is_not_diagnosed_as_billing() {
+        // The real defect: a context-overflow error whose token count happens to
+        // contain "402" was diagnosed as exhausted credits, telling the user
+        // "retrying won't help" when the actual fix is /compact.
+        let diag = diagnose_api_error(
+            "prompt is too long: 402134 tokens > 200000 maximum",
+            "claude-sonnet-4-20250514",
+        );
+        if let Some(msg) = diag {
+            assert!(
+                !msg.contains("Billing/quota limit"),
+                "a token count must not read as billing exhaustion: {msg}"
+            );
+            assert!(
+                !msg.contains("Authentication failed"),
+                "a token count must not read as an auth failure: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_request_id_digits_do_not_diagnose_an_auth_failure() {
+        let diag = diagnose_api_error(
+            "server error: internal, request id 5th-14012-abc",
+            "claude-sonnet-4-20250514",
+        );
+        if let Some(msg) = diag {
+            assert!(
+                !msg.contains("Authentication failed"),
+                "digits inside a request id must not read as 401: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_real_401_still_diagnoses_authentication() {
+        // The near-miss guard: the side that MUST still fire. A discriminator
+        // tested only on the blocking side is vacuous green.
+        let diag = diagnose_api_error("api error (401): invalid x-api-key", "claude-sonnet-4-6");
+        let msg = diag.expect("a real 401 must still be diagnosed");
+        assert!(
+            msg.contains("Authentication failed"),
+            "standalone 401 must still reach the auth branch: {msg}"
         );
     }
 
