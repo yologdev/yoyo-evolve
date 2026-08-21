@@ -504,8 +504,9 @@ mod study_tier_tests {
 /// genuinely owed. These tests pin the composite key that fixes it.
 #[cfg(test)]
 mod ungraded_round_tests {
-    use crate::commands_risk_epistemic::{format_ungraded_rounds, ungraded_rounds};
-    use crate::commands_risk_ungraded::{UngradedRound, UngradedScan};
+    use crate::commands_risk_ungraded::{
+        format_ungraded_rounds, ungraded_rounds, UngradedRound, UngradedScan,
+    };
 
     fn exp(round: &str, day: i64, target: &str) -> String {
         format!(r#"{{"type":"experiment","round":{round},"day":{day},"target":"{target}"}}"#)

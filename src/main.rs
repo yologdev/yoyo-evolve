@@ -67,6 +67,7 @@ mod commands_risk_emerging;
 mod commands_risk_epistemic;
 #[cfg(test)]
 mod commands_risk_epistemic_tests;
+mod commands_risk_families;
 mod commands_risk_neverforecast;
 mod commands_risk_parse;
 mod commands_risk_report;
