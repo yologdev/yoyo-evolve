@@ -200,6 +200,7 @@ fn test_agent_config(provider: &str, model: &str) -> AgentConfig {
 fn test_build_json_output_valid_json_with_expected_keys() {
     let response = PromptOutcome {
         text: "Hello, world!".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -244,6 +245,7 @@ fn test_build_json_output_valid_json_with_expected_keys() {
 fn test_build_json_output_error_mode() {
     let response = PromptOutcome {
         text: "Something went wrong".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -336,6 +338,7 @@ fn bedrock_credentials_includes_session_token() {
 fn test_build_json_output_empty_text() {
     let response = PromptOutcome {
         text: String::new(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -368,6 +371,7 @@ fn test_build_json_output_special_characters() {
     // Quotes, newlines, unicode — all must be properly escaped in JSON
     let response = PromptOutcome {
         text: "He said \"hello\"\nnew line\ttab\u{2713} checkmark".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -402,6 +406,7 @@ fn test_build_json_output_structure_completeness() {
     // Verify that all and only the expected top-level keys are present
     let response = PromptOutcome {
         text: "test".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -455,6 +460,7 @@ fn test_build_json_output_structure_completeness() {
 fn test_build_json_output_cost_is_non_negative() {
     let response = PromptOutcome {
         text: "x".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -486,6 +492,7 @@ fn test_build_json_output_unknown_model_still_valid() {
     // Even with an unknown model (where cost estimation may return 0), JSON is valid
     let response = PromptOutcome {
         text: "result".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -516,6 +523,7 @@ fn test_build_json_output_unknown_model_still_valid() {
 fn test_build_json_output_includes_session_changes() {
     let response = PromptOutcome {
         text: "done".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -562,6 +570,7 @@ fn test_build_json_output_includes_session_changes() {
 fn test_build_json_output_empty_session_changes() {
     let response = PromptOutcome {
         text: "nothing changed".to_string(),
+        text_since_last_tool: String::new(),
         last_tool_error: None,
         last_tool_name: None,
         was_overflow: false,
@@ -827,6 +836,7 @@ fn emit_output_writes_the_output_file_in_print_mode() {
     let path = tmp.path().join("pm_out.txt");
     let response = PromptOutcome {
         text: "ok".to_string(),
+        text_since_last_tool: String::new(),
         ..Default::default()
     };
     let failed = emit_output(
@@ -860,6 +870,7 @@ fn emit_output_writes_the_output_file_in_json_mode() {
     let path = tmp.path().join("json_out.txt");
     let response = PromptOutcome {
         text: "ok".to_string(),
+        text_since_last_tool: String::new(),
         ..Default::default()
     };
     let failed = emit_output(
@@ -891,6 +902,7 @@ fn emit_output_reports_a_failed_write_to_its_caller() {
     let path = tmp.path().join("no_such_dir").join("out.txt");
     let response = PromptOutcome {
         text: "ok".to_string(),
+        text_since_last_tool: String::new(),
         ..Default::default()
     };
     let failed = emit_output(
@@ -917,6 +929,7 @@ fn emit_output_reports_a_failed_write_to_its_caller() {
 fn emit_output_without_output_path_reports_no_failure() {
     let response = PromptOutcome {
         text: "ok".to_string(),
+        text_since_last_tool: String::new(),
         ..Default::default()
     };
     let failed = emit_output(

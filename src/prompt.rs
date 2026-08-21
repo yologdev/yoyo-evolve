@@ -114,6 +114,16 @@ async fn finish_prompt_epilogue(
 pub struct PromptOutcome {
     /// The collected text output from the agent.
     pub text: String,
+    /// Text emitted AFTER the last tool result of the turn — empty when the
+    /// model ran a tool and then said nothing. Distinct from `text`, which
+    /// accumulates the whole turn: an agent that narrates before every tool
+    /// batch and then stops dead has a long `text` and an empty
+    /// `text_since_last_tool`. `should_auto_continue`'s silence branch reads
+    /// this field, because "closing silence" is the abstention it exists to
+    /// catch — measuring the whole turn made the branch structurally unable
+    /// to fire (#808: 0 firings over 11 sessions with the opt-in live).
+    /// Do NOT fold this into `text`: four consumers read `text` as whole-turn.
+    pub text_since_last_tool: String,
     /// The last tool error encountered during this prompt turn, if any.
     /// Tool errors are from `ToolExecutionEnd` events where `is_error` is true.
     pub last_tool_error: Option<String>,
@@ -149,6 +159,9 @@ enum PromptResult {
     /// Prompt completed (possibly with non-retriable errors already shown).
     Done {
         collected_text: String,
+        /// Text emitted after the last tool result — see
+        /// `PromptOutcome::text_since_last_tool` (#808).
+        text_since_last_tool: String,
         usage: Usage,
         last_tool_error: Option<String>,
         last_tool_name: Option<String>,
@@ -300,6 +313,10 @@ struct PromptEventState {
     in_thinking: bool,
     tool_timers: HashMap<String, Instant>,
     collected_text: String,
+    /// Parallel accumulator, CLEARED at every ToolExecutionEnd, so at
+    /// turn end it holds only the closing text (#808). Pushed at the same
+    /// two sites as `collected_text` so the two cannot drift.
+    text_since_last_tool: String,
     retriable_error: Option<String>,
     overflow_error: Option<String>,
     /// #646: a fatal, non-retriable `StopReason::Error`. Surface-and-stop.
@@ -338,6 +355,7 @@ impl PromptEventState {
             in_thinking: false,
             tool_timers: HashMap::new(),
             collected_text: String::new(),
+            text_since_last_tool: String::new(),
             retriable_error: None,
             overflow_error: None,
             fatal_error: None,
@@ -469,6 +487,11 @@ impl PromptEventState {
         result: ToolResult,
         changes: &SessionChanges,
     ) {
+        // A tool just finished, so whatever text follows is post-tool text.
+        // Cleared on error too: a failed bash is still a tool result, and the
+        // question the field answers is "did the model say anything AFTER the
+        // last thing it did" (#808).
+        self.text_since_last_tool.clear();
         // Track file modifications from rename_symbol. Unlike write_file /
         // edit_file (recorded at ToolExecutionStart off a single `path`
         // argument), a rename spans many files and the written set is only
@@ -647,6 +670,7 @@ impl PromptEventState {
         }
         io::stdout().flush().ok();
         self.collected_text.push_str(&filtered);
+        self.text_since_last_tool.push_str(&filtered);
     }
 
     /// Handle an AgentEnd event: flush filters, print batch summary,
@@ -666,6 +690,7 @@ impl PromptEventState {
                 io::stdout().flush().ok();
             }
             self.collected_text.push_str(&remaining);
+            self.text_since_last_tool.push_str(&remaining);
         }
 
         // Print batch summary if tools were the last thing before end
@@ -805,6 +830,7 @@ impl PromptEventState {
         } else {
             PromptResult::Done {
                 collected_text: self.collected_text,
+                text_since_last_tool: self.text_since_last_tool,
                 usage: self.usage,
                 last_tool_error: self.last_tool_error,
                 last_tool_name: self.last_tool_name,
@@ -916,6 +942,7 @@ async fn handle_prompt_events(
                 println!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}");
                 return PromptResult::Done {
                     collected_text: state.collected_text,
+                    text_since_last_tool: state.text_since_last_tool,
                     usage: state.usage,
                     last_tool_error: state.last_tool_error,
                     last_tool_name: state.last_tool_name,
@@ -972,6 +999,9 @@ pub async fn run_prompt_with_changes(
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
+    // Overwritten (not appended) per attempt: the LAST prompt call's closing
+    // text is the one the auto-continue gate must judge (#808).
+    let mut text_since_last_tool = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut did_overflow_compact = false;
@@ -1008,12 +1038,14 @@ pub async fn run_prompt_with_changes(
         match run_prompt_once(agent, &effective_input, changes, model).await {
             PromptResult::Done {
                 collected_text: text,
+                text_since_last_tool: closing,
                 usage,
                 last_tool_error: tool_err,
                 last_tool_name: tool_nm,
             } => {
                 accumulate_usage(&mut total_usage, &usage);
                 collected_text = text;
+                text_since_last_tool = closing;
                 last_tool_error = tool_err;
                 last_tool_name = tool_nm;
                 break;
@@ -1076,12 +1108,14 @@ pub async fn run_prompt_with_changes(
                 match run_prompt_once(agent, &retry_input, changes, model).await {
                     PromptResult::Done {
                         collected_text: text,
+                        text_since_last_tool: closing,
                         usage: retry_usage,
                         last_tool_error: tool_err,
                         last_tool_name: tool_nm,
                     } => {
                         accumulate_usage(&mut total_usage, &retry_usage);
                         collected_text = text;
+                        text_since_last_tool = closing;
                         last_tool_error = tool_err;
                         last_tool_name = tool_nm;
                     }
@@ -1128,6 +1162,7 @@ pub async fn run_prompt_with_changes(
     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
     PromptOutcome {
         text: collected_text,
+        text_since_last_tool,
         last_tool_error,
         last_tool_name,
         was_overflow: did_overflow_compact,
@@ -1291,6 +1326,8 @@ pub async fn run_prompt_with_content_and_changes(
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
+    // Closing-text carrier — see PromptOutcome::text_since_last_tool (#808).
+    let mut text_since_last_tool = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut api_error: Option<String> = None;
@@ -1330,12 +1367,14 @@ pub async fn run_prompt_with_content_and_changes(
         match run_prompt_once_with_messages(agent, vec![user_msg.clone()], changes, model).await {
             PromptResult::Done {
                 collected_text: text,
+                text_since_last_tool: closing,
                 usage,
                 last_tool_error: tool_err,
                 last_tool_name: tool_nm,
             } => {
                 accumulate_usage(&mut total_usage, &usage);
                 collected_text = text;
+                text_since_last_tool = closing;
                 last_tool_error = tool_err;
                 last_tool_name = tool_nm;
                 break;
@@ -1387,6 +1426,7 @@ pub async fn run_prompt_with_content_and_changes(
     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
     PromptOutcome {
         text: collected_text,
+        text_since_last_tool,
         last_tool_error,
         last_tool_name,
         was_overflow: false,
@@ -1466,6 +1506,8 @@ async fn handle_stream_json_events(
 ) -> (PromptOutcome, Usage) {
     let mut usage = Usage::default();
     let mut collected_text = String::new();
+    // Closing-text carrier — see PromptOutcome::text_since_last_tool (#808).
+    let mut text_since_last_tool = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut last_api_error: Option<String> = None;
@@ -1505,6 +1547,9 @@ async fn handle_stream_json_events(
                     AgentEvent::ToolExecutionEnd {
                         tool_call_id, tool_name, is_error, result,
                     } => {
+                        // #808: a tool just finished — same clearing rule as the
+                        // display path, so the two cannot drift.
+                        text_since_last_tool.clear();
                         // #786: a rename's written set only exists once the call
                         // returns, so it is read off the result details here and
                         // only on success — same discipline as the display path.
@@ -1553,6 +1598,7 @@ async fn handle_stream_json_events(
                         ..
                     } => {
                         collected_text.push_str(delta);
+                        text_since_last_tool.push_str(delta);
                     }
                     AgentEvent::AgentEnd { messages } => {
                         // Extract usage from assistant messages
@@ -1609,6 +1655,7 @@ async fn handle_stream_json_events(
 
     let outcome = PromptOutcome {
         text: collected_text,
+        text_since_last_tool,
         last_tool_error,
         last_tool_name,
         was_overflow: false,
@@ -1989,6 +2036,7 @@ mod tests {
     fn test_prompt_outcome_has_api_error_field() {
         let outcome = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,
@@ -2001,6 +2049,7 @@ mod tests {
 
         let outcome_no_error = PromptOutcome {
             text: "hello".to_string(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,
@@ -2013,6 +2062,7 @@ mod tests {
     fn test_prompt_outcome_has_tool_name_field() {
         let outcome = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: Some("file not found".to_string()),
             last_tool_name: Some("read_file".to_string()),
             was_overflow: false,
@@ -2022,6 +2072,7 @@ mod tests {
 
         let outcome_none = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,
@@ -2092,6 +2143,7 @@ mod tests {
     fn test_prompt_outcome_clone() {
         let outcome = PromptOutcome {
             text: "hello world".to_string(),
+            text_since_last_tool: String::new(),
             last_tool_error: Some("error msg".to_string()),
             last_tool_name: Some("bash".to_string()),
             was_overflow: true,
@@ -2118,6 +2170,7 @@ mod tests {
     fn test_prompt_outcome_with_overflow() {
         let outcome = PromptOutcome {
             text: "compacted response".to_string(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: true,
@@ -2133,6 +2186,7 @@ mod tests {
         // API error from a subsequent retry failure
         let outcome = PromptOutcome {
             text: String::new(),
+            text_since_last_tool: String::new(),
             last_tool_error: Some("file not found".to_string()),
             last_tool_name: Some("read_file".to_string()),
             was_overflow: false,
@@ -2530,6 +2584,122 @@ mod tests {
     }
 
     #[test]
+    fn text_since_last_tool_is_cleared_by_a_tool_and_rebuilt_after_it() {
+        // #808 emission point: the value a caller receives. A narration
+        // BEFORE a tool call must not survive into the closing-text field,
+        // and text AFTER the last tool must be exactly what the field holds.
+        let changes = SessionChanges::new();
+        let mut state = PromptEventState::new();
+        if let Some(s) = state.spinner.take() {
+            s.stop();
+        }
+        state.handle_message_update_text("Mechanism confirmed. Let me look at the exact code.");
+        state.handle_tool_execution_end(
+            "call-1".to_string(),
+            "bash".to_string(),
+            false,
+            ToolResult {
+                content: vec![Content::Text {
+                    text: "ok".to_string(),
+                }],
+                details: serde_json::Value::Null,
+            },
+            &changes,
+        );
+        // The abstention shape: nothing after the tool. Whole-turn text keeps
+        // the narration; closing text is empty.
+        match state.into_result() {
+            PromptResult::Done {
+                collected_text,
+                text_since_last_tool,
+                ..
+            } => {
+                assert!(
+                    collected_text.contains("Mechanism confirmed"),
+                    "whole-turn text must keep the pre-tool narration"
+                );
+                assert_eq!(
+                    text_since_last_tool, "",
+                    "#808: pre-tool narration must not count as closing text"
+                );
+            }
+            _ => panic!("expected PromptResult::Done"),
+        }
+    }
+
+    #[test]
+    fn text_since_last_tool_holds_only_post_tool_text() {
+        // The complement: a real closing summary after the tool IS the
+        // closing text — and an errored tool clears just the same, because
+        // the field answers "did the model say anything after the last
+        // thing it did", success or not.
+        let changes = SessionChanges::new();
+        let mut state = PromptEventState::new();
+        if let Some(s) = state.spinner.take() {
+            s.stop();
+        }
+        state.handle_message_update_text("Let me check the file first.");
+        state.handle_tool_execution_end(
+            "call-1".to_string(),
+            "bash".to_string(),
+            true, // errored — still a tool result
+            ToolResult {
+                content: vec![Content::Text {
+                    text: "permission denied".to_string(),
+                }],
+                details: serde_json::Value::Null,
+            },
+            &changes,
+        );
+        state.handle_message_update_text("Done — the file was already correct.");
+        match state.into_result() {
+            PromptResult::Done {
+                text_since_last_tool,
+                ..
+            } => {
+                assert_eq!(text_since_last_tool, "Done — the file was already correct.");
+            }
+            _ => panic!("expected PromptResult::Done"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_json_outcome_carries_text_since_last_tool() {
+        // Same fact on the --output-format json path (#786 discipline: the
+        // two event paths must not drift). Text, then a tool end, then no
+        // text: closing field empty, whole-turn text intact.
+        use yoagent::provider::MockProvider;
+        let provider = MockProvider::text("unused");
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
+            .with_api_key("not-a-real-key");
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tx.send(AgentEvent::MessageUpdate {
+            message: Message::assistant(
+                Vec::new(),
+                StopReason::Stop,
+                "claude-test",
+                "anthropic",
+                Usage::default(),
+            )
+            .into(),
+            delta: StreamDelta::Text {
+                delta: "Let me verify the mechanism.".to_string(),
+            },
+        })
+        .unwrap();
+        tx.send(tool_end("call-1", "bash", false, serde_json::Value::Null))
+            .unwrap();
+        drop(tx);
+        let changes = SessionChanges::new();
+        let (outcome, _) = handle_stream_json_events(&mut agent, rx, "claude-test", &changes).await;
+        assert!(outcome.text.contains("Let me verify"));
+        assert_eq!(
+            outcome.text_since_last_tool, "",
+            "#808: json path must clear closing text at tool end too"
+        );
+    }
+
+    #[test]
     fn test_prompt_event_state_into_result_overflow_takes_priority() {
         // When both overflow_error and retriable_error are set,
         // overflow should take priority (checked first in into_result)
@@ -2677,6 +2847,7 @@ mod tests {
     fn test_prompt_outcome_text_with_unicode() {
         let outcome = PromptOutcome {
             text: "Hello 🐙 — yoyo speaking! ✓ 日本語".to_string(),
+            text_since_last_tool: String::new(),
             last_tool_error: None,
             last_tool_name: None,
             was_overflow: false,

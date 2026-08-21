@@ -613,6 +613,7 @@ async fn run_piped_mode(
         );
         let mut auto_continue_count: u32 = 0;
         let mut last_text = response.text.clone();
+        let mut last_closing = response.text_since_last_tool.clone();
         let mut had_error = response.last_tool_error.is_some() || response.last_api_error.is_some();
         // #794 half (a): a real tool-call count. The edit tracker only sees
         // write-class tools, so a turn that only READ files used to read as
@@ -627,6 +628,8 @@ async fn run_piped_mode(
             crate::prompt_budget::session_budget_exhausted(30),
             crate::repl::should_auto_continue(
                 &last_text,
+                // #808: closing text for the silence branch — see repl.rs.
+                &last_closing,
                 agent.follow_up_queue_len(),
                 ran_tools,
                 opted_in,
@@ -653,6 +656,7 @@ async fn run_piped_mode(
             .await;
 
             last_text = cont_outcome.text.clone();
+            last_closing = cont_outcome.text_since_last_tool.clone();
             had_error =
                 cont_outcome.last_tool_error.is_some() || cont_outcome.last_api_error.is_some();
             ran_tools = session_changes.tool_call_count() > cont_tools_before;
