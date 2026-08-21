@@ -977,7 +977,24 @@ fn is_source_extension(path: &str) -> bool {
 /// 4. Rust `use crate::` / `mod` declarations → sibling modules
 ///
 /// Only works for source files. Skips paths in `already_added`.
+///
+/// Thin wrapper over [`suggest_related_files_in`] rooted at the process cwd, so
+/// every production call site is unchanged. Tests use the `_in` form with a
+/// tempdir instead of changing the process-global current directory, which
+/// corrupts sibling tests running in the same process (#780).
 pub fn suggest_related_files(path: &str, already_added: &[String]) -> Vec<String> {
+    suggest_related_files_in(std::path::Path::new("."), path, already_added)
+}
+
+/// [`suggest_related_files`], resolving every filesystem probe against `root`.
+///
+/// Returned paths keep the same relative form as the input (`src/foo_test.rs`),
+/// never absolute — `root` only decides where existence is checked.
+pub(crate) fn suggest_related_files_in(
+    root: &std::path::Path,
+    path: &str,
+    already_added: &[String],
+) -> Vec<String> {
     if !is_source_extension(path) {
         return Vec::new();
     }
@@ -1029,7 +1046,7 @@ pub fn suggest_related_files(path: &str, already_added: &[String]) -> Vec<String
 
     // 4. Rust-specific: parse `use crate::` and `mod` declarations
     if path.ends_with(".rs") {
-        if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(content) = std::fs::read_to_string(root.join(path)) {
             let src_prefix = detect_src_prefix(path);
             for line in content.lines().take(50) {
                 let trimmed = line.trim();
@@ -1077,7 +1094,7 @@ pub fn suggest_related_files(path: &str, already_added: &[String]) -> Vec<String
         if suggestions.contains(&canon) {
             continue;
         }
-        if std::path::Path::new(&candidate).exists() {
+        if root.join(&candidate).exists() {
             suggestions.push(canon);
         }
     }
@@ -2654,7 +2671,6 @@ diff --git a/clean.txt b/clean.txt
     }
 
     #[test]
-    #[serial]
     fn test_suggest_related_test_file_detection() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
@@ -2664,20 +2680,14 @@ diff --git a/clean.txt b/clean.txt
         // Create src/foo_test.rs
         std::fs::write(src.join("foo_test.rs"), "#[test] fn t() {}").unwrap();
 
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let suggestions = suggest_related_files("src/foo.rs", &[]);
+        let suggestions = suggest_related_files_in(dir.path(), "src/foo.rs", &[]);
         assert!(
             suggestions.contains(&"src/foo_test.rs".to_string()),
             "should find test file, got: {suggestions:?}"
         );
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_suggest_related_module_parent() {
         let dir = tempfile::tempdir().unwrap();
         let src_foo = dir.path().join("src").join("foo");
@@ -2685,20 +2695,14 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(src_foo.join("bar.rs"), "fn bar() {}").unwrap();
         std::fs::write(src_foo.join("mod.rs"), "mod bar;").unwrap();
 
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let suggestions = suggest_related_files("src/foo/bar.rs", &[]);
+        let suggestions = suggest_related_files_in(dir.path(), "src/foo/bar.rs", &[]);
         assert!(
             suggestions.contains(&"src/foo/mod.rs".to_string()),
             "should find module parent, got: {suggestions:?}"
         );
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_suggest_related_use_crate_parsing() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
@@ -2713,10 +2717,7 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(src.join("dispatch.rs"), "pub fn run() {}").unwrap();
         // format.rs does NOT exist — should not appear
 
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let suggestions = suggest_related_files("src/commands.rs", &[]);
+        let suggestions = suggest_related_files_in(dir.path(), "src/commands.rs", &[]);
         assert!(
             suggestions.contains(&"src/dispatch.rs".to_string()),
             "should find crate dependency, got: {suggestions:?}"
@@ -2726,12 +2727,9 @@ diff --git a/clean.txt b/clean.txt
             !suggestions.contains(&"src/format.rs".to_string()),
             "non-existent files should not appear"
         );
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_suggest_related_skips_already_added() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
@@ -2739,22 +2737,16 @@ diff --git a/clean.txt b/clean.txt
         std::fs::write(src.join("foo.rs"), "fn foo() {}").unwrap();
         std::fs::write(src.join("foo_test.rs"), "#[test] fn t() {}").unwrap();
 
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
         // If the test file is already added, don't suggest it
         let already = vec!["src/foo_test.rs".to_string()];
-        let suggestions = suggest_related_files("src/foo.rs", &already);
+        let suggestions = suggest_related_files_in(dir.path(), "src/foo.rs", &already);
         assert!(
             !suggestions.contains(&"src/foo_test.rs".to_string()),
             "already-added files should be excluded, got: {suggestions:?}"
         );
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_suggest_related_cap_at_three() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
@@ -2772,17 +2764,12 @@ diff --git a/clean.txt b/clean.txt
         // Also create test file
         std::fs::write(src.join("main_file_test.rs"), "#[test] fn t() {}").unwrap();
 
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let suggestions = suggest_related_files("src/main_file.rs", &[]);
+        let suggestions = suggest_related_files_in(dir.path(), "src/main_file.rs", &[]);
         assert!(
             suggestions.len() <= 3,
             "should cap at 3, got {} suggestions: {suggestions:?}",
             suggestions.len()
         );
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]

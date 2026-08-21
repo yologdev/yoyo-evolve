@@ -158,7 +158,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // silently re-emitting the raw @path; plus tests pinning the warning string,
     // free-form-mention silence, and the unreadable-file behavior.
     // Day 174: +2 absorbed since Day 166.
-    ("src/commands_file.rs", 2809),
+    ("src/commands_file.rs", 2796),
     ("src/commands_git.rs", 3172),
     // Day 174: +25 absorbed since Day 166.
     ("src/commands_info.rs", 3061),
