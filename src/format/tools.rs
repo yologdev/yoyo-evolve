@@ -23,10 +23,36 @@ pub fn is_plain_output() -> bool {
     PLAIN_OUTPUT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// True when animated in-place redraws (`\r` + `\x1b[K`) are allowed:
-/// stderr must be a terminal AND plain output must be off.
-fn animations_enabled() -> bool {
-    stderr_is_terminal() && !is_plain_output()
+/// The exact sequence a teardown path may write to erase an in-place progress
+/// line, or `None` when it must write nothing at all.
+///
+/// One rule for all four teardown sites — `Spinner::stop`, `Spinner::drop`,
+/// `ToolProgressTimer::stop`, `ToolProgressTimer::drop` — so they cannot drift
+/// apart again. An *erase* is an ANSI cursor sequence exactly like the paint it
+/// removes, so it is subject to the *same* condition as the painting: a
+/// terminal, and plain output off.
+///
+/// Blind round 63 (day 174) found the two `ToolProgressTimer` sites gating on
+/// `stderr_is_terminal()` alone, so `--screen-reader` printed its one linear
+/// line via [`plain_tool_progress_line`] and then wrote `\r\x1b[K` into the
+/// screen reader's stream — falsifying this module's own promise above that the
+/// Spinner and ToolProgressTimer never emit `\r` redraws or cursor escapes. The
+/// `Spinner` pair was already correct; taking both through one helper is what
+/// keeps the two twins answering the same question.
+pub(crate) fn teardown_clear_sequence(is_terminal: bool, plain: bool) -> Option<&'static str> {
+    if is_terminal && !plain {
+        Some("\r\x1b[K")
+    } else {
+        None
+    }
+}
+
+/// Write the teardown erase for the current output mode, if one is permitted.
+fn write_teardown_clear() {
+    if let Some(seq) = teardown_clear_sequence(stderr_is_terminal(), is_plain_output()) {
+        eprint!("{seq}");
+        let _ = io::stderr().flush();
+    }
 }
 
 /// The single plain line the Spinner prints in plain-output mode.
@@ -128,11 +154,7 @@ impl Spinner {
     /// to Drop to minimize latency on the critical path.
     pub fn stop(self) {
         let _ = self.cancel.send(true);
-        // Only emit ANSI clear sequence when animated output was in use
-        if animations_enabled() {
-            eprint!("\r\x1b[K");
-            let _ = io::stderr().flush();
-        }
+        write_teardown_clear();
         // Defer handle.abort() to Drop — it interacts with the tokio runtime
         // and doesn't need to complete before the first text token is printed.
         // The cancel signal already ensures the spinner task won't write again.
@@ -142,11 +164,7 @@ impl Spinner {
 impl Drop for Spinner {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
-        // Only emit ANSI clear sequence when animated output was in use
-        if animations_enabled() {
-            eprint!("\r\x1b[K");
-            let _ = io::stderr().flush();
-        }
+        write_teardown_clear();
         if let Some(handle) = self.handle.take() {
             handle.abort();
         }
@@ -391,20 +409,14 @@ impl ToolProgressTimer {
     /// Stop the timer and clear its output.
     pub fn stop(self) {
         let _ = self.cancel.send(true);
-        if stderr_is_terminal() {
-            eprint!("\r\x1b[K");
-            let _ = io::stderr().flush();
-        }
+        write_teardown_clear();
     }
 }
 
 impl Drop for ToolProgressTimer {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
-        if stderr_is_terminal() {
-            eprint!("\r\x1b[K");
-            let _ = io::stderr().flush();
-        }
+        write_teardown_clear();
         if let Some(handle) = self.handle.take() {
             handle.abort();
         }
@@ -537,6 +549,65 @@ mod tests {
             );
             assert!(!line.is_empty(), "plain line should announce something");
         }
+    }
+
+    #[test]
+    fn test_teardown_clear_sequence_table() {
+        // The rule all four teardown sites share, in all four states.
+        // Animated terminal: the erase is exactly the sequence the paint used.
+        assert_eq!(
+            teardown_clear_sequence(true, false),
+            Some("\r\x1b[K"),
+            "an animated terminal must still erase its progress line"
+        );
+        // Plain (screen-reader) output: nothing at all, terminal or not.
+        assert_eq!(teardown_clear_sequence(true, true), None);
+        assert_eq!(teardown_clear_sequence(false, true), None);
+        // Not a terminal: escapes would leak into piped/captured output.
+        assert_eq!(teardown_clear_sequence(false, false), None);
+    }
+
+    #[test]
+    fn test_plain_output_teardown_writes_no_carriage_return_or_ansi() {
+        // Blind round 63 (day 174). ToolProgressTimer::stop/drop gated this
+        // erase on stderr_is_terminal() alone, so --screen-reader printed its
+        // one linear line and then wrote `\r\x1b[K` into the screen reader's
+        // stream — while this module's own doc comment promises the Spinner and
+        // ToolProgressTimer never emit `\r` redraws or ANSI cursor escapes.
+        //
+        // Asserted at the emission point: `write_teardown_clear` writes exactly
+        // the string this function returns and nothing else, so the string a
+        // caller receives is the string under test.
+        let emitted = teardown_clear_sequence(true, true).unwrap_or("");
+        assert!(
+            !emitted.contains('\r'),
+            "plain-output teardown emitted \\r: {emitted:?}"
+        );
+        assert!(
+            !emitted.contains('\x1b'),
+            "plain-output teardown emitted an ANSI escape: {emitted:?}"
+        );
+        assert!(
+            emitted.is_empty(),
+            "plain-output teardown must emit nothing"
+        );
+    }
+
+    #[test]
+    fn test_both_progress_twins_share_one_teardown_rule() {
+        // The defect was one twin (Spinner) obeying plain output at teardown
+        // while the other (ToolProgressTimer) did not. Pin that all four
+        // teardown sites route through the single shared writer, so the two
+        // cannot answer this question differently again. Needle built at
+        // runtime so this assertion cannot match itself.
+        let src = include_str!("tools.rs");
+        let needle = format!("write_{}_clear();", "teardown");
+        assert_eq!(
+            src.matches(needle.as_str()).count(),
+            4,
+            "expected Spinner::stop/drop and ToolProgressTimer::stop/drop to \
+             share one teardown writer"
+        );
     }
 
     #[test]
