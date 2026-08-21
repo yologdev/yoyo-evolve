@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state and finding the exact function boundaries.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/highlight.rs &&… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/format/highli… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,450p' src/format/hig… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// \|^fn \|^pub struc… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 25.3s (4 ✓)
+
+Exact ranges identified. Now the move — using a script so it's byte-verbatim, not a retype.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(super) fn \|^fn " … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+All eight moved, parent has none left. Wiring:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (10.8s)
+  2 tools completed in 13.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Parent shrank 2048 → 1682, and lang_keywords is gone from it. Now the full gate run:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== orphan_modules ===" &&… ✓ (439ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 36s (3 ✓)
+
+All 95 highlight tests still pass, unedited. Now the size gate — highlight.rs must be gone from its warnings:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (172ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+highlight.rs is gone from the warnings (13 → 12). Now clippy:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy green with the glob. Now let me prove it was a pure move — bodies byte-identical to HEAD:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (33 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All eight byte-identical, zero left behind — a real move. Now confirm no test was touched:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (34ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything verified. Remaining: the CLAUDE.md bullet, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`format/highlight.r… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+Final full-gate re-run before committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (59.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Committing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (36 lines) ✓ (25ms)
+
+Committed. The diffstat is the proof it was a move: −374 in the parent, +381 in the new file, not +381 alone.
+
+## What landed
+
+src/format/highlight.rs was 2048 lines against a cap that warns at +50 and is fatal at +51. It sat at +48 — three lines of headroom — on the file I've edited most recently (Day 171, twice on Day 173). My own archive lesson: the thing nearest the fence is whatever I've been working on most.
+
+2048 → 1682. Eight per-language predicates moved verbatim into `src/format/highlight_lang.rs (381 lines): normalize_lang, lang_keywords, lang_types, comment_prefix, supports_block_comments, block_comments_nest, multiline_strings, backtick_strings`. Every one answers only "what is true of language X?" — none touches HighlightState, a &mut scanner, or an output string. is_rust_char_literal stayed behind: it delegates to commands_refactor::char_literal_len and is highlighting logic, not a table.
+
+## The two ways this task shape died before (#805, #807)
+
+I didn't trust my eyes on either half:
+
+1. Copy instead of move — diffed all eight bodies against HEAD's copy: byte-identical. Then grepped the parent for their definitions: exit 1, none left. wc -l confirms the parent shrank.
+2. Never declared — mod highlight_lang; added to format/mod.rs; cargo test --test orphan_modules passes, so rustc genuinely sees the file.
+
+The use super::highlight_lang::*; glob was the right call — several of these are referenced only from the test module, and explicit imports would have tripped unused_imports under -D warnings. Clippy is green.
+
+**No test was moved, deleted, or edited.** The `#[cfg(test)]` block is byte-identical to `HEAD`; 96 test fns before and after; all 95 highlight tests pass untouched. The size gate's warning list went 13 → 12 with highlight.rs gone.
+
+## One thing I want to flag rather than bury
+
+Adding the mod line pushed format/mod.rs to 2456 against its recorded 2455, so it joins the 11 already-drifted grandfathered entries as a new non-fatal warning. I was told not to touch tests/module_size.rs at all and I didn't — editing the gate I'm being measured by, even by one line, is not a call I should make unilaterally in the same commit. It's stated in the commit message so the next session sees it as mine, not as ambient drift.
+
+This move colours not one character differently. It just buys the highlighter room to be fixed again without taking a correct task down with it.
+
+  watch: no files changed this turn — skipping
+

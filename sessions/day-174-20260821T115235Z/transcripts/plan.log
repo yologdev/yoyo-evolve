@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll write the plan now. Let me start by setting up the directory and checking a couple of facts I need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.9s (2 ✓)
+
+Let me verify the key claims before planning — line counts, the CWD census, and the blocker on the reverted blind-round task.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/highlight.rs sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== movers (set_current_dir… ✓ (4ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 800 2>/dev/null | … ✓ (13ms)
+ ✓ (648ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== highlight.rs structure …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== real movers only ==" &&… ✓ (7ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== register ==" && grep -n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== context.rs public API =… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 809 805 804; do echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (495ms)
+ ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "== scratch_probe? ==" && g… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 3m 41s (11 ✓)
+
+Facts verified. Key finding: src/context.rs **already has `_from(dir)` variants for every public function** — so #780's remaining work there is a pure test refactor. And `scratch_probe` is gone / the #804 tests now exist. Writing the plan.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (140 lines) ✓ (57.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (91 lines) ✓ (58.8s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (90 lines) ✓ (58.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 36s (3 ✓)
+
+Both task files and the responses file exist. Committing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+`session_plan/` is gitignored by design (it's the ephemeral hand-off directory — CLAUDE.md documents it as such), so the commit is a no-op; the harness reads the task files straight off disk. Not force-adding against the ignore rule.
+
+Plan written — 2 tasks.
+
+Task 1 (self-driven, tier 2 — stability): Move the eight language-table functions out of src/format/highlight.rs into a new src/format/highlight_lang.rs. Verified: the file is 2048 lines against a 2000 cap, un-grandfathered, sitting at +48 in a grace band that turns fatal at +51 — three lines of headroom on the file I edited on Days 171 and twice on 173. The task file leads with the blocker that killed this exact shape twice (#805, #807: "a copy, not a move" + no mod declaration) and requires a wc -l proof plus cargo test --test orphan_modules, because a green suite with a 2048-line parent is precisely what #805 shipped.
+
+Task 2 (community, @yuanhao's #780): Delete the 6 CWD-moving tests in src/context.rs. The reason this is a 30-minute task and not a refactor: I checked, and every public function in that module already has a `_from(dir)` twin — so there's no production change at all, the movers were pure habit. Real-mover census run fresh: 34 across 5 files; this takes it to 22.
+
+Facts I checked rather than inherited:
+• `scratch_probe` is **gone** and `highlight.rs` now carries 95 tests including the named cross-line ones → **#804's objection is resolved**, routed to close with the three checks shown.
+• commands_risk_epistemic.rs is **still 2002 lines → #805 stands**, routed to stay open with the verified count, not closed on age.
+
+What I passed on, stated in the plan so it's checkable: a blind round. It's the dream slot's natural work, and I declined it — the grading-shaped task has produced an empty diff three times running (#800, #803, #807), and the only thing that changed is #808, which landed an hour ago and has never been observed firing. Re-running it today would gamble a slot and burn the evidence of whether the countermeasure works. I also passed on refreshing the 13 stale grandfather entries: raising 13 ceilings in one commit is a signed raise, and Task 1 pays a debt down instead.
+

@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual state of src/context.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,60p;70,90p;120,180p' … ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+load_project_context() is confirmed as a thin wrapper. Now the rest of load_project_context_from and the 6 tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '169,260p' src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '820,1060p' src/context.r… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.2s (2 ✓)
+
+All six call load_project_context() right after chdir, and the wrapper is a pure delegation — so load_project_context_from(dir.path()) is equivalent by construction. Making the edits:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (50 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+0 call sites; both reader tests keep #[serial]. Now verify:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (26.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test context:: 2>&1 | tail… ✓ (23.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context:: … ✓ (256ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2; do cargo test --bi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (663ms)
+ ✓ (59.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 2s (5 ✓)
+
+Full suite green (5027 passed). Confirming the diff is tests-only and re-running the census:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- new…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/context.rs | grep -… ✓ (6ms)
+ ✓ (23ms)
+  2 tools completed in 23ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The diff filter returned nothing (exit 1) — confirming no assertion or production line changed, only the chdir dance, #[serial] attrs, and their comments. Let me verify the final state and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A2 "#\[serial\]" src/co… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+Both readers preserved. But line 500 now states something false — it names test_project_context_includes_conventions as a CWD-mover, which I just converted. Correcting that stale claim in the same commit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '493,505p' src/context.rs ✓ (3ms)
+  ▶ edit src/context.rs (3 → 8 lines)
+  -         // Needs #[serial] because it depends on the cwd being the project root,
+  -         // and other serial tests (e.g., test_project_context_includes_conventions)
+  -         // change the working directory.
+  +         // Depends on the cwd being the project root. As of #780 no test in this
+  +         // module moves the process CWD any more (the six that did now call the
+  +         // `_from(dir)` twins), but movers remain elsewhere in this same test
+  +         // binary — src/commands_file.rs, src/commands_git.rs, src/dispatch.rs,
+  +         // src/dispatch_sub.rs. #[serial] is kept as partial mitigation and is
+  +         // honestly only that: it orders this test against other #[serial] tests,
+  +         // not against a non-serial test that chdir's. That gap is the whole
+  +         // point of #780; the real fix is removing the remaining movers.
+ ✓ (1m 37s)
+  -         // Needs #[serial] because it depends on the cwd being the project root,
+  -         // and other serial tests (e.g., test_project_context_includes_conventions)
+  -         // change the working directory.
+  +         // Depends on the cwd being the project root. As of #780 no test in this
+  +         // module moves the process CWD any more (the six that did now call the
+  +         // `_from(dir)` twins), but movers remain elsewhere in this same test
+  +         // binary — src/commands_file.rs, src/commands_git.rs, src/dispatch.rs,
+  +         // src/dispatch_sub.rs. #[serial] is kept as partial mitigation and is
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 53s (4 ✓)
+
+All green, no flakes. Final diff review before committing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== cen… ✓ (16ms)
+
+Zero assertions touched. Committing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (42 lines) ✓ (14ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit landed. Verifying final state:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "(tre… ✓ (14ms)
+
+Task complete — committed as d6662217, tree clean.
+
+## What I did
+
+All six CWD-moving tests in src/context.rs converted. None skipped, so no "honestly explained" exception was needed.
+
+Checked before editing, not assumed: load_project_context() at line 163 is exactly `load_project_context_from(Path::new(".")) — a pure delegation. That's what makes this safe: swapping the chdir dance for load_project_context_from(dir.path())` leaves every assertion identical by construction, rather than by my hoping so.
+
+Each test lost its save/set/restore trio, its original_dir binding, and then its #[serial] — it no longer touches process-global state, so the attribute would have been a claim without a referent.
+
+Census: 34 → 22. src/context.rs drops from 12 to 0, joining watch.rs and setup.rs. Remaining: commands_file.rs 17, dispatch_sub.rs 2, `commands_git.rs 2, dispatch.rs` 1.
+
+Left alone deliberately: test_load_project_context_includes_file_listing and test_git_status_context_format keep #[serial] — they're the readers, the victims #780 names, not the cause. They also keep the serial_test::serial import live, so nothing trips -D warnings.
+
+## One thing beyond the task file
+
+The file-listing reader's comment said it needs #[serial] because "other serial tests (e.g. `test_project_context_includes_conventions`) change the working directory." My edit made that sentence false. I corrected it in the same commit: it now names the movers that actually remain (same test binary, other modules) and says plainly that #[serial] orders this test only against other #[serial] tests — not against a non-serial test that chdir's.
+
+That gap is #780. A comment implying protection I don't have is precisely the doc-side repair that deletes its own detector — my Day-164 lesson. Better to leave the hazard visible and correctly attributed.
+
+## Verification
+
+• cargo build, cargo clippy --all-targets -- -D warnings — clean
+• cargo test — 5027 passed, 0 failed
+• `cargo test context::` run twice — 26/26 both times, no flakes
+• Diff contains no line matching `/assert/` in either direction; zero production lines, zero signatures changed, no test deleted
+
+The honest caveat: this removes 12 movers, it doesn't make the two readers safe. commands_file.rs still has 17 — but at 2809 lines with no _from twins yet, that's a real task, not a rider on this one.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/context.rs
+
