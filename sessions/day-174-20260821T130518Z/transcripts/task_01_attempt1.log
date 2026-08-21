@@ -1,0 +1,312 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual function.
+  ▶ search 'fn generate_commit_message|fn file_change_counts' in src/git.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "generate_commit_message… ✓ (6ms)
+  ▶ read src/git.rs:200..320 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/git.rs:1020..1120 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 53.6s (4 ✓)
+
+Now I have the full picture. Writing the classifier and the dominant-match logic.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (35 → 149 lines)
+  + /// What kind of file a changed path is, for commit-type classification.
+  + ///
+  + /// `Code` is the production/default bucket — anything that is not recognisably a
+  + /// test, a doc, or repo housekeeping. It deliberately wins ties (see
+  + /// `dominant_commit_category`): a commit that touches production code and a
+  + /// fixture in equal measure is not a test commit.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + enum CommitFileCategory {
+  +     Test,
+  +     Docs,
+  +     Chore,
+  +     Code,
+  + }
+  + 
+  + /// Is this path a test file *by shape*, not by substring?
+  + ///
+  + /// The old rule was `path.contains("test")`, which fires on `src/commands_latest.rs`,
+  + /// `contest.rs` and `src/protest_handler.rs` — and, with `any()`, let one fixture
+  + /// re-type an entire production commit (#811). Recognised shapes, kept
+  + /// language-agnostic because every `/commit` user gets this string in their history:
+  ... (146 more lines)
+ ✓ (1m 33s)
+  + /// What kind of file a changed path is, for commit-type classification.
+  + ///
+  + /// `Code` is the production/default bucket — anything that is not recognisably a
+  + /// test, a doc, or repo housekeeping. It deliberately wins ties (see
+  + /// `dominant_commit_category`): a commit that touches production code and a
+  + /// fixture in equal measure is not a test commit.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + enum CommitFileCategory {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/git.rs (9 → 30 lines)
+  -     let summary = if deletions == 0 && insertions > 0 {
+  -         "add changes"
+  +     let verb = if deletions == 0 && insertions > 0 {
+  +         "add"
+        } else if insertions == 0 && deletions > 0 {
+  -         "remove code"
+  +         "remove"
+        } else {
+  -         "update code"
+  +         "update"
+  +     };
+  + 
+  +     // The old summary said the least exactly when the commit was biggest: once the
+  +     // scope collapsed to "N files", every mixed diff read `update code` (#811).
+  +     // When the scope can no longer name the files, spend the summary on a fact the
+  +     // diff already knows — the file carrying the most changed lines — rather than
+  +     // inventing an intent this function cannot know.
+  +     let summary = if files_changed.len() > 3 {
+  +         let focus = per_file_lines
+  +             .iter()
+  ... (14 more lines)
+ ✓ (12.2s)
+  -     let summary = if deletions == 0 && insertions > 0 {
+  -         "add changes"
+  +     let verb = if deletions == 0 && insertions > 0 {
+  +         "add"
+        } else if insertions == 0 && deletions > 0 {
+  -         "remove code"
+  +         "remove"
+        } else {
+  ... (13 more lines)
+  ▶ read src/git.rs:362..392 ✓ (0ms)
+  ▶ edit src/git.rs (18 → 12 lines)
+        // Build a concise scope from changed files
+        let scope = if files_changed.len() == 1 {
+  -         let f = &files_changed[0];
+  -         let name = f.rsplit('/').next().unwrap_or(f);
+  -         // Strip extension for scope
+  -         name.split('.').next().unwrap_or(name).to_string()
+  +         file_stem_of(&files_changed[0])
+        } else if files_changed.len() <= 3 {
+            files_changed
+                .iter()
+  -             .map(|f| {
+  -                 let name = f.rsplit('/').next().unwrap_or(f);
+  -                 name.split('.').next().unwrap_or(name).to_string()
+  -             })
+  +             .map(|f| file_stem_of(f))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+ ✓ (12.5s)
+        // Build a concise scope from changed files
+        let scope = if files_changed.len() == 1 {
+  -         let f = &files_changed[0];
+  -         let name = f.rsplit('/').next().unwrap_or(f);
+  -         // Strip extension for scope
+  -         name.split('.').next().unwrap_or(name).to_string()
+  +         file_stem_of(&files_changed[0])
+        } else if files_changed.len() <= 3 {
+  ... (10 more lines)
+  4 tools completed in 2m 15s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/git.rs (3 → 13 lines)
+  + /// The bare name of a path with its extension(s) stripped — `src/prompt.rs` → `prompt`.
+  + ///
+  + /// Cuts at the *first* dot, preserving the scope wording this function has always
+  + /// produced (`foo.test.js` → `foo`). Used for both the scope and the large-commit
+  + /// summary so the two cannot drift.
+  + fn file_stem_of(path: &str) -> String {
+  +     let name = path.rsplit('/').next().unwrap_or(path);
+  +     name.split('.').next().unwrap_or(name).to_string()
+  + }
+  + 
+    /// Generate a conventional commit message from a diff using simple heuristics.
+    /// This is a local, token-free approach — no AI calls needed.
+    pub fn generate_commit_message(diff: &str) -> String {
+ ✓ (1m 33s)
+  + /// The bare name of a path with its extension(s) stripped — `src/prompt.rs` → `prompt`.
+  + ///
+  + /// Cuts at the *first* dot, preserving the scope wording this function has always
+  + /// produced (`foo.test.js` → `foo`). Used for both the scope and the large-commit
+  + /// summary so the two cannot drift.
+  + fn file_stem_of(path: &str) -> String {
+  +     let name = path.rsplit('/').next().unwrap_or(path);
+  +     name.split('.').next().unwrap_or(name).to_string()
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (158ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test git:: 2>&1 | tail -25 ✓ (211ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test git::tests::test_gene… ✓ (148ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 43s (4 ✓)
+
+All four existing tests pass. Now the new tests at the emission point.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (7 → 130 lines)
+            assert!(
+                msg.contains("4 files"),
+                "Should show file count for many files: {msg}"
+  +         );
+  +         // This test used to stop here — it pinned the scope collapse and nothing else,
+  +         // so it was green while the summary said "update code" for every big mixed
+  +         // diff (#811). The scope is unchanged; the summary now names the file carrying
+  +         // the most changed lines instead of saying nothing.
+  +         assert!(
+  +             msg.contains("(+3 more)"),
+  +             "Large-commit summary should disclose the remaining files: {msg}"
+  +         );
+  +         assert!(
+  +             !msg.contains("update code"),
+  +             "Large-commit summary should not be the bare placeholder: {msg}"
+  +         );
+  +     }
+  + 
+  +     /// The exact shape that produced #811: one test-shaped path plus five
+  +     /// production files, with the weight overwhelmingly on production.
+  ... (108 more lines)
+ ✓ (1m 32s)
+            assert!(
+                msg.contains("4 files"),
+                "Should show file count for many files: {msg}"
+  +         );
+  +         // This test used to stop here — it pinned the scope collapse and nothing else,
+  +         // so it was green while the summary said "update code" for every big mixed
+  +         // diff (#811). The scope is unchanged; the summary now names the file carrying
+  +         // the most changed lines instead of saying nothing.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test git::tests:: 2>&1 | g… ✓ (219ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 37s (2 ✓)
+
+All green including the verbatim assert_eq!. Full check suite:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (25.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+  2 tools completed in 1m 40s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t.log 2>&1; ec… ✓ (52.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B3 -A25 "^failures:" /tmp/… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 10s (2 ✓)
+
+The module-size gate fired — git.rs was already at 1997/2000. A 259-line overshoot is the design event that gate exists for, so I'll split at the natural seam rather than register debt.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// What kind of file\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '218,219p;420,424p' src/g… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1166p;1355,1376p' s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1375p' src/git.rs |… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 11.1s (4 ✓)
+
+Code is lines 218–422, tests 1164–1373. Extracting both into a new module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,225p' src/git.rs && … ✓ (5ms)
+  2 tools completed in 2.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/git.rs (5 → 10 lines)
+        let with_trailer = append_co_authored_trailer(message);
+        run_git_commit(&with_trailer)
+    }
+  + 
+  + // The deterministic commit-message generator lives in `git_commit_msg` (moved out
+  + // on Day 174 to keep this module under the size gate). Re-exported so every call
+  + // site keeps saying `git::generate_commit_message`.
+  + pub use crate::git_commit_msg::generate_commit_message;
+ ✓ (12.6s)
+        let with_trailer = append_co_authored_trailer(message);
+        run_git_commit(&with_trailer)
+    }
+  + 
+  + // The deterministic commit-message generator lives in `git_commit_msg` (moved out
+  + // on Day 174 to keep this module under the size gate). Re-exported so every call
+  + // site keeps saying `git::generate_commit_message`.
+  + pub use crate::git_commit_msg::generate_commit_message;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod git;\|^mod git" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '97a mod git_commit_msg;'… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '96,100p' src/main.rs && … ✓ (15.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/t2.log 2>&1; e… ✓ (1m 16s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 55s (5 ✓)
+
+All 5032 pass, including both gates. Verifying the new module's tests actually ran and confirming the #811 string live:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "git_commit_msg::tests" … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- git… ✓ (7ms)
+  2 tools completed in 2.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/git.rs\|`git.rs`" C… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src/git\.rs' CLAUDE.md … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `g\|^- `hooks\|^- `h… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.7s (3 ✓)
+
+No git.rs bullet exists in CLAUDE.md's module list; adding one for the new module (alphabetically after gasp.rs):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (23ms)
+
+Now final verification of everything before committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (55.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green. Final review of the new module:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,12p' src/git_commit_ms… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (53 lines) ✓ (19ms)
+  2 tools completed in 15.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done and committed — working tree clean.
+
+## What shipped
+
+#811, all three defects in `generate_commit_message`:
+
+1. **`.contains("test") → path_is_test** — matches by path *shape*, language-agnostic (Kind: product, so not "Rust files under src/`"): components tests/test/spec/__tests__, stems ending _test/_tests, filenames containing .test./.spec.. src/commands_latest.rs no longer matches; `src/main_tests.rs` does.
+2. First-match ladder → dominant match — commit_file_category + dominant_commit_category, weighted by per-file changed lines parsed out of the diff already being walked (no new git invocation; a rename still weighs 1). Ties go to production code. Prefix vocabulary unchanged (test/docs/chore/refactor/feat).
+3. Summary no longer empties out when the commit is biggest — past 3 files it names the file carrying the most changed lines instead of update code. Under 4 files the strings are byte-identical to before.
+
+Verbatim result for the #811 file list: `feat(6 files): update prompt (+5 more)`
+
+Tests (at the emission point, on the string the caller receives): the mixed fixture+production case that produced #811, the substring near-miss, the real-test-path near-miss guard, a cross-language table for path_is_test, and a tie table for dominant_commit_category. All four pre-existing tests kept — test_generate_commit_message_multiple_files was pinning the degradation, so its "4 files" assertion stands and two were added beside a comment explaining what changed.
+
+## One thing I had to decide mid-task
+
+The module-size gate fired: git.rs was already at 1997/2000 and this landed 259 lines past the cap — far outside the 50-line grace band, which is precisely the design event that gate exists for. Registering 259 lines of debt when a clean seam was sitting right there would have been the ceiling-as-furniture move my own notes warn about. So I split: src/git_commit_msg.rs is a pure move (no body rewritten), re-exported from git.rs so every call site still says git::generate_commit_message. git.rs 1997 → 1848.
+
+cargo fmt --check, clippy --all-targets -D warnings, build, test (5032 passing, both the module-size and orphan-module gates green). CLAUDE.md gained a git_commit_msg.rs architecture bullet in the same commit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/git.rs
+

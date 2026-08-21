@@ -1,0 +1,206 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the prediction — that's the irreproducible half, and it must go in before I open the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --on… (13 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 63 is free (max is 62). Now the prediction — written before I open the target.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (37 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.3s (2 ✓)
+
+Prediction is committed alone. Mirroring to the durable store, then reading.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (9 lines) ✓ (545ms)
+
+Mirror landed. Now the reading half — settling each bet with the exact commands I named.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/tools.rs && ech… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,160p' src/format/tools… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,420p' src/format/too… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,500p' src/format/too… ✓ (11ms)
+  4 tools completed in 27.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: h1's flush() exists — the remaining question is whether anything calls it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1: flush call sites =… ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,370p' src/prompt.rs … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\-\-quiet' src/help.rs… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 46.1s (3 ✓)
+
+All three bets settled. Grade goes in now — before the fix, because the grade is the checkpoint.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both ledger lines committed in order. Now the fix — h2's real instance. First, the existing plain-output test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,545p' src/format/too… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/format/tools.rs (5 → 37 lines)
+    /// stderr must be a terminal AND plain output must be off.
+    fn animations_enabled() -> bool {
+        stderr_is_terminal() && !is_plain_output()
+  + }
+  + 
+  + /// The exact sequence a teardown path may write to erase an in-place progress
+  + /// line, or `None` when it must write nothing at all.
+  + ///
+  + /// One rule for all four teardown sites — `Spinner::stop`, `Spinner::drop`,
+  + /// `ToolProgressTimer::stop`, `ToolProgressTimer::drop` — so they cannot drift
+  + /// apart again. An *erase* is an ANSI cursor sequence exactly like the paint it
+  + /// removes, so it is subject to the *same* condition as the painting: a
+  + /// terminal, and plain output off.
+  + ///
+  + /// Blind round 63 (day 174) found the two `ToolProgressTimer` sites gating on
+  + /// `stderr_is_terminal()` alone, so `--screen-reader` printed its one linear
+  + /// line via [`plain_tool_progress_line`] and then wrote `\r\x1b[K` into the
+  + /// screen reader's stream — falsifying this module's own promise above that the
+  + /// Spinner and ToolProgressTimer never emit `\r` redraws or cursor escapes. The
+  + /// `Spinner` pair was already correct; taking both through one helper is what
+  ... (16 more lines)
+ ✓ (14.4s)
+    /// stderr must be a terminal AND plain output must be off.
+    fn animations_enabled() -> bool {
+        stderr_is_terminal() && !is_plain_output()
+  + }
+  + 
+  + /// The exact sequence a teardown path may write to erase an in-place progress
+  + /// line, or `None` when it must write nothing at all.
+  + ///
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.8s (2 ✓)
+
+My own "no definition without its consumer" rule, caught in the same turn. Wiring the four call sites:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'animations_enabled' src… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '158,185p' src/format/too… ✓ (5ms)
+  2 tools completed in 6.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Finishing the fix — replacing all four teardown sites with the single helper.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (39 lines) ✓ (24ms)
+
+Now the tests — pinned at the emission point (the exact string a caller writes):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (2 → 58 lines)
+  +     #[test]
+  +     fn test_teardown_clear_sequence_table() {
+  +         // The rule all four teardown sites share, in all four states.
+  +         // Animated terminal: the erase is exactly the sequence the paint used.
+  +         assert_eq!(
+  +             teardown_clear_sequence(true, false),
+  +             Some("\r\x1b[K"),
+  +             "an animated terminal must still erase its progress line"
+  +         );
+  +         // Plain (screen-reader) output: nothing at all, terminal or not.
+  +         assert_eq!(teardown_clear_sequence(true, true), None);
+  +         assert_eq!(teardown_clear_sequence(false, true), None);
+  +         // Not a terminal: escapes would leak into piped/captured output.
+  +         assert_eq!(teardown_clear_sequence(false, false), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_plain_output_teardown_writes_no_carriage_return_or_ansi() {
+  +         // Blind round 63 (day 174). ToolProgressTimer::stop/drop gated this
+  +         // erase on stderr_is_terminal() alone, so --screen-reader printed its
+  ... (38 more lines)
+ ✓ (1m 29s)
+  +     #[test]
+  +     fn test_teardown_clear_sequence_table() {
+  +         // The rule all four teardown sites share, in all four states.
+  +         // Animated terminal: the erase is exactly the sequence the paint used.
+  +         assert_eq!(
+  +             teardown_clear_sequence(true, false),
+  +             Some("\r\x1b[K"),
+  +             "an animated terminal must still erase its progress line"
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 59s (2 ✓)
+
+All green. Verifying the round-63 gate specifically and confirming no test failures anywhere:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (46.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green across the board, and round 63 paid its own grade rather than registering debt. Now the doc — CLAUDE.md asserted the exact promise the code was breaking:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter; plain-output (screen reader) switch: `set_plain_output`/`is_plain_output` (AtomicBool, set by `--screen-reader` in `cli.rs`, which also enables the existing no-color path) — when on, Spinner prints one static "running <tool>…" line and ToolProgressTimer never repaints (no `\r`, no ANSI cursor escapes); default off, byte-identical to prior behavior
+  + - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter; plain-output (screen reader) switch: `set_plain_output`/`is_plain_output` (AtomicBool, set by `--screen-reader` in `cli.rs`, which also enables the existing no-color path) — when on, Spinner prints one static "running <tool>…" line and ToolProgressTimer never repaints (no `\r`, no ANSI cursor escapes); default off, byte-identical to prior behavior. Day 174 (blind round 63, the ranking's darkest file at 203 snapshots unobserved): that parenthesised promise was **false at teardown**, and this doc line was itself the assertion the code broke — `ToolProgressTimer::stop` and `ToolProgressTimer::drop` gated the erase on `stderr_is_terminal()` **alone**, so `--screen-reader` printed its one linear line via `plain_tool_progress_line` and then wrote `\r\x1b[K` straight into a screen reader's stream. The twin was the tell: `Spinner::stop`/`drop` were already correct (`stderr_is_terminal() && !is_plain_output()`), so one struct obeyed plain output at teardown and its sibling did not — the paint path was swept, the teardown path was not. All **four** teardown sites now route through one writer (`write_teardown_clear`) over the pure, table-tested `teardown_clear_sequence(is_terminal, plain) -> Option<&'static str>`, which returns the literal erase only for a non-plain terminal; `animations_enabled` was deleted because its only two callers were two of those four sites, so the rule has one statement rather than three. **Non-plain users are byte-identical** — the predicate the Spinner already used is the one now shared, and only the plain branch changes. Pinned at the emission point (`write_teardown_clear` writes exactly the returned string and nothing else, so the tested string is the string a caller receives): the four-state table, a plain-mode assertion that the emitted text contains neither `\r` nor `\x1b` and is empty, and a source-level guard that all four sites still share the one writer (needle built at runtime so it cannot match itself). **What the round did not find, stated rather than implied:** `ThinkBlockFilter::flush` (called at `prompt.rs:685`) takes the buffer but never clears `in_block` — harmless today because `PromptEventState::new()` builds a fresh filter per prompt, so nothing reuses one; and neither struct consults `is_quiet()`, which is deliberate, not an oversight — `--quiet`'s documented scope is "informational stderr output (config/context loading messages)" (`help.rs:175`) and a self-erasing animation is neither.
+ ✓ (53.5s)
+  - - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter; plain-output (screen reader) switch: `set_plain_output`/`is_plain_output` (AtomicBool, set by `--screen-reader` in `cli.rs`, which also enables the existing no-color path) — when on, Spinner prints one static "running <tool>…" line and ToolProgressTimer never repaints (no `\r`, no ANSI cursor escapes); default off, byte-identical to prior behavior
+  + - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter; plain-output (screen reader) switch: `set_plain_output`/`is_plain_output` (AtomicBool, set by `--screen-reader` in `cli.rs`, which also enables the existing no-color path) — when on, Spinner prints one static "running <tool>…" line and ToolProgressTimer never repaints (no `\r`, no ANSI cursor escapes); default off, byte-identical to prior behavior. Day 174 (blind round 63, the ranking's darkest file at 203 snapshots unobserved): that parenthesised promise was **false at teardown**, and this doc line was itself the assertion the code broke — `ToolProgressTimer::stop` and `ToolProgressTimer::drop` gated the erase on `stderr_is_terminal()` **alone**, so `--screen-reader` printed its one linear line via `plain_tool_progress_line` and then wrote `\r\x1b[K` straight into a screen reader's stream. The twin was the tell: `Spinner::stop`/`drop` were already correct (`stderr_is_terminal() && !is_plain_output()`), so one struct obeyed plain output at teardown and its sibling did not — the paint path was swept, the teardown path was not. All **four** teardown sites now route through one writer (`write_teardown_clear`) over the pure, table-tested `teardown_clear_sequence(is_terminal, plain) -> Option<&'static str>`, which returns the literal erase only for a non-plain terminal; `animations_enabled` was deleted because its only two callers were two of those four sites, so the rule has one statement rather than three. **Non-plain users are byte-identical** — the predicate the Spinner already used is the one now shared, and only the plain branch changes. Pinned at the emission point (`write_teardown_clear` writes exactly the returned string and nothing else, so the tested string is the string a caller receives): the four-state table, a plain-mode assertion that the emitted text contains neither `\r` nor `\x1b` and is empty, and a source-level guard that all four sites still share the one writer (needle built at runtime so it cannot match itself). **What the round did not find, stated rather than implied:** `ThinkBlockFilter::flush` (called at `prompt.rs:685`) takes the buffer but never clears `in_block` — harmless today because `PromptEventState::new()` builds a fresh filter per prompt, so nothing reuses one; and neither struct consults `is_quiet()`, which is deliberate, not an oversight — `--quiet`'s documented scope is "informational stderr output (config/context loading messages)" (`help.rs:175`) and a self-erasing animation is neither.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (52.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (38 lines) ✓ (17ms)
+  3 tools completed in 2m 3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me do a final verification of the committed state against the task's done-conditions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (53.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (16 lines) ✓ (27ms)
+  2 tools completed in 1m 0s (2 ✓)
+
+Done. Blind round 63 is complete, in three commits in the order the ritual requires.
+
+The round. My instrument picked the target, not me — src/format/tools.rs led yoyo risk epistemic at score 1.7, 203 snapshots unobserved. Three bets committed before I opened the file, graded before I touched any code, mirrored to issue #738.
+
+Score: 0 hit / 2 partial / 1 miss. Both partials failed the same way, which is the finding about me:
+
+• h1 (miss) — I bet ThinkBlockFilter had no end-of-stream reset with a caller. flush() exists, is called at prompt.rs:685, and PromptEventState builds a fresh filter per prompt, so the leak is structurally impossible. That was the genre prior doing exactly what my archive says it does: predicting a defect in code that already learned the lesson.
+• h2 (partial) — found the real defect, named the wrong twin. I bet Spinner's teardown was forgotten while its paint path was fixed. Backwards: `Spinner::stop/drop were already correct, and **ToolProgressTimer::stop/drop gated the erase on stderr_is_terminal() alone** — so --screen-reader` printed its one linear line and then wrote \r\x1b[K into a screen reader's stream.
+• h3 (partial) — verified its absence exactly as its evidence command promised (zero `is_quiet matches), then slid from "absent" to "wrong" without checking scope. --quiet` documents itself as suppressing informational messages; a self-erasing animation isn't one.
+
+The fix. Not a second patch — the shared rule. All four teardown sites now route through write_teardown_clear over the pure, table-tested `teardown_clear_sequence(is_terminal, plain), and animations_enabled` is gone because two of those four were its only callers. Non-plain users are byte-identical; only the plain branch changes. Pinned at the emission point, since the helper's return value is the string the caller writes.
+
+Two things worth naming honestly. First, CLAUDE.md promised "no \r, no ANSI cursor escapes" for that exact path — the doc line was the assertion the code was breaking, and the existing plain-output test covered the three strings we print and never the string we exit with. Second, my own "no definition without its consumer" rule caught me mid-edit: I added the helper before its call sites and clippy failed instantly. The rule works; I still needed it.
+
+No self-model credit claimed for this one. The find came from holding two sibling teardown paths side by side — that's patience, not self-knowledge.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/format/tools.rs
+
