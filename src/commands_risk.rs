@@ -299,6 +299,37 @@ fn co_change_coupling() -> std::collections::HashMap<String, std::collections::H
     coupling
 }
 
+/// Keep only candidate paths that still exist, per an injected resolver.
+///
+/// **Why this exists (do not "simplify" it away).** The risk-score universe is
+/// assembled from three sources: two git-churn windows and two disk walks. The
+/// disk walks are existence-checked by construction; the churn-derived paths are
+/// not — and **a file's own deletion commit is churn**. So deleting a file hands
+/// it a fresh 30-day *and* 7-day change count (i.e. a fresh risk score) while
+/// simultaneously guaranteeing it has never appeared in any prediction column,
+/// which sorts it straight to the top of the *never forecast* dark set in
+/// `yoyo risk epistemic`. `scripts/extract_trajectory.py` feeds those rows to the
+/// planner as "point the self-driven slot here", so a deleted file becomes the
+/// most attractive target in the one output that steers task selection. Live
+/// instance: `src/commands_risk_families.rs`, deleted Day 173 by #804, led the
+/// dark set on Day 174 and had already eaten one session (receipt #807) as an
+/// empty-diff revert.
+///
+/// Note the polarity: this is the opposite of the Day-166 too-new split. That one
+/// stopped calling genuinely-new files dark; this one drops a file that can
+/// **never** be studied from a list of rooms worth entering.
+///
+/// The I/O stays at the call site (`&|p| Path::new(p).exists()`) so the decision
+/// half is pure and table-tested, matching the discipline of its siblings
+/// (`never_forecast_files` injects `added_ts`; `revisit_add_at` injects the
+/// resolved title).
+fn scorable_paths(
+    candidates: impl IntoIterator<Item = String>,
+    exists: &dyn Fn(&str) -> bool,
+) -> std::collections::HashSet<String> {
+    candidates.into_iter().filter(|p| exists(p)).collect()
+}
+
 /// Compute risk scores for all `src/**/*.rs` files using six weighted signals.
 pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     // 1. Change frequency (30 days) — weight 0.30
@@ -341,6 +372,11 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
             }
         }
     }
+    // Drop candidates that no longer exist on disk. The two disk walks above are
+    // existence-checked by construction; the two churn windows are not, and a
+    // file's own deletion commit is churn — see `scorable_paths` for why that
+    // lands a deleted file at the top of the planner's dark-room list.
+    let file_set = scorable_paths(file_set, &|p: &str| std::path::Path::new(p).exists());
     let mut all_files: Vec<String> = file_set.into_iter().collect();
     all_files.sort();
 
@@ -2844,6 +2880,61 @@ fn handle_risk_validate() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Day 174: the risk-score universe is filtered to paths that exist ──
+    // A file's deletion commit is churn, so a deleted file otherwise earns a
+    // fresh score plus a guaranteed never-forecast status and leads the list
+    // that steers the planner (`src/commands_risk_families.rs`, deleted #804,
+    // led the dark set and ate a session as #807).
+
+    #[test]
+    fn scorable_paths_table() {
+        let present = ["src/alive.rs", "src/format/mod.rs"];
+        let exists = |p: &str| present.contains(&p);
+
+        // A path the resolver says exists survives.
+        let kept = scorable_paths(
+            vec!["src/alive.rs".to_string(), "src/format/mod.rs".to_string()],
+            &exists,
+        );
+        assert_eq!(kept.len(), 2);
+        assert!(kept.contains("src/alive.rs"));
+        assert!(kept.contains("src/format/mod.rs"));
+
+        // A path the resolver says does not exist is dropped — the live case:
+        // a deleted file that still carries churn from its own deletion commit.
+        let filtered = scorable_paths(
+            vec![
+                "src/alive.rs".to_string(),
+                "src/commands_risk_families.rs".to_string(),
+            ],
+            &exists,
+        );
+        assert_eq!(
+            filtered.iter().cloned().collect::<Vec<_>>(),
+            vec!["src/alive.rs".to_string()],
+            "a non-existent candidate must not be scored"
+        );
+
+        // An empty candidate set yields an empty set — no panic.
+        let empty = scorable_paths(Vec::<String>::new(), &exists);
+        assert!(empty.is_empty());
+
+        // Every candidate missing is also empty, not a fallback to "keep all".
+        let all_gone = scorable_paths(vec!["src/gone.rs".to_string()], &exists);
+        assert!(
+            all_gone.is_empty(),
+            "an all-missing set must not silently pass through"
+        );
+
+        // Duplicates collapse (it returns a set), and the resolver is the only
+        // authority — nothing here touches the filesystem.
+        let deduped = scorable_paths(
+            vec!["src/alive.rs".to_string(), "src/alive.rs".to_string()],
+            &exists,
+        );
+        assert_eq!(deduped.len(), 1);
+    }
 
     // ── #764: the ledger-health line a `/risk accuracy` caller actually reads ──
     // These assert the *string emitted*, not the state one layer below it.

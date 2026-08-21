@@ -122,7 +122,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // bookkeeping commits are not a second opinion) plus three fixture tests
     // pinning the cargo-fmt window as ungraded, the real-corroboration window
     // as red, and the harness vocabulary the filter is keyed to.
-    ("src/commands_risk.rs", 5846),
+    // Day 174: +91 lines — the risk-score universe is now filtered to paths that
+    // exist on disk (`scorable_paths` + its table test). A file's deletion commit
+    // is itself churn, so a deleted file was earning a fresh score plus a
+    // guaranteed never-forecast status and leading the list that steers the
+    // planner. Recorded deliberately rather than absorbed.
+    ("src/commands_risk.rs", 5937),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
