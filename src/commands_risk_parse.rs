@@ -59,11 +59,15 @@ pub(crate) enum ValidationLedger {
     /// The path exists but could not be read; the string names path + io error.
     Unreadable(String),
     /// The file was read. `dropped` counts non-blank lines that failed to
-    /// parse as JSON — `Present { events: [], dropped: n }` (everything
+    /// parse as JSON — `Present { events: [], dropped: n, .. }` (everything
     /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+    /// `ungradable` counts lines that *are* valid JSON but carry no outcome to
+    /// grade (see [`line_is_gradable`]); before Day 174 those were absorbed by
+    /// `unwrap_or` defaults into healthy-looking 0/0 events.
     Present {
         events: Vec<ValidationEvent>,
         dropped: usize,
+        ungradable: usize,
     },
 }
 
@@ -80,8 +84,12 @@ pub(crate) fn read_validation_ledger(path: &std::path::Path) -> ValidationLedger
             return ValidationLedger::Unreadable(format!("could not read {}: {e}", path.display()))
         }
     };
-    let (events, dropped) = parse_validation_events_counting(&content);
-    ValidationLedger::Present { events, dropped }
+    let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+    ValidationLedger::Present {
+        events,
+        dropped,
+        ungradable,
+    }
 }
 
 /// Parse validation events from JSONL content (testable without filesystem).
@@ -89,12 +97,36 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
     parse_validation_events_counting(content).0
 }
 
+/// Does this JSON line carry an outcome that can be graded at all?
+///
+/// A validation event grades a prediction list against the set of files the
+/// outcome actually touched — that set is `hits` + `surprises`. A line naming
+/// **neither** as an array has no outcome, so there is nothing to grade.
+///
+/// Day 174 (#764 residue item 1): such a line used to fall straight through the
+/// `unwrap_or(0)` / `unwrap_or_default()` defaults below and be pushed as a
+/// perfectly healthy `0 hits / 0 changed, 0.0%` event. That is worse than
+/// dropping it — it inflates `total_validations`, feeds a fabricated 0% into
+/// the trend, and does it while every health line reports the ledger clean.
+/// Absence gets its own name instead of borrowing the convenient neighbour.
+///
+/// Deliberately narrow: it asks only for the outcome arrays. `day`, `severity`
+/// and `accuracy_pct` are still parsed defensively, because a missing `day` is
+/// a display defect while a missing outcome is a *fabricated measurement*.
+pub(crate) fn line_is_gradable(val: &serde_json::Value) -> bool {
+    val["hits"].is_array() || val["surprises"].is_array()
+}
+
 /// Same parse as [`parse_validation_events`], additionally returning how many
-/// **non-blank** lines failed `serde_json::from_str`. Blank lines are not
-/// corruption and are never counted (a trailing newline is normal JSONL).
-pub(crate) fn parse_validation_events_counting(content: &str) -> (Vec<ValidationEvent>, usize) {
+/// **non-blank** lines failed `serde_json::from_str` and how many parsed as
+/// JSON but carry no gradable outcome ([`line_is_gradable`]). Blank lines are
+/// not corruption and are never counted (a trailing newline is normal JSONL).
+pub(crate) fn parse_validation_events_counting(
+    content: &str,
+) -> (Vec<ValidationEvent>, usize, usize) {
     let mut events = Vec::new();
     let mut dropped = 0usize;
+    let mut ungradable = 0usize;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -107,6 +139,12 @@ pub(crate) fn parse_validation_events_counting(content: &str) -> (Vec<Validation
                 continue;
             }
         };
+        // A line with no outcome arrays is not an event with a bad grade — it
+        // is not an event. Count it out loud instead of manufacturing a 0/0.
+        if !line_is_gradable(&val) {
+            ungradable += 1;
+            continue;
+        }
         let day = val["day"].as_u64().unwrap_or(0) as u32;
         let hits = val["hits"].as_array().map(|a| a.len()).unwrap_or(0);
         let surprises = val["surprises"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -131,7 +169,7 @@ pub(crate) fn parse_validation_events_counting(content: &str) -> (Vec<Validation
             severity,
         });
     }
-    (events, dropped)
+    (events, dropped, ungradable)
 }
 
 /// A graded validation event reduced to what the epistemic view needs: the
@@ -569,15 +607,26 @@ mod tests {
 
     /// One well-formed validation line, parameterised by day.
     fn valid_line(day: u32) -> String {
+        // Day 174: this fixture used to name `hit_count` / `total_changed` —
+        // the *struct* field names, not the JSON keys the parser reads. So
+        // every "valid" line here actually parsed as a 0-hit / 0-changed
+        // event, and these tests pinned my belief about the format rather
+        // than the format. Shape taken verbatim from a real ledger line.
         format!(
-            r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+            r#"{{"day":{day},"hits":["src/a.rs","src/b.rs"],"surprises":["src/c.rs","src/d.rs","src/e.rs"],"accuracy_pct":40.0,"severity":"watch_failure"}}"#
         )
+    }
+
+    /// A line that is valid JSON but names no outcome — the state Day 174
+    /// stopped absorbing into a healthy 0/0 event (#764 residue item 1).
+    fn ungradable_line(day: u32) -> String {
+        format!(r#"{{"day":{day},"severity":"watch_failure"}}"#)
     }
 
     #[test]
     fn counting_reports_zero_dropped_for_a_clean_ledger() {
         let content = format!("{}\n{}\n", valid_line(160), valid_line(161));
-        let (events, dropped) = parse_validation_events_counting(&content);
+        let (events, dropped, _ungradable) = parse_validation_events_counting(&content);
         assert_eq!(events.len(), 2);
         assert_eq!(dropped, 0, "well-formed lines are never counted as dropped");
     }
@@ -589,7 +638,7 @@ mod tests {
             valid_line(160),
             valid_line(161)
         );
-        let (events, dropped) = parse_validation_events_counting(&content);
+        let (events, dropped, _ungradable) = parse_validation_events_counting(&content);
         assert_eq!(events.len(), 2, "valid lines still parse");
         assert_eq!(dropped, 2, "both the garbage and the truncated line count");
     }
@@ -600,9 +649,81 @@ mod tests {
         // are not corruption — counting them would manufacture a warning on a
         // perfectly healthy ledger.
         let content = format!("\n{}\n\n   \n{}\n", valid_line(160), valid_line(161));
-        let (events, dropped) = parse_validation_events_counting(&content);
+        let (events, dropped, ungradable) = parse_validation_events_counting(&content);
         assert_eq!(events.len(), 2);
         assert_eq!(dropped, 0);
+        assert_eq!(ungradable, 0);
+    }
+
+    #[test]
+    fn line_is_gradable_needs_an_outcome_array_not_a_count() {
+        let g = |s: &str| line_is_gradable(&serde_json::from_str(s).unwrap());
+        // Either array alone is enough: the live ledger really does write
+        // `"hits":[]` on a day nothing predicted was touched, and that is a
+        // graded 0%, not a missing outcome.
+        assert!(g(r#"{"hits":[],"surprises":["src/a.rs"]}"#));
+        assert!(g(r#"{"hits":["src/a.rs"]}"#));
+        assert!(g(r#"{"surprises":[]}"#));
+        // No outcome at all — the state that used to become a 0/0 event.
+        assert!(!g(r#"{"day":10,"severity":"watch_failure"}"#));
+        // Present but the wrong type is not an outcome either; absence and
+        // malformation both keep their own name rather than borrowing "graded".
+        assert!(!g(r#"{"hits":3,"surprises":"none"}"#));
+    }
+
+    #[test]
+    fn counting_separates_ungradable_lines_from_unparseable_ones() {
+        // The two failure modes are different facts and must not be summed:
+        // corrupt JSON is a *display* problem, a missing outcome would have
+        // been a *fabricated measurement*.
+        let content = format!("{}\nnot-json\n{}\n", valid_line(160), ungradable_line(161));
+        let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+        assert_eq!(events.len(), 1, "only the line with an outcome survives");
+        assert_eq!(events[0].day, 160);
+        assert_eq!(dropped, 1, "garbage counts as unparseable, not ungradable");
+        assert_eq!(
+            ungradable, 1,
+            "the outcome-less line is counted, not dropped silently"
+        );
+    }
+
+    #[test]
+    fn an_ungradable_line_never_becomes_a_zero_zero_event() {
+        // The regression this whole third value exists for: before Day 174 the
+        // `unwrap_or(0)` defaults turned a line with no outcome into a
+        // perfectly healthy-looking 0 hits / 0 changed event, which then got
+        // averaged into `/risk accuracy` as if it had been measured.
+        let content = format!("{}\n", ungradable_line(161));
+        let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+        assert!(
+            events.is_empty(),
+            "an outcome-less line must not appear as an event at all"
+        );
+        assert_eq!(dropped, 0, "it parsed as JSON — it is not corrupt");
+        assert_eq!(ungradable, 1);
+    }
+
+    #[test]
+    fn read_validation_ledger_counts_ungradable_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risk_validations.jsonl");
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", valid_line(160), ungradable_line(161)),
+        )
+        .unwrap();
+        match read_validation_ledger(&path) {
+            ValidationLedger::Present {
+                events,
+                dropped,
+                ungradable,
+            } => {
+                assert_eq!(events.len(), 1);
+                assert_eq!(dropped, 0);
+                assert_eq!(ungradable, 1);
+            }
+            _ => panic!("expected Present"),
+        }
     }
 
     #[test]
@@ -631,7 +752,11 @@ mod tests {
         let path = dir.path().join("risk_validations.jsonl");
         std::fs::write(&path, format!("{}\n{}\n", valid_line(160), valid_line(161))).unwrap();
         match read_validation_ledger(&path) {
-            ValidationLedger::Present { events, dropped } => {
+            ValidationLedger::Present {
+                events,
+                dropped,
+                ungradable: _,
+            } => {
                 assert_eq!(events.len(), 2);
                 assert_eq!(dropped, 0);
             }
@@ -645,7 +770,11 @@ mod tests {
         let path = dir.path().join("risk_validations.jsonl");
         std::fs::write(&path, format!("{}\ntruncated{{\n", valid_line(160))).unwrap();
         match read_validation_ledger(&path) {
-            ValidationLedger::Present { events, dropped } => {
+            ValidationLedger::Present {
+                events,
+                dropped,
+                ungradable: _,
+            } => {
                 assert_eq!(events.len(), 1, "the surviving line is still reported");
                 assert_eq!(dropped, 1, "the dropped line is no longer silent");
             }
@@ -662,7 +791,11 @@ mod tests {
         let path = dir.path().join("risk_validations.jsonl");
         std::fs::write(&path, "not-json\n{oops\n").unwrap();
         match read_validation_ledger(&path) {
-            ValidationLedger::Present { events, dropped } => {
+            ValidationLedger::Present {
+                events,
+                dropped,
+                ungradable: _,
+            } => {
                 assert!(events.is_empty());
                 assert_eq!(dropped, 2);
             }
@@ -828,19 +961,35 @@ mod tests {
 
     #[test]
     fn test_parse_validation_event_emerging_accuracy_pct_optional() {
+        // Day 174: both fixtures below used to name `hit_count` / `total_changed`
+        // as JSON keys. No writer has ever emitted those — they are *derived*
+        // struct fields, and all 141 lines of the live ledger carry `hits` /
+        // `surprises` arrays instead (`write_validation_event` writes "hits" and
+        // "surprises"). The old shape only parsed because `unwrap_or(0)` absorbed
+        // the missing outcome into a healthy-looking 0/0 event, which is the
+        // defect `line_is_gradable` now refuses. The fixtures are corrected to
+        // the shape the writer actually produces; this test's own concern —
+        // `emerging_accuracy_pct` absent → None, present → Some — is unchanged,
+        // and the derived counts are now asserted so the arrays are pinned as
+        // their source.
+
         // Backward compat: a line WITHOUT emerging_accuracy_pct parses to None.
-        let without = r#"{"day":10,"trigger":"cli","predicted_count":10,"hit_count":1,"total_changed":2,"accuracy_pct":50.0}"#;
+        let without = r#"{"day":10,"trigger":"cli","predicted_count":10,"hits":["src/a.rs"],"surprises":["src/b.rs"],"accuracy_pct":50.0}"#;
         let events = parse_validation_events(without);
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hit_count, 1);
+        assert_eq!(events[0].total_changed, 2);
         assert_eq!(
             events[0].emerging_accuracy_pct, None,
             "absent emerging_accuracy_pct → None (legacy emerging-less lines stay valid)"
         );
 
         // A line WITH emerging_accuracy_pct parses to Some(value).
-        let with = r#"{"day":11,"trigger":"watch_failure","predicted_count":10,"hit_count":2,"total_changed":4,"accuracy_pct":50.0,"emerging_accuracy_pct":75.0}"#;
+        let with = r#"{"day":11,"trigger":"watch_failure","predicted_count":10,"hits":["src/a.rs","src/b.rs"],"surprises":["src/c.rs","src/d.rs"],"accuracy_pct":50.0,"emerging_accuracy_pct":75.0}"#;
         let events = parse_validation_events(with);
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hit_count, 2);
+        assert_eq!(events[0].total_changed, 4);
         assert_eq!(
             events[0].emerging_accuracy_pct,
             Some(75.0),

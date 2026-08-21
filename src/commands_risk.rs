@@ -1180,15 +1180,42 @@ fn ledger_health_line(ledger: &ValidationLedger) -> Option<String> {
         ValidationLedger::Missing => None,
         ValidationLedger::Unreadable(msg) => Some(msg.clone()),
         ValidationLedger::Present { dropped: 0, .. } => None,
-        ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
-            "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+        ValidationLedger::Present {
+            events,
+            dropped,
+            ungradable,
+        } if events.is_empty() && dropped + ungradable > 0 => Some(format!(
+            "{RISK_VALIDATION_PATH} exists but none of its {} line(s) are usable ({}) — \
              the ledger is corrupt, not absent, so the \"starts automatically\" note below \
-             does not apply here."
+             does not apply here.",
+            dropped + ungradable,
+            unusable_breakdown(*dropped, *ungradable)
         )),
-        ValidationLedger::Present { dropped, .. } => Some(format!(
-            "{RISK_VALIDATION_PATH}: {dropped} unparseable line(s) skipped — \
-             the numbers below cover only the rest of the ledger."
+        ValidationLedger::Present {
+            dropped,
+            ungradable,
+            ..
+        } if dropped + ungradable > 0 => Some(format!(
+            "{RISK_VALIDATION_PATH}: {} line(s) skipped ({}) — \
+             the numbers below cover only the rest of the ledger.",
+            dropped + ungradable,
+            unusable_breakdown(*dropped, *ungradable)
         )),
+        ValidationLedger::Present { .. } => None,
+    }
+}
+
+/// Spell out *why* lines were skipped, keeping the two reasons distinct.
+///
+/// An unparseable line is corruption; a line that is valid JSON but names no
+/// outcome (`hits`/`surprises`) is a different fact — it was written by
+/// something, it just grades nothing. Collapsing them into one number would
+/// repeat the defect this reporting exists to expose (#764).
+fn unusable_breakdown(dropped: usize, ungradable: usize) -> String {
+    match (dropped, ungradable) {
+        (d, 0) => format!("{d} unparseable"),
+        (0, u) => format!("{u} with no gradable outcome"),
+        (d, u) => format!("{d} unparseable, {u} with no gradable outcome"),
     }
 }
 
@@ -2822,6 +2849,7 @@ mod tests {
         let ledger = ValidationLedger::Present {
             events: Vec::new(),
             dropped: 0,
+            ungradable: 0,
         };
         assert_eq!(ledger_health_line(&ledger), None);
     }
@@ -2845,6 +2873,7 @@ mod tests {
                 severity: Some("watch_failure".to_string()),
             }],
             dropped: 3,
+            ungradable: 0,
         };
         let line = ledger_health_line(&ledger).expect("dropped > 0 must be reported");
         assert!(
@@ -2867,6 +2896,7 @@ mod tests {
         let ledger = ValidationLedger::Present {
             events: Vec::new(),
             dropped: 4,
+            ungradable: 0,
         };
         let line = ledger_health_line(&ledger).expect("all-corrupt must be reported");
         assert!(
