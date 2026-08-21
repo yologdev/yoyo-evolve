@@ -95,6 +95,7 @@ mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
 mod git;
+mod git_commit_msg;
 mod help;
 mod help_data;
 #[cfg(test)]

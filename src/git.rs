@@ -216,71 +216,10 @@ pub fn run_git_commit_with_trailer(message: &str) -> (bool, String) {
     run_git_commit(&with_trailer)
 }
 
-/// Generate a conventional commit message from a diff using simple heuristics.
-/// This is a local, token-free approach — no AI calls needed.
-pub fn generate_commit_message(diff: &str) -> String {
-    let mut files_changed: Vec<String> = Vec::new();
-    let mut insertions = 0usize;
-    let mut deletions = 0usize;
-
-    for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            files_changed.push(path.to_string());
-        } else if line.starts_with('+') && !line.starts_with("+++") {
-            insertions += 1;
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            deletions += 1;
-        }
-    }
-
-    // Determine type prefix based on file paths
-    let prefix = if files_changed.iter().any(|f| f.contains("test")) {
-        "test"
-    } else if files_changed
-        .iter()
-        .any(|f| f.ends_with(".md") || f.starts_with("docs/"))
-    {
-        "docs"
-    } else if files_changed
-        .iter()
-        .any(|f| f.starts_with(".github/") || f.starts_with("scripts/") || f == "Cargo.toml")
-    {
-        "chore"
-    } else if deletions > insertions * 2 {
-        "refactor"
-    } else {
-        "feat"
-    };
-
-    // Build a concise scope from changed files
-    let scope = if files_changed.len() == 1 {
-        let f = &files_changed[0];
-        let name = f.rsplit('/').next().unwrap_or(f);
-        // Strip extension for scope
-        name.split('.').next().unwrap_or(name).to_string()
-    } else if files_changed.len() <= 3 {
-        files_changed
-            .iter()
-            .map(|f| {
-                let name = f.rsplit('/').next().unwrap_or(f);
-                name.split('.').next().unwrap_or(name).to_string()
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    } else {
-        format!("{} files", files_changed.len())
-    };
-
-    let summary = if deletions == 0 && insertions > 0 {
-        "add changes"
-    } else if insertions == 0 && deletions > 0 {
-        "remove code"
-    } else {
-        "update code"
-    };
-
-    format!("{prefix}({scope}): {summary}")
-}
+// The deterministic commit-message generator lives in `git_commit_msg` (moved out
+// on Day 174 to keep this module under the size gate). Re-exported so every call
+// site keeps saying `git::generate_commit_message`.
+pub use crate::git_commit_msg::generate_commit_message;
 
 /// Apply ANSI colors to a unified diff string, line by line.
 ///
@@ -1020,94 +959,6 @@ mod tests {
             // If we are in a git repo, the diff is a string (possibly empty)
             assert!(diff.len() < 10_000_000, "Diff should be reasonable size");
         }
-    }
-
-    #[test]
-    fn test_generate_commit_message_basic() {
-        let diff = "\
-diff --git a/src/main.rs b/src/main.rs
---- a/src/main.rs
-+++ b/src/main.rs
-@@ -1,3 +1,5 @@
-+// new comment
-+use std::io;
- fn main() {
-     println!(\"hello\");
- }
-";
-        let msg = generate_commit_message(diff);
-        // Should produce a conventional commit format: type(scope): description
-        assert!(msg.contains('('), "Should have scope: {msg}");
-        assert!(msg.contains("):"), "Should have conventional format: {msg}");
-        assert!(msg.contains("main"), "Scope should mention 'main': {msg}");
-    }
-
-    #[test]
-    fn test_generate_commit_message_docs() {
-        let diff = "\
-diff --git a/README.md b/README.md
---- a/README.md
-+++ b/README.md
-@@ -1,2 +1,3 @@
- # Project
-+New docs line
-";
-        let msg = generate_commit_message(diff);
-        assert!(
-            msg.starts_with("docs("),
-            "Markdown changes should use docs prefix: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_generate_commit_message_multiple_files() {
-        let diff = "\
-diff --git a/src/a.rs b/src/a.rs
---- a/src/a.rs
-+++ b/src/a.rs
-@@ -1 +1,2 @@
-+// change a
-diff --git a/src/b.rs b/src/b.rs
---- a/src/b.rs
-+++ b/src/b.rs
-@@ -1 +1,2 @@
-+// change b
-diff --git a/src/c.rs b/src/c.rs
---- a/src/c.rs
-+++ b/src/c.rs
-@@ -1 +1,2 @@
-+// change c
-diff --git a/src/d.rs b/src/d.rs
---- a/src/d.rs
-+++ b/src/d.rs
-@@ -1 +1,2 @@
-+// change d
-";
-        let msg = generate_commit_message(diff);
-        // More than 3 files should show "N files"
-        assert!(
-            msg.contains("4 files"),
-            "Should show file count for many files: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_generate_commit_message_deletions_only() {
-        let diff = "\
-diff --git a/src/old.rs b/src/old.rs
---- a/src/old.rs
-+++ b/src/old.rs
-@@ -1,5 +1,2 @@
--// removed line 1
--// removed line 2
--// removed line 3
- fn keep() {}
-";
-        let msg = generate_commit_message(diff);
-        assert!(
-            msg.contains("remove code"),
-            "Pure deletion should say 'remove code': {msg}"
-        );
     }
 
     #[test]
