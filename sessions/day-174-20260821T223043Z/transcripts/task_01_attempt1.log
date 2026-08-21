@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target function and its tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "suggest_related_files" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_file.rs && gr… ✓ (4ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 960,1080p src/commands_fi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1110p src/commands_f… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:1014..1086 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2640,2809p src/commands_f… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 12.9s (6 ✓)
+
+Now the seam. Making the edit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,25p src/commands_file.r… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs:969..983 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (4 → 21 lines)
+    /// Only works for source files. Skips paths in `already_added`.
+  + ///
+  + /// Thin wrapper over [`suggest_related_files_in`] rooted at the process cwd, so
+  + /// every production call site is unchanged. Tests use the `_in` form with a
+  + /// tempdir instead of `std::env::set_current_dir`, which is process-global and
+  + /// corrupts sibling tests running in the same process (#780).
+    pub fn suggest_related_files(path: &str, already_added: &[String]) -> Vec<String> {
+  +     suggest_related_files_in(std::path::Path::new("."), path, already_added)
+  + }
+  + 
+  + /// [`suggest_related_files`], resolving every filesystem probe against `root`.
+  + ///
+  + /// Returned paths keep the same relative form as the input (`src/foo_test.rs`),
+  + /// never absolute — `root` only decides where existence is checked.
+  + pub(crate) fn suggest_related_files_in(
+  +     root: &std::path::Path,
+  +     path: &str,
+  +     already_added: &[String],
+  + ) -> Vec<String> {
+        if !is_source_extension(path) {
+  ... (1 more lines)
+ ✓ (13.8s)
+    /// Only works for source files. Skips paths in `already_added`.
+  + ///
+  + /// Thin wrapper over [`suggest_related_files_in`] rooted at the process cwd, so
+  + /// every production call site is unchanged. Tests use the `_in` form with a
+  + /// tempdir instead of `std::env::set_current_dir`, which is process-global and
+  + /// corrupts sibling tests running in the same process (#780).
+    pub fn suggest_related_files(path: &str, already_added: &[String]) -> Vec<String> {
+  +     suggest_related_files_in(std::path::Path::new("."), path, already_added)
+  ... (13 more lines)
+  3 tools completed in 21.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now wire root into the two filesystem probes.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (1 → 1 lines)
+  -         if let Ok(content) = std::fs::read_to_string(path) {
+  +         if let Ok(content) = std::fs::read_to_string(root.join(path)) {
+ ✓ (1m 37s)
+  -         if let Ok(content) = std::fs::read_to_string(path) {
+  +         if let Ok(content) = std::fs::read_to_string(root.join(path)) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (3 → 3 lines)
+  -         if std::path::Path::new(&candidate).exists() {
+  +         if root.join(&candidate).exists() {
+                suggestions.push(canon);
+            }
+ ✓ (1m 36s)
+  -         if std::path::Path::new(&candidate).exists() {
+  +         if root.join(&candidate).exists() {
+                suggestions.push(canon);
+            }
+  2 tools completed in 3m 16s (2 ✓)
+
+Now the five tests. Rewriting each pair:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (134 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "env::set_current_dir" s… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.6s (2 ✓)
+
+The 8th is my own doc prose. Rewording so the census grep stays honest:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_file.rs (2 → 2 lines)
+  - /// tempdir instead of `std::env::set_current_dir`, which is process-global and
+  + /// tempdir instead of changing the process-global current directory, which
+    /// corrupts sibling tests running in the same process (#780).
+ ✓ (1m 35s)
+  - /// tempdir instead of `std::env::set_current_dir`, which is process-global and
+  + /// tempdir instead of changing the process-global current directory, which
+    /// corrupts sibling tests running in the same process (#780).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test 2>&1 | g… ✓ (58.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 37s (2 ✓)
+
+The predicted ratchet trip. Getting the exact remedy line:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (194ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_file.rs", 2809),
+  +     ("src/commands_file.rs", 2796),
+ ✓ (58.3s)
+  -     ("src/commands_file.rs", 2809),
+  +     ("src/commands_file.rs", 2796),
+  2 tools completed in 1m 1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (59.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Verifying the census and that #[serial] was only touched in my five tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "sites in commands_file.rs:… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+7 sites (from 17); total census 12 (from 22). Now CLAUDE.md:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_file.rs\|comma… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 125p CLAUDE.md | cut -c1-… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (59.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 13s (4 ✓)
+
+All four checks green, exactly three files touched. Committing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (26ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed and done. Final state:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "clea… ✓ (13ms)
+
+Done — committed as `9d175371`. Ten CWD movers gone; 22 → 12 sites repo-wide.
+
+What landed:
+
+1. The seam. suggest_related_files_in(root: &Path, path: &str, already_added: &[String]) holds the body; the two filesystem probes — fs::read_to_string(path) and Path::new(&candidate).exists() — now resolve against root.join(...). Returned paths keep their relative form (src/foo_test.rs), so root only decides where existence is checked. suggest_related_files is a one-line Path::new(".") wrapper: git diff on src/dispatch.rs and src/commands.rs is empty, so every production call site is byte-identical.
+2. Five tests rewritten to suggest_related_files_in(dir.path(), …), both set_current_dir lines and the orig_dir binding deleted from each. Assertions untouched.
+3. `#[serial]` removed from exactly those five — the diff shows 5 removals, 0 additions, nothing elsewhere.
+4. The ratchet trap, hit as predicted. The file shrank 2809 → 2796 and branch 3 of the module-size gate failed fatally; tests/module_size.rs register entry updated to the printed ("src/commands_file.rs", 2796) in the same commit.
+5. CLAUDE.md — one new commands_file.rs bullet naming the seam, the wrapper, the #780 reason (process-global cwd; #[serial] doesn't protect unmarked readers), and the out-of-scope remainder.
+
+cargo fmt --check, cargo build, cargo test (5045 + integration, 0 failures), cargo clippy --all-targets -- -D warnings all green.
+
+Stopping here rather than starting a second cluster. Remaining census, unchanged and deliberately untouched:
+
+| file | sites | why not now |
+|---|---|---|
+| src/commands_file.rs | 7 | the apply_patch tests — they shell out to git apply in the process cwd; needs production changes |
+| src/dispatch_sub.rs | 2 | needs a try_dispatch_subcommand route seam |
+| src/commands_git.rs | 2 | needs a handle_undo_last_commit call seam |
+| src/dispatch.rs | 1 | production /cd — not a test, leave alone |
+
+One note for whoever picks up the next cluster: my first draft of the doc comment contained the literal string std::env::set_current_dir in prose, which made grep -c on the file return 8 instead of 7. I reworded it — the census is a grep, so the census must not be able to count my own writing about it.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+There is no remaining work in scope — the task is complete and committed. Verifying once more rather than asserting it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && git stat… ✓ (10ms)
+
+**Nothing left to do.** HEAD is 9d175371, working tree clean (0 modified files), the cluster is down to 7 sites, and the register entry reads 2796.
+
+Every "Done when" item is satisfied and verified by command, not by claim:
+
+• grep -c "env::set_current_dir" src/commands_file.rs → 7 (from 17) ✓
+• cargo fmt --check, cargo build, cargo test, cargo clippy --all-targets -- -D warnings → all green ✓
+• tests/module_size.rs register updated to the count the gate itself printed ✓
+• CLAUDE.md bullet added, naming the seam, the wrapper, and the #780 reason ✓
+
+I'm deliberately not continuing. The task file is explicit: "If you finish early, **stop** and report the remaining census rather than starting a second cluster — a half-done second cluster is what reverts the first one." The remaining 12 sites each need a different seam (apply_patch needs production changes to stop shelling into the process cwd; dispatch_sub.rs needs a route seam; commands_git.rs needs a handle_undo_last_commit seam; /cd in dispatch.rs is production and stays), and bundling unrelated seams into one pass is precisely the shape that produced three empty-diff reverts on #790/#797. One cluster, one seam, committed green — that's the whole job, and it's done.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
