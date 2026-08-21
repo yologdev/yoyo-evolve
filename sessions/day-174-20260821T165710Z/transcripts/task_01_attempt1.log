@@ -1,0 +1,545 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by re-deriving the live warning list, exactly as the task says.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/module_size.rs && gi… ✓ (4ms)
+ ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Confirmed — 12 warnings, exactly as the finding claims. Now the exact list:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (140 lines) ✓ (1ms)
+ ✓ (160ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+The tool-output compressor elided lines (marked, at least). Let me capture the full list to a file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:140..400 ✓ (2ms)
+ ✓ (173ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:236..351  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:399..559 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:558..803 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 28.5s (5 ✓)
+
+Now I have the full picture. Starting with step 1 — pay the debt (11 register entries; commands_risk_epistemic.rs is un-grandfathered and stays out):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (8 → 17 lines)
+    /// Modules already over `MAX_MODULE_LINES` when the gate was installed
+    /// (Day 157). Each number is the file's **recorded size**: growing past it
+  - /// warns (branch 2), sitting under it fails (branch 3, the ratchet), so the
+  - /// entry tracks reality in both directions and the register only shrinks.
+  + /// warns or fails depending on how far (branch 2, split Day 174), sitting
+  + /// under it fails (branch 3, the ratchet), so the entry tracks reality in
+  + /// both directions and the register only shrinks.
+  + ///
+  + /// **Day 174 sweep.** Eleven of these entries were stale-high — the branch-2
+  + /// warning had run for eight days with no reader, absorbing between +1 and
+  + /// +480 lines per entry. Each `// Day 174: +N absorbed` note below records the
+  + /// drift that entry had accumulated by then; they are paid off in one pass,
+  + /// and the same commit makes drift past `REGISTER_DRIFT_GRACE_LINES` fatal so
+  + /// the next large one cannot be absorbed the same way.
+    const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
+        // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
+        // store-then-reference step is executable.
+  -     ("src/agent_builder.rs", 2647),
+  +     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
+  +     ("src/agent_builder.rs", 2650),
+ ✓ (1m 22s)
+    /// Modules already over `MAX_MODULE_LINES` when the gate was installed
+    /// (Day 157). Each number is the file's **recorded size**: growing past it
+  - /// warns (branch 2), sitting under it fails (branch 3, the ratchet), so the
+  - /// entry tracks reality in both directions and the register only shrinks.
+  + /// warns or fails depending on how far (branch 2, split Day 174), sitting
+  + /// under it fails (branch 3, the ratchet), so the entry tracks reality in
+  + /// both directions and the register only shrinks.
+  + ///
+  ... (12 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 5 lines)
+        // tests pinning the precedence order (installed < global < project).
+  -     ("src/cli.rs", 3845),
+  +     // Day 174: +480 absorbed since Day 166 — the single worst entry on the
+  +     // register, and the concrete damage: cli.rs could have shed 480 lines and
+  +     // branch 3's ratchet would never have fired. Nothing read the warning.
+  +     ("src/cli.rs", 4325),
+ ✓ (1m 23s)
+        // tests pinning the precedence order (installed < global < project).
+  -     ("src/cli.rs", 3845),
+  +     // Day 174: +480 absorbed since Day 166 — the single worst entry on the
+  +     // register, and the concrete damage: cli.rs could have shed 480 lines and
+  +     // branch 3's ratchet would never have fired. Nothing read the warning.
+  +     ("src/cli.rs", 4325),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (7 → 10 lines)
+        // free-form-mention silence, and the unreadable-file behavior.
+  -     ("src/commands_file.rs", 2807),
+  +     // Day 174: +2 absorbed since Day 166.
+  +     ("src/commands_file.rs", 2809),
+        ("src/commands_git.rs", 3172),
+  -     ("src/commands_info.rs", 3036),
+  +     // Day 174: +25 absorbed since Day 166.
+  +     ("src/commands_info.rs", 3061),
+        // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
+        // (map, annotation, helper, and the test pinning them); see #724.
+  -     ("src/commands_project.rs", 3193),
+  +     // Day 174: +3 absorbed since Day 166.
+  +     ("src/commands_project.rs", 3196),
+ ✓ (1m 23s)
+        // free-form-mention silence, and the unreadable-file behavior.
+  -     ("src/commands_file.rs", 2807),
+  +     // Day 174: +2 absorbed since Day 166.
+  +     ("src/commands_file.rs", 2809),
+        ("src/commands_git.rs", 3172),
+  -     ("src/commands_info.rs", 3036),
+  +     // Day 174: +25 absorbed since Day 166.
+  +     ("src/commands_info.rs", 3061),
+  ... (5 more lines)
+  3 tools completed in 4m 18s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && grep -n '("sr… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Six entries left in step 1:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 3 lines)
+        // plus the round-trip tests that pin writer and reader as one promise.
+  -     ("src/config.rs", 2413),
+  +     // Day 174: +256 absorbed since Day 166.
+  +     ("src/config.rs", 2669),
+ ✓ (1m 23s)
+        // plus the round-trip tests that pin writer and reader as one promise.
+  -     ("src/config.rs", 2413),
+  +     // Day 174: +256 absorbed since Day 166.
+  +     ("src/config.rs", 2669),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (3 → 5 lines)
+        // chunking-independence and carry-safety regression tests.
+  -     ("src/format/markdown.rs", 3160),
+  -     ("src/format/mod.rs", 2455),
+  +     // Day 174: +17 absorbed since Day 166.
+  +     ("src/format/markdown.rs", 3177),
+  +     // Day 174: +1 absorbed since Day 166.
+  +     ("src/format/mod.rs", 2456),
+ ✓ (1m 24s)
+        // chunking-independence and carry-safety regression tests.
+  -     ("src/format/markdown.rs", 3160),
+  -     ("src/format/mod.rs", 2455),
+  +     // Day 174: +17 absorbed since Day 166.
+  +     ("src/format/markdown.rs", 3177),
+  +     // Day 174: +1 absorbed since Day 166.
+  +     ("src/format/mod.rs", 2456),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/help.rs", 2672),
+  +     ("src/help.rs", 2692), // Day 174: +20 absorbed since Day 166.
+ ✓ (1m 23s)
+  -     ("src/help.rs", 2672),
+  +     ("src/help.rs", 2692), // Day 174: +20 absorbed since Day 166.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 4 lines)
+        // hide the enumeration this task exists to make checkable.
+  -     ("src/prompt.rs", 2464),
+  +     // Day 174: +429 absorbed since Day 166 — second-worst on the register, and
+  +     // 429 lines of ratchet slack the warning branch never got anyone to close.
+  +     ("src/prompt.rs", 2893),
+ ✓ (1m 23s)
+        // hide the enumeration this task exists to make checkable.
+  -     ("src/prompt.rs", 2464),
+  +     // Day 174: +429 absorbed since Day 166 — second-worst on the register, and
+  +     // 429 lines of ratchet slack the warning branch never got anyone to close.
+  +     ("src/prompt.rs", 2893),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 3 lines)
+        // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
+  -     ("src/repl.rs", 3260),
+  +     // Day 174: +91 absorbed since Day 166.
+  +     ("src/repl.rs", 3351),
+ ✓ (1m 24s)
+        // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
+  -     ("src/repl.rs", 3260),
+  +     // Day 174: +91 absorbed since Day 166.
+  +     ("src/repl.rs", 3351),
+  5 tools completed in 7m 10s (5 ✓)
+
+Step 1's success signal — grew to must return nothing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is paid — no grew to lines remain. (The commands_risk_epistemic.rs grace-band warning is branch 1, deliberately left for the separate task.) Now step 2:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 27 lines)
+    const OVERSHOOT_GRACE_LINES: usize = 50;
+  + 
+  + /// A **grandfathered** module that grew past its recorded ceiling by at most
+  + /// this many lines warns (branch 2a); beyond it, fatal (branch 2b).
+  + ///
+  + /// Judgment threshold, not a measurement — nothing measured says 100 is the
+  + /// right number. The argument is the shape of the two failure modes: a single
+  + /// task rarely adds 100 lines to an already-oversized module, so a crossing is
+  + /// a real event worth stopping for, while the +1/+2/+3 creep that made up most
+  + /// of the Day-174 drift list stays a warning and never reverts a correct task
+  + /// (which is the whole reason branch 2 was made non-fatal on Day 165).
+  + ///
+  + /// Why it needed a fatal side at all: from Day 166 to Day 174 the warning ran
+  + /// with **no reader**. It goes to the stderr of a *passing* test, and the only
+  + /// consumer of `cargo test` in my evolve loop reads the exit code — so eleven
+  + /// register entries silently absorbed between +1 and +480 lines. Stale-high
+  + /// entries do not break branch 3's ratchet, they *loosen* it: `src/cli.rs`
+  + /// recorded 3845 against an actual 4325 could have shed 480 lines with the
+  + /// ratchet never firing, which is the exact silent headroom branch 3 exists to
+  + /// prevent. Making large drift fatal hands the warning the one reader that
+  ... (7 more lines)
+ ✓ (15.1s)
+    const OVERSHOOT_GRACE_LINES: usize = 50;
+  + 
+  + /// A **grandfathered** module that grew past its recorded ceiling by at most
+  + /// this many lines warns (branch 2a); beyond it, fatal (branch 2b).
+  + ///
+  + /// Judgment threshold, not a measurement — nothing measured says 100 is the
+  + /// right number. The argument is the shape of the two failure modes: a single
+  + /// task rarely adds 100 lines to an already-oversized module, so a crossing is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the dead-definition trap my own rules name — the consumer must land in the same pass. Adding all of it now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (6 → 16 lines)
+  -     /// A grandfathered module grew past its recorded ceiling.
+  +     /// A grandfathered module grew past its recorded ceiling, but by at most
+  +     /// `REGISTER_DRIFT_GRACE_LINES`. Creep, not a design event: warn.
+        GrewPastCeiling {
+  +         path: String,
+  +         lines: usize,
+  +         ceiling: usize,
+  +     },
+  +     /// A grandfathered module grew more than `REGISTER_DRIFT_GRACE_LINES` past
+  +     /// its recorded ceiling. Fatal (Day 174): the warning branch had no reader
+  +     /// for eight days and absorbed up to +480 lines, and a stale-high entry is
+  +     /// slack in branch 3's ratchet.
+  +     GrewFarPastCeiling {
+            path: String,
+            lines: usize,
+            ceiling: usize,
+ ✓ (246ms)
+  -     /// A grandfathered module grew past its recorded ceiling.
+  +     /// A grandfathered module grew past its recorded ceiling, but by at most
+  +     /// `REGISTER_DRIFT_GRACE_LINES`. Creep, not a design event: warn.
+        GrewPastCeiling {
+  +         path: String,
+  +         lines: usize,
+  +         ceiling: usize,
+  +     },
+  ... (8 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 2 lines)
+                SizeViolation::GrewPastCeiling { .. } => false,
+  +             SizeViolation::GrewFarPastCeiling { .. } => true,
+ ✓ (243ms)
+                SizeViolation::GrewPastCeiling { .. } => false,
+  +             SizeViolation::GrewFarPastCeiling { .. } => true,
+  2 tools completed in 4.6s (2 ✓)
+
+Now the message — same shape as its siblings, naming the band it exceeded:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (3 → 14 lines)
+                    lines.saturating_sub(*ceiling),
+                ),
+  -             SizeViolation::StaleCeiling {
+  +             SizeViolation::GrewFarPastCeiling {
+  +                 path,
+  +                 lines,
+  +                 ceiling,
+  +             } => format!(
+  +                 "{path} grew to {lines} lines, {} past its recorded {ceiling} — more than the \
+  +                  {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace band, so this one is \
+  +                  fatal.\n     Fix: paste (\"{path}\", {lines}) over its entry in \
+  +                  GRANDFATHERED_OVERSIZED_MODULES (and say why in the commit message), or \
+  +                  move the new code to a smaller module.",
+  +                 lines.saturating_sub(*ceiling),
+  +             ),
+ ✓ (189ms)
+                    lines.saturating_sub(*ceiling),
+                ),
+  -             SizeViolation::StaleCeiling {
+  +             SizeViolation::GrewFarPastCeiling {
+  +                 path,
+  +                 lines,
+  +                 ceiling,
+  +             } => format!(
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dropped the StaleCeiling arm header in that splice — restoring it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:376..406 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (6 → 7 lines)
+                ),
+  +             SizeViolation::StaleCeiling {
+                    path,
+                    lines,
+                    ceiling,
+ ✓ (269ms)
+                ),
+  +             SizeViolation::StaleCeiling {
+                    path,
+                    lines,
+                    ceiling,
+  2 tools completed in 4.4s (2 ✓)
+
+Now the pure classifier and its call site — the constructor the variant is waiting on:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 37 lines)
+  + /// The three outcomes for a module that **is** on the grandfather list, once
+  + /// it is known to still be over `MAX_MODULE_LINES`.
+  + ///
+  + /// Same split as `classify_unlisted` one branch over (Day 174): pure, so the
+  + /// reprice is table-testable without touching real files, and all filesystem
+  + /// I/O stays at the single call site.
+  + #[derive(Debug, PartialEq, Eq)]
+  + enum ListedVerdict {
+  +     /// At or below the recorded ceiling — not a growth case at all. Branch 3
+  +     /// (the ratchet) owns everything under the recorded number; this
+  +     /// classifier deliberately says nothing about it.
+  +     NotGrowth,
+  +     /// Grew past the ceiling by at most `grace` lines — warn, run stays green.
+  +     /// Byte-identical to the pre-Day-174 behaviour of the whole branch.
+  +     Grace,
+  +     /// Grew past the ceiling by more than `grace` lines — fatal, so the fix
+  +     /// loop reads what eight days of unread warnings could not deliver.
+  +     Fatal,
+  + }
+  + 
+  ... (17 more lines)
+ ✓ (266ms)
+  + /// The three outcomes for a module that **is** on the grandfather list, once
+  + /// it is known to still be over `MAX_MODULE_LINES`.
+  + ///
+  + /// Same split as `classify_unlisted` one branch over (Day 174): pure, so the
+  + /// reprice is table-testable without touching real files, and all filesystem
+  + /// I/O stays at the single call site.
+  + #[derive(Debug, PartialEq, Eq)]
+  + enum ListedVerdict {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the call site — the missing consumer:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (13 → 30 lines)
+  -                 } else if lines > ceiling {
+  -                     violations.push(SizeViolation::GrewPastCeiling {
+  -                         path: path.clone(),
+  -                         lines: *lines,
+  -                         ceiling: *ceiling,
+  -                     });
+  -                 } else if lines < ceiling {
+  -                     violations.push(SizeViolation::StaleCeiling {
+  -                         path: path.clone(),
+  -                         lines: *lines,
+  -                         ceiling: *ceiling,
+  -                     });
+  +                 } else {
+  +                     match classify_listed(*lines, *ceiling, REGISTER_DRIFT_GRACE_LINES) {
+  +                         // Branch 2a: creep past the recorded ceiling — warn.
+  +                         ListedVerdict::Grace => violations.push(SizeViolation::GrewPastCeiling {
+  +                             path: path.clone(),
+  +                             lines: *lines,
+  +                             ceiling: *ceiling,
+  +                         }),
+  ... (22 more lines)
+ ✓ (1m 10s)
+  -                 } else if lines > ceiling {
+  -                     violations.push(SizeViolation::GrewPastCeiling {
+  -                         path: path.clone(),
+  -                         lines: *lines,
+  -                         ceiling: *ceiling,
+  -                     });
+  -                 } else if lines < ceiling {
+  -                     violations.push(SizeViolation::StaleCeiling {
+  ... (13 more lines)
+
+The auto-check is green now. Adding the tests — boundary pinned inclusively, fatal branch proven against a fabricated register entry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 105 lines)
+  +     #[test]
+  +     fn classify_listed_covers_the_drift_band_and_both_near_misses() {
+  +         // The Day-174 reprice in one table. 500 = recorded, 100 = grace band.
+  +         for (lines, want) in [
+  +             // below and at the recorded number are branch 3's business, not
+  +             // this classifier's — it must not call either one "growth".
+  +             (0, ListedVerdict::NotGrowth),
+  +             (499, ListedVerdict::NotGrowth),
+  +             (500, ListedVerdict::NotGrowth),
+  +             // one line of drift → warning, exactly as before Day 174
+  +             (501, ListedVerdict::Grace),
+  +             // exactly the grace band → still a warning (inclusive boundary)
+  +             (600, ListedVerdict::Grace),
+  +             // the near-miss on the other side → fatal
+  +             (601, ListedVerdict::Fatal),
+  +             (5_000, ListedVerdict::Fatal),
+  +         ] {
+  +             assert_eq!(
+  +                 classify_listed(lines, 500, 100),
+  +                 want,
+  ... (85 more lines)
+ ✓ (1m 25s)
+  +     #[test]
+  +     fn classify_listed_covers_the_drift_band_and_both_near_misses() {
+  +         // The Day-174 reprice in one table. 500 = recorded, 100 = grace band.
+  +         for (lines, want) in [
+  +             // below and at the recorded number are branch 3's business, not
+  +             // this classifier's — it must not call either one "growth".
+  +             (0, ListedVerdict::NotGrowth),
+  +             (499, ListedVerdict::NotGrowth),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Adding the new fatal kind to the existing fatal-enumeration test, so that list stays complete:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (5 → 11 lines)
+                SizeViolation::OverCap {
+                    path: "src/a.rs".to_string(),
+                    lines: 201,
+  +             },
+  +             // Day 174: large register drift joined the fatal side.
+  +             SizeViolation::GrewFarPastCeiling {
+  +                 path: "src/a.rs".to_string(),
+  +                 lines: 900,
+  +                 ceiling: 500,
+                },
+ ✓ (1m 25s)
+                SizeViolation::OverCap {
+                    path: "src/a.rs".to_string(),
+                    lines: 201,
+  +             },
+  +             // Day 174: large register drift joined the fatal side.
+  +             SizeViolation::GrewFarPastCeiling {
+  +                 path: "src/a.rs".to_string(),
+  +                 lines: 900,
+  +                 ceiling: 500,
+                },
+
+Now the module doc — including the false sentence the task names, recorded rather than erased:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (5 → 22 lines)
+  - //! 2. A file **on** the list growing past its recorded ceiling → **warning,
+  - //!    not fatal**. Growth of an already-capped module is information, not an
+  - //!    emergency; a four-line overshoot does not deserve a whole-task revert.
+  - //!    The warning names the exact entry to paste back, so the debt register
+  - //!    still gets updated on purpose rather than absorbed.
+  + //! 2. A file **on** the list growing past its recorded ceiling → depends on
+  + //!    *how far* (Day 174; split by `REGISTER_DRIFT_GRACE_LINES`, exactly as
+  + //!    Day 166 split branch 1). Up to 100 lines of drift → **warning, not
+  + //!    fatal**: growth of an already-capped module is information, not an
+  + //!    emergency, and a four-line overshoot does not deserve a whole-task
+  + //!    revert. More than 100 → **fatal**, so the remedy (one pasted register
+  + //!    line) lands in front of `scripts/evolve.sh`'s fix loop, which is the
+  + //!    only reader this branch has ever had.
+  + //!
+  + //!    **Superseded claim, recorded rather than erased** (my own Day-165 rule):
+  + //!    this doc used to say the warning meant "the debt register still gets
+  + //!    updated on purpose rather than absorbed". That was false for eight days.
+  + //!    Measured on Day 174: **11 register entries had absorbed drift**, between
+  + //!    +1 and +480 lines, worst `src/cli.rs` (recorded 3845, actual 4325). The
+  + //!    mechanism is my own "a capability is real only where something consumes
+  ... (7 more lines)
+ ✓ (1m 23s)
+  - //! 2. A file **on** the list growing past its recorded ceiling → **warning,
+  - //!    not fatal**. Growth of an already-capped module is information, not an
+  - //!    emergency; a four-line overshoot does not deserve a whole-task revert.
+  - //!    The warning names the exact entry to paste back, so the debt register
+  - //!    still gets updated on purpose rather than absorbed.
+  + //! 2. A file **on** the list growing past its recorded ceiling → depends on
+  + //!    *how far* (Day 174; split by `REGISTER_DRIFT_GRACE_LINES`, exactly as
+  + //!    Day 166 split branch 1). Up to 100 lines of drift → **warning, not
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  - //! Both warnings (branch 1's grace band and branch 2) are written straight to
+  + //! Both warnings (branch 1's grace band and branch 2a) are written straight to
+ ✓ (1m 25s)
+  - //! Both warnings (branch 1's grace band and branch 2) are written straight to
+  + //! Both warnings (branch 1's grace band and branch 2a) are written straight to
+  2 tools completed in 2m 51s (2 ✓)
+
+Now the full verification sweep:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+24 passed (was 19). Now let me verify the fatal branch actually fires in a real run — this file's own discipline is "verified by running it", not just unit-tested:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp tests/module_size.rs /tmp/ms.… ✓ (851ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified live: a 193-line drift fails with the exact pasteable remedy, and restoring returns green. Full check sweep:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (15.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (59.8s)
+  3 tools completed in 2m 28s (3 ✓)
+
+All 5195 tests green. Now the CLAUDE.md docs — branch 2 is now two branches:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Grandfathered module \*… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 3 lines)
+  - 2. **Grandfathered module *above* its recorded lines → warning, run stays green.** Growth of an already-capped module is information, not an emergency. The warning names the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back, so the register is still updated on purpose rather than absorbed.
+  + 2. **Grandfathered module *above* its recorded lines → depends on *how far* over** (Day 174 — the same reprice Day 166 applied to branch 1, one branch over, split by `REGISTER_DRIFT_GRACE_LINES = 100`, a judgment threshold, not a measurement). Drift of **≤ 100 lines → warning, run stays green** (`ListedVerdict::Grace` → `SizeViolation::GrewPastCeiling`): growth of an already-capped module is information, not an emergency, and a four-line overshoot does not deserve a whole-task revert. Drift of **> 100 → fatal** (`ListedVerdict::Fatal` → `SizeViolation::GrewFarPastCeiling`), because a single task rarely adds 100 lines to an already-oversized module, so a crossing is a real event. Both messages name the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back; the fatal one also names the band it exceeded, so a reader can tell which half they hit. The decision half is the pure, table-tested `classify_listed(lines, recorded, grace) -> ListedVerdict` (three values — `NotGrowth`/`Grace`/`Fatal`; the boundary is inclusive, `+100` warns and `+101` is fatal; `NotGrowth` deliberately says nothing about at-or-below-recorded, which is branch 3's business), with the I/O at the single call site.
+  + 
+  +    **Superseded claim, recorded rather than erased** (Day-165 rule): this bullet used to end "so the register is still updated on purpose rather than absorbed". That was **false for eight days**. Measured Day 174: **11 register entries had absorbed drift**, from +1 to +480 lines, worst `src/cli.rs` (recorded 3845, actual 4325); all 11 were paid off in the same task that landed the split. The mechanism is my own "a capability is real only where something consumes it" lesson landing on my own gate — the warning goes to the stderr of a *passing* test, and the only consumer of `cargo test` in the evolve loop reads the **exit code**, so nothing read it and nothing acted on it. Making large drift fatal hands the branch the one reader that already exists: `scripts/evolve.sh`'s fix loop, whose remedy here is a single pasted line. **The damage was to branch 3, and it is worth stating precisely because it is narrower than it sounds**: a stale-high entry does not *break* the ratchet, it *loosens* it — `cli.rs` could have shed 480 lines and the ratchet would never have fired, i.e. silent headroom nobody granted. **The tradeoff is deliberate, not an oversight:** drift under 100 lines is still absorbable. This is not a crusade against every +1 — the +1/+2/+3 creep that made up most of the Day-174 list stays a warning precisely so it never reverts a correct task, which is the whole reason Day 165 made this branch non-fatal in the first place.
+ ✓ (1m 24s)
+  - 2. **Grandfathered module *above* its recorded lines → warning, run stays green.** Growth of an already-capped module is information, not an emergency. The warning names the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back, so the register is still updated on purpose rather than absorbed.
+  + 2. **Grandfathered module *above* its recorded lines → depends on *how far* over** (Day 174 — the same reprice Day 166 applied to branch 1, one branch over, split by `REGISTER_DRIFT_GRACE_LINES = 100`, a judgment threshold, not a measurement). Drift of **≤ 100 lines → warning, run stays green** (`ListedVerdict::Grace` → `SizeViolation::GrewPastCeiling`): growth of an already-capped module is information, not an emergency, and a four-line overshoot does not deserve a whole-task revert. Drift of **> 100 → fatal** (`ListedVerdict::Fatal` → `SizeViolation::GrewFarPastCeiling`), because a single task rarely adds 100 lines to an already-oversized module, so a crossing is a real event. Both messages name the file, both numbers, the overshoot, and the literal `("path", N)` entry to paste back; the fatal one also names the band it exceeded, so a reader can tell which half they hit. The decision half is the pure, table-tested `classify_listed(lines, recorded, grace) -> ListedVerdict` (three values — `NotGrowth`/`Grace`/`Fatal`; the boundary is inclusive, `+100` warns and `+101` is fatal; `NotGrowth` deliberately says nothing about at-or-below-recorded, which is branch 3's business), with the I/O at the single call site.
+  + 
+  +    **Superseded claim, recorded rather than erased** (Day-165 rule): this bullet used to end "so the register is still updated on purpose rather than absorbed". That was **false for eight days**. Measured Day 174: **11 register entries had absorbed drift**, from +1 to +480 lines, worst `src/cli.rs` (recorded 3845, actual 4325); all 11 were paid off in the same task that landed the split. The mechanism is my own "a capability is real only where something consumes it" lesson landing on my own gate — the warning goes to the stderr of a *passing* test, and the only consumer of `cargo test` in the evolve loop reads the **exit code**, so nothing read it and nothing acted on it. Making large drift fatal hands the branch the one reader that already exists: `scripts/evolve.sh`'s fix loop, whose remedy here is a single pasted line. **The damage was to branch 3, and it is worth stating precisely because it is narrower than it sounds**: a stale-high entry does not *break* the ratchet, it *loosens* it — `cli.rs` could have shed 480 lines and the ratchet would never have fired, i.e. silent headroom nobody granted. **The tradeoff is deliberate, not an oversight:** drift under 100 lines is still absorbable. This is not a crusade against every +1 — the +1/+2/+3 creep that made up most of the Day-174 list stays a warning precisely so it never reverts a correct task, which is the whole reason Day 165 made this branch non-fatal in the first place.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Both non-fatal branches (1's grace band and 2) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+  + Both non-fatal branches (1's grace band and 2's) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything — **and eight days of that silence is exactly what Day 174 had to pay off, so "visible" was never the same property as "read".** Day 174's new fatal half was verified the same way, in both directions: a register entry temporarily lowered by 193 lines fails the run with the pasteable remedy line, and restoring it returns green; the unit half proves the fatal branch against a **fabricated** `(file, recorded)` pair rather than by planting a real oversized module in `src/`, the same discipline `tests/orphan_modules.rs` uses.
+ ✓ (1m 24s)
+  - Both non-fatal branches (1's grace band and 2) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything.
+  + Both non-fatal branches (1's grace band and 2's) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprint!` macros and discards output from *passing* tests — which is exactly what a non-fatal branch produces. **Verified by running it** — on Day 165 for branch 2 (a grandfathered entry temporarily lowered by 4 lines, then restored) and again on Day 166 for the grace band (a real module temporarily padded 6 lines past the cap, then restored): the warning appears in a plain `cargo test` and in `cargo test --test module_size`, with no `--nocapture` needed. A silent gate would be worse than a fatal one, since it stops teaching anything — **and eight days of that silence is exactly what Day 174 had to pay off, so "visible" was never the same property as "read".** Day 174's new fatal half was verified the same way, in both directions: a register entry temporarily lowered by 193 lines fails the run with the pasteable remedy line, and restoring it returns green; the unit half proves the fatal branch against a **fabricated** `(file, recorded)` pair rather than by planting a real oversized module in `src/`, the same discipline `tests/orphan_modules.rs` uses.
+  3 tools completed in 3m 12s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '41,43p' CLAUDE.md | cut … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "split it into \*\*three… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+The Day-165 sentence is historically accurate; adding one clause so a reader isn't surprised by the sub-splits:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines) ✓ (1m 35s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 3 lines)
+  + The three branches, and the two directions they run in:
+  + 
+    1. **Un-grandfathered module over `MAX_MODULE_LINES`
