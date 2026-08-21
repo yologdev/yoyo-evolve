@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff. Let me verify a few key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "parse_validation_event…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -3 .yoyo/risk_validations.j… ✓ (6ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1170,1225p src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1174,1186p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dropped: 0" src/command… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1176,1184p src/commands_r… ✓ (3ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 45s (7 ✓)
+
+Verdict: FAIL
+
+The core parse fix is sound — line_is_gradable correctly refuses outcome-less lines, and I confirmed all 141 lines of the live .yoyo/risk_validations.jsonl carry hits arrays, so no real event is dropped by the change.
+
+But the reporting half never fires in the case that matters. src/commands_risk.rs:1182 still has the pre-existing arm:
+
+```rust
+ValidationLedger::Present { dropped: 0, .. } => None,
+```
+
+which is matched before both new ungradable arms. So a ledger with 0 unparseable lines and N ungradable ones prints nothing — the lines are excluded from the denominator silently, which is precisely the defect the work was meant to eliminate ("count it out loud instead of manufacturing a 0/0", per its own comment). Corrupt JSON is the rare shape; valid-JSON-without-outcome is the shape #764 names, and that's the one now silenced.
+
+The new tests only exercise the parse side; none drives ledger_health_line with dropped == 0, ungradable > 0, which is why this passed green.
+
+Also: CLAUDE.md still asserts the old behavior verbatim ("still absorbed by unwrap_or ... counts as a healthy event", "#764 stays open on both") and wasn't updated in this commit.
+
+Fix is one line — move or narrow the dropped: 0 arm to Present { dropped: 0, ungradable: 0, .. } — plus a test at the emission point.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

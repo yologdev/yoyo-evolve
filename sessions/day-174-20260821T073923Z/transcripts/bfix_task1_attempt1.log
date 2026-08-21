@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the failing test and the code it exercises.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 860,910p src/commands_ris… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk_parse…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 885,900p src/commands_ris… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -2 .yoyo/risk_validations.j… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"hit_count"' src/ scri…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (10ms)
+ ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 22.9s (7 ✓)
+
+Confirmed the diagnosis: all 141 live ledger lines carry hits/surprises arrays, and "hit_count" appears as a JSON key only in those two fixture strings — no writer emits it. The fixture asserts a shape the ledger never produces.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs:889..911 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (20 → 36 lines)
+        fn test_parse_validation_event_emerging_accuracy_pct_optional() {
+  +         // Day 174: both fixtures below used to name `hit_count` / `total_changed`
+  +         // as JSON keys. No writer has ever emitted those — they are *derived*
+  +         // struct fields, and all 141 lines of the live ledger carry `hits` /
+  +         // `surprises` arrays instead (`write_validation_event` writes "hits" and
+  +         // "surprises"). The old shape only parsed because `unwrap_or(0)` absorbed
+  +         // the missing outcome into a healthy-looking 0/0 event, which is the
+  +         // defect `line_is_gradable` now refuses. The fixtures are corrected to
+  +         // the shape the writer actually produces; this test's own concern —
+  +         // `emerging_accuracy_pct` absent → None, present → Some — is unchanged,
+  +         // and the derived counts are now asserted so the arrays are pinned as
+  +         // their source.
+  + 
+            // Backward compat: a line WITHOUT emerging_accuracy_pct parses to None.
+  -         let without = r#"{"day":10,"trigger":"cli","predicted_count":10,"hit_count":1,"total_changed":2,"accuracy_pct":50.0}"#;
+  +         let without = r#"{"day":10,"trigger":"cli","predicted_count":10,"hits":["src/a.rs"],"surprises":["src/b.rs"],"accuracy_pct":50.0}"#;
+            let events = parse_validation_events(without);
+            assert_eq!(events.len(), 1);
+  +         assert_eq!(events[0].hit_count, 1);
+  +         assert_eq!(events[0].total_changed, 2);
+  ... (15 more lines)
+ ✓ (13.4s)
+        fn test_parse_validation_event_emerging_accuracy_pct_optional() {
+  +         // Day 174: both fixtures below used to name `hit_count` / `total_changed`
+  +         // as JSON keys. No writer has ever emitted those — they are *derived*
+  +         // struct fields, and all 141 lines of the live ledger carry `hits` /
+  +         // `surprises` arrays instead (`write_validation_event` writes "hits" and
+  +         // "surprises"). The old shape only parsed because `unwrap_or(0)` absorbed
+  +         // the missing outcome into a healthy-looking 0/0 event, which is the
+  +         // defect `line_is_gradable` now refuses. The fixtures are corrected to
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.6s (2 ✓)
+
+A second, pre-existing error surfaced: I added an ungradable_line fixture without its consumer. Let me look at the counting tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,700p src/commands_ris… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The new ungradable count has no test consumer at all — every existing test discards it. That's the real gap. Adding the missing tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (5 → 78 lines)
+            let content = format!("\n{}\n\n   \n{}\n", valid_line(160), valid_line(161));
+  -         let (events, dropped, _ungradable) = parse_validation_events_counting(&content);
+  +         let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+            assert_eq!(events.len(), 2);
+            assert_eq!(dropped, 0);
+  +         assert_eq!(ungradable, 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn line_is_gradable_needs_an_outcome_array_not_a_count() {
+  +         let g = |s: &str| line_is_gradable(&serde_json::from_str(s).unwrap());
+  +         // Either array alone is enough: the live ledger really does write
+  +         // `"hits":[]` on a day nothing predicted was touched, and that is a
+  +         // graded 0%, not a missing outcome.
+  +         assert!(g(r#"{"hits":[],"surprises":["src/a.rs"]}"#));
+  +         assert!(g(r#"{"hits":["src/a.rs"]}"#));
+  +         assert!(g(r#"{"surprises":[]}"#));
+  +         // No outcome at all — the state that used to become a 0/0 event.
+  +         assert!(!g(r#"{"day":10,"severity":"watch_failure"}"#));
+  +         // Present but the wrong type is not an outcome either; absence and
+  ... (59 more lines)
+ ✓ (11.5s)
+            let content = format!("\n{}\n\n   \n{}\n", valid_line(160), valid_line(161));
+  -         let (events, dropped, _ungradable) = parse_validation_events_counting(&content);
+  +         let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+            assert_eq!(events.len(), 2);
+            assert_eq!(dropped, 0);
+  +         assert_eq!(ungradable, 0);
+  +     }
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Neither type derives Debug; I'll keep the change narrow and drop the debug formatting rather than widening the type's derives.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 34s)
+  2 tools completed in 1m 47s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

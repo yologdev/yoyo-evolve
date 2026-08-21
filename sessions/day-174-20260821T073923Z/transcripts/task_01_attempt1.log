@@ -1,0 +1,280 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and picking one concrete improvement fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prediction_accuracy_sum… ✓ (9ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Backtick\|raw_string_op…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,260p src/commands_ris… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_validation_eve…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ValidationEvent"… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 41,95p src/commands_risk_… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1155,1240p src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2810,2940p src/commands_r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 58.4s (10 ✓)
+
+Now the fix — #764's stated residue item (1): a line that is valid JSON but carries no outcome is silently absorbed as a healthy 0/0 event.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (8 → 12 lines)
+        /// The file was read. `dropped` counts non-blank lines that failed to
+  -     /// parse as JSON — `Present { events: [], dropped: n }` (everything
+  +     /// parse as JSON — `Present { events: [], dropped: n, .. }` (everything
+        /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+  +     /// `ungradable` counts lines that *are* valid JSON but carry no outcome to
+  +     /// grade (see [`line_is_gradable`]); before Day 174 those were absorbed by
+  +     /// `unwrap_or` defaults into healthy-looking 0/0 events.
+        Present {
+            events: Vec<ValidationEvent>,
+            dropped: usize,
+  +         ungradable: usize,
+        },
+    }
+ ✓ (26.9s)
+        /// The file was read. `dropped` counts non-blank lines that failed to
+  -     /// parse as JSON — `Present { events: [], dropped: n }` (everything
+  +     /// parse as JSON — `Present { events: [], dropped: n, .. }` (everything
+        /// corrupt) is a *different fact* from `Missing`, never collapsed into it.
+  +     /// `ungradable` counts lines that *are* valid JSON but carry no outcome to
+  +     /// grade (see [`line_is_gradable`]); before Day 174 those were absorbed by
+  +     /// `unwrap_or` defaults into healthy-looking 0/0 events.
+        Present {
+  ... (5 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0027][0m[1m: pattern does not mention field `ungradable`[0m
+    [1m[94m--> [0msrc/commands_risk.rs:1183:9
+     [1m[94m|[0m
+[1m[94m1183[0m [1m[94m|[0m         ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mmissing field `ungradable`[0m
+     [1m[94m|[0m
+[1m[96mhelp[0m: include the missing field in the pattern
+     [1m[94m|[0m
+[1m[94m1183[0m [1m[94m| [0m        ValidationLedger::Present { events, dropped[92m, ungradable[0m } if events.is_empty() => Some(format!(
+     [1m[94m|[0m                                                    [92m++++++++++++[0m
+[1m[96mhelp[0m: if you don't care about this missing field, you can explicitly ignore it
+     [1m[94m|[0m
+[1m[94m1183[0m [1m[94m| [0m        ValidationLedger::Present { events, dropped[92m, ungradable: _[0m } if events.is_empty() => Some(format!(
+     [1m[94m|[0m                                                    [92m+++++++++++++++[0m
+[1m[96mhelp[0m: or always ignore missing fields here
+     [1m[94m|[0m
+[1m[94m1183[0m [1m[94m| [0m        ValidationLedger::Present { events, dropped[92m, ..[0m } if events.is_empty() => Some(format!(
+     [1m[94m|[0m                                                    [92m++++[0m
+
+[1m[91merror[E0063][0m[1m: missing field `ungradable` in initializer of `commands_risk_parse::ValidationLedger`[0m
+  [1m[94m--> [0msrc/commands_risk_parse.rs:88:5
+   [1m[94m|[0m
+[1m[94m88[0m [1m[94m|[0m     ValidationLedger::Present { events, dropped }
+   [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mmissing `ungradable`[0m
+
+[1mSome errors have detailed explanations: E0027, E0063.[0m
+[1mFor more information about an error, try `rustc --explain E0027`.[0m
+[1m[91merro...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 78,100p src/commands_risk… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the parser half:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (13 → 40 lines)
+  -     let (events, dropped) = parse_validation_events_counting(&content);
+  -     ValidationLedger::Present { events, dropped }
+  +     let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+  +     ValidationLedger::Present {
+  +         events,
+  +         dropped,
+  +         ungradable,
+  +     }
+    }
+    
+    /// Parse validation events from JSONL content (testable without filesystem).
+    pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
+        parse_validation_events_counting(content).0
+  + }
+  + 
+  + /// Does this JSON line carry an outcome that can be graded at all?
+  + ///
+  + /// A validation event grades a prediction list against the set of files the
+  + /// outcome actually touched — that set is `hits` + `surprises`. A line naming
+  + /// **neither** as an array has no outcome, so there is nothing to grade.
+  ... (25 more lines)
+ ✓ (11.5s)
+  -     let (events, dropped) = parse_validation_events_counting(&content);
+  -     ValidationLedger::Present { events, dropped }
+  +     let (events, dropped, ungradable) = parse_validation_events_counting(&content);
+  +     ValidationLedger::Present {
+  +         events,
+  +         dropped,
+  +         ungradable,
+  +     }
+  ... (13 more lines)
+
+Now the loop body and the health line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 126,167p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (24ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now ledger_health_line — it must report the new count, not hide it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (11 → 38 lines)
+  -         ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+  -             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+  +         ValidationLedger::Present {
+  +             events,
+  +             dropped,
+  +             ungradable,
+  +         } if events.is_empty() && dropped + ungradable > 0 => Some(format!(
+  +             "{RISK_VALIDATION_PATH} exists but none of its {} line(s) are usable ({}) — \
+                 the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+  -              does not apply here."
+  +              does not apply here.",
+  +             dropped + ungradable,
+  +             unusable_breakdown(*dropped, *ungradable)
+            )),
+  -         ValidationLedger::Present { dropped, .. } => Some(format!(
+  -             "{RISK_VALIDATION_PATH}: {dropped} unparseable line(s) skipped — \
+  -              the numbers below cover only the rest of the ledger."
+  +         ValidationLedger::Present {
+  +             dropped,
+  +             ungradable,
+  ... (24 more lines)
+ ✓ (11.6s)
+  -         ValidationLedger::Present { events, dropped } if events.is_empty() => Some(format!(
+  -             "{RISK_VALIDATION_PATH} exists but all {dropped} line(s) in it are unparseable — \
+  +         ValidationLedger::Present {
+  +             events,
+  +             dropped,
+  +             ungradable,
+  +         } if events.is_empty() && dropped + ungradable > 0 => Some(format!(
+  +             "{RISK_VALIDATION_PATH} exists but none of its {} line(s) are usable ({}) — \
+  ... (13 more lines)
+
+Now fix the existing test fixtures and add coverage for the new state:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (9.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (137ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.8s (2 ✓)
+
+Builds. Now the tests that pin the new behaviour at the emission point:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn read_validation_ledg… ✓ (3ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2860,2885p src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 5 lines)
+                }],
+                dropped: 3,
+  +             ungradable: 0,
+            };
+            let line = ledger_health_line(&ledger).expect("dropped > 0 must be reported");
+ ✓ (1m 34s)
+                }],
+                dropped: 3,
+  +             ungradable: 0,
+            };
+            let line = ledger_health_line(&ledger).expect("dropped > 0 must be reported");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (55.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^    … ✓ (57.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | sed -n '/^fail… ✓ (55.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | sed… ✓ (55.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l /tmp/f.txt && sed -n '1,10… ✓ (5ms)
+  7 tools completed in 5m 31s (7 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn valid_line" -A 8 src… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The fixture itself is wrong — it uses struct field names (hit_count/total_changed) where the real ledger writes hits/surprises arrays. Let me check the real format:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -1 .yoyo/risk_validations.j… ✓ (24ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (5 → 16 lines)
+        fn valid_line(day: u32) -> String {
+  +         // Day 174: this fixture used to name `hit_count` / `total_changed` —
+  +         // the *struct* field names, not the JSON keys the parser reads. So
+  +         // every "valid" line here actually parsed as a 0-hit / 0-changed
+  +         // event, and these tests pinned my belief about the format rather
+  +         // than the format. Shape taken verbatim from a real ledger line.
+            format!(
+  -             r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+  +             r#"{{"day":{day},"hits":["src/a.rs","src/b.rs"],"surprises":["src/c.rs","src/d.rs","src/e.rs"],"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+            )
+  +     }
+  + 
+  +     /// A line that is valid JSON but names no outcome — the state Day 174
+  +     /// stopped absorbing into a healthy 0/0 event (#764 residue item 1).
+  +     fn ungradable_line(day: u32) -> String {
+  +         format!(r#"{{"day":{day},"severity":"watch_failure"}}"#)
+        }
+ ✓ (13.4s)
+        fn valid_line(day: u32) -> String {
+  +         // Day 174: this fixture used to name `hit_count` / `total_changed` —
+  +         // the *struct* field names, not the JSON keys the parser reads. So
+  +         // every "valid" line here actually parsed as a 0-hit / 0-changed
+  +         // event, and these tests pinned my belief about the format rather
+  +         // than the format. Shape taken verbatim from a real ledger line.
+            format!(
+  -             r#"{{"day":{day},"hit_count":2,"total_changed":5,"accuracy_pct":40.0,"severity":"watch_failure"}}"#
+  ... (9 more lines)
+  2 tools completed in 21.9s (2 ✓)
+
+Now the consumer for that fixture — the new tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (3 → 2 lines)
+        #[test]
+        fn parse_validation_events_still_returns_just_the_events() {
+  -         // The delegation must leave every existing caller byte-identical.
+ ✓ (13.5s)
+        #[test]
+        fn parse_validation_events_still_returns_just_the_events() {
+  -         // The delegation must leave every existing caller byte-identical.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (2 → 3 lines)
+        #[test]
+        fn parse_validation_events_still_returns_just_the_events() {
+  +         // The delegation must leave every existing caller byte-identical.
+ ✓ (13.5s)
+        #[test]
+        fn parse_validation_events_still_returns_just_the_events() {
+  +         // The delegation must leave every existing caller byte-identical.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (3 → 2 lines)
+        #[test]
+        fn counting_reports_the_number_of_unparseable_lines() {
+  -         let content = format!(
+ ✓ (247ms)
+        #[test]
+        fn counting_reports_the_number_of_unparseable_lines() {
+  -         let content = format!(
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_parse.rs (2 → 3 lines)
+        fn counting_reports_the_number_of_unparseable_lines() {
+  +         let content = format!(
+                "{}\nnot-json\n{}\n{{\"day\":9,\n",
+ ✓ (13.5s)
+        fn counting_reports_the_number_of_unparseable_lines() {
+  +         let content = format!(
+                "{}\nnot-json\n{}\n{{\"day\":9,\n",
+  4 tools completed in 50.1s (4 ✓)
+
+  ✗ Watch still failing after 3 attempts — manual fix needed
+
