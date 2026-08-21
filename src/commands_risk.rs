@@ -1179,14 +1179,19 @@ fn ledger_health_line(ledger: &ValidationLedger) -> Option<String> {
     match ledger {
         ValidationLedger::Missing => None,
         ValidationLedger::Unreadable(msg) => Some(msg.clone()),
-        ValidationLedger::Present { dropped: 0, .. } => None,
+        // NOTE: there is deliberately no `Present { dropped: 0, .. }` arm here.
+        // One existed until Day 174 and it matched *before* the two arms below,
+        // so a ledger with 0 unparseable lines and N ungradable ones printed
+        // nothing at all — the denominator shrank silently, which is the exact
+        // defect this line exists to expose. The healthy case is the catch-all
+        // at the bottom, which fires only when *both* counts are 0.
         ValidationLedger::Present {
             events,
             dropped,
             ungradable,
         } if events.is_empty() && dropped + ungradable > 0 => Some(format!(
             "{RISK_VALIDATION_PATH} exists but none of its {} line(s) are usable ({}) — \
-             the ledger is corrupt, not absent, so the \"starts automatically\" note below \
+             the ledger is present, not absent, so the \"starts automatically\" note below \
              does not apply here.",
             dropped + ungradable,
             unusable_breakdown(*dropped, *ungradable)
@@ -2911,6 +2916,106 @@ mod tests {
         assert!(
             line.contains("does not apply"),
             "disowns the missing-ledger copy printed underneath: {line:?}"
+        );
+    }
+
+    #[test]
+    fn ledger_health_line_reports_ungradable_lines_when_nothing_is_unparseable() {
+        // The regression this test exists for: an earlier `dropped: 0` arm
+        // matched first and returned None, so a ledger whose lines all parse
+        // as JSON but carry no outcome was silently excluded from the
+        // denominator while the report below claimed a confident number.
+        let ledger = ValidationLedger::Present {
+            events: vec![ValidationEvent {
+                day: 160,
+                hit_count: 2,
+                total_changed: 5,
+                accuracy_pct: 40.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            }],
+            dropped: 0,
+            ungradable: 7,
+        };
+        let line =
+            ledger_health_line(&ledger).expect("ungradable > 0 must be reported even at dropped=0");
+        assert!(
+            line.contains(RISK_VALIDATION_PATH),
+            "names the path: {line:?}"
+        );
+        assert!(line.contains('7'), "names how many were skipped: {line:?}");
+        assert!(
+            line.contains("no gradable outcome"),
+            "names the reason, not just a count: {line:?}"
+        );
+        assert!(
+            !line.contains("unparseable"),
+            "must not claim corruption when nothing failed to parse: {line:?}"
+        );
+        assert!(
+            line.contains("only the rest"),
+            "says the numbers below are partial: {line:?}"
+        );
+    }
+
+    #[test]
+    fn ledger_health_line_reports_a_wholly_ungradable_ledger_without_calling_it_corrupt() {
+        // Every line is valid JSON and none of them grades anything: the file
+        // is neither missing nor corrupt, and the message must say so without
+        // borrowing either of those two explanations.
+        let ledger = ValidationLedger::Present {
+            events: Vec::new(),
+            dropped: 0,
+            ungradable: 5,
+        };
+        let line = ledger_health_line(&ledger).expect("all-ungradable must be reported");
+        assert!(
+            line.contains(RISK_VALIDATION_PATH),
+            "names the path: {line:?}"
+        );
+        assert!(line.contains('5'), "names the line count: {line:?}");
+        assert!(
+            line.contains("no gradable outcome"),
+            "names the reason: {line:?}"
+        );
+        assert!(
+            !line.contains("unparseable"),
+            "must not claim corruption when nothing failed to parse: {line:?}"
+        );
+        assert!(
+            line.contains("does not apply"),
+            "disowns the missing-ledger copy printed underneath: {line:?}"
+        );
+    }
+
+    #[test]
+    fn ledger_health_line_keeps_the_two_skip_reasons_distinct() {
+        // Both causes present at once: collapsing them into one number would
+        // repeat the defect the reporting exists to expose.
+        let ledger = ValidationLedger::Present {
+            events: vec![ValidationEvent {
+                day: 161,
+                hit_count: 1,
+                total_changed: 4,
+                accuracy_pct: 25.0,
+                emerging_accuracy_pct: None,
+                severity: Some("watch_failure".to_string()),
+            }],
+            dropped: 2,
+            ungradable: 3,
+        };
+        let line = ledger_health_line(&ledger).expect("both causes must be reported");
+        assert!(
+            line.contains("2 unparseable"),
+            "names the corrupt count: {line:?}"
+        );
+        assert!(
+            line.contains("3 with no gradable outcome"),
+            "names the ungradable count separately: {line:?}"
+        );
+        assert!(
+            line.contains('5'),
+            "still reports the combined total skipped: {line:?}"
         );
     }
 

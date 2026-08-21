@@ -47,12 +47,17 @@ pub(crate) fn load_validation_history_from(path: &std::path::Path) -> Vec<Valida
 /// milestone's own meter without saying so — and the "missing" copy that
 /// followed it asserted a *cause* that was false.
 ///
-/// **Deliberately NOT covered here** (still open on #764): a line that is
-/// *valid JSON but missing fields* is still absorbed by the `unwrap_or(0)` /
-/// `unwrap_or_default()` defaults below and counts as a healthy event. That is
-/// a different defect. The other readers in this module (`parse_graded_events`,
-/// `parse_all_snapshots`, `parse_failed_ci_runs`) and their ~10 call sites are
-/// untouched by this repair and still drop malformed lines silently.
+/// **Partly covered as of Day 174, and the residue is named rather than
+/// implied**: a line that carries no gradable outcome at all (no `hits` and no
+/// `surprises` array — see [`line_is_gradable`]) is now *excluded and counted*
+/// as `ungradable` instead of being absorbed by the `unwrap_or(0)` defaults
+/// below into a healthy-looking 0-hit/0-changed event. What is still absorbed:
+/// a line that *does* carry an outcome array but is missing any of the other
+/// fields (`day`, `accuracy_pct`, `severity`) still takes its default and
+/// counts as a healthy event — a different defect on the same issue, and #764
+/// stays open on it. `parse_failed_ci_runs` and `load_validation_history_from`
+/// (whose own `Err(_) => Vec::new()` erases a read failure) are untouched by
+/// this repair and still drop malformed lines silently.
 pub(crate) enum ValidationLedger {
     /// The path does not exist. Accuracy tracking genuinely hasn't started.
     Missing,
