@@ -5,13 +5,13 @@ tools: [bash, read_file, list_files, search, sub_agent]
 core: false
 origin: yoyo
 status: active
-score: 0.50
-uses: 0
-wins: 0
-last_used: null
-last_evolved: null
+score: 0.59
+uses: 1
+wins: 1
+last_used: "2026-08-19T23:06:39Z"
+last_evolved: "2026-08-21"
 parent_pattern_key: null
-keywords: ["blindspot", "roast", "critique", "audit", "security", "architecture", "code review", "debt"]
+keywords: ["skills/blindspot", "roast level", "structured critique", "Analysis Dimensions"]
 ---
 
 # Blindspot
