@@ -1903,6 +1903,83 @@ pub fn detect_git_redirection_escape(
     None
 }
 
+/// Which class of redirection `detect_git_redirection_escape` matched.
+///
+/// Decided from the reason string the detector already produced — deliberately
+/// **not** a second matcher over the command. One rule, one statement: if the
+/// detector's wording changes, this classifier changes with it in the same file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedirectionClass {
+    /// `GIT_DIR=` / `GIT_WORK_TREE=` env assignment. Blanket-refused, **even
+    /// when the target is relative** — so the "point it inside" hatch is a lie
+    /// for this class and must not be offered.
+    EnvAssignment,
+    /// `-C` / `--git-dir` / `--work-tree` pointing outside the root. Relative
+    /// and in-root absolute targets pass today, so the in-root hatch is real.
+    Flag,
+}
+
+/// Classify a refusal reason. Anything unrecognised falls back to the
+/// conservative branch (env), which offers only hatches that are always true.
+fn classify_redirection_reason(reason: &str) -> RedirectionClass {
+    if reason.contains("points outside the pinned worktree") {
+        RedirectionClass::Flag
+    } else {
+        RedirectionClass::EnvAssignment
+    }
+}
+
+/// Turn a `detect_git_redirection_escape` reason into the full refusal a user
+/// (or a `/spawn` worker, which cannot ask a human) actually receives.
+///
+/// The first sentence is byte-identical to the pre-Day-174 message. What is new
+/// is the second half: **what would be accepted**. There is no bypass flag here
+/// and this does not add one — the confinement is deliberate. Every alternative
+/// listed is already true of the detector and covered by its own passing tests.
+///
+/// The list branches on the matched class, because offering an alternative that
+/// will *also* be refused is precisely the bug this was transferred from: env
+/// assignments are blanket-blocked even when relative, so they get the
+/// "drop the redirection" and "hand it to the parent session" hatches only.
+///
+/// Glyph-free under `plain` (screen-reader mode), matching
+/// `project_mcp_refusal_message` and `goal_verify_refusal_message`.
+pub fn git_redirection_refusal_message(
+    reason: &str,
+    confinement_root: &str,
+    plain: bool,
+) -> String {
+    let bullet = if plain { "-" } else { "•" };
+    // Em dashes are glyphs too: screen-reader mode gets ASCII throughout.
+    let dash = if plain { "--" } else { "—" };
+    let mut msg = format!(
+        "Command refused: {reason}. This bash session is confined to {confinement_root}; \
+         git may not be redirected outside it."
+    );
+    msg.push_str("\nWhat is accepted instead:");
+    msg.push_str(&format!(
+        "\n  {bullet} Drop the redirection. Bare git already operates on this worktree {dash} \
+         that is what the pinned directory is for: `git status`, `git add .`, `git commit`."
+    ));
+    if classify_redirection_reason(reason) == RedirectionClass::Flag {
+        msg.push_str(&format!(
+            "\n  {bullet} Point it inside. Relative and in-root paths pass: \
+             `git -C sub ...`, `git --work-tree=. ...`."
+        ));
+    } else {
+        msg.push_str(&format!(
+            "\n  {bullet} There is no in-root form of this one: GIT_DIR= and GIT_WORK_TREE= \
+             are refused even when the target is relative."
+        ));
+    }
+    msg.push_str(&format!(
+        "\n  {bullet} If the work genuinely belongs to the main repository, it belongs to \
+         the parent session, not this worker {dash} report it up rather than reaching out of \
+         the worktree."
+    ));
+    msg
+}
+
 /// True when `path` (absolute, or relative to `root`) resolves outside `root`.
 /// Existing paths are canonicalized (symlink-aware); non-existent ones are
 /// lexically normalized so `..` escapes are still caught.
@@ -3256,6 +3333,150 @@ mod tests {
         assert_eq!(
             detect_git_redirection_escape("git --work-tree=. status", &root),
             None
+        );
+    }
+
+    // === git_redirection_refusal_message (the way forward, #Day-174) ===
+
+    /// The first sentence must stay byte-identical to the pre-Day-174 message,
+    /// so anything reading the current text keeps working.
+    #[test]
+    fn test_refusal_message_keeps_the_original_first_sentence() {
+        for reason in [
+            "`GIT_DIR=` redirects git outside the pinned worktree",
+            "`git -C /other` points outside the pinned worktree",
+        ] {
+            let msg = git_redirection_refusal_message(reason, "/tmp/wt", false);
+            assert!(
+                msg.starts_with(&format!(
+                    "Command refused: {reason}. This bash session is confined to /tmp/wt; \
+                     git may not be redirected outside it."
+                )),
+                "first sentence changed, got: {msg}"
+            );
+        }
+    }
+
+    /// The transferred bug: never offer a hatch that will also be refused.
+    /// Env assignments are blanket-blocked even when relative, so the
+    /// "point it inside" alternative must not appear for that class.
+    #[test]
+    fn test_refusal_message_branches_on_matched_class() {
+        let root = "/tmp/wt";
+
+        for reason in [
+            "`GIT_DIR=` redirects git outside the pinned worktree",
+            "`GIT_WORK_TREE=` redirects git outside the pinned worktree",
+        ] {
+            let msg = git_redirection_refusal_message(reason, root, false);
+            assert!(
+                !msg.contains("git -C"),
+                "env class must not offer the in-root flag hatch, got: {msg}"
+            );
+            assert!(
+                !msg.contains("--work-tree"),
+                "env class must not offer the in-root flag hatch, got: {msg}"
+            );
+            assert!(
+                msg.contains("even when the target is relative"),
+                "env class must say why the flag hatch is unavailable, got: {msg}"
+            );
+            // Hatches 1 and 3 are still offered.
+            assert!(msg.contains("git status"), "hatch 1 missing, got: {msg}");
+            assert!(
+                msg.contains("parent session"),
+                "hatch 3 missing, got: {msg}"
+            );
+        }
+
+        for reason in [
+            "`git -C /other` points outside the pinned worktree",
+            "`git --git-dir /other/.git` points outside the pinned worktree",
+            "`git --work-tree /other` points outside the pinned worktree",
+        ] {
+            let msg = git_redirection_refusal_message(reason, root, false);
+            assert!(msg.contains("git status"), "hatch 1 missing, got: {msg}");
+            assert!(
+                msg.contains("git -C sub") && msg.contains("--work-tree=."),
+                "hatch 2 missing, got: {msg}"
+            );
+            assert!(
+                msg.contains("parent session"),
+                "hatch 3 missing, got: {msg}"
+            );
+        }
+    }
+
+    /// Every branch must name at least one thing the user can type instead —
+    /// the whole point of the task.
+    #[test]
+    fn test_refusal_message_always_names_something_typable() {
+        for reason in [
+            "`GIT_DIR=` redirects git outside the pinned worktree",
+            "`git -C /other` points outside the pinned worktree",
+        ] {
+            for plain in [false, true] {
+                let msg = git_redirection_refusal_message(reason, "/tmp/wt", plain);
+                assert!(
+                    msg.contains("git status") || msg.contains("git add"),
+                    "no typable alternative, got: {msg}"
+                );
+            }
+        }
+    }
+
+    /// Screen-reader mode: no glyphs, same convention as
+    /// `project_mcp_refusal_message` / `goal_verify_refusal_message`.
+    #[test]
+    fn test_refusal_message_is_glyph_free_under_plain() {
+        for reason in [
+            "`GIT_DIR=` redirects git outside the pinned worktree",
+            "`git -C /other` points outside the pinned worktree",
+        ] {
+            let msg = git_redirection_refusal_message(reason, "/tmp/wt", true);
+            assert!(
+                msg.is_ascii(),
+                "plain output must be glyph-free ASCII, got: {msg}"
+            );
+        }
+    }
+
+    /// A reason shape the detector does not produce today must still yield a
+    /// usable message — fall back to the conservative (env) branch rather than
+    /// offering a hatch that might be refused.
+    #[test]
+    fn test_refusal_message_unrecognised_reason_falls_back_conservatively() {
+        let msg = git_redirection_refusal_message("something new", "/tmp/wt", false);
+        assert!(msg.contains("git status"), "hatch 1 missing, got: {msg}");
+        assert!(!msg.contains("git -C sub"), "must not guess a hatch: {msg}");
+    }
+
+    /// The transferred bug, stated as an executable property: every command
+    /// this message tells the user to type must actually **pass** the detector.
+    /// Offering an alternative that would also be refused is exactly the defect
+    /// this task exists to avoid, so assert it against the real detector rather
+    /// than trusting the prose.
+    #[test]
+    fn test_offered_alternatives_actually_pass_the_detector() {
+        let root = escape_test_root();
+        for cmd in [
+            "git status",
+            "git add .",
+            "git commit",
+            "git -C sub status",
+            "git --work-tree=. status",
+        ] {
+            assert_eq!(
+                detect_git_redirection_escape(cmd, &root),
+                None,
+                "the refusal message offers `{cmd}`, so it must be accepted"
+            );
+        }
+        // And the one we deliberately do NOT offer for the env class is indeed
+        // refused even relative — the reason that branch exists.
+        assert!(
+            detect_git_redirection_escape("GIT_DIR=.git git log", &root).is_some(),
+            "relative GIT_DIR= must stay refused"
         );
     }
 

@@ -207,10 +207,13 @@ impl AgentTool for StreamingBashTool {
             if let Some(reason) =
                 crate::safety::detect_git_redirection_escape(command, std::path::Path::new(cwd))
             {
-                return Err(ToolError::Failed(format!(
-                    "Command refused: {reason}. This bash session is confined to {cwd}; \
-                     git may not be redirected outside it."
-                )));
+                return Err(ToolError::Failed(
+                    crate::safety::git_redirection_refusal_message(
+                        &reason,
+                        cwd,
+                        crate::format::is_plain_output(),
+                    ),
+                ));
             }
         }
 

@@ -187,7 +187,14 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     ("src/repl.rs", 3260),
-    ("src/safety.rs", 3269),
+    // Day 174: raised 3269 -> 3490 for `git_redirection_refusal_message` +
+    // `classify_redirection_reason` (~76 lines) and their emission-point tests
+    // (~146) — the worktree-confinement refusal now names the accepted
+    // alternatives, branching so the env class is never offered a hatch that
+    // would also be refused. The message belongs beside the detector whose
+    // reason string it classifies; splitting them would create the second
+    // matcher this deliberately avoids.
+    ("src/safety.rs", 3490),
     ("src/symbols.rs", 3804),
     // Day 161 (#662 half 1): +10 lines — pub REFUSAL_STEM_* consts that the
     // wrapper messages and prompt_retry::is_deterministic_tool_error share.
@@ -207,7 +214,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // session's DirectoryRestrictions (struct + constructor + denied-file
     // reporting in execute), so rename_symbol stops writing across --deny'd
     // directories. The rename logic itself lives in src/commands_rename.rs.
-    ("src/tools.rs", 3290),
+    // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
+    // string became a call to safety::git_redirection_refusal_message); the
+    // other +6 predates it and was already showing as unrecorded growth.
+    ("src/tools.rs", 3299),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 3472),
