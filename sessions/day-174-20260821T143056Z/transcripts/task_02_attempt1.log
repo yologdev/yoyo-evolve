@@ -1,0 +1,300 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at the two sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_git_redirection…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,225p' src/tools.rs ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1820,1960p' src/safety.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn goal_verify_refusal_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs src/tools.rs… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safety.rs\|tools.rs" te… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 22.2s (6 ✓)
+
+Now the helper. First, a failing test at the emission point:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3245,3269p' src/safety.r… ✓ (3ms)
+  ▶ edit src/safety.rs (2 → 117 lines)
+  +     // === git_redirection_refusal_message (the way forward, #Day-174) ===
+  + 
+  +     /// The first sentence must stay byte-identical to the pre-Day-174 message,
+  +     /// so anything reading the current text keeps working.
+  +     #[test]
+  +     fn test_refusal_message_keeps_the_original_first_sentence() {
+  +         for reason in [
+  +             "`GIT_DIR=` redirects git outside the pinned worktree",
+  +             "`git -C /other` points outside the pinned worktree",
+  +         ] {
+  +             let msg = git_redirection_refusal_message(reason, "/tmp/wt", false);
+  +             assert!(
+  +                 msg.starts_with(&format!(
+  +                     "Command refused: {reason}. This bash session is confined to /tmp/wt; \
+  +                      git may not be redirected outside it."
+  +                 )),
+  +                 "first sentence changed, got: {msg}"
+  +             );
+  +         }
+  +     }
+  ... (97 more lines)
+ ✓ (12.7s)
+  +     // === git_redirection_refusal_message (the way forward, #Day-174) ===
+  + 
+  +     /// The first sentence must stay byte-identical to the pre-Day-174 message,
+  +     /// so anything reading the current text keeps working.
+  +     #[test]
+  +     fn test_refusal_message_keeps_the_original_first_sentence() {
+  +         for reason in [
+  +             "`GIT_DIR=` redirects git outside the pinned worktree",
+  ... (13 more lines)
+  2 tools completed in 32.4s (2 ✓)
+
+Good — failing for the right reason. Now the helper:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (1 → 76 lines)
+  + /// Which class of redirection `detect_git_redirection_escape` matched.
+  + ///
+  + /// Decided from the reason string the detector already produced — deliberately
+  + /// **not** a second matcher over the command. One rule, one statement: if the
+  + /// detector's wording changes, this classifier changes with it in the same file.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + enum RedirectionClass {
+  +     /// `GIT_DIR=` / `GIT_WORK_TREE=` env assignment. Blanket-refused, **even
+  +     /// when the target is relative** — so the "point it inside" hatch is a lie
+  +     /// for this class and must not be offered.
+  +     EnvAssignment,
+  +     /// `-C` / `--git-dir` / `--work-tree` pointing outside the root. Relative
+  +     /// and in-root absolute targets pass today, so the in-root hatch is real.
+  +     Flag,
+  + }
+  + 
+  + /// Classify a refusal reason. Anything unrecognised falls back to the
+  + /// conservative branch (env), which offers only hatches that are always true.
+  + fn classify_redirection_reason(reason: &str) -> RedirectionClass {
+  +     if reason.contains("points outside the pinned worktree") {
+  ... (56 more lines)
+ ✓ (15.4s)
+  + /// Which class of redirection `detect_git_redirection_escape` matched.
+  + ///
+  + /// Decided from the reason string the detector already produced — deliberately
+  + /// **not** a second matcher over the command. One rule, one statement: if the
+  + /// detector's wording changes, this classifier changes with it in the same file.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + enum RedirectionClass {
+  +     /// `GIT_DIR=` / `GIT_WORK_TREE=` env assignment. Blanket-refused, **even
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The helper needs its consumer — wiring the one call site now.
+  ▶ edit src/tools.rs (4 → 7 lines)
+  -                 return Err(ToolError::Failed(format!(
+  -                     "Command refused: {reason}. This bash session is confined to {cwd}; \
+  -                      git may not be redirected outside it."
+  -                 )));
+  +                 return Err(ToolError::Failed(
+  +                     crate::safety::git_redirection_refusal_message(
+  +                         &reason,
+  +                         cwd,
+  +                         crate::format::is_plain_output(),
+  +                     ),
+  +                 ));
+ ✓ (1m 47s)
+  -                 return Err(ToolError::Failed(format!(
+  -                     "Command refused: {reason}. This bash session is confined to {cwd}; \
+  -                      git may not be redirected outside it."
+  -                 )));
+  +                 return Err(ToolError::Failed(
+  +                     crate::safety::git_redirection_refusal_message(
+  +                         &reason,
+  +                         cwd,
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 14s (3 ✓)
+
+My own glyph test caught an em-dash. Parameterizing the punctuation:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 50s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 55s (2 ✓)
+
+All green. Checking whether the size register drifted:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs src/tools.rs… ✓ (189ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (160ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (160ms)
+  3 tools completed in 6.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Updating the register for the two files I touched:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/safety.rs", 3269… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '178,212p' tests/module_s… ✓ (3ms)
+  ▶ edit tests/module_size.rs (2 → 9 lines)
+  +     // Day 174: raised 3269 -> 3461 for `git_redirection_refusal_message` +
+  +     // `classify_redirection_reason` (~76 lines) and their emission-point tests
+  +     // (~117) — the worktree-confinement refusal now names the accepted
+  +     // alternatives, branching so the env class is never offered a hatch that
+  +     // would also be refused. The message belongs beside the detector whose
+  +     // reason string it classifies; splitting them would create the second
+  +     // matcher this deliberately avoids.
+        ("src/safety.rs", 3461),
+        ("src/symbols.rs", 3804),
+ ✓ (1m 28s)
+  +     // Day 174: raised 3269 -> 3461 for `git_redirection_refusal_message` +
+  +     // `classify_redirection_reason` (~76 lines) and their emission-point tests
+  +     // (~117) — the worktree-confinement refusal now names the accepted
+  +     // alternatives, branching so the env class is never offered a hatch that
+  +     // would also be refused. The message belongs beside the detector whose
+  +     // reason string it classifies; splitting them would create the second
+  +     // matcher this deliberately avoids.
+        ("src/safety.rs", 3461),
+        ("src/symbols.rs", 3804),
+  ▶ edit tests/module_size.rs (1 → 4 lines)
+  +     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
+  +     // string became a call to safety::git_redirection_refusal_message); the
+  +     // other +6 predates it and was already showing as unrecorded growth.
+        ("src/tools.rs", 3299),
+ ✓ (1m 28s)
+  +     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
+  +     // string became a call to safety::git_redirection_refusal_message); the
+  +     // other +6 predates it and was already showing as unrecorded growth.
+        ("src/tools.rs", 3299),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (183ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 3m 14s (5 ✓)
+
+Now the CLAUDE.md doc claim:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "honest error naming wha… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass)
+  + env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass). Day 174: that refusal also names **what would be accepted**, via the pure `safety::git_redirection_refusal_message(reason, root, plain)` at the single emission point (`tools.rs`, the only non-test consumer of the detector) — the first sentence is byte-identical to before, and the appended alternatives **branch on the matched class**, decided from the detector's own reason string by `classify_redirection_reason` rather than by a second matcher over the command. Flag refusals (`-C` / `--git-dir` / `--work-tree`) get all three hatches: drop the redirection (bare `git` already operates on the worktree), point it inside (`git -C sub`, `git --work-tree=.` — both accepted today), or hand the work to the parent session. **Env assignments get only the first and third, and that asymmetry is the whole point**: `GIT_DIR=`/`GIT_WORK_TREE=` are blanket-refused *even when the target is relative*, so offering the in-root hatch there would name an alternative that is also refused — the transferred bug class this fixes (Claude Code v2.1.238's worktree-isolation refusals). An unrecognised reason shape falls back to the conservative env branch rather than guessing a hatch. **No bypass flag was added and none exists** — the confinement is deliberate; every listed alternative is already true of the detector and covered by its passing tests. Glyph-free under `is_plain_output()` (bullets *and* em dashes), matching `project_mcp_refusal_message`/`goal_verify_refusal_message`; pinned at the **emission point** — the string a caller receives — including an assertion that the env branch names neither `git -C` nor `--work-tree`. **What it deliberately does not do:** `bash` with a non-git absolute path can still write outside the worktree
+ ✓ (1m 24s)
+  - env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass)
+  + env assignments, with an honest error naming what matched; quoted mentions and in-root/relative paths pass). Day 174: that refusal also names **what would be accepted**, via the pure `safety::git_redirection_refusal_message(reason, root, plain)` at the single emission point (`tools.rs`, the only non-test consumer of the detector) — the first sentence is byte-identical to before, and the appended alternatives **branch on the matched class**, decided from the detector's own reason string by `classify_redirection_reason` rather than by a second matcher over the command. Flag refusals (`-C` / `--git-dir` / `--work-tree`) get all three hatches: drop the redirection (bare `git` already operates on the worktree), point it inside (`git -C sub`, `git --work-tree=.` — both accepted today), or hand the work to the parent session. **Env assignments get only the first and third, and that asymmetry is the whole point**: `GIT_DIR=`/`GIT_WORK_TREE=` are blanket-refused *even when the target is relative*, so offering the in-root hatch there would name an alternative that is also refused — the transferred bug class this fixes (Claude Code v2.1.238's worktree-isolation refusals). An unrecognised reason shape falls back to the conservative env branch rather than guessing a hatch. **No bypass flag was added and none exists** — the confinement is deliberate; every listed alternative is already true of the detector and covered by its passing tests. Glyph-free under `is_plain_output()` (bullets *and* em dashes), matching `project_mcp_refusal_message`/`goal_verify_refusal_message`; pinned at the **emission point** — the string a caller receives — including an assertion that the env branch names neither `git -C` nor `--work-tree`. **What it deliberately does not do:** `bash` with a non-git absolute path can still write outside the worktree
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "deliberately does not d… ✓ (85ms)
+  3 tools completed in 1m 40s (3 ✓)
+
+
+I duplicated a clause in CLAUDE.md. Fixing:
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `bash` with a non-git absolute path can still write outside the worktree, but `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard
+  + `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard
+ ✓ (1m 24s)
+  - `bash` with a non-git absolute path can still write outside the worktree, but `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard
+  + `bash` with a non-git absolute path can still write outside the worktree — the `dir_restrictions` guard
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "deliberately does not d… ✓ (28ms)
+  2 tools completed in 1m 27s (2 ✓)
+
+Now let me see the actual message a user receives, end to end:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/d… (9 lines) ✓ (311ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (16 lines) ✓ (24.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.8s (2 ✓)
+
+Removing the demo, and adding the guard that matters most — that the offered alternatives actually pass the detector:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (21ms)
+  ▶ edit src/safety.rs (2 → 31 lines)
+  +     /// The transferred bug, stated as an executable property: every command
+  +     /// this message tells the user to type must actually **pass** the detector.
+  +     /// Offering an alternative that would also be refused is exactly the defect
+  +     /// this task exists to avoid, so assert it against the real detector rather
+  +     /// than trusting the prose.
+  +     #[test]
+  +     fn test_offered_alternatives_actually_pass_the_detector() {
+  +         let root = escape_test_root();
+  +         for cmd in [
+  +             "git status",
+  +             "git add .",
+  +             "git commit",
+  +             "git -C sub status",
+  +             "git --work-tree=. status",
+  +         ] {
+  +             assert_eq!(
+  +                 detect_git_redirection_escape(cmd, &root),
+  +                 None,
+  +                 "the refusal message offers `{cmd}`, so it must be accepted"
+  +             );
+  ... (11 more lines)
+ ✓ (1m 50s)
+  +     /// The transferred bug, stated as an executable property: every command
+  +     /// this message tells the user to type must actually **pass** the detector.
+  +     /// Offering an alternative that would also be refused is exactly the defect
+  +     /// this task exists to avoid, so assert it against the real detector rather
+  +     /// than trusting the prose.
+  +     #[test]
+  +     fn test_offered_alternatives_actually_pass_the_detector() {
+  +         let root = escape_test_root();
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 56s)
+  3 tools completed in 3m 55s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -c "^test… ✓ (2m 15s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/safety.rs", 3461… ✓ (421ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_git_redirection… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 32s (4 ✓)
+
+Verified myself: 19 mentions total, exactly one executable consumer (tools.rs:208) plus two comments. Final full check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 43s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (64 lines) ✓ (24ms)
+  2 tools completed in 2m 4s (2 ✓)
+
+Committed, tree clean.
+
+## What I did
+
+The refusal at src/tools.rs:208 told a confined /spawn worker what it blocked and where the fence is — and nothing it could type instead. Every other refusal I've deliberately hardened (#767, #748, #761, #749) names its hatches verbatim; this one was the odd one out, and it fires exactly where a worker can't ask a human.
+
+**`safety::git_redirection_refusal_message(reason, root, plain)`** — pure, beside the detector:
+
+• First sentence byte-identical, so nothing reading the current text breaks.
+• Alternatives branch on the matched class, decided from the detector's own reason string via classify_redirection_reason — not a second matcher over the command.
+• Flag class → all three hatches (drop it; point it inside with git -C sub / `git --work-tree=.; hand it to the parent session). Env class → **hatches 1 and 3 only**, because GIT_DIR=/GIT_WORK_TREE=` are refused even when relative. Offering the in-root form there would name an alternative that's *also* refused — the exact Claude Code bug I transferred from.
+• Unrecognised reason → conservative env branch rather than a guessed hatch.
+• No bypass flag added; the confinement is deliberate.
+
+Verified rather than assumed: I ran the grep myself — 19 mentions, exactly one executable consumer (tools.rs:208), two comments, rest is definition + tests. No second door.
+
+Tests at the emission point, including the one I'd defend hardest: every command the message tells you to type is fed through the real detector and must return None. Prose drifts; that assertion can't. My own glyph test also caught an em dash I'd left in plain mode — so the dash is parameterized, not just the bullet. No existing detector test weakened.
+
+cargo fmt --check, clippy -D warnings, build, test (5041 + 7 suites) all green. Size register updated for the two files I touched, with reasons; CLAUDE.md's now-false "names what matched" claim corrected in the same commit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/safety.rs, src/tools.rs
+
