@@ -20,11 +20,28 @@
 //!    Over the cap by **more** than the grace band → **fatal**: a module
 //!    blowing 50+ lines past the cap in one task *is* the design event. That
 //!    is the actual invariant, and it is what stays lethal.
-//! 2. A file **on** the list growing past its recorded ceiling → **warning,
-//!    not fatal**. Growth of an already-capped module is information, not an
-//!    emergency; a four-line overshoot does not deserve a whole-task revert.
-//!    The warning names the exact entry to paste back, so the debt register
-//!    still gets updated on purpose rather than absorbed.
+//! 2. A file **on** the list growing past its recorded ceiling → depends on
+//!    *how far* (Day 174; split by `REGISTER_DRIFT_GRACE_LINES`, exactly as
+//!    Day 166 split branch 1). Up to 100 lines of drift → **warning, not
+//!    fatal**: growth of an already-capped module is information, not an
+//!    emergency, and a four-line overshoot does not deserve a whole-task
+//!    revert. More than 100 → **fatal**, so the remedy (one pasted register
+//!    line) lands in front of `scripts/evolve.sh`'s fix loop, which is the
+//!    only reader this branch has ever had.
+//!
+//!    **Superseded claim, recorded rather than erased** (my own Day-165 rule):
+//!    this doc used to say the warning meant "the debt register still gets
+//!    updated on purpose rather than absorbed". That was false for eight days.
+//!    Measured on Day 174: **11 register entries had absorbed drift**, between
+//!    +1 and +480 lines, worst `src/cli.rs` (recorded 3845, actual 4325). The
+//!    mechanism is my own "a capability is real only where something consumes
+//!    it" lesson landing on my own gate — the warning goes to the stderr of a
+//!    *passing* test, and the only consumer of `cargo test` in the evolve loop
+//!    reads the **exit code**. Nothing read it, so nothing acted on it. The
+//!    damage is to branch 3: a stale-high entry does not break the ratchet, it
+//!    *loosens* it — `cli.rs` could have shed 480 lines with the ratchet never
+//!    firing. Drift under 100 lines is still absorbable, and that is a
+//!    deliberate tradeoff, not an oversight.
 //! 3. A file on the list sitting **below** its recorded ceiling → **fatal**.
 //!    This is the ratchet: an exception list only pays itself down if
 //!    improving is also a failure, otherwise a shrunk file keeps silent
@@ -33,7 +50,7 @@
 //!    message. (Same for a listed file that shrank under the cap entirely, or
 //!    vanished: its entry must be deleted.)
 //!
-//! Both warnings (branch 1's grace band and branch 2) are written straight to
+//! Both warnings (branch 1's grace band and branch 2a) are written straight to
 //! `std::io::stderr()` through one shared helper rather than through
 //! `eprintln!`, because libtest captures the macros and swallows output from
 //! *passing* tests — and a silent gate teaches nothing at all, which is worse
@@ -70,21 +87,59 @@ const MAX_MODULE_LINES: usize = 2_000;
 /// never be granted silently.
 const OVERSHOOT_GRACE_LINES: usize = 50;
 
+/// A **grandfathered** module that grew past its recorded ceiling by at most
+/// this many lines warns (branch 2a); beyond it, fatal (branch 2b).
+///
+/// Judgment threshold, not a measurement — nothing measured says 100 is the
+/// right number. The argument is the shape of the two failure modes: a single
+/// task rarely adds 100 lines to an already-oversized module, so a crossing is
+/// a real event worth stopping for, while the +1/+2/+3 creep that made up most
+/// of the Day-174 drift list stays a warning and never reverts a correct task
+/// (which is the whole reason branch 2 was made non-fatal on Day 165).
+///
+/// Why it needed a fatal side at all: from Day 166 to Day 174 the warning ran
+/// with **no reader**. It goes to the stderr of a *passing* test, and the only
+/// consumer of `cargo test` in my evolve loop reads the exit code — so eleven
+/// register entries silently absorbed between +1 and +480 lines. Stale-high
+/// entries do not break branch 3's ratchet, they *loosen* it: `src/cli.rs`
+/// recorded 3845 against an actual 4325 could have shed 480 lines with the
+/// ratchet never firing, which is the exact silent headroom branch 3 exists to
+/// prevent. Making large drift fatal hands the warning the one reader that
+/// already exists — `scripts/evolve.sh`'s fix loop — and the remedy is a
+/// single pasted line, which is precisely what that loop handles well.
+///
+/// The accepted tradeoff, stated rather than papered over: drift under 100
+/// lines is still absorbable, and that is deliberate. This is not a crusade
+/// against every +1.
+const REGISTER_DRIFT_GRACE_LINES: usize = 100;
+
 /// Modules already over `MAX_MODULE_LINES` when the gate was installed
 /// (Day 157). Each number is the file's **recorded size**: growing past it
-/// warns (branch 2), sitting under it fails (branch 3, the ratchet), so the
-/// entry tracks reality in both directions and the register only shrinks.
+/// warns or fails depending on how far (branch 2, split Day 174), sitting
+/// under it fails (branch 3, the ratchet), so the entry tracks reality in
+/// both directions and the register only shrinks.
+///
+/// **Day 174 sweep.** Eleven of these entries were stale-high — the branch-2
+/// warning had run for eight days with no reader, absorbing between +1 and
+/// +480 lines per entry. Each `// Day 174: +N absorbed` note below records the
+/// drift that entry had accumulated by then; they are paid off in one pass,
+/// and the same commit makes drift past `REGISTER_DRIFT_GRACE_LINES` fatal so
+/// the next large one cannot be absorbed the same way.
 const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
-    ("src/agent_builder.rs", 2647),
+    // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
+    ("src/agent_builder.rs", 2650),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
     // over a pure `auto_discovery_sources` list first (that dedup is why this is
     // +98 and not more); the rest is the new source, its doc comments, and three
     // tests pinning the precedence order (installed < global < project).
-    ("src/cli.rs", 3845),
+    // Day 174: +480 absorbed since Day 166 — the single worst entry on the
+    // register, and the concrete damage: cli.rs could have shed 480 lines and
+    // branch 3's ratchet would never have fired. Nothing read the warning.
+    ("src/cli.rs", 4325),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -102,12 +157,15 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // warn on stderr (mention_read_warning helper, both Err arms) instead of
     // silently re-emitting the raw @path; plus tests pinning the warning string,
     // free-form-mention silence, and the unreadable-file behavior.
-    ("src/commands_file.rs", 2807),
+    // Day 174: +2 absorbed since Day 166.
+    ("src/commands_file.rs", 2809),
     ("src/commands_git.rs", 3172),
-    ("src/commands_info.rs", 3036),
+    // Day 174: +25 absorbed since Day 166.
+    ("src/commands_info.rs", 3061),
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
-    ("src/commands_project.rs", 3193),
+    // Day 174: +3 absorbed since Day 166.
+    ("src/commands_project.rs", 3196),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
@@ -150,7 +208,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 164 (#732): +105 lines — TOML basic-string escaping on the write
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
-    ("src/config.rs", 2413),
+    // Day 174: +256 absorbed since Day 166.
+    ("src/config.rs", 2669),
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),
@@ -158,8 +217,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
     // chunking-independence and carry-safety regression tests.
-    ("src/format/markdown.rs", 3160),
-    ("src/format/mod.rs", 2455),
+    // Day 174: +17 absorbed since Day 166.
+    ("src/format/markdown.rs", 3177),
+    // Day 174: +1 absorbed since Day 166.
+    ("src/format/mod.rs", 2456),
     // Day 162 (#665): +27 lines — the test-output filter is now gated on tool
     // provenance, so read_file results stop being eaten. Signature recorded
     // retroactively during Day 162 reflection: the raise itself shipped
@@ -167,7 +228,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 164: +45 lines — provenance corroboration gate for filter_test_output
     // (a `✓` glyph is a shape, a runner summary is provenance) + its regression tests.
     ("src/format/output.rs", 2680),
-    ("src/help.rs", 2672),
+    ("src/help.rs", 2692), // Day 174: +20 absorbed since Day 166.
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals
     // instead of burning MAX_AUTO_RETRIES on an identical answer.
@@ -183,10 +244,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // none. Raised on purpose: the seam belongs beside the call sites it
     // replaces, and splitting four one-line calls into another module would
     // hide the enumeration this task exists to make checkable.
-    ("src/prompt.rs", 2464),
+    // Day 174: +429 absorbed since Day 166 — second-worst on the register, and
+    // 429 lines of ratchet slack the warning branch never got anyone to close.
+    ("src/prompt.rs", 2893),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
-    ("src/repl.rs", 3260),
+    // Day 174: +91 absorbed since Day 166.
+    ("src/repl.rs", 3351),
     // Day 174: raised 3269 -> 3490 for `git_redirection_refusal_message` +
     // `classify_redirection_reason` (~76 lines) and their emission-point tests
     // (~146) — the worktree-confinement refusal now names the accepted
@@ -238,8 +302,18 @@ enum SizeViolation {
     /// A module not on the grandfather list crossed the cap, but by at most
     /// `OVERSHOOT_GRACE_LINES`. Creep, not a design event: warn and move on.
     OverCapWithinGrace { path: String, lines: usize },
-    /// A grandfathered module grew past its recorded ceiling.
+    /// A grandfathered module grew past its recorded ceiling, but by at most
+    /// `REGISTER_DRIFT_GRACE_LINES`. Creep, not a design event: warn.
     GrewPastCeiling {
+        path: String,
+        lines: usize,
+        ceiling: usize,
+    },
+    /// A grandfathered module grew more than `REGISTER_DRIFT_GRACE_LINES` past
+    /// its recorded ceiling. Fatal (Day 174): the warning branch had no reader
+    /// for eight days and absorbed up to +480 lines, and a stale-high entry is
+    /// slack in branch 3's ratchet.
+    GrewFarPastCeiling {
         path: String,
         lines: usize,
         ceiling: usize,
@@ -280,6 +354,7 @@ impl SizeViolation {
             SizeViolation::OverCap { .. } => true,
             SizeViolation::OverCapWithinGrace { .. } => false,
             SizeViolation::GrewPastCeiling { .. } => false,
+            SizeViolation::GrewFarPastCeiling { .. } => true,
             SizeViolation::StaleCeiling { .. } => true,
             SizeViolation::StaleGrandfatherEntry { .. } => true,
         }
@@ -311,6 +386,18 @@ impl SizeViolation {
                 "{path} grew to {lines} lines, {} past its recorded {ceiling}.\n     \
                  Not fatal — growth of an already-capped module is information, not an \
                  emergency.\n     Fix: paste (\"{path}\", {lines}) over its entry in \
+                 GRANDFATHERED_OVERSIZED_MODULES (and say why in the commit message), or \
+                 move the new code to a smaller module.",
+                lines.saturating_sub(*ceiling),
+            ),
+            SizeViolation::GrewFarPastCeiling {
+                path,
+                lines,
+                ceiling,
+            } => format!(
+                "{path} grew to {lines} lines, {} past its recorded {ceiling} — more than the \
+                 {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace band, so this one is \
+                 fatal.\n     Fix: paste (\"{path}\", {lines}) over its entry in \
                  GRANDFATHERED_OVERSIZED_MODULES (and say why in the commit message), or \
                  move the new code to a smaller module.",
                 lines.saturating_sub(*ceiling),
@@ -371,6 +458,42 @@ fn classify_unlisted(lines: usize, max_lines: usize, grace: usize) -> UnlistedVe
     }
 }
 
+/// The three outcomes for a module that **is** on the grandfather list, once
+/// it is known to still be over `MAX_MODULE_LINES`.
+///
+/// Same split as `classify_unlisted` one branch over (Day 174): pure, so the
+/// reprice is table-testable without touching real files, and all filesystem
+/// I/O stays at the single call site.
+#[derive(Debug, PartialEq, Eq)]
+enum ListedVerdict {
+    /// At or below the recorded ceiling — not a growth case at all. Branch 3
+    /// (the ratchet) owns everything under the recorded number; this
+    /// classifier deliberately says nothing about it.
+    NotGrowth,
+    /// Grew past the ceiling by at most `grace` lines — warn, run stays green.
+    /// Byte-identical to the pre-Day-174 behaviour of the whole branch.
+    Grace,
+    /// Grew past the ceiling by more than `grace` lines — fatal, so the fix
+    /// loop reads what eight days of unread warnings could not deliver.
+    Fatal,
+}
+
+/// Classify a grandfathered module's line count against its recorded ceiling.
+///
+/// The grace band is inclusive, like `classify_unlisted`'s: exactly `grace`
+/// lines of drift is still a warning, `grace + 1` is fatal. A threshold has to
+/// land somewhere, and the side that costs a whole task gets the benefit of
+/// the doubt.
+fn classify_listed(lines: usize, recorded: usize, grace: usize) -> ListedVerdict {
+    if lines <= recorded {
+        ListedVerdict::NotGrowth
+    } else if lines - recorded <= grace {
+        ListedVerdict::Grace
+    } else {
+        ListedVerdict::Fatal
+    }
+}
+
 /// Pure checker: given every module's line count and the grandfather list,
 /// report every violation. No I/O, so it is testable against synthetic input
 /// rather than only against whatever `src/` happens to look like today.
@@ -389,18 +512,35 @@ fn check_module_sizes(
                         path: path.clone(),
                         lines: Some(*lines),
                     });
-                } else if lines > ceiling {
-                    violations.push(SizeViolation::GrewPastCeiling {
-                        path: path.clone(),
-                        lines: *lines,
-                        ceiling: *ceiling,
-                    });
-                } else if lines < ceiling {
-                    violations.push(SizeViolation::StaleCeiling {
-                        path: path.clone(),
-                        lines: *lines,
-                        ceiling: *ceiling,
-                    });
+                } else {
+                    match classify_listed(*lines, *ceiling, REGISTER_DRIFT_GRACE_LINES) {
+                        // Branch 2a: creep past the recorded ceiling — warn.
+                        ListedVerdict::Grace => violations.push(SizeViolation::GrewPastCeiling {
+                            path: path.clone(),
+                            lines: *lines,
+                            ceiling: *ceiling,
+                        }),
+                        // Branch 2b (Day 174): large drift — fatal, so the fix
+                        // loop becomes the reader the warning never had.
+                        ListedVerdict::Fatal => {
+                            violations.push(SizeViolation::GrewFarPastCeiling {
+                                path: path.clone(),
+                                lines: *lines,
+                                ceiling: *ceiling,
+                            })
+                        }
+                        // Branch 3, untouched: at the ceiling is clean, below
+                        // it is the ratchet and stays fatal.
+                        ListedVerdict::NotGrowth => {
+                            if lines < ceiling {
+                                violations.push(SizeViolation::StaleCeiling {
+                                    path: path.clone(),
+                                    lines: *lines,
+                                    ceiling: *ceiling,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             None => match classify_unlisted(*lines, max_lines, OVERSHOOT_GRACE_LINES) {
@@ -693,6 +833,12 @@ mod tests {
                 path: "src/a.rs".to_string(),
                 lines: 201,
             },
+            // Day 174: large register drift joined the fatal side.
+            SizeViolation::GrewFarPastCeiling {
+                path: "src/a.rs".to_string(),
+                lines: 900,
+                ceiling: 500,
+            },
             SizeViolation::StaleCeiling {
                 path: "src/a.rs".to_string(),
                 lines: 400,
@@ -709,6 +855,113 @@ mod tests {
         ] {
             assert!(fatal.is_fatal(), "{fatal:?} must stay fatal");
         }
+    }
+
+    #[test]
+    fn classify_listed_covers_the_drift_band_and_both_near_misses() {
+        // The Day-174 reprice in one table. 500 = recorded, 100 = grace band.
+        for (lines, want) in [
+            // below and at the recorded number are branch 3's business, not
+            // this classifier's — it must not call either one "growth".
+            (0, ListedVerdict::NotGrowth),
+            (499, ListedVerdict::NotGrowth),
+            (500, ListedVerdict::NotGrowth),
+            // one line of drift → warning, exactly as before Day 174
+            (501, ListedVerdict::Grace),
+            // exactly the grace band → still a warning (inclusive boundary)
+            (600, ListedVerdict::Grace),
+            // the near-miss on the other side → fatal
+            (601, ListedVerdict::Fatal),
+            (5_000, ListedVerdict::Fatal),
+        ] {
+            assert_eq!(
+                classify_listed(lines, 500, 100),
+                want,
+                "{lines} lines against recorded 500, grace 100"
+            );
+        }
+    }
+
+    #[test]
+    fn drift_band_uses_the_real_const_at_a_real_recorded_size() {
+        // The table drives synthetic numbers; this pins that the shipped
+        // constant is what the checker actually applies. `recorded + 100`
+        // warns, `recorded + 101` is fatal.
+        let recorded = 2_464;
+        assert_eq!(
+            classify_listed(
+                recorded + REGISTER_DRIFT_GRACE_LINES,
+                recorded,
+                REGISTER_DRIFT_GRACE_LINES
+            ),
+            ListedVerdict::Grace
+        );
+        assert_eq!(
+            classify_listed(
+                recorded + REGISTER_DRIFT_GRACE_LINES + 1,
+                recorded,
+                REGISTER_DRIFT_GRACE_LINES
+            ),
+            ListedVerdict::Fatal
+        );
+    }
+
+    #[test]
+    fn large_register_drift_is_fatal_end_to_end() {
+        // Proven against a FABRICATED (file, recorded) pair — never by really
+        // growing a module in src/, same discipline tests/orphan_modules.rs
+        // uses for its fatal branch. These numbers are src/cli.rs's real Day-174
+        // drift (3845 recorded, 4325 actual, +480), which is the instance that
+        // motivated the reprice.
+        let v = check_module_sizes(&files(&[("src/a.rs", 4325)]), 2_000, &[("src/a.rs", 3845)]);
+        assert_eq!(
+            v,
+            vec![SizeViolation::GrewFarPastCeiling {
+                path: "src/a.rs".to_string(),
+                lines: 4325,
+                ceiling: 3845
+            }]
+        );
+        assert!(v[0].is_fatal(), "480 lines of drift must stop the run");
+    }
+
+    #[test]
+    fn small_register_drift_stays_a_warning_end_to_end() {
+        // The near-miss that must still pass through: the +1/+2/+3 creep that
+        // made up most of the Day-174 list never reverts a task.
+        let v = check_module_sizes(
+            &files(&[("src/a.rs", 2_003)]),
+            2_000,
+            &[("src/a.rs", 2_000)],
+        );
+        assert_eq!(
+            v,
+            vec![SizeViolation::GrewPastCeiling {
+                path: "src/a.rs".to_string(),
+                lines: 2_003,
+                ceiling: 2_000
+            }]
+        );
+        assert!(!v[0].is_fatal(), "three lines of creep must stay non-fatal");
+    }
+
+    #[test]
+    fn far_past_ceiling_message_names_the_drift_band_it_exceeded() {
+        // A reader must be able to tell WHICH of the two branch-2 halves they
+        // hit, and must get the literal register line to paste.
+        let m = SizeViolation::GrewFarPastCeiling {
+            path: "src/a.rs".to_string(),
+            lines: 4325,
+            ceiling: 3845,
+        }
+        .message();
+        assert!(m.contains("src/a.rs"), "{m}");
+        assert!(m.contains("4325"), "{m}");
+        assert!(m.contains("3845"), "{m}");
+        assert!(m.contains("480 past"), "{m}");
+        assert!(m.contains("(\"src/a.rs\", 4325)"), "{m}");
+        assert!(m.contains(&REGISTER_DRIFT_GRACE_LINES.to_string()), "{m}");
+        assert!(m.contains("grace band"), "{m}");
     }
 
     #[test]
