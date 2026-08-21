@@ -1947,9 +1947,7 @@ mod tests {
         let out = highlight_code_line_with("js", "${user} world`;", &mut st);
 
         let user_at = out.find("user").expect("the identifier is still rendered");
-        let green_at = out
-            .find(GREEN.0)
-            .expect("` world` is still string content");
+        let green_at = out.find(GREEN.0).expect("` world` is still string content");
         assert!(
             user_at < green_at,
             "the interpolation must be emitted before any green run, got {out:?}"
