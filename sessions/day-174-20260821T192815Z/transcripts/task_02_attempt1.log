@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact anchors out of scripts/evolve.sh (read-only) and checking what's available locally.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1268,1280p;1560,1615p' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls .yoyo/session_staging/ 2>/dev… ✓ (5ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Anchors confirmed verbatim. Now the firing emission:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto-continuing" src/ma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git ls-tree -r --name-only origi… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '636,652p' src/main.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 41.2s (3 ✓)
+
+Now the script — writing it first, then testing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (447 lines) ✓ (59.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && chmod +x scripts/measure_abstent… ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 14s (2 ✓)
+
+Both failures are my test expectations, not the code — those lines have trailing table syntax so the $ anchor already rejects them (rejected twice over, not "shape-matched then excluded"). Fixing the expectations to say that precisely:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (5 → 7 lines)
+  -     check(
+  -         "backticked firing in a table",
+  -         classify("| `⚡ auto-continuing (2/5 — more work pending)...` | 0 |"),
+  -         (None, True),
+  -     )
+  +     # A quoted firing inside a table is rejected TWICE over: the trailing table syntax
+  +     # already breaks the end-of-line anchor, and the provenance tells fire too. Assert
+  +     # both halves rather than only the one that happens to run first.
+  +     table_firing = "| `⚡ auto-continuing (2/5 — more work pending)...` | 0 |"
+  +     check("backticked firing: shape rejected", classify_line(table_firing), None)
+  +     check("backticked firing: prose tells fire", is_quoted_prose(table_firing), True)
+  +     check("backticked firing: not counted", classify(table_firing), (None, False))
+ ✓ (59.7s)
+  -     check(
+  -         "backticked firing in a table",
+  -         classify("| `⚡ auto-continuing (2/5 — more work pending)...` | 0 |"),
+  -         (None, True),
+  -     )
+  +     # A quoted firing inside a table is rejected TWICE over: the trailing table syntax
+  +     # already breaks the end-of-line anchor, and the provenance tells fire too. Assert
+  +     # both halves rather than only the one that happens to run first.
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (14 → 17 lines)
+                "(early-stop suspected).",
+                "  Planning agent produced 0 tasks — falling back to single task.",
+                "  ⚡ auto-continuing (1/5 — more work pending)...",
+  +             # Shape-matches but is my own writing quoted back: counted as excluded.
+  +             grep_echo,
+  +             # Shape does not match at all (trailing table syntax): not counted anywhere.
+                my_table_cell,
+                "ordinary log noise",
+            ],
+ ✓ (59.9s)
+                "(early-stop suspected).",
+                "  Planning agent produced 0 tasks — falling back to single task.",
+                "  ⚡ auto-continuing (1/5 — more work pending)...",
+  +             # Shape-matches but is my own writing quoted back: counted as excluded.
+  +             grep_echo,
+  +             # Shape does not match at all (trailing table syntax): not counted anywhere.
+                my_table_cell,
+                "ordinary log noise",
+            ],
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (25ms)
+  3 tools completed in 2m 8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Now the consumer half — running it over real session data.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git ls-tree --name-only origin/a… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/abst && mkdir -p /tm… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/abst && for s in $… ✓ (671ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (71ms)
+  ▶ $ cd /tmp/abst && grep -rl "No assessment produced" . 2>/dev/null | head -5; echo … ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 19.8s (5 ✓, 1 ✗)
+
+The defect, demonstrated live on real data:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/abst && echo "=== bare-grep 'No assessment produced' hit (respond.log = … ✓ (40ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 4 bare-grep hits are my own echoed commands and prose — the anchored classifier scored every one 0. Now the CLAUDE.md bullet:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Complementary to skill-… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '247,250p' CLAUDE.md ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 2 lines)
+    - Complementary to skill-evolve: skill-evolve mines audit-log for *skill-level* signals; trajectory awareness is *task-level*. Both consume audit-log, neither writes to it.
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built in the same shape as the extractor above (pure decision functions, `--test` self-tests, I/O at the call sites). It exists because **#810's proposed grep matched my own prose**: the Day-174 comment I posted on #810 contains the abstention markers verbatim inside a markdown table cell, and Phase C composes that comment *during the session being measured*, so the string lands in that session's own log — measured, not hypothetical (run `32480314380` grepped as 1 abstention while the same session's transcripts had 0). Worse, the contamination grows monotonically and inflates the **denominator**, so the gate would look progressively more broken than it is. **The anchoring rule: match the harness's whole emitted line, not a substring** — `classify_line` matches each of `evolve.sh:1273/1567/1605/1610` and `main.rs:643`'s `⚡ auto-continuing` from its first word to end-of-line, with only counters and budget seconds loose, and a runner prefix (`gh run view`'s `job\tjob\tTIMESTAMP`) allowed in front. The provenance half is the separate pure `is_quoted_prose` (markdown pipe, backtick, `NNN:`/`path:NNN:` grep prefix, leading `>`); a line that shape-matches but trips it is **counted and reported** as `prose_excluded`, never silently dropped. Double-counting is avoided deliberately: 1567 and 1605 are the two arms of one `if/elif` and both map to `PLANNER_ZERO_TASKS`, while 1610 (`PLANNER_FALLBACK`) is a *consequence* of the same event and is reported beside the count rather than added. `grade()` implements @yuanhao's corrected rule — a session with zero abstentions is excluded from **both** numerator and denominator, and below `MIN_GRADEABLE_SESSIONS = 4` it **refuses a verdict** and prints the wait, because "not yet gradeable" is its own state and not "the gate failed". **Recorded negative finding, so the next reader does not re-derive it:** `sessions/day-*/outcome.json`'s `fallback_phases` field looks like a structured source for this and is not — `scripts/evolve.sh:583` populates it from `STAGE_NAME` when a phase is served by the **fallback provider**, not when the planner falls back to a single task; no field in `outcome.json` records an A1 abstention or a planner fallback. **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation. Status as of Day 174: **0 of 4 gradeable sessions** over the 19 day-173/174 sessions on `audit-log` — and note the transcripts carry agent output, not harness stdout, so the markers only appear in the workflow log; the four bare-substring hits present in those transcripts were all my own echoed `grep` commands and prose, and the anchored classifier scored every one of them 0.
+ ✓ (1m 0s)
+    - Complementary to skill-evolve: skill-evolve mines audit-log for *skill-level* signals; trajectory awareness is *task-level*. Both consume audit-log, neither writes to it.
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built in the same shape as the extractor above (pure decision functions, `--test` self-tests, I/O at the call sites). It exists because **#810's proposed grep matched my own prose**: the Day-174 comment I posted on #810 contains the abstention markers verbatim inside a markdown table cell, and Phase C composes that comment *during the session being measured*, so the string lands in that session's own log — measured, not hypothetical (run `32480314380` grepped as 1 abstention while the same session's transcripts had 0). Worse, the contamination grows monotonically and inflates the **denominator**, so the gate would look progressively more broken than it is. **The anchoring rule: match the harness's whole emitted line, not a substring** — `classify_line` matches each of `evolve.sh:1273/1567/1605/1610` and `main.rs:643`'s `⚡ auto-continuing` from its first word to end-of-line, with only counters and budget seconds loose, and a runner prefix (`gh run view`'s `job\tjob\tTIMESTAMP`) allowed in front. The provenance half is the separate pure `is_quoted_prose` (markdown pipe, backtick, `NNN:`/`path:NNN:` grep prefix, leading `>`); a line that shape-matches but trips it is **counted and reported** as `prose_excluded`, never silently dropped. Double-counting is avoided deliberately: 1567 and 1605 are the two arms of one `if/elif` and both map to `PLANNER_ZERO_TASKS`, while 1610 (`PLANNER_FALLBACK`) is a *consequence* of the same event and is reported beside the count rather than added. `grade()` implements @yuanhao's corrected rule — a session with zero abstentions is excluded from **both** numerator and denominator, and below `MIN_GRADEABLE_SESSIONS = 4` it **refuses a verdict** and prints the wait, because "not yet gradeable" is its own state and not "the gate failed". **Recorded negative finding, so the next reader does not re-derive it:** `sessions/day-*/outcome.json`'s `fallback_phases` field looks like a structured source for this and is not — `scripts/evolve.sh:583` populates it from `STAGE_NAME` when a phase is served by the **fallback provider**, not when the planner falls back to a single task; no field in `outcome.json` records an A1 abstention or a planner fallback. **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation. Status as of Day 174: **0 of 4 gradeable sessions** over the 19 day-173/174 sessions on `audit-log` — and note the transcripts carry agent output, not harness stdout, so the markers only appear in the workflow log; the four bare-substring hits present in those transcripts were all my own echoed `grep` commands and prose, and the anchored classifier scored every one of them 0.
+  3 tools completed in 1m 19s (3 ✓)
+
+Now the full verification sweep:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 9s (3 ✓)
+
+All green, scope is exactly the two task files. Committing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (27 lines) ✓ (16ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "clea… ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done and committed (de56c2a1). Working tree clean.
+
+## What shipped
+
+`scripts/measure_abstentions.py` (new) — the #810 grading instrument, anchored so it stops counting my own writing.
+
+• `classify_line` (pure) matches each harness emission — evolve.sh:1273/1567/1605/1610 and `main.rs:643's ⚡ auto-continuing — from its first word to **end-of-line**, with only counters and budget seconds loose, and a gh run view` runner prefix allowed in front. Read the anchors out of evolve.sh; never edited it.
+• `is_quoted_prose` (pure, separate) carries the provenance half: markdown pipe, backtick, `NNN:/path:NNN: grep prefix, leading >. A line that shape-matches but trips it is **counted as prose_excluded` and printed** — a shrinking denominator inside my own meter is the defect I keep fixing elsewhere.
+• No double-counting, deliberately: 1567 and 1605 are two arms of one if/elif, so both map to `PLANNER_ZERO_TASKS; 1610` is a consequence of the same event, reported beside the count rather than added.
+• `grade` implements the corrected rule: zero-abstention sessions leave both numerator and denominator, and below 4 gradeable sessions it refuses a verdict and prints the wait.
+• --test covers the four real harness lines, a runner-prefixed copy, the ⚡ glyph vs. bare auto-continuing, a grep -n echo of evolve.sh:1273, a blockquote, the no-double-count fold, and 3-vs-4 gradeable sessions. The regression guard is the exact table cell from my #810 comment, pasted verbatim.
+
+## The denominator, which is the deliverable
+
+0 of 4 gradeable sessions. 19 day-173/174 sessions pulled off audit-log, every one with zero abstentions. Not graded — the floor isn't reached, and recording that is the job.
+
+## The defect confirmed live while measuring
+
+Those same transcripts hold four bare-substring hits for #810's grep terms. Every one is my own echoed grep command or prose — including a respond.log line that is literally me running grep -rc "No assessment produced". The anchored classifier scored all four as 0.
+
+Two corrections I owe the record: two of my own self-test expectations were wrong (I'd assumed a backticked table line would be "shape-matched then excluded" — the $ anchor rejects it first, so it's refused twice over), and I fixed the tests, not the code. And I recorded the negative finding in the docstring: outcome.json's `fallback_phases is the **provider** fallback (evolve.sh:583, from STAGE_NAME`), not the planner's — there is no structured abstention source.
+
+cargo fmt --check, build, clippy --all-targets -D warnings, test (89 + 12 + suites, 0 failed) all green; extract_trajectory.py --test still passes. CLAUDE.md gained one bullet under trajectory awareness.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

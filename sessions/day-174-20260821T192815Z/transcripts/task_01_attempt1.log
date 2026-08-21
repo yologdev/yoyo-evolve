@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by gathering the legitimate inputs for the prediction — without opening the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry" CLAUDE.md ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "prompt_retry::" src/ -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_auto_retry\|… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,160p src/prompt.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,45p src/tool_wrappers.… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 26,60p src/tool_wrappers.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retry\|prompt_retry\|Co… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_STEM\|is active…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1370,1420p src/watch.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "API_KEY\|KNOWN_PROVIDER… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 20s (11 ✓)
+
+Grounding is enough. Writing the prediction now — before opening the target.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (47 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add drea… (8 lines) ✓ (23ms)
+  2 tools completed in 4.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction committed. Now step 2 — read the target and run the exact evidence commands I registered.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1 ===" && grep -n 'AN… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three evidence commands run. Let me read the actual regions before grading.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,230p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 415,480p src/prompt_retry… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'contains("[0-9]' src/pr… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 36.8s (3 ✓)
+
+A real defect, and it's the sharpest thing in the file: four bare-numeric substring matches decide the diagnosis.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,435p src/prompt_retry… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: lower.contains("401") on an error string that routinely carries other numbers. Fixing it.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (6 → 40 lines)
+        match configured {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => infer_provider_from_model(model),
+  +     }
+  + }
+  + 
+  + /// True when `code` (an HTTP status such as `"401"`) appears in `haystack` as a
+  + /// number in its own right, rather than as a run of digits inside a bigger one.
+  + ///
+  + /// `diagnose_api_error` used to ask `lower.contains("401")` — a bare substring
+  + /// match on three digits, which is the most collidable shape there is inside an
+  + /// error string. Provider errors routinely carry *other* numbers: token counts
+  + /// (`"prompt is too long: 402134 tokens"`), request ids, retry-after
+  + /// milliseconds. Any of those flipped the diagnosis to a confident and wrong
+  + /// remediation, which in error-recovery code is worse than no diagnosis at all
+  + /// because the user acts on it — the overflow example above was told its
+  + /// credits were exhausted and that "retrying won't help", when the real fix is
+  + /// `/compact`.
+  + ///
+  + /// The rule is a **digit** boundary, not a word boundary: `"401"` still matches
+  ... (19 more lines)
+ ✓ (14.1s)
+        match configured {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => infer_provider_from_model(model),
+  +     }
+  + }
+  + 
+  + /// True when `code` (an HTTP status such as `"401"`) appears in `haystack` as a
+  + /// number in its own right, rather than as a run of digits inside a bigger one.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Right — my own rule, caught by the gate. Wiring the four call sites in the same edit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (25ms)
+
+Now the tests — at the emission point (the string a caller receives), plus the near-miss guard.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_diagnose_insuff… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (97 lines) ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry 2>&1 | t… ✓ (25.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry 2>&1 | g… ✓ (158ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (25.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 13s (4 ✓)
+
+Now the grade — including the honest note that the fix came from an unpredicted find, not from a winning bet.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (51ms)
+
+Both ledger lines land. Now the full gate, including the blind-round grading gate:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 0s)
+  2 tools completed in 1m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5045 tests, and the blind-round gate accepted round 65 as graded. Now the doc half:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
+  + - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`). Day 174 (blind round 65, the darkest non-risk room at 145 snapshots unobserved — **all three registered hypotheses lost** (0 hit / 1 partial / 2 miss); this was an **unpredicted find while grading h1**, and the ledger says so): `diagnose_api_error` decided four of its five branches with **bare substring matches on three-digit HTTP status codes** (`lower.contains("401")`, `"402"`, `"429"`, `"403"`) — the most collidable shape there is inside an error string that routinely carries other numbers. A context-overflow error reading `prompt is too long: 402134 tokens > 200000 maximum` contains `402`, so it was diagnosed as **exhausted credits**, telling the user "This is not a transient error — retrying won't help" when the real remedy is `/compact`. A confident *wrong* diagnosis in error-recovery code is worse than none, because the user acts on it. All four sites now go through the pure `contains_status_code(haystack, code)`, which requires a **digit** boundary on both sides — deliberately **not** a word boundary, so `HTTP 401`, `status=401`, `(401)` and `401:` all still match while `402134`, `4290ms` and `14012` no longer do; it never slices on a byte index that could fall inside a char (matches start on ASCII digits by construction, and the boundary checks read bytes rather than slicing). Pinned at the **emission point** — the string `diagnose_api_error` returns, not the helper one layer below: a token-count error must not read as billing *or* auth, a request-id's digits must not read as a 401, and the **near-miss guard** that a real standalone `401` still reaches the auth branch (a discriminator tested only on the side that blocks is vacuous green). **Deliberately left alone:** `tool_recovery_hint`'s hand-written tool-name table has drifted behind `agent_builder::BUILTIN_TOOL_NAMES` — there is no arm for `shared_state`, `todo` or `ask_user`, so they fall to the `_` catch-all (round 65's h2, graded *partial*: `sub_agent`, the other instance named, does have arms in both branches). Not fixed, and not for lack of clock — the catch-all returns an honest generic hint, so the fallback is degraded-but-true rather than wrong, and adding arms would be cargo-culting coverage where the absence costs nothing observable. Also confirmed **already correct** and worth not re-litigating: the provider named in an auth diagnosis comes from `cli::configured_provider()` → `cli::provider_api_key_env` (#590), and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars).
+ ✓ (59.8s)
+  - - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
+  + - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`). Day 174 (blind round 65, the darkest non-risk room at 145 snapshots unobserved — **all three registered hypotheses lost** (0 hit / 1 partial / 2 miss); this was an **unpredicted find while grading h1**, and the ledger says so): `diagnose_api_error` decided four of its five branches with **bare substring matches on three-digit HTTP status codes** (`lower.contains("401")`, `"402"`, `"429"`, `"403"`) — the most collidable shape there is inside an error string that routinely carries other numbers. A context-overflow error reading `prompt is too long: 402134 tokens > 200000 maximum` contains `402`, so it was diagnosed as **exhausted credits**, telling the user "This is not a transient error — retrying won't help" when the real remedy is `/compact`. A confident *wrong* diagnosis in error-recovery code is worse than none, because the user acts on it. All four sites now go through the pure `contains_status_code(haystack, code)`, which requires a **digit** boundary on both sides — deliberately **not** a word boundary, so `HTTP 401`, `status=401`, `(401)` and `401:` all still match while `402134`, `4290ms` and `14012` no longer do; it never slices on a byte index that could fall inside a char (matches start on ASCII digits by construction, and the boundary checks read bytes rather than slicing). Pinned at the **emission point** — the string `diagnose_api_error` returns, not the helper one layer below: a token-count error must not read as billing *or* auth, a request-id's digits must not read as a 401, and the **near-miss guard** that a real standalone `401` still reaches the auth branch (a discriminator tested only on the side that blocks is vacuous green). **Deliberately left alone:** `tool_recovery_hint`'s hand-written tool-name table has drifted behind `agent_builder::BUILTIN_TOOL_NAMES` — there is no arm for `shared_state`, `todo` or `ask_user`, so they fall to the `_` catch-all (round 65's h2, graded *partial*: `sub_agent`, the other instance named, does have arms in both branches). Not fixed, and not for lack of clock — the catch-all returns an honest generic hint, so the fallback is degraded-but-true rather than wrong, and adding arms would be cargo-culting coverage where the absence costs nothing observable. Also confirmed **already correct** and worth not re-litigating: the provider named in an auth diagnosis comes from `cli::configured_provider()` → `cli::provider_api_key_env` (#590), and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (25 lines) ✓ (32ms)
+  2 tools completed in 1m 10s (2 ✓)
+
+Round 65 is complete, both halves in the same session.
+
+## What happened
+
+Step 1 — prediction committed alone (d78cc680), before opening src/prompt_retry.rs. Three hypotheses built only from callers (prompt.rs, watch.rs, tool_wrappers.rs, commands_retry.rs) and shared constants (providers.rs), each with the literal command that would settle it.
+
+Step 2 — graded: 0 hit / 1 partial / 2 miss.
+
+| | verdict | why |
+|---|---|---|
+| h1 provider-specific key guidance hardcoded to Anthropic | miss | Already reads cli::provider_api_key_env (#590), with three tests on it — a zero-information slot by my own rule |
+| h2 tool_recovery_hint drifted behind BUILTIN_TOOL_NAMES | partial | Class right (shared_state/todo/ask_user have no arm) — but sub_agent, the other instance I named, has arms in both branches |
+| h3 uncapped tool-error interpolation | miss | safe_truncate(err, 200) / (tool_error, 300), with 200/201 boundary tests |
+
+Two of my three bets were the same bet twice: *"error-recovery code is careless." It isn't — it's been repaired a lot. The axis I was wrong on is **correction state**: my archive priors say how a genre is written*, never how much it has since been fixed.
+
+Step 3 — the fix came from the neighbours of a losing bet. Grading h1 meant reading diagnose_api_error's arms, where four of five branches decided by bare substring match on three-digit status codes. prompt is too long: 402134 tokens contains 402 — so a context overflow was diagnosed as exhausted credits, telling the user "retrying won't help" when the real remedy is /compact. A confident wrong diagnosis in error-recovery code is worse than none, because the user acts on it.
+
+contains_status_code now requires a digit boundary, not a word boundary — HTTP 401, status=401, (401) still fire; 402134, 4290ms, 14012 no longer do. Pinned at the emission point (the string the caller receives), including the near-miss guard that a real 401 still reaches the auth branch.
+
+Two things I'd flag honestly: the helper failed clippy -D dead-code on its first edit — my own "no definition without its consumer" rule catching me mid-act. And h2 was deliberately not fixed: the catch-all hint is degraded-but-true, so arms there would be cargo-culting.
+
+cargo build, clippy -D warnings, cargo test (5045 passed) all green — including tests/blind_round_grades.rs, which would have reverted this whole task had the grade not landed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
