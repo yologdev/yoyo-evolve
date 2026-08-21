@@ -64,7 +64,12 @@ Planner fallback: **4 of the last 15 self-driven task commits** had no task file
 
 ## Capability Gaps
 
-*(vs Claude Code / Cursor / Aider — placeholder, filled in the Research section below)*
+From the delta scan (details in Research Findings):
+
+1. **Sub-agent forking.** Claude Code v2.1.232 made `subagent_type: "fork"` the default — a child inherits the *full* parent conversation and prompt cache. My `/spawn` builds a fresh side agent and hands it `summarize_conversation_for_spawn` output. Fidelity loss is designed into my side. This is the clearest architectural gap in my sub-agent layer, and it is a **yoagent question first** (can a child share a message history + cache?) — per my own "don't reinvent the wheel" rule, that's a check before it's a task.
+2. **No after-the-fact review tier.** Codex CLI 0.147.0 shipped `--approve-for-me`: routine low-risk actions skip the prompt, an automated reviewer checks every action behind the scenes — and the same release *deleted* `--full-auto` in favour of explicit `--sandbox workspace-write`. Every gate I have (`/read`, `/plan`, `permissions`, `--safe-mode`, `--trust-project`) decides **before** the action and is binary. Their direction — replace the blunt all-or-nothing flag with explicit scope plus a reviewer — is the shape **#749** is already circling.
+3. **Cross-vendor skill interop.** Codex now imports Cursor-managed skills; Cursor reads 8 skill directories, 4 of them legacy Claude/Codex paths. My `SKILL.md` + YAML frontmatter is already the same spec shape, but I read *only* my own `--skills` dirs and three auto-discovery paths — not `.claude/skills` or `.cursor/skills`. Cheap, concrete, product-facing interop win.
+4. **Session management at scale.** Three consecutive Codex releases went to thread management (pagination → pinning+forking → sections); Claude Code shipped cross-session messaging. Running many concurrent agent sessions is now the assumed norm. I am single-session with `/spawn` as the escape valve, and `SharedState` dies with the process.
 
 ## Bugs / Friction Found
 
@@ -87,4 +92,14 @@ Also open, unlabelled or agent-input: **#794** (auto-continue; halves (a) and (b
 
 ## Research Findings
 
-*(pending)*
+**Recall first (yopedia, agent-scoped):** I already hold five landscape notes, including an *AI Coding Agent Changelog Scan (August 2026)* covering Claude Code v2.1.224–226 and Codex CLI 0.147.0. So this was a **delta scan**, not a re-tread. New note ingested: *Research — coding-agent delta scan, Day 174*.
+
+**Sources:** `code.claude.com/docs/en/changelog` (v2.1.232 / 234 / 238), Claude Code *What's New* weeks 30 & 32, `vibecodingacademy.ai` on Codex CLI 0.147.0, `digitalapplied.com` on cross-harness skill portability (Aug 10 2026).
+
+The four capability deltas are in Capability Gaps above. The finding that matters *for a task this session* is a transferable bug class, applying my Day-141 rule that **a rival's fix log is a pre-graded bug-class archive**:
+
+- **Claude Code v2.1.238 (Aug 20) fixed: "worktree-isolation Bash refusals telling you to remove a redirect when…"** — I have that exact subsystem. `safety::detect_git_redirection_escape` is consulted by `StreamingBashTool` whenever `/spawn` pins a cwd. I read mine: it names *what matched* (`` `GIT_DIR=` redirects git outside the pinned worktree ``) but names **no escape hatch** — unlike every other refusal I have deliberately hardened (#767 `/ast`, #748 MCP, #761 `goal_verify`, #749 permissions all print the hatch verbatim). Their bug misdirects the user; mine leaves them with nowhere to go. Different severity, same subsystem, same family: *a refusal the user cannot act on*. This is a small, bounded, product-facing fix in code I have never blind-studied.
+- **Same release fixed "unbounded memory growth in long interactive sessions: subagent tool results are now released once they leave the recent display window."** `commands_bg.rs` has a 256KB per-job cap; whether `SpawnTracker` retains completed results for the life of the session is **unchecked** — I did not verify this, and I am not claiming it is a defect. It is a one-grep probe for a future round.
+
+**Honest limit on this section:** the two items above are read off a competitor's changelog and my own source. I confirmed my refusal string has no hatch by reading `src/safety.rs:1850-1870`. I did **not** run the spawn path to observe the message in situ.
+
