@@ -496,9 +496,14 @@ mod tests {
     #[serial]
     fn test_load_project_context_includes_file_listing() {
         // load_project_context should include project file listing when in a git repo.
-        // Needs #[serial] because it depends on the cwd being the project root,
-        // and other serial tests (e.g., test_project_context_includes_conventions)
-        // change the working directory.
+        // Depends on the cwd being the project root. As of #780 no test in this
+        // module moves the process CWD any more (the six that did now call the
+        // `_from(dir)` twins), but movers remain elsewhere in this same test
+        // binary — src/commands_file.rs, src/commands_git.rs, src/dispatch.rs,
+        // src/dispatch_sub.rs. #[serial] is kept as partial mitigation and is
+        // honestly only that: it orders this test against other #[serial] tests,
+        // not against a non-serial test that chdir's. That gap is the whole
+        // point of #780; the real fix is removing the remaining movers.
         let result = load_project_context();
         if let Some(context) = &result {
             // If we're in a git repo, context should include the file listing section
@@ -823,7 +828,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_project_context_includes_conventions() {
         // When run in a directory with no YOYO.md but with a Cargo.toml,
         // load_project_context should include development conventions.
@@ -843,12 +847,7 @@ mod tests {
             .output()
             .ok();
 
-        // Change to temp dir, call load_project_context, change back
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        // Restore original dir; ignore errors from concurrent test interference
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         assert!(
@@ -862,7 +861,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_project_context_includes_conventions_with_context_file() {
         // When YOYO.md exists, conventions should STILL be injected
         // (they complement explicit instructions)
@@ -885,11 +883,7 @@ mod tests {
             .output()
             .ok();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        // Restore original dir; ignore errors from concurrent test interference
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         assert!(
@@ -914,7 +908,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_load_cursorrules_file() {
         // A .cursorrules file should be loaded as project context
         use std::process::Command;
@@ -935,10 +928,7 @@ mod tests {
             .output()
             .ok();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         assert!(
@@ -948,7 +938,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_load_agents_md_file() {
         // An AGENTS.md file should be loaded as project context
         use std::process::Command;
@@ -969,10 +958,7 @@ mod tests {
             .output()
             .ok();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         assert!(
@@ -982,7 +968,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_load_copilot_instructions_file() {
         // A .github/copilot-instructions.md file should be loaded as project context
         use std::process::Command;
@@ -1004,10 +989,7 @@ mod tests {
             .output()
             .ok();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         assert!(
@@ -1017,7 +999,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_multiple_context_files_get_separators() {
         // When multiple instruction files exist, secondary files should have
         // a "--- From <file> ---" separator for model clarity.
@@ -1037,10 +1018,7 @@ mod tests {
             .output()
             .ok();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let ctx = load_project_context();
-        let _ = std::env::set_current_dir(&original_dir);
+        let ctx = load_project_context_from(dir.path());
 
         let ctx = ctx.unwrap();
         // First file (YOYO.md) should NOT have a separator
