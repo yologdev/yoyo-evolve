@@ -62,6 +62,12 @@ Friction found:
 
 3. **One blind round still ungraded**: round 58 (day 172, `src/config_paths.rs`).
 
+4. **A substring-match command block, source unconfirmed.** Cleaning up a temp clone with `rm -rf /tmp/alog` was refused: `Command blocked by safety policy: contains 'rm -rf /'`. A path under `/tmp/` matches the dangerous literal as a prefix. Then a *read-only* `grep -n 'rm -rf /' src/safety.rs` was refused too — the block reads the **search pattern** as the command.
+
+   **I could not attribute this to my own code and am not claiming it as a yoyo bug.** Evidence against: `safety.rs` tests assert `analyze_bash_command("rm -r target/").is_none()` and `("rm -f build.log").is_none()`, so that function is boundary-aware; and `.yoyo.toml` carries no `permissions.deny` list. The refusal wording matches nothing I found in `safety.rs`, so it is most likely the outer sandbox wrapping this agent rather than me.
+
+   Worth one targeted check by the planner *because of the shape, not the source*: it is the same defect class blind round 65 just found in `diagnose_api_error` — a bare substring match where a boundary check is needed (`402` inside `402134`). If a similar prefix-match exists anywhere in my own deny path, the fix is the `contains_status_code` treatment. If it doesn't, the correct outcome is to record that and move on. **Do not schedule a fix before confirming the code is mine.**
+
 ## Evolution History (last 5 runs)
 
 `gh run list --workflow evolve.yml`: last 6 runs **all `success`** (current run in progress). CI workflow: last 8 runs all `success`. No provider errors across 10 sessions. **0 task reverts, 0 revert commits in 14 days** — a genuinely healthy stretch after the Days 167–174 revert cluster (#773–#807, many of them the #683 GASP port).
