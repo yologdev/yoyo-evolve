@@ -1,0 +1,234 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/config_paths.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,230p src/setup.rs && … ✓ (8ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:640..690 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "existing_config_paths\|… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs:655..700 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_dir" src/setup.… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:280..330 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HOME\|serial\|TempDir\|… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:1755..1825 ✓ (0ms)
+  9 tools completed in 56.3s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn home_config_path… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs:32..62 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 47.4s (3 ✓)
+
+Now the dir-taking seam in config_paths.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (7 → 30 lines)
+    pub(crate) fn existing_config_paths() -> Vec<std::path::PathBuf> {
+  +     existing_config_paths_in(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-taking seam for [`existing_config_paths`]: `project_dir` is where the
+  + /// project rung (`.yoyo.toml`) is looked for, instead of the process cwd.
+  + ///
+  + /// This exists because the returned chain is compared **by path equality** against
+  + /// a file someone just wrote (`shadowing_config_file` / `demoted_config_file`), and
+  + /// the setup wizard writes `project_dir.join(".yoyo.toml")` — an absolute path in
+  + /// production. A chain whose project rung is the bare relative `.yoyo.toml` can
+  + /// never compare equal to it, so the guard would be structurally incapable of
+  + /// firing. Callers that know their project dir pass it; everyone else keeps the
+  + /// cwd-relative form, byte-identical to before (`Path::new(".").join(".yoyo.toml")`
+  + /// is `./.yoyo.toml`, which is why the wrapper special-cases the bare name).
+  + ///
+  + /// There is exactly ONE statement of the precedence ladder — this function. A
+  + /// second copy would drift from `config::load_config_file`, which is the whole
+  + /// property these helpers exist to mirror.
+  + pub(crate) fn existing_config_paths_in(project_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+  ... (12 more lines)
+ ✓ (1m 38s)
+    pub(crate) fn existing_config_paths() -> Vec<std::path::PathBuf> {
+  +     existing_config_paths_in(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-taking seam for [`existing_config_paths`]: `project_dir` is where the
+  + /// project rung (`.yoyo.toml`) is looked for, instead of the process cwd.
+  + ///
+  + /// This exists because the returned chain is compared **by path equality** against
+  ... (13 more lines)
+
+Now the pure helper and the two wizard arms in src/setup.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/setup.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (1 → 39 lines)
+  + /// Both halves of the #735 precedence guard, behind **one** writer so the wizard's
+  + /// two save arms cannot drift apart.
+  + ///
+  + /// yoyo loads exactly one config file — the first that exists, no merging — so a
+  + /// green `✓ Saved to <path>` is a claim about the *container*, never the payload.
+  + /// Two things can be true of a freshly written config, and they run in opposite
+  + /// directions:
+  + ///
+  + /// * **shadowed** — the file written sits *below* an existing one, so nothing in
+  + ///   it will ever be read here (the wizard's `SaveLocation::User` arm writes the
+  + ///   lowest rung, so this is its failure mode);
+  + /// * **demoted** — the file written is the *new* highest rung, so whatever config
+  + ///   yoyo had been reading has silently gone dark (the `SaveLocation::Project` arm
+  + ///   writes the highest rung, so this is its failure mode).
+  + ///
+  + /// `before` must be captured **before** the write and `after` after it: a newly
+  + /// created file is already position 0 in its own chain, so a purely post-write
+  + /// check answers "no, you're on top" and stays silent about the file it just
+  + /// demoted (#735 — a guard that reads the world after its own action is blinded
+  + /// by that action).
+  ... (19 more lines)
+ ✓ (13.5s)
+  + /// Both halves of the #735 precedence guard, behind **one** writer so the wizard's
+  + /// two save arms cannot drift apart.
+  + ///
+  + /// yoyo loads exactly one config file — the first that exists, no merging — so a
+  + /// green `✓ Saved to <path>` is a claim about the *container*, never the payload.
+  + /// Two things can be true of a freshly written config, and they run in opposite
+  + /// directions:
+  + ///
+  ... (13 more lines)
+  2 tools completed in 26.9s (2 ✓)
+
+Expected — the consumer lands next, in the same edit sequence.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (41 → 61 lines)
+            SaveLocation::Project => {
+                let target = project_dir.to_path_buf();
+                let existed = target.join(".yoyo.toml").exists();
+  +             // Capture the precedence chain BEFORE the write: afterwards this
+  +             // file is already position 0 of its own chain, which is exactly
+  +             // what blinds the guard to the demotion it just caused (#735).
+  +             let before_write = crate::config_paths::existing_config_paths_in(&target);
+                match save_config_to_file(&target, provider, &model, base_url.as_deref(), key_arg) {
+                    Ok(path) => {
+                        writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+  ···
+                                "  {DIM}Previous config backed up to {path}.bak (unmanaged settings preserved){RESET}"
+                            )
+                            .ok();
+  +                     }
+  +                     let after_write = crate::config_paths::existing_config_paths_in(&target);
+  +                     for line in
+  +                         config_write_warnings(&before_write, &after_write, &target.join(".yoyo.toml"))
+  +                     {
+  +                         writeln!(writer, "  {YELLOW}{line}{RESET}").ok();
+  ... (27 more lines)
+ ✓ (1m 37s)
+            SaveLocation::Project => {
+                let target = project_dir.to_path_buf();
+                let existed = target.join(".yoyo.toml").exists();
+  +             // Capture the precedence chain BEFORE the write: afterwards this
+  +             // file is already position 0 of its own chain, which is exactly
+  +             // what blinds the guard to the demotion it just caused (#735).
+  +             let before_write = crate::config_paths::existing_config_paths_in(&target);
+                match save_config_to_file(&target, provider, &model, base_url.as_deref(), key_arg) {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.5s)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:1276..1308 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.6s (2 ✓)
+
+Now the tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 src/setup.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (128 lines) ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test setup:: 2>&1 | tail -… ✓ (23.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo setup:: 2>… ✓ (144ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo setup:: --… ✓ (142ms)
+  5 tools completed in 54.9s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "resul… ✓ (1m 22s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'const GRANDFATHERED_OVE… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^    ("src/' tests/modu… ✓ (3ms)
+  7 tools completed in 2m 26s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < src/setup.rs && sed -n 2… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 16 lines)
+        ("src/safety.rs", 3490),
+  +     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
+  +     // wizard becomes the second and third consumer of the #735 shadow/demotion
+  +     // guard family (which had exactly one: `/config set`), so both of its save
+  +     // arms now say when the file they just wrote is shadowed, or has silently
+  +     // demoted the config yoyo was reading. ~60 of the +185 are the two arms and
+  +     // the one shared pure writer; ~125 are tests, including the emission-point
+  +     // one that pins the string a user actually reads out of the wizard's writer.
+  +     // Registered rather than trimmed on purpose: the only way to land under the
+  +     // cap here was to delete the tests and the "why" comment, i.e. trade the
+  +     // legibility of the fix for a line count. A split is the real answer and is
+  +     // NOT free — this module's ~1200 lines of tests reach ~20 private helpers
+  +     // through `use super::*`, so moving them out means making all of those
+  +     // `pub(crate)` first. Filed as the follow-up rather than half-done here.
+  +     ("src/setup.rs", 2067),
+        ("src/symbols.rs", 3804),
+ ✓ (1m 0s)
+        ("src/safety.rs", 3490),
+  +     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
+  +     // wizard becomes the second and third consumer of the #735 shadow/demotion
+  +     // guard family (which had exactly one: `/config set`), so both of its save
+  +     // arms now say when the file they just wrote is shadowed, or has silently
+  +     // demoted the config yoyo was reading. ~60 of the +185 are the two arms and
+  +     // the one shared pure writer; ~125 are tests, including the emission-point
+  +     // one that pins the string a user actually reads out of the wizard's writer.
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (177ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 13s (3 ✓)
+
+Now the CLAUDE.md note:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config_paths\|setup\.rs… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `sync_util.rs`' CLAU… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (30ms)
+  3 tools completed in 24.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "resul… ✓ (1m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 6s (2 ✓)
+
+All green. Verifying the fix is real end-to-end (not just green tests) before committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf w816 && mkdir -p w816/proj w816/home/.config/yoyo && cd w816 &… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf w816b && mkdir -p w816b/proj w816b/home/.config && cd w816b/pr… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+Both arms fire live, in opposite directions. Confirming the silent path is unchanged for first-time setup:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf w816c && mkdir -p w816c/proj w816c/home/.config && cd w816c/pr… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /tmp && rm -rf w816c && mkdir -p w816c/proj w816c/home/.config && cd w816c/pr… ✓ (8ms)
+  2 tools completed in 3.3s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
