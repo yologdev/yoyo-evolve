@@ -1304,8 +1304,26 @@ pub fn maybe_learn_from_fix(watch_cmd: &str, failed_output: &str) {
 /// calls this turn). Running clippy/tests after a read-only prompt burns
 /// wall-clock time and — worse — misattributes any pre-existing failures
 /// to "your changes" in the auto-fix loop. Pure so it's trivially testable.
-fn should_run_watch_after_prompt(changes: &SessionChanges) -> bool {
-    !changes.snapshot().is_empty()
+///
+/// `edits_before` is the caller's own [`SessionChanges::edit_count`] sampled
+/// *before* the prompt ran, which is what makes this a **per-turn** question.
+/// Day 175 (#818, found by blind round 71): this used to be
+/// `!changes.snapshot().is_empty()` — the *session-wide* deduped file list,
+/// which `clear()` only empties on `/clear`. Once anything had been edited in
+/// the session it returned `true` forever, so the predicate could not answer
+/// the question the paragraph above claims it answers. Three of its four
+/// callers happened to be safe for three different reasons (`repl.rs` has its
+/// own outer per-turn delta guard; both `main.rs` sites are per-process, where
+/// session-wide *is* per-turn), and the fourth — `/extended`, at
+/// `conversations.rs` — had no outer guard at all, so a zero-change
+/// `/extended` turn ran the full lint→fix→test cycle and was then told
+/// "Your changes caused failures" about a failure it did not cause.
+///
+/// The counter, not the vec length, is the right input: a turn that re-edits
+/// an already-touched file grows `edit_count()` but leaves `snapshot().len()`
+/// unchanged (that is why #774 added it).
+fn should_run_watch_after_prompt(changes: &SessionChanges, edits_before: usize) -> bool {
+    changes.edit_count() > edits_before
 }
 
 /// Run the watch command(s) after a prompt completes.
@@ -1329,6 +1347,7 @@ pub async fn run_watch_after_prompt(
     session_total: &mut Usage,
     model: &str,
     changes: &SessionChanges,
+    edits_before: usize,
 ) -> WatchResult {
     let commands = get_watch_commands();
     if commands.is_empty() {
@@ -1338,7 +1357,7 @@ pub async fn run_watch_after_prompt(
         };
     }
 
-    if !should_run_watch_after_prompt(changes) {
+    if !should_run_watch_after_prompt(changes, edits_before) {
         eprintln!("{DIM}  watch: no files changed this turn — skipping{RESET}");
         return WatchResult {
             passed: true,
@@ -1959,7 +1978,7 @@ mod tests {
         // changes — the post-prompt watch cycle must be skipped.
         let changes = SessionChanges::new();
         assert!(
-            !should_run_watch_after_prompt(&changes),
+            !should_run_watch_after_prompt(&changes, 0),
             "watch should be skipped when the prompt changed zero files"
         );
     }
@@ -1971,8 +1990,49 @@ mod tests {
         let changes = SessionChanges::new();
         changes.record("src/main.rs", crate::session::ChangeKind::Edit);
         assert!(
-            should_run_watch_after_prompt(&changes),
+            should_run_watch_after_prompt(&changes, 0),
             "watch should run when the prompt changed at least one file"
+        );
+    }
+
+    #[test]
+    fn watch_gate_reads_a_per_turn_delta_not_session_wide_state() {
+        // #818, found by blind round 71. The gate used to be
+        // `!changes.snapshot().is_empty()` — the SESSION-WIDE deduped file
+        // list, which `clear()` only empties on `/clear`. Both tests above
+        // drive a FRESH tracker, where session-wide state and per-turn state
+        // are identical, so neither could ever distinguish the two readings:
+        // vacuous green in exactly the direction that mattered. This test
+        // drives a NON-fresh tracker, which is the case they could not reach.
+        let changes = SessionChanges::new();
+
+        // An earlier turn in this session edited a file.
+        changes.record("src/main.rs", crate::session::ChangeKind::Edit);
+
+        // A later turn begins: sample the baseline, then change nothing.
+        let edits_before = changes.edit_count();
+        assert!(
+            !should_run_watch_after_prompt(&changes, edits_before),
+            "a zero-edit turn must be skipped even when the session already \
+             has recorded changes — under the old session-wide reading this \
+             returned true forever after the session's first edit"
+        );
+
+        // Near-miss guard (Day 124 lesson): a discriminator tested only on the
+        // side that blocks is vacuous green. Re-edit the SAME file — the
+        // deduped vec does not grow, so `snapshot().len()` is unchanged and
+        // only the monotonic counter (#774) can see this turn's work.
+        let files_before = changes.snapshot().len();
+        changes.record("src/main.rs", crate::session::ChangeKind::Edit);
+        assert_eq!(
+            changes.snapshot().len(),
+            files_before,
+            "precondition: re-editing the same file must not grow the deduped \
+             set — that is why the counter, not the length, is the right input"
+        );
+        assert!(
+            should_run_watch_after_prompt(&changes, edits_before),
+            "re-editing an already-touched file is still work this turn"
         );
     }
 

@@ -813,6 +813,7 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
             ctx.session_total,
             &ctx.agent_config.model,
             ctx.session_changes,
+            ctx.edits_before,
         )
         .await;
         if !watch_result.passed {

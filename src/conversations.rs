@@ -600,6 +600,15 @@ pub(crate) async fn handle_extended(
 
     // Run the task using the existing prompt infrastructure with auto-retry.
     // If a budget is set, wrap in tokio::time::timeout.
+    //
+    // #818: sample the edit counter BEFORE the prompt runs. The post-prompt
+    // watch gate asks a per-turn question ("did *this* turn change files?"),
+    // and a baseline read afterwards would already contain this turn's own
+    // writes — the Day-165 shape, where a guard that reads the world after its
+    // own action is blinded by that action. Unlike `repl.rs`, this call site
+    // has no outer per-turn guard, so this baseline is the only thing standing
+    // between a zero-change `/extended` turn and a full lint→fix→test cycle.
+    let edits_before = session_changes.edit_count();
     let prompt_start = Instant::now();
     let timed_out;
 
@@ -649,7 +658,7 @@ pub(crate) async fn handle_extended(
 
     // Run watch command after prompt if active (auto lint/test loop)
     if !timed_out {
-        run_watch_after_prompt(agent, session_total, model, session_changes).await;
+        run_watch_after_prompt(agent, session_total, model, session_changes, edits_before).await;
     }
 
     // Summary

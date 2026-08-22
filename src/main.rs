@@ -430,6 +430,9 @@ async fn run_single_prompt(
         &mut session_total,
         &agent_config.model,
         &session_changes,
+        // Per-process entry point: this tracker was created for this run, so
+        // its session-wide state IS the turn's state and the baseline is 0.
+        0,
     )
     .await;
 
@@ -684,6 +687,8 @@ async fn run_piped_mode(
             &mut session_total,
             &agent_config.model,
             &session_changes,
+            // Per-process entry point: baseline 0 (see run_single_prompt).
+            0,
         )
         .await;
     }
