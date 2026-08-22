@@ -87,9 +87,6 @@ const LEDGER_PATH: &str = "dreams/experiments.jsonl";
 /// rounds of days 150–153 are real rounds, and absence gets its own value
 /// rather than being absorbed by a convenient neighbour.
 const GRANDFATHERED_UNGRADED_ROUNDS: &[(&str, &str, usize, usize)] = &[
-    // Day 172: prediction landed, the grade never did. The exact shape #801 is
-    // about, and the reason this gate exists.
-    ("58", "src/config_paths.rs", 4, 0),
     // Day 171: 1 of 3 graded — the round ran out of clock mid-grade.
     ("57", "src/commands_plan.rs", 3, 1),
     // Day 169: 1 of 3 graded.
