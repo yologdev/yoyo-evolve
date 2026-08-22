@@ -1500,35 +1500,50 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn goal_set_routing_stores_multi_word_goal_without_quotes() {
         // #679 finding 2, twin arm (Day 151 sweep): the `goal` CLI arm must
         // plain-join, not re-quote, because handle_goal's `set` takes its
         // remainder verbatim (no tokenize_quoted in commands_goal.rs).
         // End-to-end through try_dispatch_subcommand: what lands in
         // .yoyo/goal.md must be the words, never `"words"`.
+        //
+        // #780: this drives the real route (handle_goal -> save_goal ->
+        // goal_path -> goal_base) rooted at a temp dir via the goal module's
+        // own thread-local seam, instead of moving the process CWD. The chdir
+        // it used to do was process-global, so it corrupted any concurrently
+        // running test resolving a relative path — `#[serial]` did not help,
+        // since that only serialises against other `#[serial]` tests and left
+        // unmarked CWD *readers* (setup::tests) exposed. The `#[serial]` was
+        // removed with the chdir: keeping it would be a false record of which
+        // tests are dangerous.
         let tmp = tempfile::TempDir::new().expect("create temp dir");
-        let prev = std::env::current_dir().expect("get cwd");
-        std::env::set_current_dir(tmp.path()).expect("set cwd");
-        let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
-            .into_iter()
-            .map(String::from)
-            .collect();
-        let result = try_dispatch_subcommand(&args);
-        let stored = crate::commands_goal::load_goal();
-        // Restore cwd before asserting so a failure can't leak the temp cwd
-        // into other tests.
-        std::env::set_current_dir(prev).expect("restore cwd");
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for `goal set` subcommand"
-        );
-        let stored = stored.expect("goal should have been saved");
-        assert_eq!(stored, "ship the parser fix");
-        assert!(
-            !stored.contains('"'),
-            "stored goal must not contain literal quote chars, got: {stored}"
-        );
+        crate::commands_goal::with_goal_base_dir(tmp.path(), || {
+            let args: Vec<String> = vec!["yoyo", "goal", "set", "ship the parser fix"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+            let result = try_dispatch_subcommand(&args);
+            let stored = crate::commands_goal::load_goal();
+            assert!(
+                matches!(result, Some(None)),
+                "expected Some(None) for `goal set` subcommand"
+            );
+            let stored = stored.expect("goal should have been saved");
+            assert_eq!(stored, "ship the parser fix");
+            assert!(
+                !stored.contains('"'),
+                "stored goal must not contain literal quote chars, got: {stored}"
+            );
+            // The seam is load-bearing, so assert it at the emission point —
+            // the file on disk, not just the value read back. Without this a
+            // future regression that resolved against the process CWD again
+            // could still pass every assertion above by writing the real repo's
+            // .yoyo/goal.md, which is exactly the damage #780 is about.
+            assert!(
+                tmp.path().join(".yoyo/goal.md").exists(),
+                "goal must be written under the temp root, not the process CWD"
+            );
+        });
     }
 
     #[test]

@@ -40,6 +40,26 @@ fn goal_base() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
+/// Run `f` with every goal path rooted at `dir` instead of the process CWD.
+///
+/// Test-only, and `pub(crate)` so a *sibling* module's tests can drive a route
+/// that reaches this file's writers (`src/dispatch_sub.rs`'s `goal set` routing
+/// test) without calling `std::env::set_current_dir`, which is process-global
+/// and so corrupts any concurrently-running test that resolves a relative path
+/// (#780). The previous value is restored rather than cleared, so nesting is
+/// safe, and it is restored on panic too — a failing test must not re-root a
+/// later one at a deleted directory.
+#[cfg(test)]
+pub(crate) fn with_goal_base_dir<F: FnOnce()>(dir: &Path, f: F) {
+    let prev = GOAL_BASE_DIR.with(|b| b.borrow().clone());
+    GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(dir.to_path_buf()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    GOAL_BASE_DIR.with(|b| *b.borrow_mut() = prev);
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 /// Path to the goal file, rooted at [`goal_base`].
 fn goal_path() -> std::path::PathBuf {
     goal_base().join(GOAL_FILE)
@@ -560,12 +580,7 @@ mod tests {
     /// panics, so one failing test cannot re-root a later one at a deleted dir.
     fn with_temp_dir<F: FnOnce()>(f: F) {
         let tmp = TempDir::new().expect("create temp dir");
-        GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(tmp.path().to_path_buf()));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-        GOAL_BASE_DIR.with(|b| *b.borrow_mut() = None);
-        if let Err(payload) = result {
-            std::panic::resume_unwind(payload);
-        }
+        with_goal_base_dir(tmp.path(), f);
     }
 
     #[test]
