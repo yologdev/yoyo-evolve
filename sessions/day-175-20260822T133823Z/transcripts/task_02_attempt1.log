@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant section of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p scripts/extract_tra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ci_error\|CI error\|fai… ✓ (5ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 525,650p scripts/extract_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,985p scripts/extract_… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1590,1660p scripts/extrac… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 986,1000p scripts/extract… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 19,27p scripts/extract_tr… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=19 && NR<=24' scripts/e… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^import \|^from " scrip… ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 49s (9 ✓)
+
+Now I understand the shape. Let me write the change.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 9 lines)
+    import subprocess
+    import sys
+    from collections import Counter, defaultdict
+  + from dataclasses import dataclass, field
+    from datetime import datetime, timezone
+    from pathlib import Path
+ ✓ (46.0s)
+    import subprocess
+    import sys
+    from collections import Counter, defaultdict
+  + from dataclasses import dataclass, field
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 556,636p scripts/extract_… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.9s (3 ✓)
+
+Now the core rewrite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (72 → 188 lines)
+  - def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
+  -     """Return [(fingerprint, [run_ids_seen_at])]. Capped at MAX_FAILED_RUNS fetches.
+  -     Silent return-empty paths now warn() so a misconfigured token / rate-limit
+  -     doesn't masquerade as 'no failed runs' (would defeat the recurring-error
+  -     detection this section exists for)."""
+  + def run_age_days(created_at, now: datetime):
+  +     """Age of an ISO-8601 timestamp in days. Pure.
+  + 
+  +     Returns None for a missing / non-string / unparseable stamp — deliberately
+  +     NOT 0.0. "I don't know when this ran" is a different fact from "it ran just
+  +     now", and folding the first into the second is exactly how resolved history
+  +     gets rendered as current state."""
+  +     if not isinstance(created_at, str):
+  +         return None
+  +     s = created_at.strip()
+  +     if not s:
+  +         return None
+  +     if s.endswith("Z"):
+  +         s = s[:-1] + "+00:00"
+  +     try:
+  ... (177 more lines)
+ ✓ (45.9s)
+  - def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
+  -     """Return [(fingerprint, [run_ids_seen_at])]. Capped at MAX_FAILED_RUNS fetches.
+  -     Silent return-empty paths now warn() so a misconfigured token / rate-limit
+  -     doesn't masquerade as 'no failed runs' (would defeat the recurring-error
+  -     detection this section exists for)."""
+  + def run_age_days(created_at, now: datetime):
+  +     """Age of an ISO-8601 timestamp in days. Pure.
+  + 
+  ... (13 more lines)
+
+Now the main() call sites:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ci_clusters\|render_ci_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1068,1092p scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (23ms)
+  3 tools completed in 13.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (75ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Parses and existing tests still pass. Now the new self-tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'print(f"\\n{.ALL PASSED… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1960,1972p scripts/extrac… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 122 lines)
+  +     # --- CI section: age filter + three render worlds ----------------------
+  +     # The defect: `gh run list --status failure --limit N` has no date filter,
+  +     # so the N most recent failures EVER were rendered under a header claiming
+  +     # they were "in window". Four-day-old resolved history read as current
+  +     # state, and the healthier the loop gets the staler the section becomes.
+  +     print("\n=== CI age filter / render self-tests ===\n")
+  + 
+  +     NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+  + 
+  +     def run_at(stamp, run_id="1"):
+  +         return {"databaseId": run_id, "createdAt": stamp}
+  + 
+  +     # 1. run_age_days: a real stamp, both Z and offset spellings.
+  +     assert_eq(
+  +         "age of a 4-day-old run",
+  +         f"{run_age_days('2026-08-18T12:00:00Z', NOW):.2f}",
+  +         "4.00",
+  +     )
+  +     assert_eq(
+  +         "offset-form stamp parses the same",
+  ... (102 more lines)
+ ✓ (47.0s)
+  +     # --- CI section: age filter + three render worlds ----------------------
+  +     # The defect: `gh run list --status failure --limit N` has no date filter,
+  +     # so the N most recent failures EVER were rendered under a header claiming
+  +     # they were "in window". Four-day-old resolved history read as current
+  +     # state, and the healthier the loop gets the staler the section becomes.
+  +     print("\n=== CI age filter / render self-tests ===\n")
+  + 
+  +     NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO=yologdev/yoyo-evolve Y… ✓ (113ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptyaudit && YOYO… ✓ (4.8s)
+  6 tools completed in 1m 38s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real run works — the rows now carry ages and the header names the window. Let me capture the exact CI section:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^## Recurring CI/,/^$/' /t… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "recurring CI error fing… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (48ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (46.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (46.2s)
+  7 tools completed in 2m 18s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (46.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (56 lines) ✓ (16ms)
+
+Committed. Here's what happened.
+
+## The defect
+
+collect_failed_ci_fingerprints called gh run list --status failure --limit 5 with no date filter — the five most recent failures ever — and rendered them under a header claiming "(failed runs in window)". createdAt was already being fetched and discarded.
+
+Measured today: no failed run in 4 days, last 10 sessions 2/2 green, and two of the five fingerprints are the setup::tests::test_wizard_* panics that #780's chdir removals already cured. Resolved history, handed to my planner as current state.
+
+## What I built (`scripts/extract_trajectory.py`, one file)
+
+• `run_age_days(created_at, now)` — pure; None for missing/unparseable, deliberately never 0.0.
+• `partition_failed_runs(runs, now, window_days)` — pure; three states (in_window / too_old / undated), none folded into another. Undated is counted and reported.
+• Filter runs before the gh run view --log-failed loop, so it also saves the slow calls.
+• Clusters carry newest-run age → `[2×, last 4d ago] …; header names the window. Reuses the existing WINDOW_DAYS`.
+• render_ci_errors takes a CiScan, giving its three worlds separate sentences — plus a fourth I found while writing it: runs are in window but every log fetch died, which now reports unreadable logs instead of "clean".
+• The could-not-check line isn't counted as trajectory data in main, so it can't suppress the global (no trajectory data yet) state.
+
+## Verification
+
+• python3 scripts/extract_trajectory.py --test → ALL PASSED, 17 new cases including both sides of the boundary (exactly 14d inside, 14d+1min outside).
+• cargo fmt --check, clippy --all-targets -D warnings, build, test — all green (no Rust changed).
+• Real run against this repo: the clean branch correctly does not fire — all five failures are 3–4 days old and genuinely inside the 14-day window. The visible change today is the age labels and the window-named header, exactly as the task predicted. I didn't tune the window until it read "clean".
+
+CLAUDE.md's extract_trajectory.py bullet updated with the age filter, the three render states, and the reason.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
