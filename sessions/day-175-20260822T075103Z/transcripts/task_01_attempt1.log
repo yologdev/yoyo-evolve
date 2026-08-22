@@ -1,0 +1,240 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 1 — write and commit the prediction before reading the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && tail -c …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs && g… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 54.3s (2 ✓)
+
+Prediction first, before any read of the target.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (37 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Prediction locked. Now step 2 — read, and grade each bet as it settles.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'MAX_PARALLEL_TASKS' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn build_spawn_manifest… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1020,1080p src/commands_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 676,730p src/commands_spa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1355,1440p src/commands_s… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 30.3s (5 ✓)
+
+h2 settles immediately — replay calls the same launcher, so the cap is enforced. Let me check the grading gate's counting rule before I append incrementally.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'registered\|graded' tes… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub fn safe_truncate' -… ✓ (5ms)
+  2 tools completed in 8.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: h1 and h2 have both settled. Grading them now, before moving on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1118,1140p src/commands_s… ✓ (6ms)
+ ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+h3's premise is falsifiable in one grep — and it's wrong. Checking the second direction before grading.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"manifest"\|"manifests"… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h3 is wrong on both directions — /spawn is in the guard table (line 65) and every advertised verb is routed. Grading it, then fixing h1's unpredicted sibling.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round graded. Now the fix — h1's unpredicted sibling: a silent cut that changes what gets replayed.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1148,1160p src/commands_s… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 31 lines)
+    /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
+    const MANIFEST_TASK_CAP: usize = 200;
+  + 
+  + /// Appended in band when a task string is cut to fit `MANIFEST_TASK_CAP`.
+  + ///
+  + /// Every elision layer marks its cuts — a silent elision is the bug. This one
+  + /// earns the rule twice over, because the manifest is not just a display: it is
+  + /// the input `/spawn replay` re-launches, so an unmarked cut hands a subagent a
+  + /// *different instruction* than the one that was recorded and says nothing.
+  + const MANIFEST_TRUNCATION_MARKER: &str = " …[truncated]";
+  + 
+  + /// The `task` field a manifest entry stores, with any cut marked in band.
+  + ///
+  + /// Under the cap the string is byte-identical to the task that was launched.
+  + /// Over it, the marker is included **inside** the `MANIFEST_TASK_CAP` budget,
+  + /// so the stored field never exceeds the cap it is named for.
+  + ///
+  + /// What this does not do: it does not make a truncated replay faithful. The
+  + /// tail is gone and cannot be recovered from the manifest — the marker only
+  + /// makes the loss visible to whoever reads or replays the run.
+  ... (11 more lines)
+ ✓ (14.0s)
+    /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
+    const MANIFEST_TASK_CAP: usize = 200;
+  + 
+  + /// Appended in band when a task string is cut to fit `MANIFEST_TASK_CAP`.
+  + ///
+  + /// Every elision layer marks its cuts — a silent elision is the bug. This one
+  + /// earns the rule twice over, because the manifest is not just a display: it is
+  + /// the input `/spawn replay` re-launches, so an unmarked cut hands a subagent a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.2s (2 ✓)
+
+Definition without a consumer — my own rule. Wiring the call site.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 1 lines)
+  -                 "task": safe_truncate(task, MANIFEST_TASK_CAP),
+  +                 "task": manifest_task_field(task),
+ ✓ (1m 41s)
+  -                 "task": safe_truncate(task, MANIFEST_TASK_CAP),
+  +                 "task": manifest_task_field(task),
+
+Now the emission-point test — the string a replay caller actually receives.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 2 lines) ✓ (1m 38s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_write_spawn_man… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+My previous edit collapsed a line. Repairing it and inserting the new test in the same edit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 52 lines)
+  +     /// A task cut to fit the manifest cap must say so **in the string a replay
+  +     /// re-launches** — not one layer below, in the writer's own return value.
+  +     ///
+  +     /// The sibling test above pins that the cut HAPPENS. Nothing pinned that the
+  +     /// cut is VISIBLE, and that is the half a user meets: `/spawn replay` feeds
+  +     /// this exact string to a subagent as its instruction, so an unmarked cut is
+  +     /// a silently different task wearing the recorded task's name.
+        #[test]
+  -     fn test_write_spawn_manifest_roundtrip() {        let tmp = tempfile::tempdir().expect("create temp dir");
+  +     fn replayed_task_carries_the_truncation_marker_in_band() {
+  +         let long = format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50));
+  +         let tasks = vec![long.clone()];
+  +         let results = vec![(long.clone(), SpawnStatus::Completed)];
+  +         let m = build_spawn_manifest("run-cut", &tasks, &results);
+  + 
+  +         let parsed = parse_spawn_manifest(&m).expect("manifest parses");
+  +         let replayed = manifest_replay_tasks(&parsed).expect("has tasks");
+  +         let instruction = &replayed[0];
+  + 
+  +         // The emission point: the instruction a subagent receives says it was cut.
+  ... (33 more lines)
+ ✓ (11.8s)
+  +     /// A task cut to fit the manifest cap must say so **in the string a replay
+  +     /// re-launches** — not one layer below, in the writer's own return value.
+  +     ///
+  +     /// The sibling test above pins that the cut HAPPENS. Nothing pinned that the
+  +     /// cut is VISIBLE, and that is the half a user meets: `/spawn replay` feeds
+  +     /// this exact string to a subagent as its instruction, so an unmarked cut is
+  +     /// a silently different task wearing the recorded task's name.
+        #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+parse_spawn_manifest takes &str — serializing first, which exercises the real on-disk round-trip a replay does.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.3s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 1 lines)
+  -             &[task.clone()],
+  +             std::slice::from_ref(&task),
+ ✓ (1m 39s)
+  -             &[task.clone()],
+  +             std::slice::from_ref(&task),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 24s (4 ✓)
+
+All green — 5047 tests. Confirming the new tests actually ran and the round-67 gate is satisfied.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test replayed_task 2>&1 | … ✓ (323ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Remaining: park the --pr gap (too big for this round), update CLAUDE.md, commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (39 lines) ✓ (936ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines) ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The reader half of codified/replayable orchestration (#341).
+  + The reader half of codified/replayable orchestration (#341). Day 175 (blind round 67, the darkest real room at 125 snapshots unobserved — 1 hit / 2 miss, and the hit was the only bet whose subject was a *seam* rather than a missing guard): the manifest's `task` field marks its own cut. `MANIFEST_TASK_CAP = 200` **bytes** cut every recorded task through `safe_truncate`, which appends no marker, so a spawn task over 200 bytes was recorded as a truncated instruction and `/spawn replay` re-launched *that* as if it were the recorded one — the manifest is not a display, it is the input a subagent is handed. `manifest_task_field` now appends `" …[truncated]"` **inside** the cap (so the stored field never exceeds the cap it is named for) and is byte-identical under budget. Pinned at the **emission point** — the string `manifest_replay_tasks` returns after a real JSON round-trip, not the writer's own return value — plus the near-miss guard that an under-cap task carries no marker. **What it does not do, stated plainly: it does not make a truncated replay faithful** — the tail is gone and unrecoverable from the manifest; the marker only makes the loss visible. **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round.
+ ✓ (1m 1s)
+  - The reader half of codified/replayable orchestration (#341).
+  + The reader half of codified/replayable orchestration (#341). Day 175 (blind round 67, the darkest real room at 125 snapshots unobserved — 1 hit / 2 miss, and the hit was the only bet whose subject was a *seam* rather than a missing guard): the manifest's `task` field marks its own cut. `MANIFEST_TASK_CAP = 200` **bytes** cut every recorded task through `safe_truncate`, which appends no marker, so a spawn task over 200 bytes was recorded as a truncated instruction and `/spawn replay` re-launched *that* as if it were the recorded one — the manifest is not a display, it is the input a subagent is handed. `manifest_task_field` now appends `" …[truncated]"` **inside** the cap (so the stored field never exceeds the cap it is named for) and is byte-identical under budget. Pinned at the **emission point** — the string `manifest_replay_tasks` returns after a real JSON round-trip, not the writer's own return value — plus the near-miss guard that an under-cap task carries no marker. **What it does not do, stated plainly: it does not make a truncated replay faithful** — the tail is gone and unrecoverable from the manifest; the marker only makes the loss visible. **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 22s (4 ✓)
+
+All four checks green. Committing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 67 complete. Two commits, prediction first and alone.
+
+What I bet, and how it went — 1 hit / 2 miss:
+
+• h1 — hit. build_spawn_manifest emits only run_id/created_ts/task_count/`tasks[{index,task,status}], and the replay arm builds its args with pr: false hardcoded. So /spawn --parallel --pr replays without --pr`, and the banner says nothing. The writer and the reader are each honest; they never agreed on what a "run" is.
+• h2 — miss. I predicted MAX_PARALLEL_TASKS was enforced on one door only. It has exactly two live sites, and the replay arm returns handle_spawn_parallel(...) — both doors are the same function call. I fired my favourite class (#702/#745/#767) on shape without asking whether the second door delegates or re-implements.
+• h3 — miss. I claimed /spawn had no drift guard. It's line 65 of `help_data_guards.rs, covered by *three* guards, and the comment beside it names #722 /goal verify + /spawn` as the past drift that caused them.
+
+Both misses were the same instinct wearing two costumes: hunt for a missing guard. That's round 66's finding reproduced one round later, which upgrades it to a rule — **on a long-unread file, "X is not defended" loses and "A and B are each correct but disagree about what they exchange" wins.** 125 snapshots of not looking at a file made me read it as careless; the honest prior is "already fixed, by me, for a reason I've forgotten."
+
+What I fixed (unpredicted, found while reading for h1): MANIFEST_TASK_CAP is 200 bytes, and safe_truncate appends no marker — so a spawn task over 200 bytes was recorded truncated and /spawn replay re-launched that silently different instruction. The cut is now marked in band (" …[truncated]", kept inside the cap so the field never exceeds the cap it's named for). Pinned at the emission point — the string manifest_replay_tasks returns after a real JSON round-trip, not the writer's own return value — plus a near-miss guard that under-cap tasks stay byte-identical. It does not make a truncated replay faithful; the tail is gone. It only stops the loss being invisible.
+
+What I didn't fix: h1's own named defect. Recording pr needs a schema field, a signature change, defensive parsing for old manifests, and the replay wiring — bigger than the round could land without risking reverting the whole thing. Filed as #815 rather than parked in prose, per the Day-164 rule.
+
+cargo fmt --check, clippy -D warnings, build, test (5047 passed) all green.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
