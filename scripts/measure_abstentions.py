@@ -30,12 +30,37 @@ lesson: never widen a match to a bare substring of a tag my own harness authors)
 
 RECORDED NEGATIVE FINDING — there is no structured source to use instead
 -----------------------------------------------------------------------
-`sessions/day-*/outcome.json` on the `audit-log` branch carries a `fallback_phases`
-field. It looks like the answer and is not: `scripts/evolve.sh:583` populates it from
-`STAGE_NAME` when a phase is served by the **fallback provider** (a different model
-answered), *not* when the planner falls back to a single task. No field in `outcome.json`
-records an A1 abstention or a planner fallback. Checked on day 174; do not spend the same
-twenty minutes.
+Superseded and kept rather than erased: see "RECORDED NEGATIVE FINDING — ... for the
+*counts*" below, which restates this after re-checking on day 175. Still true, and still
+the reason `fallback_phases` must not be read as a planner-fallback record.
+
+THE STREAM MISMATCH, AND THE SECOND STREAM (day 175)
+----------------------------------------------------
+Every marker below is anchored to a line `scripts/evolve.sh` prints to the **workflow
+log**. A `sessions/day-*/` directory contains agent transcripts and files the harness
+writes into it — *not* the harness's own stdout. So pointing this tool at a session
+directory reads `fallback=0` by construction, whatever happened.
+
+Measured, not inferred: `day-174-20260821T232342Z` and `day-175-20260822T021038Z` both
+read `fallback=0` while both ran the planner-fallback path and committed nothing but a
+wrap-up. Both carry `transcripts/plan_retry.log` and an `unverified_task_1.md`.
+
+So a session directory is read for **structural artifacts** as well — files the harness
+writes, which my own prose cannot forge (the #810 contamination defect that forced the
+anchored-line design). `classify_structure` is pure and reports three-valued fields:
+`False` is observed-and-absent, `UNKNOWN` is this-stream-cannot-say. The two streams are
+printed **side by side and never summed** — they have different coverage, and adding
+them would double-count exactly when both are available (the same rule already applied
+to evolve.sh:1567/1605 vs 1610).
+
+RECORDED NEGATIVE FINDING — there is no structured source for the *counts*
+--------------------------------------------------------------------------
+`outcome.json` carries a `fallback_phases` field. It looks like the answer and is not:
+`scripts/evolve.sh:583` populates it from `STAGE_NAME` when a phase is served by the
+**fallback provider** (a different model answered), *not* when the planner falls back to
+a single task. Its twelve keys, enumerated over all 453 directories on `audit-log`, carry
+no A1 abstention, no planner fallback, and no record of the session's commits. Checked
+day 174, re-checked day 175; do not spend the same twenty minutes.
 
 WHAT COUNTS
 -----------
@@ -64,6 +89,15 @@ WHAT IT CANNOT DO
 It checks that an abstention marker was *emitted*, never why the model abstained, and it
 says nothing about whether a firing was the *right* continuation. Presence is mechanically
 checkable; correctness is not.
+
+And it cannot tell you whether a session produced any output. Nothing in a session
+directory records the commits a session made — not one of `outcome.json`'s twelve keys,
+not any file. So `zero_output` is reported as **unknown**, always, and the tool says why
+rather than deriving it from `tasks_succeeded`. (`tasks_succeeded: 1` for a session that
+committed nothing is `scripts/evolve.sh`'s own defect; it is a protected file and cannot
+be fixed here. This makes the defect visible from the outside, which is all that can be
+done from here.) Likewise `plan_retry` means a planner retry artifact is present — that
+is evidence *toward* a fallback session, never a synonym for one.
 
 THE ELIGIBILITY BOUNDARY (@yuanhao on #810, 2026-08-21)
 -------------------------------------------------------
@@ -97,6 +131,7 @@ Usage::
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -295,6 +330,9 @@ class SessionCounts:
         # boundary landed.
         self.ts = None
         self.eligibility = ELIGIBLE
+        # The second (structural) stream, or None when this input was not a session
+        # directory. Never folded into the counts above.
+        self.structure = None
 
     @property
     def abstentions(self):
@@ -334,6 +372,182 @@ def count_lines(name, lines):
         elif marker == AUTO_CONTINUE_FIRING:
             counts.firings += 1
     return counts
+
+
+# ---------------------------------------------------------------------------
+# The second stream: structural artifacts inside the session directory.
+# ---------------------------------------------------------------------------
+#
+# THE STREAM MISMATCH (day 175). Every marker above is anchored to a line
+# `scripts/evolve.sh` prints to the **workflow log**. A `sessions/day-*/` directory on
+# the `audit-log` branch does not contain the harness's stdout — it contains agent
+# transcripts and files the harness writes. So measuring a session *directory* for
+# planner fallbacks reads 0 by construction, no matter what happened.
+#
+# Measured, not inferred: `day-174-20260821T232342Z` and `day-175-20260822T021038Z`
+# both read `fallback=0` while both ran the planner-fallback path and committed nothing
+# but a wrap-up. Both carry `transcripts/plan_retry.log` and an `unverified_task_1.md`.
+#
+# Why artifacts rather than more greps: these files are written by the harness into the
+# directory. They cannot be produced by my own prose, which is the #810 contamination
+# defect that forced the anchored-line design in the first place. Their presence is a
+# fact about the run, not a string that happened to appear in a log.
+#
+# ENUMERATED BY LISTING ALL 453 SESSION DIRECTORIES ON `audit-log` (day 175), not from
+# memory and not from the task file that asked for this:
+#   top level    outcome.json 453, trajectory.stderr.log 453, transcripts/ 453,
+#                audit.jsonl 447, trajectory.md 441,
+#                eval_verdict_task<N>_attempt<N>.md 371, eval_checklist.log 118,
+#                unverified_task_<N>.md 11
+#   transcripts/ plan.log 453, assess.log 453, eval_task<N>_attempt<N>.log 1514,
+#                task_<N>_attempt<N>.log 893, fix_* 693, respond.log 308, bfix_* 115,
+#                plan_retry.log 62
+#   outcome.json keys, union over all 453:
+#                build_ok, day, reverted, session_time, session_type, tasks_attempted,
+#                tasks_succeeded, test_ok, ts (453 each);
+#                applied_pattern_keys 309; fallback_phases 131; model 131
+#
+# NOTE, because the task that commissioned this said otherwise: `plan_retry.log` is in
+# `transcripts/`, NOT at the top level. Coded against the listing, not the description.
+
+# The explicit third value. `False` means observed-and-not-present; UNKNOWN means this
+# stream cannot answer. Absence must not collapse into False — this repo has paid for
+# that distinction repeatedly (UngradedScan.unkeyed_excluded, NeverForecast's
+# unknown-age branch, JobSnapshot.runtime).
+UNKNOWN = "unknown"
+
+# A planner retry ran. Evidence TOWARD a fallback session, never a synonym for one: the
+# retry can also succeed and produce tasks. 62 of 453 directories carry it.
+PLAN_RETRY_ARTIFACT = "transcripts/plan_retry.log"
+
+# The evaluator produced no verdict for a task. 11 of 453 directories carry one.
+UNVERIFIED_ARTIFACT_RE = re.compile(r"^unverified_task_\d+\.md$")
+
+# Why `zero_output` is UNKNOWN and stays UNKNOWN. Nothing in a session directory records
+# which commits the session made: not one of the twelve outcome.json keys above, and no
+# file in the directory. `tasks_succeeded: 1` for a session that committed nothing is
+# `scripts/evolve.sh`'s own defect (protected file, cannot be fixed here) — and deriving
+# "zero output" from `tasks_succeeded` alone would be inventing the number this tool
+# exists to stop inventing. An honest unknown is the deliverable.
+NO_COMMIT_EVIDENCE = (
+    "commit evidence is not carried in the session directory stream "
+    "(no outcome.json key and no file records the session's commits)"
+)
+
+
+class StructuralFacts:
+    """Named facts about one session directory. Every field is True / False / UNKNOWN.
+
+    Named by what is *observable*, never by what it suggests: `plan_retry` says a
+    planner retry artifact is present, not "this was a fallback session".
+    """
+
+    def __init__(self):
+        self.plan_retry = UNKNOWN
+        self.unverified = UNKNOWN
+        self.tasks_attempted = UNKNOWN
+        self.tasks_succeeded = UNKNOWN
+        self.zero_output = UNKNOWN
+
+    @staticmethod
+    def _render(value):
+        if value is True:
+            return "yes"
+        if value is False:
+            return "no"
+        if value is UNKNOWN:
+            return UNKNOWN
+        return str(value)
+
+    def row(self):
+        return (
+            "    structure: "
+            f"plan_retry={self._render(self.plan_retry)} "
+            f"unverified={self._render(self.unverified)} "
+            f"tasks_attempted={self._render(self.tasks_attempted)} "
+            f"tasks_succeeded={self._render(self.tasks_succeeded)} "
+            f"zero_output={self._render(self.zero_output)}"
+        )
+
+    def disagreement(self, log_fallback_count):
+        """The finding, made legible instead of silently reconciled.
+
+        Returns a line when the two streams disagree, else None. It states the
+        *coverage* gap rather than asserting a fallback happened, because
+        `plan_retry` is evidence toward one and not a synonym for one.
+        """
+        if self.plan_retry is True and log_fallback_count == 0:
+            return (
+                "    ! streams disagree: log-derived fallback=0 but a planner retry "
+                f"artifact is present ({PLAN_RETRY_ARTIFACT}). The harness's stdout is "
+                "not in the session directory, so a planner fallback in this session "
+                "is invisible to the log-derived count."
+            )
+        return None
+
+
+def classify_structure(relpaths, outcome):
+    """Pure: named structural facts from what was OBSERVED. No filesystem work here.
+
+    `relpaths`   POSIX-style paths relative to the session directory, or None when
+                 there was no listing to take (a plain log file is not a session dir) —
+                 then every listing-derived field is UNKNOWN, not False.
+    `outcome`    the parsed outcome.json dict, or None when it was not observed — then
+                 every outcome-derived field is UNKNOWN, not zero.
+    """
+    facts = StructuralFacts()
+
+    if relpaths is not None:
+        names = {str(p).replace(os.sep, "/") for p in relpaths}
+        facts.plan_retry = PLAN_RETRY_ARTIFACT in names
+        facts.unverified = any(UNVERIFIED_ARTIFACT_RE.match(n) for n in names)
+
+    if isinstance(outcome, dict):
+        for field in ("tasks_attempted", "tasks_succeeded"):
+            value = outcome.get(field, UNKNOWN)
+            # A present-but-wrong-typed value is UNKNOWN too: a string where an int
+            # belongs is not observable as a count.
+            setattr(facts, field, value if isinstance(value, int) else UNKNOWN)
+
+    # Deliberately not derived. See NO_COMMIT_EVIDENCE.
+    facts.zero_output = UNKNOWN
+    return facts
+
+
+def summarize_structure(sessions):
+    """Pure: the aggregate structural block, or None when no directory was read.
+
+    Reported BESIDE the log-derived counts and never summed into them — the two streams
+    have different coverage, and adding them would double-count exactly when both are
+    available. Same rule the file already applies to evolve.sh:1567/1605 vs 1610.
+    """
+    observed = [s for s in sessions if s.structure is not None]
+    if not observed:
+        return None
+    listed = [s for s in observed if s.structure.plan_retry is not UNKNOWN]
+    retries = [s for s in listed if s.structure.plan_retry is True]
+    unverified = [
+        s for s in observed if s.structure.unverified is True
+    ]
+    disagree = [
+        s for s in observed if s.structure.disagreement(s.fallback) is not None
+    ]
+    unknown_outcome = [
+        s for s in observed if s.structure.tasks_succeeded is UNKNOWN
+    ]
+    return (
+        "structural signals — a SECOND stream, reported beside the log-derived counts "
+        "above and never summed into them:\n"
+        f"  session directories read: {len(observed)} "
+        f"({len(listed)} with a readable listing)\n"
+        f"  planner retry artifact present: {len(retries)}\n"
+        f"  unverified evaluator artifact present: {len(unverified)}\n"
+        f"  outcome.json missing or unreadable: {len(unknown_outcome)} "
+        "(counts reported as unknown, not zero)\n"
+        f"  streams disagree (retry artifact present, log-derived fallback=0): "
+        f"{len(disagree)}\n"
+        f"  zero_output: unknown for all {len(observed)} — {NO_COMMIT_EVIDENCE}"
+    )
 
 
 def apply_boundary(sessions, boundary_ts):
@@ -422,18 +636,43 @@ def resolve_sha_timestamp(sha):
     return proc.stdout.strip() or None
 
 
+def read_outcome(path):
+    """I/O: the parsed outcome.json under a session directory, or None.
+
+    None covers all three failure shapes — absent, unreadable, unparseable — because
+    the caller treats them identically: this stream did not carry the counts, which is
+    UNKNOWN and not zero.
+    """
+    try:
+        with open(
+            os.path.join(path, "outcome.json"), "r", encoding="utf-8", errors="replace"
+        ) as fh:
+            outcome = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return outcome if isinstance(outcome, dict) else None
+
+
 def session_from_path(path):
     """A file is one session; a directory is one session made of all files under it."""
     if os.path.isdir(path):
         lines = []
+        relpaths = []
         for root, _dirs, files in os.walk(path):
             for fname in sorted(files):
-                lines.extend(read_lines(os.path.join(root, fname)))
+                full = os.path.join(root, fname)
+                relpaths.append(os.path.relpath(full, path))
+                lines.extend(read_lines(full))
         name = os.path.basename(path.rstrip("/")) or path
         counts = count_lines(name, lines)
+        # I/O here, decision in `classify_structure` — the listing and the parsed
+        # outcome are handed over; nothing under this line touches the filesystem.
+        counts.structure = classify_structure(relpaths, read_outcome(path))
     else:
         name = os.path.basename(path)
         counts = count_lines(name, read_lines(path))
+        # A plain log file is not a session directory: there is no listing to take, so
+        # the structural stream stays absent rather than reporting a listing of False.
     counts.ts = session_timestamp(name)
     return counts
 
@@ -521,7 +760,19 @@ def main(argv):
     print(f"#810 abstention/firing measurement over {len(sessions)} session(s):")
     for s in sessions:
         print(s.row())
+        # The structural stream prints on its OWN lines, under the row it belongs to.
+        # A plain log file has no structure block, so an old-style invocation prints
+        # byte-identically to before.
+        if s.structure is not None:
+            print(s.structure.row())
+            note = s.structure.disagreement(s.fallback)
+            if note is not None:
+                print(note)
     print()
+    structural = summarize_structure(sessions)
+    if structural is not None:
+        print(structural)
+        print()
     print(grade(sessions, boundary_label, boundary_ts))
     return 0
 
@@ -778,6 +1029,152 @@ def run_self_tests():
     check("no boundary → row carries no suffix", "[" in over_floor[0].row(), False)
     apply_boundary(over_floor, boundary)
     check("ineligible row is labelled", "[INELIGIBLE]" in over_floor[0].row(), True)
+
+    # 10. The structural stream (day 175). A directory listing is a second, independent
+    # source with different coverage from the workflow log.
+    real_listing = [
+        "outcome.json",
+        "trajectory.md",
+        "trajectory.stderr.log",
+        "unverified_task_1.md",
+        "transcripts/assess.log",
+        "transcripts/plan.log",
+        "transcripts/plan_retry.log",
+        "transcripts/respond.log",
+        "transcripts/task_01_attempt1.log",
+    ]
+    real_outcome = {
+        "day": 175,
+        "ts": "2026-08-22T02:10:38Z",
+        "build_ok": True,
+        "test_ok": True,
+        "tasks_attempted": 1,
+        "tasks_succeeded": 1,
+        "reverted": False,
+    }
+    facts = classify_structure(real_listing, real_outcome)
+    check("plan_retry present", facts.plan_retry, True)
+    check("unverified present", facts.unverified, True)
+    check("tasks_attempted read", facts.tasks_attempted, 1)
+    check("tasks_succeeded read", facts.tasks_succeeded, 1)
+    # zero_output is never derived from tasks_succeeded, however tempting.
+    check("zero_output stays unknown", facts.zero_output, UNKNOWN)
+
+    # The near-miss side, so the discriminator is not tested only where it fires: a
+    # listing WITHOUT the artifact reports False (observed-and-absent), not unknown.
+    plain_listing = [
+        "outcome.json",
+        "audit.jsonl",
+        "eval_verdict_task1_attempt1.md",
+        "transcripts/assess.log",
+        "transcripts/plan.log",
+        "transcripts/task_01_attempt1.log",
+    ]
+    plain = classify_structure(plain_listing, {"tasks_attempted": 2, "tasks_succeeded": 2})
+    check("no retry artifact → False", plain.plan_retry, False)
+    check("no retry artifact is not unknown", plain.plan_retry is UNKNOWN, False)
+    check("no unverified artifact → False", plain.unverified, False)
+    # A top-level plan_retry.log must NOT count: the artifact lives in transcripts/,
+    # and this was the one detail the commissioning task got wrong.
+    check(
+        "top-level plan_retry.log does not match",
+        classify_structure(["plan_retry.log"], None).plan_retry,
+        False,
+    )
+
+    # No outcome.json → the outcome-derived fields are UNKNOWN, never zero.
+    no_outcome = classify_structure(real_listing, None)
+    check("missing outcome → attempted unknown", no_outcome.tasks_attempted, UNKNOWN)
+    check("missing outcome → succeeded unknown", no_outcome.tasks_succeeded, UNKNOWN)
+    check("missing outcome does not zero the count", no_outcome.tasks_succeeded == 0, False)
+    check("listing still read without outcome", no_outcome.plan_retry, True)
+    # A present-but-wrong-typed value is unobservable as a count, so it is unknown too.
+    check(
+        "string count is unknown",
+        classify_structure([], {"tasks_succeeded": "1"}).tasks_succeeded,
+        UNKNOWN,
+    )
+    # A key absent from an otherwise valid outcome.json is unknown, not zero.
+    check(
+        "absent key is unknown",
+        classify_structure([], {"day": 175}).tasks_attempted,
+        UNKNOWN,
+    )
+
+    # No listing at all (a plain log file) → the listing-derived fields are UNKNOWN.
+    no_listing = classify_structure(None, real_outcome)
+    check("no listing → plan_retry unknown", no_listing.plan_retry, UNKNOWN)
+    check("no listing → unverified unknown", no_listing.unverified, UNKNOWN)
+    check("no listing → outcome still read", no_listing.tasks_succeeded, 1)
+
+    # 11. The disagreement is legible, and only where it exists.
+    check(
+        "retry artifact + log fallback=0 disagrees",
+        "streams disagree" in (facts.disagreement(0) or ""),
+        True,
+    )
+    check(
+        "disagreement names the artifact",
+        PLAN_RETRY_ARTIFACT in (facts.disagreement(0) or ""),
+        True,
+    )
+    check("both streams saw it → no disagreement", facts.disagreement(1), None)
+    check("no retry artifact → no disagreement", plain.disagreement(0), None)
+    check("unknown listing → no disagreement", no_listing.disagreement(0), None)
+    check("row names every field", facts.row().count("="), 5)
+    check("row renders unknown as a word", "zero_output=unknown" in facts.row(), True)
+
+    # 12. THE NO-REGRESSION PIN. The structural stream changes no existing number, and
+    # a session with no structure block renders and grades exactly as before.
+    structural_session = count_lines(
+        "day-175-20260822T021038Z",
+        ["ordinary log noise", "  ⚡ auto-continuing (1/5 — more work pending)..."],
+    )
+    before_row = structural_session.row()
+    before_counts = (
+        structural_session.abstentions,
+        structural_session.firings,
+        structural_session.fallback,
+        structural_session.gradeable,
+    )
+    structural_session.structure = classify_structure(real_listing, real_outcome)
+    check("structure does not touch the row", structural_session.row(), before_row)
+    check(
+        "structure does not touch the counts",
+        (
+            structural_session.abstentions,
+            structural_session.firings,
+            structural_session.fallback,
+            structural_session.gradeable,
+        ),
+        before_counts,
+    )
+    check(
+        "structure does not touch the verdict",
+        grade([structural_session] + four),
+        grade(four + [mk("z", 0, 1)]),
+    )
+
+    # 13. The aggregate block: reported beside, never summed into, the log counts.
+    check("no directories read → no block", summarize_structure(four), None)
+    block = summarize_structure([structural_session])
+    check("block says it is a second stream", "never summed" in block, True)
+    check("block counts the retry artifact", "planner retry artifact present: 1" in block, True)
+    check("block counts the disagreement", "streams disagree" in block, True)
+    check("block states the commit-evidence limit", NO_COMMIT_EVIDENCE in block, True)
+    unknown_session = count_lines("nameless", [])
+    unknown_session.structure = classify_structure(None, None)
+    unknown_block = summarize_structure([unknown_session])
+    check(
+        "unknown outcome is counted, not dropped",
+        "outcome.json missing or unreadable: 1" in unknown_block,
+        True,
+    )
+    check(
+        "unreadable listing is disclosed",
+        "(0 with a readable listing)" in unknown_block,
+        True,
+    )
 
     if failures:
         for f in failures:
