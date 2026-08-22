@@ -202,6 +202,48 @@ fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
     std::path::PathBuf::from(os)
 }
 
+/// Both halves of the #735 precedence guard, behind **one** writer so the wizard's
+/// two save arms cannot drift apart.
+///
+/// yoyo loads exactly one config file — the first that exists, no merging — so a
+/// green `✓ Saved to <path>` is a claim about the *container*, never the payload.
+/// Two things can be true of a freshly written config, and they run in opposite
+/// directions:
+///
+/// * **shadowed** — the file written sits *below* an existing one, so nothing in
+///   it will ever be read here (the wizard's `SaveLocation::User` arm writes the
+///   lowest rung, so this is its failure mode);
+/// * **demoted** — the file written is the *new* highest rung, so whatever config
+///   yoyo had been reading has silently gone dark (the `SaveLocation::Project` arm
+///   writes the highest rung, so this is its failure mode).
+///
+/// `before` must be captured **before** the write and `after` after it: a newly
+/// created file is already position 0 in its own chain, so a purely post-write
+/// check answers "no, you're on top" and stays silent about the file it just
+/// demoted (#735 — a guard that reads the world after its own action is blinded
+/// by that action).
+///
+/// Returns an empty `Vec` when there is nothing true to say, so the common
+/// first-time-setup path is byte-identical to before.
+fn config_write_warnings(
+    before: &[std::path::PathBuf],
+    after: &[std::path::PathBuf],
+    written: &std::path::Path,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Some(shadow) = crate::config_paths::shadowing_config_file(written, after) {
+        warnings.push(crate::config_paths::shadowed_write_warning(
+            written, &shadow,
+        ));
+    }
+    if let Some(demoted) = crate::config_paths::demoted_config_file(written, before, after) {
+        warnings.push(crate::config_paths::demoted_write_warning(
+            written, &demoted,
+        ));
+    }
+    warnings
+}
+
 /// Save config to the user-level XDG path (`~/.config/yoyo/config.toml`).
 /// Creates parent directories if they don't exist. If the file already exists,
 /// it is backed up to `config.toml.bak` first and unmanaged top-level keys are
@@ -646,6 +688,10 @@ pub fn run_wizard_interactive_in<R: BufRead, W: Write>(
         SaveLocation::Project => {
             let target = project_dir.to_path_buf();
             let existed = target.join(".yoyo.toml").exists();
+            // Capture the precedence chain BEFORE the write: afterwards this
+            // file is already position 0 of its own chain, which is exactly
+            // what blinds the guard to the demotion it just caused (#735).
+            let before_write = crate::config_paths::existing_config_paths_in(&target);
             match save_config_to_file(&target, provider, &model, base_url.as_deref(), key_arg) {
                 Ok(path) => {
                     writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
@@ -658,6 +704,14 @@ pub fn run_wizard_interactive_in<R: BufRead, W: Write>(
                         )
                         .ok();
                     }
+                    let after_write = crate::config_paths::existing_config_paths_in(&target);
+                    for line in config_write_warnings(
+                        &before_write,
+                        &after_write,
+                        &target.join(".yoyo.toml"),
+                    ) {
+                        writeln!(writer, "  {YELLOW}{line}{RESET}").ok();
+                    }
                 }
                 Err(e) => {
                     writeln!(writer, "  {YELLOW}Could not save config: {e}{RESET}").ok();
@@ -666,6 +720,9 @@ pub fn run_wizard_interactive_in<R: BufRead, W: Write>(
         }
         SaveLocation::User => {
             let existed = crate::cli::user_config_path().is_some_and(|p| p.exists());
+            // Same pre-write snapshot, opposite failure mode: this arm writes the
+            // LOWEST rung, so what it risks is being shadowed, not demoting.
+            let before_write = crate::config_paths::existing_config_paths_in(project_dir);
             match save_config_to_user_file(provider, &model, base_url.as_deref(), key_arg) {
                 Ok(path) => {
                     writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
@@ -677,6 +734,13 @@ pub fn run_wizard_interactive_in<R: BufRead, W: Write>(
                             "  {DIM}Previous config backed up to {path}.bak (unmanaged settings preserved){RESET}"
                         )
                         .ok();
+                    }
+                    if let Some(written) = crate::cli::user_config_path() {
+                        let after_write =
+                            crate::config_paths::existing_config_paths_in(project_dir);
+                        for line in config_write_warnings(&before_write, &after_write, &written) {
+                            writeln!(writer, "  {YELLOW}{line}{RESET}").ok();
+                        }
                     }
                 }
                 Err(e) => {
@@ -1878,5 +1942,126 @@ mod tests {
 
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("eu-west-1"));
+    }
+
+    // ---- #816: the wizard's own shadow/demotion guard (the #735 family's
+    // second and third consumers) ----
+
+    /// Table test over the pure decision half, driven with fabricated paths so
+    /// no filesystem or environment is involved. Both directions AND the silent
+    /// case: a discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn config_write_warnings_covers_both_directions_and_the_silent_case() {
+        let project = std::path::PathBuf::from("/repo/.yoyo.toml");
+        let xdg = std::path::PathBuf::from("/home/u/.config/yoyo/config.toml");
+
+        // (a) demotion — the wizard's Project arm wrote the new highest rung,
+        // so the XDG config yoyo had been reading has gone dark.
+        let warnings = config_write_warnings(
+            std::slice::from_ref(&xdg),
+            &[project.clone(), xdg.clone()],
+            &project,
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("now takes precedence over")
+                && warnings[0].contains("/home/u/.config/yoyo/config.toml"),
+            "demotion must name the file that went dark: {warnings:?}"
+        );
+
+        // (b) shadowing — the wizard's User arm wrote the lowest rung under an
+        // existing project config, so nothing it wrote will be read here.
+        let warnings = config_write_warnings(
+            std::slice::from_ref(&project),
+            &[project.clone(), xdg.clone()],
+            &xdg,
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("is not the config yoyo loads here")
+                && warnings[0].contains("/repo/.yoyo.toml"),
+            "shadowing must name the file that wins: {warnings:?}"
+        );
+
+        // (c) the near-miss guard: sole config file, nothing shadowed, nothing
+        // demoted — first-time setup must stay byte-identical to before.
+        assert!(
+            config_write_warnings(&[], std::slice::from_ref(&project), &project).is_empty(),
+            "a first-and-only config file has nothing to warn about"
+        );
+        // ...and re-writing the file that was already winning is also silent.
+        assert!(
+            config_write_warnings(
+                std::slice::from_ref(&project),
+                std::slice::from_ref(&project),
+                &project
+            )
+            .is_empty(),
+            "rewriting the already-loaded config warns about nothing"
+        );
+    }
+
+    /// Emission point: the string a user actually reads out of the wizard's own
+    /// writer handle. HOME and XDG_CONFIG_HOME are both redirected so the
+    /// precedence chain is fully determined by this test rather than by whatever
+    /// config files happen to exist on the machine running it.
+    #[test]
+    #[serial]
+    fn wizard_project_save_warns_that_it_demoted_the_loaded_config() {
+        let xdg_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_816_xdg")
+            .tempdir()
+            .unwrap();
+        let home_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_816_home")
+            .tempdir()
+            .unwrap();
+        let project = tempfile::Builder::new()
+            .prefix("yoyo_test_816_proj")
+            .tempdir()
+            .unwrap();
+
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let prev_home = std::env::var("HOME").ok();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_dir.path());
+        std::env::set_var("HOME", home_dir.path());
+
+        // The config yoyo would have been loading before the wizard ran.
+        let xdg_config = xdg_dir.path().join("yoyo").join("config.toml");
+        std::fs::create_dir_all(xdg_config.parent().unwrap()).unwrap();
+        std::fs::write(&xdg_config, "provider = \"anthropic\"\n").unwrap();
+
+        // ollama (4), default model, save to project (1) — no API key prompt.
+        let input = "4\n\n1\n";
+        let mut reader = io::Cursor::new(input.as_bytes());
+        let mut output = Vec::new();
+        let result = run_wizard_interactive_in(project.path(), &mut reader, &mut output);
+
+        if let Some(val) = prev_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        if let Some(val) = prev_home {
+            std::env::set_var("HOME", val);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        assert!(result.is_some());
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            output_str.contains("Saved to"),
+            "precondition — the write itself must have succeeded: {output_str}"
+        );
+        assert!(
+            output_str.contains("now takes precedence over"),
+            "the green checkmark must not be the whole story — the demoted file \
+must be named: {output_str}"
+        );
+        assert!(
+            output_str.contains(&xdg_config.display().to_string()),
+            "the warning must name the config that just went dark: {output_str}"
+        );
     }
 }

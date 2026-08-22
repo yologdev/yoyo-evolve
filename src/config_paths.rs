@@ -36,9 +36,32 @@ pub(crate) fn detect_loaded_config_path() -> Option<std::path::PathBuf> {
 /// first that exists — and does **not** merge them:
 /// `./.yoyo.toml` → `~/.yoyo.toml` → `~/.config/yoyo/config.toml`.
 pub(crate) fn existing_config_paths() -> Vec<std::path::PathBuf> {
+    existing_config_paths_in(std::path::Path::new("."))
+}
+
+/// Directory-taking seam for [`existing_config_paths`]: `project_dir` is where the
+/// project rung (`.yoyo.toml`) is looked for, instead of the process cwd.
+///
+/// This exists because the returned chain is compared **by path equality** against
+/// a file someone just wrote (`shadowing_config_file` / `demoted_config_file`), and
+/// the setup wizard writes `project_dir.join(".yoyo.toml")` — an absolute path in
+/// production. A chain whose project rung is the bare relative `.yoyo.toml` can
+/// never compare equal to it, so the guard would be structurally incapable of
+/// firing. Callers that know their project dir pass it; everyone else keeps the
+/// cwd-relative form, byte-identical to before (`Path::new(".").join(".yoyo.toml")`
+/// is `./.yoyo.toml`, which is why the wrapper special-cases the bare name).
+///
+/// There is exactly ONE statement of the precedence ladder — this function. A
+/// second copy would drift from `config::load_config_file`, which is the whole
+/// property these helpers exist to mirror.
+pub(crate) fn existing_config_paths_in(project_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
-    // Project-level: ./.yoyo.toml
-    let project = std::path::PathBuf::from(".yoyo.toml");
+    // Project-level: <project_dir>/.yoyo.toml
+    let project = if project_dir == std::path::Path::new(".") {
+        std::path::PathBuf::from(".yoyo.toml")
+    } else {
+        project_dir.join(".yoyo.toml")
+    };
     if project.exists() {
         found.push(project);
     }

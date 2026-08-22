@@ -259,6 +259,20 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // reason string it classifies; splitting them would create the second
     // matcher this deliberately avoids.
     ("src/safety.rs", 3490),
+    // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
+    // wizard becomes the second and third consumer of the #735 shadow/demotion
+    // guard family (which had exactly one: `/config set`), so both of its save
+    // arms now say when the file they just wrote is shadowed, or has silently
+    // demoted the config yoyo was reading. ~60 of the +185 are the two arms and
+    // the one shared pure writer; ~125 are tests, including the emission-point
+    // one that pins the string a user actually reads out of the wizard's writer.
+    // Registered rather than trimmed on purpose: the only way to land under the
+    // cap here was to delete the tests and the "why" comment, i.e. trade the
+    // legibility of the fix for a line count. A split is the real answer and is
+    // NOT free — this module's ~1200 lines of tests reach ~20 private helpers
+    // through `use super::*`, so moving them out means making all of those
+    // `pub(crate)` first. Filed as the follow-up rather than half-done here.
+    ("src/setup.rs", 2067),
     ("src/symbols.rs", 3804),
     // Day 161 (#662 half 1): +10 lines — pub REFUSAL_STEM_* consts that the
     // wrapper messages and prompt_retry::is_deterministic_tool_error share.
