@@ -65,15 +65,43 @@ It checks that an abstention marker was *emitted*, never why the model abstained
 says nothing about whether a firing was the *right* continuation. Presence is mechanically
 checkable; correctness is not.
 
+THE ELIGIBILITY BOUNDARY (@yuanhao on #810, 2026-08-21)
+-------------------------------------------------------
+A session whose head predates the fix under test **could not** have fired the gate. Read
+without a boundary, every one of those sessions lands in the denominator as a miss, so the
+verdict combines "could not fire" with "did not fire" — a category error, and one that
+gets worse-looking as more pre-fix history accumulates in the window. Measured: the first
+run of this tool reported `of 16 gradeable sessions, the gate fired in 0` where all 16
+predated #808's fix.
+
+`--since-sha <sha>` (resolved with `git show -s --format=%cI`) or `--since <ISO8601>`
+marks the boundary. Each session then lands in exactly one of three states, and none is
+folded into another:
+
+  INELIGIBLE   strictly before the boundary — excluded from numerator AND denominator
+  ELIGIBLE     at or after the boundary (the boundary is inclusive)
+  UNKNOWN_AGE  no parseable timestamp — NOT eligible and NOT ineligible; counted in its
+               own bucket and reported, never quietly promoted
+
+Session age comes from the `sessions/day-N-YYYYMMDDTHHMMSSZ` directory name
+(`scripts/evolve.sh:3471`), so it needs no git and works on a bare `audit-log` checkout.
+With no boundary flag every session is eligible and the output is byte-identical to the
+pre-boundary tool.
+
 Usage::
 
     python3 scripts/measure_abstentions.py <logfile|dir> [...]
+    python3 scripts/measure_abstentions.py --since-sha <sha> <logfile|dir> [...]
+    python3 scripts/measure_abstentions.py --since 2026-08-21T21:25:00Z <dir> [...]
     python3 scripts/measure_abstentions.py --test
 """
 
+import argparse
 import os
 import re
+import subprocess
 import sys
+from datetime import datetime, timezone
 
 # ── Markers ───────────────────────────────────────────────────────────────────
 A1_ABSTENTION = "A1_ABSTENTION"
@@ -83,6 +111,22 @@ AUTO_CONTINUE_FIRING = "AUTO_CONTINUE_FIRING"
 
 # Sessions below this many *gradeable* sessions get a wait, never a verdict (#810).
 MIN_GRADEABLE_SESSIONS = 4
+
+# Eligibility relative to a `--since-sha` / `--since` boundary. THREE states, and none
+# of them is folded into another. A session whose head predates the fix under test
+# could not have exercised it, so reporting it as "did not fire" is a category error:
+# "could not fire" and "did not fire" are different facts and only the second grades
+# the gate. UNKNOWN_AGE is the abstention case getting its own name (my standing rule:
+# a silently-absorbed unknown inside my own meter is the defect this tool exists for)
+# — it is neither eligible nor ineligible, is excluded from both halves, and is
+# COUNTED and reported rather than quietly promoted into the comfortable bucket.
+ELIGIBLE = "ELIGIBLE"
+INELIGIBLE = "INELIGIBLE"
+UNKNOWN_AGE = "UNKNOWN_AGE"
+
+# `sessions/day-N-YYYYMMDDTHHMMSSZ` — written by scripts/evolve.sh:3471.
+SESSION_DIR_TS_RE = re.compile(r"^day-\d+-(\d{8}T\d{6}Z)$")
+COMPACT_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -181,6 +225,61 @@ def classify(line):
     return (marker, False)
 
 
+def parse_timestamp(text):
+    """Pure: an aware UTC datetime from a compact or ISO-8601 stamp, else None.
+
+    Accepts the compact `YYYYMMDDTHHMMSSZ` form the session directories use and the
+    ISO-8601 form `git show -s --format=%cI` and `--since` produce. A naive stamp is
+    read as UTC so a comparison can never raise; anything unparseable returns None,
+    which the caller must treat as UNKNOWN, never as a boundary decision.
+    """
+    if not text:
+        return None
+    text = text.strip()
+    m = COMPACT_TS_RE.match(text)
+    if m:
+        text = "{}-{}-{}T{}:{}:{}+00:00".format(*m.groups())
+    elif text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def session_timestamp(name):
+    """Pure: the UTC datetime encoded in a `day-N-YYYYMMDDTHHMMSSZ` name, else None.
+
+    No git, no network — it reads the name the harness already wrote, so this works on
+    a bare `audit-log` checkout. A plain log file with no stamp in its name has UNKNOWN
+    age, which is its own bucket.
+    """
+    m = SESSION_DIR_TS_RE.match((name or "").rstrip("/"))
+    if not m:
+        return None
+    return parse_timestamp(m.group(1))
+
+
+def classify_eligibility(session_ts, boundary_ts):
+    """Pure: ELIGIBLE / INELIGIBLE / UNKNOWN_AGE for one session against a boundary.
+
+    No boundary → every session is eligible (the pre-boundary behaviour, byte-for-byte).
+    The boundary is **inclusive**: a session stamped exactly at it is ELIGIBLE, because
+    the boundary marks the moment the change landed, and strictly-before is the only
+    interval that could not have exercised it.
+    """
+    if boundary_ts is None:
+        return ELIGIBLE
+    if session_ts is None:
+        return UNKNOWN_AGE
+    if session_ts < boundary_ts:
+        return INELIGIBLE
+    return ELIGIBLE
+
+
 class SessionCounts:
     """Per-session tallies. Plain data; every field is derived by `count_lines`."""
 
@@ -191,6 +290,11 @@ class SessionCounts:
         self.fallback = 0
         self.firings = 0
         self.prose_excluded = 0
+        # Age and eligibility. The default is ELIGIBLE so that every path with no
+        # `--since*` boundary behaves and renders exactly as it did before #810's
+        # boundary landed.
+        self.ts = None
+        self.eligibility = ELIGIBLE
 
     @property
     def abstentions(self):
@@ -203,11 +307,14 @@ class SessionCounts:
         return self.abstentions > 0
 
     def row(self):
+        # The eligibility suffix is emitted ONLY when the session is not eligible, so a
+        # run with no boundary prints byte-identically to the pre-boundary tool.
+        suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
         return (
             f"  {self.name:<44} abstentions={self.abstentions:<3} "
             f"firings={self.firings:<3} fallback={self.fallback:<3} "
             f"gradeable={'yes' if self.gradeable else 'no ':<3} "
-            f"prose_excluded={self.prose_excluded}"
+            f"prose_excluded={self.prose_excluded}{suffix}"
         )
 
 
@@ -229,25 +336,58 @@ def count_lines(name, lines):
     return counts
 
 
-def grade(sessions):
+def apply_boundary(sessions, boundary_ts):
+    """Pure-ish: stamp each session's eligibility against the boundary. Mutates in place
+    and returns the list, so the decision lives in `classify_eligibility` alone."""
+    for s in sessions:
+        s.eligibility = classify_eligibility(s.ts, boundary_ts)
+    return sessions
+
+
+def grade(sessions, boundary_label=None, boundary_ts=None):
     """Pure: render the #810 verdict for a list of SessionCounts.
 
     @yuanhao's corrected rule: a session with zero abstentions is excluded from BOTH
     numerator and denominator — the gate cannot fire where there was nothing to
     continue. Below the sample floor the verdict is refused and the wait is printed
     instead: "not yet gradeable" is its own state, not "the gate failed".
+
+    His second correction (#810, 2026-08-21) adds the eligibility boundary: a session
+    whose head predates the fix under test is INELIGIBLE, not a miss, and is dropped
+    from both halves before any of the above runs. Without it the verdict keeps
+    combining "could not fire" with "did not fire" and gets worse-looking as more
+    pre-fix history accumulates. The boundary is reported, the exclusions are reported,
+    and the unknown-age bucket is reported — a shrinking denominator inside my own
+    meter is the exact defect this tool exists to avoid.
+
+    With no boundary the output is byte-identical to the pre-boundary tool.
     """
+    header = ""
+    if boundary_label is not None:
+        ineligible = [s for s in sessions if s.eligibility == INELIGIBLE]
+        unknown = [s for s in sessions if s.eligibility == UNKNOWN_AGE]
+        sessions = [s for s in sessions if s.eligibility == ELIGIBLE]
+        stamp = boundary_ts.isoformat() if boundary_ts is not None else "unresolved"
+        header = (
+            f"boundary: {boundary_label} ({stamp}) — sessions strictly before it are "
+            f"ineligible\n"
+            f"excluded: {len(ineligible)} session(s) predate the boundary — could not "
+            f"fire, not graded\n"
+            f"unknown age: {len(unknown)} session(s) — neither eligible nor "
+            f"ineligible, excluded from both halves and reported rather than "
+            f"absorbed\n"
+        )
     gradeable = [s for s in sessions if s.gradeable]
     n = len(gradeable)
     if n < MIN_GRADEABLE_SESSIONS:
-        return (
+        return header + (
             f"NOT YET GRADEABLE: {n} of {MIN_GRADEABLE_SESSIONS} gradeable sessions "
             f"({len(sessions)} session(s) read, {len(sessions) - n} with zero "
             f"abstentions and so excluded from both numerator and denominator). "
             f"Recording the wait, not a verdict."
         )
     fired = sum(1 for s in gradeable if s.firings > 0)
-    return (
+    return header + (
         f"VERDICT: of {n} gradeable sessions, the gate fired in {fired} "
         f"({len(sessions)} session(s) read, {len(sessions) - n} excluded for zero "
         f"abstentions)."
@@ -262,6 +402,26 @@ def read_lines(path):
         return fh.readlines()
 
 
+def resolve_sha_timestamp(sha):
+    """I/O: the committer date of `sha` as an ISO-8601 string, or None.
+
+    Kept out of every decision function on purpose — `classify_eligibility` takes a
+    resolved timestamp and nothing else, so the boundary rule stays pure and testable.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "show", "-s", "--format=%cI", sha],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 def session_from_path(path):
     """A file is one session; a directory is one session made of all files under it."""
     if os.path.isdir(path):
@@ -269,22 +429,100 @@ def session_from_path(path):
         for root, _dirs, files in os.walk(path):
             for fname in sorted(files):
                 lines.extend(read_lines(os.path.join(root, fname)))
-        return count_lines(os.path.basename(path.rstrip("/")) or path, lines)
-    return count_lines(os.path.basename(path), read_lines(path))
+        name = os.path.basename(path.rstrip("/")) or path
+        counts = count_lines(name, lines)
+    else:
+        name = os.path.basename(path)
+        counts = count_lines(name, read_lines(path))
+    counts.ts = session_timestamp(name)
+    return counts
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="measure_abstentions.py",
+        description=(
+            "Measure the #808 auto-continue gate against A1/planner abstentions "
+            "(issue #810)."
+        ),
+        epilog=(
+            "With no --since-sha/--since the output is identical to the pre-boundary "
+            "tool. With a boundary, sessions strictly before it are INELIGIBLE "
+            "('could not fire'), sessions with no parseable timestamp are UNKNOWN_AGE, "
+            "and both are excluded from numerator and denominator and reported."
+        ),
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        metavar="logfile|dir",
+        help="session directories (sessions/day-N-<ts>/) or plain log files",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="run the self-tests and exit",
+    )
+    boundary = parser.add_mutually_exclusive_group()
+    boundary.add_argument(
+        "--since-sha",
+        metavar="SHA",
+        help="eligibility boundary: the committer date of this commit "
+        "(git show -s --format=%%cI)",
+    )
+    boundary.add_argument(
+        "--since",
+        metavar="ISO8601",
+        help="eligibility boundary as a timestamp, e.g. 2026-08-21T21:25:00Z "
+        "(no git needed)",
+    )
+    return parser
 
 
 def main(argv):
-    if not argv:
+    args = build_parser().parse_args(argv)
+    if args.test:
+        return run_self_tests()
+    if not args.paths:
         print(__doc__.strip().splitlines()[0])
         print("usage: python3 scripts/measure_abstentions.py <logfile|dir> [...]")
         print("       python3 scripts/measure_abstentions.py --test")
         return 2
-    sessions = [session_from_path(p) for p in argv]
+
+    boundary_label = None
+    boundary_ts = None
+    if args.since_sha:
+        raw = resolve_sha_timestamp(args.since_sha)
+        if raw is None:
+            print(
+                f"error: could not resolve --since-sha {args.since_sha!r} "
+                f"(git show -s --format=%cI failed). Refusing to grade: an "
+                f"unresolvable boundary must not silently become 'no boundary'.",
+                file=sys.stderr,
+            )
+            return 2
+        boundary_ts = parse_timestamp(raw)
+        # Just the sha — `grade` already prints the resolved stamp, and printing it
+        # twice reads as two different facts.
+        boundary_label = args.since_sha
+    elif args.since:
+        boundary_ts = parse_timestamp(args.since)
+        boundary_label = args.since
+    if boundary_label is not None and boundary_ts is None:
+        print(
+            f"error: could not parse boundary timestamp from {boundary_label!r}. "
+            f"Refusing to grade rather than grading against an unknown boundary.",
+            file=sys.stderr,
+        )
+        return 2
+
+    sessions = [session_from_path(p) for p in args.paths]
+    apply_boundary(sessions, boundary_ts)
     print(f"#810 abstention/firing measurement over {len(sessions)} session(s):")
     for s in sessions:
         print(s.row())
     print()
-    print(grade(sessions))
+    print(grade(sessions, boundary_label, boundary_ts))
     return 0
 
 
@@ -436,6 +674,111 @@ def run_self_tests():
     check("zeros excluded from denominator", "of 4 gradeable sessions" in v, True)
     check("zeros counted as excluded", "2 excluded for zero abstentions" in v, True)
 
+    # 7. The eligibility boundary (@yuanhao on #810). Timestamp parsing first.
+    check(
+        "compact session stamp parses",
+        parse_timestamp("20260821T120601Z").isoformat(),
+        "2026-08-21T12:06:01+00:00",
+    )
+    check(
+        "ISO stamp with Z parses",
+        parse_timestamp("2026-08-21T21:25:00Z").isoformat(),
+        "2026-08-21T21:25:00+00:00",
+    )
+    check(
+        "git %cI offset stamp parses",
+        parse_timestamp("2026-08-21T23:25:00+02:00").isoformat(),
+        "2026-08-21T21:25:00+00:00",
+    )
+    check("junk stamp is None", parse_timestamp("not-a-date"), None)
+    check("empty stamp is None", parse_timestamp(""), None)
+    check(
+        "session dir name yields its stamp",
+        session_timestamp("day-174-20260821T120601Z").isoformat(),
+        "2026-08-21T12:06:01+00:00",
+    )
+    check("plain log name yields no stamp", session_timestamp("run-12345.log"), None)
+    check(
+        "trailing slash still parses",
+        session_timestamp("day-9-20260101T000000Z/") is not None,
+        True,
+    )
+
+    # The three states, each pinned on its own. Boundary chosen so one session sits
+    # strictly before it, one exactly ON it, and one after.
+    boundary = parse_timestamp("2026-08-21T12:00:00Z")
+    before = parse_timestamp("2026-08-21T11:59:59Z")
+    exactly = parse_timestamp("2026-08-21T12:00:00Z")
+    after = parse_timestamp("2026-08-21T12:00:01Z")
+    check("strictly before → ineligible", classify_eligibility(before, boundary), INELIGIBLE)
+    # Both sides of the discriminator, so it is not tested only where it blocks.
+    check("exactly at → eligible", classify_eligibility(exactly, boundary), ELIGIBLE)
+    check("after → eligible", classify_eligibility(after, boundary), ELIGIBLE)
+    check("no stamp → unknown", classify_eligibility(None, boundary), UNKNOWN_AGE)
+    check("no boundary → eligible", classify_eligibility(before, None), ELIGIBLE)
+    check("no boundary, no stamp → eligible", classify_eligibility(None, None), ELIGIBLE)
+
+    # 8. An ineligible session leaves BOTH halves; an unknown one is counted, not dropped.
+    def mk_ts(name, abstentions, firings, stamp):
+        s = mk(name, abstentions, firings)
+        s.ts = parse_timestamp(stamp) if stamp else None
+        return s
+
+    pool = [
+        mk_ts("old-1", 1, 0, "2026-08-20T00:00:00Z"),
+        mk_ts("old-2", 1, 0, "2026-08-21T11:59:59Z"),
+        mk_ts("edge", 1, 1, "2026-08-21T12:00:00Z"),
+        mk_ts("new", 1, 0, "2026-08-22T00:00:00Z"),
+        mk_ts("nameless", 1, 1, None),
+    ]
+    apply_boundary(pool, boundary)
+    check("old-1 ineligible", pool[0].eligibility, INELIGIBLE)
+    check("edge eligible (inclusive boundary)", pool[2].eligibility, ELIGIBLE)
+    check("nameless unknown", pool[4].eligibility, UNKNOWN_AGE)
+    bounded = grade(pool, "abc1234", boundary)
+    check("verdict names the boundary", "boundary: abc1234" in bounded, True)
+    check("verdict names the boundary stamp", "2026-08-21T12:00:00+00:00" in bounded, True)
+    check("two predate the boundary", "excluded: 2 session(s) predate" in bounded, True)
+    check("unknown age reported", "unknown age: 1 session(s)" in bounded, True)
+    # 5 read, 2 ineligible, 1 unknown → 2 eligible, both with abstentions → below floor.
+    check("boundary shrinks the pool", "2 of 4 gradeable sessions" in bounded, True)
+    check("below floor still refuses a verdict", "NOT YET GRADEABLE" in bounded, True)
+    check("below floor prints no verdict", "VERDICT" in bounded, False)
+    # The ineligible session that FIRED nothing must not appear in the numerator, and the
+    # unknown one that DID fire must not either — both halves, not just the denominator.
+    check("ineligible not in numerator", "fired in" in bounded, False)
+    over_floor = [
+        mk_ts("old", 1, 0, "2026-08-20T00:00:00Z"),
+        mk_ts("a", 1, 1, "2026-08-22T00:00:00Z"),
+        mk_ts("b", 1, 0, "2026-08-22T01:00:00Z"),
+        mk_ts("c", 1, 1, "2026-08-22T02:00:00Z"),
+        mk_ts("d", 1, 0, "2026-08-22T03:00:00Z"),
+        mk_ts("unknown-fired", 1, 1, None),
+    ]
+    apply_boundary(over_floor, boundary)
+    v2 = grade(over_floor, "2026-08-21T12:00:00Z", boundary)
+    check("4 eligible gradeable", "of 4 gradeable sessions" in v2, True)
+    check("only eligible firings counted", "the gate fired in 2" in v2, True)
+
+    # 9. With no boundary, grading is identical to the pre-change result — including for
+    # sessions that carry timestamps, so adding the field changed nothing by itself.
+    apply_boundary(over_floor, None)
+    check(
+        "no boundary → every session eligible",
+        [s.eligibility for s in over_floor],
+        [ELIGIBLE] * 6,
+    )
+    check(
+        "no boundary → pre-change verdict verbatim",
+        grade(over_floor),
+        "VERDICT: of 6 gradeable sessions, the gate fired in 3 "
+        "(6 session(s) read, 0 excluded for zero abstentions).",
+    )
+    check("no boundary → no boundary header", grade(over_floor).startswith("VERDICT"), True)
+    check("no boundary → row carries no suffix", "[" in over_floor[0].row(), False)
+    apply_boundary(over_floor, boundary)
+    check("ineligible row is labelled", "[INELIGIBLE]" in over_floor[0].row(), True)
+
     if failures:
         for f in failures:
             print(f"FAIL {f}")
@@ -446,7 +789,4 @@ def run_self_tests():
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    if args and args[0] == "--test":
-        sys.exit(run_self_tests())
-    sys.exit(main(args))
+    sys.exit(main(sys.argv[1:]))
