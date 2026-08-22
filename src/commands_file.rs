@@ -596,15 +596,45 @@ fn three_way_mutation_message(changed: &[String]) -> String {
     msg
 }
 
+/// Run a git invocation rooted at `root`.
+///
+/// The redirection flag is `git -C <dir> <subcommand>` — `-C` is a **git
+/// global** and must sit before the subcommand. `git apply -C<n>` is an
+/// entirely different flag (number of context lines that must match), so
+/// putting the directory in the argument position would silently change
+/// patch-matching behaviour instead of changing the directory.
+fn git_output_in(root: &std::path::Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let root_str = root.to_string_lossy().to_string();
+    let mut full: Vec<&str> = Vec::with_capacity(args.len() + 2);
+    full.push("-C");
+    full.push(&root_str);
+    full.extend_from_slice(args);
+    run_git_output(&full)
+}
+
 /// Apply a patch file using `git apply`. Returns `(success, output_message)`.
+///
+/// Thin wrapper over [`apply_patch_in`] rooted at the process CWD, so every
+/// production call site is byte-identical to the pre-seam behaviour.
 pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
-    // Verify file exists
-    if !std::path::Path::new(path).exists() {
+    apply_patch_in(std::path::Path::new("."), path, check_only)
+}
+
+/// Apply a patch file using `git apply`, resolving every filesystem probe and
+/// every git invocation against `root`. Returns `(success, output_message)`.
+///
+/// This is the dir-taking seam (#780): tests drive it with a tempdir instead of
+/// calling `std::env::set_current_dir`, which is process-global and races with
+/// any sibling test resolving a relative path.
+pub fn apply_patch_in(root: &std::path::Path, path: &str, check_only: bool) -> (bool, String) {
+    // Verify file exists (relative patch paths resolve against `root`; an
+    // absolute path is unaffected by the join).
+    if !root.join(path).exists() {
         return (false, format!("Patch file not found: {path}"));
     }
 
     // First get stat output to show a summary
-    let stat_text = match run_git_output(&["apply", "--stat", path]) {
+    let stat_text = match git_output_in(root, &["apply", "--stat", path]) {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => String::new(),
     };
@@ -633,14 +663,14 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
         // a mutating failure can be detected and reported instead of cascading
         // `-C1`/`--recount` against the dirty state. `--check` never writes.
         let status_before = if !check_only && extra_flags.contains(&"--3way") {
-            run_git_output(&["status", "--porcelain"])
+            git_output_in(root, &["status", "--porcelain"])
                 .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         } else {
             None
         };
 
-        match run_git_output(&args) {
+        match git_output_in(root, &args) {
             Ok(output) if output.status.success() => {
                 let mut msg = String::new();
                 if check_only {
@@ -664,7 +694,7 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
                 // This strategy failed. If it was --3way and it dirtied the
                 // tree, stop honestly instead of cascading (#699).
                 if let Some(before) = status_before {
-                    if let Ok(o) = run_git_output(&["status", "--porcelain"]) {
+                    if let Ok(o) = git_output_in(root, &["status", "--porcelain"]) {
                         let after = String::from_utf8_lossy(&o.stdout).to_string();
                         let changed = status_diff_paths(&before, &after);
                         if !changed.is_empty() {
@@ -685,7 +715,7 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
         fail_args.push("--check");
     }
     fail_args.push(path);
-    let stderr = run_git_output(&fail_args)
+    let stderr = git_output_in(root, &fail_args)
         .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
         .unwrap_or_default();
 
@@ -1186,7 +1216,6 @@ mod tests {
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
     use crate::help::help_text;
-    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -1943,7 +1972,6 @@ error[E0308]: second
     }
 
     #[test]
-    #[serial]
     fn test_apply_patch_from_string_valid_in_git_repo() {
         // Create a temp dir with a git repo and test applying a real patch
         let dir = TempDir::new().unwrap();
@@ -1974,29 +2002,23 @@ error[E0308]: second
 
         // Apply with --check first
         let patch_str = patch_path.to_string_lossy().to_string();
-        let old_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
 
-        let (ok, msg) = apply_patch(&patch_str, true);
+        let (ok, msg) = apply_patch_in(dir.path(), &patch_str, true);
         assert!(ok, "Check should succeed: {msg}");
 
         // Apply for real
-        let (ok, msg) = apply_patch(&patch_str, false);
+        let (ok, msg) = apply_patch_in(dir.path(), &patch_str, false);
         assert!(ok, "Apply should succeed: {msg}");
 
         // Verify file changed
         let content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "hello world\n");
-
-        std::env::set_current_dir(old_dir).unwrap();
     }
 
     /// Helper: set up a temp git repo with a committed file.
-    /// Returns (TempDir, file_path, old_cwd).
-    fn setup_git_repo(
-        filename: &str,
-        content: &str,
-    ) -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+    /// Returns (TempDir, file_path). The process CWD is never moved (#780) —
+    /// callers pass `dir.path()` to `apply_patch_in`.
+    fn setup_git_repo(filename: &str, content: &str) -> (TempDir, std::path::PathBuf) {
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join(filename);
         fs::write(&file_path, content).unwrap();
@@ -2027,18 +2049,15 @@ error[E0308]: second
             .output()
             .unwrap();
 
-        let old_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        (dir, file_path, old_dir)
+        (dir, file_path)
     }
 
     #[test]
-    #[serial]
     fn test_apply_patch_fallback_strategies() {
         // Create a repo with a file, then modify it so that a patch against the
         // original version has shifted context — forcing a fallback strategy.
         let original = "line1\nline2\nline3\nline4\nline5\n";
-        let (_dir, file_path, old_dir) = setup_git_repo("test.txt", original);
+        let (_dir, file_path) = setup_git_repo("test.txt", original);
 
         // Now modify the file (add lines at the top) so context drifts
         let modified = "new_top_1\nnew_top_2\nline1\nline2\nline3\nline4\nline5\n";
@@ -2071,7 +2090,7 @@ diff --git a/test.txt b/test.txt
         let patch_path = _dir.path().join("drift.patch");
         fs::write(&patch_path, patch).unwrap();
 
-        let (ok, msg) = apply_patch(&patch_path.to_string_lossy(), false);
+        let (ok, msg) = apply_patch_in(_dir.path(), &patch_path.to_string_lossy(), false);
         // Should succeed via a fallback strategy
         assert!(ok, "Fallback should succeed: {msg}");
 
@@ -2081,16 +2100,13 @@ diff --git a/test.txt b/test.txt
             content.contains("line3_modified"),
             "File should contain modified line, got: {content}"
         );
-
-        std::env::set_current_dir(old_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_apply_patch_check_only_fallback() {
         // Same drift setup as above, but with check_only=true
         let original = "line1\nline2\nline3\nline4\nline5\n";
-        let (_dir, file_path, old_dir) = setup_git_repo("test.txt", original);
+        let (_dir, file_path) = setup_git_repo("test.txt", original);
 
         let modified = "new_top_1\nnew_top_2\nline1\nline2\nline3\nline4\nline5\n";
         fs::write(&file_path, modified).unwrap();
@@ -2120,7 +2136,7 @@ diff --git a/test.txt b/test.txt
         let patch_path = _dir.path().join("drift.patch");
         fs::write(&patch_path, patch).unwrap();
 
-        let (ok, msg) = apply_patch(&patch_path.to_string_lossy(), true);
+        let (ok, msg) = apply_patch_in(_dir.path(), &patch_path.to_string_lossy(), true);
         assert!(ok, "Check-only fallback should succeed: {msg}");
         assert!(
             msg.contains("Dry-run OK"),
@@ -2133,17 +2149,14 @@ diff --git a/test.txt b/test.txt
             !content.contains("line3_modified"),
             "File should not be modified in check-only mode"
         );
-
-        std::env::set_current_dir(old_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_apply_patch_reports_fallback_strategy() {
         // Create a drifted patch situation where strict apply fails but a fallback succeeds.
         // Verify the output message mentions the fallback method.
         let original = "line1\nline2\nline3\nline4\nline5\n";
-        let (_dir, file_path, old_dir) = setup_git_repo("test.txt", original);
+        let (_dir, file_path) = setup_git_repo("test.txt", original);
 
         let modified = "new_top_1\nnew_top_2\nline1\nline2\nline3\nline4\nline5\n";
         fs::write(&file_path, modified).unwrap();
@@ -2173,7 +2186,7 @@ diff --git a/test.txt b/test.txt
         let patch_path = _dir.path().join("drift.patch");
         fs::write(&patch_path, patch).unwrap();
 
-        let (ok, msg) = apply_patch(&patch_path.to_string_lossy(), false);
+        let (ok, msg) = apply_patch_in(_dir.path(), &patch_path.to_string_lossy(), false);
         assert!(ok, "Should succeed via fallback: {msg}");
 
         // If it didn't apply via strict mode, the message should mention a fallback
@@ -2186,16 +2199,13 @@ diff --git a/test.txt b/test.txt
             used_fallback,
             "Message should mention the strategy used: {msg}"
         );
-
-        std::env::set_current_dir(old_dir).unwrap();
     }
 
     #[test]
-    #[serial]
     fn test_apply_patch_strict_still_works() {
         // When a patch applies cleanly, it should say "successfully" without fallback labels
         let original = "hello\n";
-        let (_dir, file_path, old_dir) = setup_git_repo("clean.txt", original);
+        let (_dir, file_path) = setup_git_repo("clean.txt", original);
 
         let patch = "\
 diff --git a/clean.txt b/clean.txt
@@ -2208,7 +2218,7 @@ diff --git a/clean.txt b/clean.txt
         let patch_path = _dir.path().join("clean.patch");
         fs::write(&patch_path, patch).unwrap();
 
-        let (ok, msg) = apply_patch(&patch_path.to_string_lossy(), false);
+        let (ok, msg) = apply_patch_in(_dir.path(), &patch_path.to_string_lossy(), false);
         assert!(ok, "Strict apply should succeed: {msg}");
         assert!(
             msg.contains("successfully"),
@@ -2222,8 +2232,6 @@ diff --git a/clean.txt b/clean.txt
 
         let content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "hello world\n");
-
-        std::env::set_current_dir(old_dir).unwrap();
     } // ── Tests moved from commands.rs — /add command tests ────────────
 
     #[test]
