@@ -1,0 +1,264 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Phase 1 — the prediction, written before I open the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && tail -c …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines) ✓ (6ms)
+ ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 9s (2 ✓)
+
+Phase 1: predict before reading. Let me check the live ranking first (permitted) and write the hypotheses.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la src/commands_risk_neverfo… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (43 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (20 lines) ✓ (674ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 41.0s (4 ✓)
+
+Prediction is durable in both stores. Phase 2 — read and grade, one bet at a time.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1: caps ===" && grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h2: shallow ===" && gr… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '955,985p' scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,360p' src/commands_r… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 8.7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-orienting: prediction committed (d9163260) + mirrored on #738. h1 settled MISS, h2 settled HIT. Settling h3 and h4 now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h3: path-shape filter …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h4: NeverForecastGroup… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.7s (2 ✓)
+
+h3 HIT (only starts_with outside tests is the sha compare at :382), h4 HIT (struct has exactly three fields). Now checking the neighbour that h1's miss exposed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -3; .…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,900p' scripts/extrac… ✓ (3ms)
+ ✓ (843ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.0s (2 ✓)
+
+Measured: 5 dark files exist, Rust renders all 5, Python hands the planner 2 — with nothing saying 3 were dropped. That's the fix.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'render_epistemic' scrip…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'render_epistemic' -A 14… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.9s (2 ✓)
+
+The fix: the Rust side marks its cut (+N more), the Python side silently drops 3 of 5. Landing it with a pure helper plus emission-point tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:833..845 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 31 lines)
+    EPISTEMIC_NEVER_FORECAST_SHOWN = 2
+  + 
+  + 
+  + def never_forecast_clause(paths: list[str], shown_max: int) -> str:
+  +     """The value half of the "never forecast" line: the shown paths, plus an
+  +     **in-band** marker naming how many were dropped.
+  + 
+  +     Two independent caps bound this list and only one of them used to say so.
+  +     The Rust renderer caps its own rows at `NEVER_FORECAST_SAMPLE = 5` and
+  +     marks that cut (`... (+N more)`); this collector then re-cut the survivors
+  +     to `EPISTEMIC_NEVER_FORECAST_SHOWN` and marked nothing. Measured Day 175:
+  +     5 dark files existed, the Rust side rendered all 5, and the planner was
+  +     handed 2 with no indication that 3 more were behind them — under a hint
+  +     reading "the never-forecast files are the darkest, point the self-driven
+  +     slot at one of these". The header line carrying the true count is consumed
+  +     and discarded by the parser, so the number survived nowhere.
+  + 
+  +     Byte-identical to the old join whenever nothing is dropped, which is the
+  +     common case and the regression risk.
+  +     """
+  ... (11 more lines)
+ ✓ (57.9s)
+    EPISTEMIC_NEVER_FORECAST_SHOWN = 2
+  + 
+  + 
+  + def never_forecast_clause(paths: list[str], shown_max: int) -> str:
+  +     """The value half of the "never forecast" line: the shown paths, plus an
+  +     **in-band** marker naming how many were dropped.
+  + 
+  +     Two independent caps bound this list and only one of them used to say so.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 1 lines)
+  -         shown = ", ".join(never_forecast[:EPISTEMIC_NEVER_FORECAST_SHOWN])
+  +         shown = never_forecast_clause(never_forecast, EPISTEMIC_NEVER_FORECAST_SHOWN)
+ ✓ (57.7s)
+  -         shown = ", ".join(never_forecast[:EPISTEMIC_NEVER_FORECAST_SHOWN])
+  +         shown = never_forecast_clause(never_forecast, EPISTEMIC_NEVER_FORECAST_SHOWN)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 12s (3 ✓)
+
+Now the emission-point tests. Let me find the existing render self-tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'only_never\|rendered_ne… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Priority: the ungraded prediction is what's failing cargo test (the #801 gate). Landing the grade first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test blind_round_gr… ✓ (181ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.7s (2 ✓)
+
+Gate green — the round is safe. Now the emission-point tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1556..1574 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 40 lines)
+        assert_true(
+            "at most 2 never-forecast paths are rendered",
+            "src/commands_lint.rs" not in rendered_never,
+  +     )
+  +     # 19h-bis (Day 175, blind round 72). The cut that the assertion directly
+  +     # above pins must be MARKED. This collector re-cuts a list the Rust
+  +     # renderer already cut and used to mark nothing, so the planner was handed
+  +     # 2 of 5 dark rooms under a hint calling them "the darkest" — with the
+  +     # header line carrying the real count consumed and discarded at the parse
+  +     # step. Asserted at the emission point: the string render_epistemic
+  +     # returns, which is the string that reaches the planner prompt.
+  +     assert_true(
+  +         "render_epistemic marks its own never-forecast cut in-band",
+  +         "(+" in rendered_never.split("never forecast", 1)[1].splitlines()[0],
+  +     )
+  +     five_dark = render_epistemic(
+  +         real_entries,
+  +         ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs", "src/e.rs"],
+  +     )
+  +     never_line = [ln for ln in five_dark.splitlines() if "never forecast" in ln][0]
+  ... (20 more lines)
+ ✓ (1m 2s)
+        assert_true(
+            "at most 2 never-forecast paths are rendered",
+            "src/commands_lint.rs" not in rendered_never,
+  +     )
+  +     # 19h-bis (Day 175, blind round 72). The cut that the assertion directly
+  +     # above pins must be MARKED. This collector re-cuts a list the Rust
+  +     # renderer already cut and used to mark nothing, so the planner was handed
+  +     # 2 of 5 dark rooms under a hint calling them "the darkest" — with the
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'def assert_eq\|def asse… ✓ (62ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (10 lines) ✓ (140ms)
+ ✓ (162ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 31s (5 ✓)
+
+Tests verified to fail against the old body — real regression guards. Checking why the passing labels didn't print:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (118ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass and print. Now: my h4 grade note claims an issue was filed — that must be true, not planned. Filing it, and verifying the live output:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (43 lines) ✓ (71ms)
+ ✓ (804ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+Live output confirms (+3 more). Issue #819 filed. Now CLAUDE.md (behaviour changed) and full checks:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'epistemic blind spots (… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - provider/API health from audit.jsonl, epistemic blind spots (from `yoyo risk epistemic`, fail-soft)
+  + provider/API health from audit.jsonl, epistemic blind spots (from `yoyo risk epistemic`, fail-soft — Day 175, blind round 72: the never-forecast line **marks its own cut in band** via the pure `never_forecast_clause(paths, shown_max)`. Two independent caps bound that list and only one of them used to say so: the Rust renderer caps its rows at `NEVER_FORECAST_SAMPLE = 5` and marks that cut (`... (+N more)`), then this collector re-cut the survivors to `EPISTEMIC_NEVER_FORECAST_SHOWN = 2` and marked nothing. Measured live that day: **5 dark files existed, Rust rendered all 5, the planner was handed 2** under a hint reading "the never-forecast files are the darkest — point the self-driven slot at one of these", and the section header carrying the true count of 5 is consumed and discarded by the parser (`continue` at the `in_never_forecast` branch), so the number survived nowhere. The damage was directional, not cosmetic: both shown files were day-old *pure moves* whose darkness carries zero bits, while the three hidden behind the silent cut were the genuinely old rooms — i.e. the elision was hiding exactly the rooms worth entering, in the one output that steers task selection. The marker deliberately reuses the Rust renderer's `(+N more)` shape rather than inventing a second elision vocabulary. **Byte-identical whenever nothing is dropped** — including exactly at the cap — which is the common case and was the regression risk; pinned at the **emission point** (the string `render_epistemic` returns, which is the string that reaches the planner prompt) with a 5-of-2 assertion, an at-the-cap near-miss guard so the discriminator is not covered only on the side that fires, and both verified to fail against the pre-fix body before landing)
+ ✓ (1m 2s)
+  - provider/API health from audit.jsonl, epistemic blind spots (from `yoyo risk epistemic`, fail-soft)
+  + provider/API health from audit.jsonl, epistemic blind spots (from `yoyo risk epistemic`, fail-soft — Day 175, blind round 72: the never-forecast line **marks its own cut in band** via the pure `never_forecast_clause(paths, shown_max)`. Two independent caps bound that list and only one of them used to say so: the Rust renderer caps its rows at `NEVER_FORECAST_SAMPLE = 5` and marks that cut (`... (+N more)`), then this collector re-cut the survivors to `EPISTEMIC_NEVER_FORECAST_SHOWN = 2` and marked nothing. Measured live that day: **5 dark files existed, Rust rendered all 5, the planner was handed 2** under a hint reading "the never-forecast files are the darkest — point the self-driven slot at one of these", and the section header carrying the true count of 5 is consumed and discarded by the parser (`continue` at the `in_never_forecast` branch), so the number survived nowhere. The damage was directional, not cosmetic: both shown files were day-old *pure moves* whose darkness carries zero bits, while the three hidden behind the silent cut were the genuinely old rooms — i.e. the elision was hiding exactly the rooms worth entering, in the one output that steers task selection. The marker deliberately reuses the Rust renderer's `(+N more)` shape rather than inventing a second elision vocabulary. **Byte-identical whenever nothing is dropped** — including exactly at the cap — which is the common case and was the regression risk; pinned at the **emission point** (the string `render_epistemic` returns, which is the string that reaches the planner prompt) with a 5-of-2 assertion, an at-the-cap near-miss guard so the discriminator is not covered only on the side that fires, and both verified to fail against the pre-fix body before landing)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 41s (4 ✓)
+
+All green. Final verification and commit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt --… (6 lines) ✓ (1.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything verified green. Only the commit remains:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/g… (21 lines) ✓ (702ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 34.3s (3 ✓)
+
+Done. Blind round 72 is complete and committed.
+
+## What happened
+
+Phase 1 — 4 hypotheses committed (d9163260) and mirrored on #738 before opening src/commands_risk_neverforecast.rs, so the harness's git reset --hard couldn't destroy the round.
+
+Phase 2 — 3 hit / 0 partial / 1 miss:
+
+| id | grade | outcome |
+|----|-------|---------|
+| h1 | miss | EPISTEMIC_NEVER_FORECAST_SHOWN = 2, not ≥5 — the Python cap binds, the Rust one is slack. I had the two caps' relative sizes backwards. |
+| h2 | hit | Both shallow-detection git commands re-run per candidate, no OnceLock. Not fixed — priced in the note, not left as ambient debt. |
+| h3 | hit | No path-shape filter in the module. Correctly not fixed — the prediction columns draw from the same universe, so filtering one half alone would make them disagree. |
+| h4 | hit | No unobservable-age counter. Filed as #819. |
+
+## The miss was the productive bet
+
+Chasing h1's inversion found what nobody predicted: render_epistemic() sliced never_forecast[:2] with no in-band cut marker, while the Rust renderer one layer up marks its own cut.
+
+Measured live: **5 dark files existed, Rust rendered all 5, the planner got 2* — under a hint reading "the never-forecast files are the darkest, point the self-driven slot at one of these"*. The header carrying the count of 5 is consumed and discarded at parse time, so the number survived nowhere.
+
+Directional, not cosmetic: both shown files were day-old pure moves whose darkness carries zero bits; the three hidden behind the silent cut were the genuinely old rooms. My own "every elision layer marks its cuts in-band" rule, broken inside the one output that steers task selection — and it was hiding exactly the rooms worth entering.
+
+## The fix
+
+Pure never_forecast_clause(paths, shown_max), one file, reusing the Rust renderer's (+N more) shape rather than inventing a second elision vocabulary. Byte-identical whenever nothing is dropped — including exactly at the cap, which was the regression risk. Pinned at the **emission point** (the string render_epistemic returns, which is what reaches the planner), with an at-the-cap near-miss guard so the discriminator isn't tested only on the side that fires — and both verified to fail against the pre-fix body before landing, so they're real regression guards, not fixtures agreeing with the fix.
+
+cargo build/test (5065)/clippy -D warnings/fmt --check and extract_trajectory.py --test all green.
+
+One thing I'll flag honestly: h2 and h3 were hits I chose not to act on. That's the right call for both, but it means this round's three hits grade my model of the file rather than delivering three fixes — and the one delivery came from the bet I got wrong.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

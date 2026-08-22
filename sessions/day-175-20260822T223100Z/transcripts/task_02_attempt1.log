@@ -1,0 +1,350 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 2 (the register), since it's two numbers and cheap.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/watch.rs src/repl.rs s… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '253s/3357/3358/' tests/m… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+Now step 1. Let me read the relevant spawn code.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest\|P… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest\|P… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:1210..1370 ✓ (1ms)
+  3 tools completed in 9.8s (3 ✓)
+
+Now let me see the replay arm and the banner:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:680..750 ✓ (1ms)
+
+Now the --parallel launch site that builds the manifest:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:1085..1125 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn_paralle… ✓ (5ms)
+  2 tools completed in 2.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (12 → 20 lines)
+    /// Build a rerunnable JSON manifest of a `/spawn --parallel` fan-out.
+    ///
+    /// Pure (no I/O, no spawning) so it is unit-testable. Captures the run id,
+  - /// a UTC timestamp, the task count, and per-task `{index, task, status}`
+  - /// where `task` is char-boundary-truncated to a sane cap.
+  + /// a UTC timestamp, the task count, the launch modifiers, and per-task
+  + /// `{index, task, status}` where `task` is char-boundary-truncated to a sane
+  + /// cap.
+  + ///
+  + /// `pr` records whether the run was launched with `--pr` (#815): a replay
+  + /// that silently runs under different flags than the run it names is a
+  + /// fidelity bug, and it is silent in the one direction a user cannot check.
+  + /// **Only `--pr` is recorded** — worktree/isolation state is deliberately
+  + /// still absent, so this manifest is not a complete record of the launch.
+    ///
+    /// First step toward codified/replayable orchestration (#341).
+    pub fn build_spawn_manifest(
+        run_id: &str,
+        tasks: &[String],
+        results: &[(String, SpawnStatus)],
+  ... (2 more lines)
+ ✓ (12.8s)
+    /// Build a rerunnable JSON manifest of a `/spawn --parallel` fan-out.
+    ///
+    /// Pure (no I/O, no spawning) so it is unit-testable. Captures the run id,
+  - /// a UTC timestamp, the task count, and per-task `{index, task, status}`
+  - /// where `task` is char-boundary-truncated to a sane cap.
+  + /// a UTC timestamp, the task count, the launch modifiers, and per-task
+  + /// `{index, task, status}` where `task` is char-boundary-truncated to a sane
+  + /// cap.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.0s (2 ✓)
+
+Expected — finishing both halves now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (6 → 7 lines)
+            "run_id": run_id,
+            "created_ts": created_ts,
+            "task_count": tasks.len(),
+  +         "pr": pr,
+            "tasks": entries,
+        })
+ ✓ (13.0s)
+            "run_id": run_id,
+            "created_ts": created_ts,
+            "task_count": tasks.len(),
+  +         "pr": pr,
+            "tasks": entries,
+        })
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 1 lines)
+  -     let manifest = build_spawn_manifest(&run_id, tasks, &results);
+  +     let manifest = build_spawn_manifest(&run_id, tasks, &results, args.pr);
+ ✓ (12.9s)
+  -     let manifest = build_spawn_manifest(&run_id, tasks, &results);
+  +     let manifest = build_spawn_manifest(&run_id, tasks, &results, args.pr);
+  2 tools completed in 34.1s (2 ✓)
+
+Now the parser side, then the test call sites.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (6 → 13 lines)
+        pub run_id: String,
+        pub created_ts: String,
+        pub task_count: usize,
+  +     /// Whether the recorded run was launched with `--pr` (#815).
+  +     ///
+  +     /// A manifest written before this field existed has no `pr` key, and
+  +     /// `false` is the honest reading of that absence rather than a guess:
+  +     /// those runs genuinely recorded no modifier and replaying them without
+  +     /// `--pr` is exactly what happened before. See `parse_spawn_manifest`.
+  +     pub pr: bool,
+        pub tasks: Vec<ParsedManifestTask>,
+    }
+ ✓ (12.5s)
+        pub run_id: String,
+        pub created_ts: String,
+        pub task_count: usize,
+  +     /// Whether the recorded run was launched with `--pr` (#815).
+  +     ///
+  +     /// A manifest written before this field existed has no `pr` key, and
+  +     /// `false` is the honest reading of that absence rather than a guess:
+  +     /// those runs genuinely recorded no modifier and replaying them without
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 5 lines)
+        let task_count = obj.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+  +     // Absent `pr` key => a manifest written before #815 existed. `false` is
+  +     // the honest reading of that absence, not a fallback guess: those runs
+  +     // really did launch without `--pr`.
+  +     let pr = obj.get("pr").and_then(|v| v.as_bool()).unwrap_or(false);
+ ✓ (12.6s)
+        let task_count = obj.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+  +     // Absent `pr` key => a manifest written before #815 existed. `false` is
+  +     // the honest reading of that absence, not a fallback guess: those runs
+  +     // really did launch without `--pr`.
+  +     let pr = obj.get("pr").and_then(|v| v.as_bool()).unwrap_or(false);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (6 → 7 lines)
+            run_id,
+            created_ts,
+            task_count,
+  +         pr,
+            tasks,
+        })
+ ✓ (12.5s)
+            run_id,
+            created_ts,
+            task_count,
+  +         pr,
+            tasks,
+        })
+  3 tools completed in 48.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest(" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i -E 's/(build_spawn_manife… ✓ (8ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 3 lines)
+                &[(task.clone(), SpawnStatus::Completed)],
+  +             false,
+            );
+ ✓ (12.5s)
+                &[(task.clone(), SpawnStatus::Completed)],
+  +             false,
+            );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3810,3818p' src/commands… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 3 lines)
+                task_count: 3,
+  +             pr: false,
+                tasks: vec![
+ ✓ (1m 43s)
+                task_count: 3,
+  +             pr: false,
+                tasks: vec![
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 18s (5 ✓)
+
+Compiles. Now the replay arm: the banner and the real pr.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (17 → 24 lines)
+                Ok((manifest, tasks)) => {
+                    println!(
+  -                     "{CYAN}  🐙 replaying run {} ({} task(s), recorded {}){RESET}",
+  -                     manifest.run_id,
+  -                     tasks.len(),
+  -                     manifest.created_ts
+  +                     "{CYAN}  🐙 {}{RESET}",
+  +                     replay_banner(
+  +                         &manifest.run_id,
+  +                         tasks.len(),
+  +                         &manifest.created_ts,
+  +                         manifest.pr
+  +                     )
+                    );
+                    let replay_args = SpawnArgs {
+                        task: String::new(),
+  ···
+                        model: None,
+                        system_prompt: None,
+                        parallel_tasks: Some(tasks.clone()),
+  ... (7 more lines)
+ ✓ (12.8s)
+                Ok((manifest, tasks)) => {
+                    println!(
+  -                     "{CYAN}  🐙 replaying run {} ({} task(s), recorded {}){RESET}",
+  -                     manifest.run_id,
+  -                     tasks.len(),
+  -                     manifest.created_ts
+  +                     "{CYAN}  🐙 {}{RESET}",
+  +                     replay_banner(
+  ... (13 more lines)
+
+Now the helper, placed next to load_replay_tasks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_replay_tasks" -… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (1 → 16 lines)
+  + /// The line `/spawn replay` prints *before* it re-launches a recorded run.
+  + ///
+  + /// Pure so it can be asserted at the emission point. #815: a replay that is
+  + /// about to open draft PRs must say so on the line that announces the replay,
+  + /// not discover it afterwards. When `pr` is false the string is byte-identical
+  + /// to the pre-#815 banner — that is every existing user's path.
+  + fn replay_banner(run_id: &str, task_count: usize, created_ts: &str, pr: bool) -> String {
+  +     let base = format!("replaying run {run_id} ({task_count} task(s), recorded {created_ts})");
+  +     if pr {
+  +         format!("{base} — with --pr: draft PRs will be opened")
+  +     } else {
+  +         base
+  +     }
+  + }
+  + 
+    /// Load the tasks for `/spawn replay [<run_id>|latest]`.
+ ✓ (1m 41s)
+  + /// The line `/spawn replay` prints *before* it re-launches a recorded run.
+  + ///
+  + /// Pure so it can be asserted at the emission point. #815: a replay that is
+  + /// about to open draft PRs must say so on the line that announces the replay,
+  + /// not discover it afterwards. When `pr` is false the string is byte-identical
+  + /// to the pre-#815 banner — that is every existing user's path.
+  + fn replay_banner(run_id: &str, task_count: usize, created_ts: &str, pr: bool) -> String {
+  +     let base = format!("replaying run {run_id} ({task_count} task(s), recorded {created_ts})");
+  ... (8 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the tests — both directions plus the legacy near-miss.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3686,3712p' src/commands… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 2 lines) ✓ (1m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 62 lines)
+  +     // --- #815: the manifest records the launch modifier -------------------
+  +     //
+  +     // `/spawn --parallel --pr` used to write a manifest with no record of
+  +     // `--pr` at all, and `/spawn replay` re-launched it with `pr: false`
+  +     // hardcoded — a replay running under different flags than the run it
+  +     // names, silent in the one direction a user cannot check.
+  + 
+  +     #[test]
+  +     fn manifest_roundtrips_pr_true() {
+  +         let tasks = vec!["task one".to_string()];
+  +         let results = vec![("task one".to_string(), SpawnStatus::Completed)];
+  +         let m = build_spawn_manifest("run-pr", &tasks, &results, true);
+  +         let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
+  +         assert!(parsed.pr, "a run launched with --pr must replay with --pr");
+  +     }
+  + 
+  +     #[test]
+  +     fn manifest_roundtrips_pr_false() {
+  +         // Near-miss guard: a discriminator tested only on the side that fires
+  +         // is vacuous green, so pin the common path too.
+  ... (42 more lines)
+ ✓ (1m 44s)
+  +     // --- #815: the manifest records the launch modifier -------------------
+  +     //
+  +     // `/spawn --parallel --pr` used to write a manifest with no record of
+  +     // `--pr` at all, and `/spawn replay` re-launched it with `pr: false`
+  +     // hardcoded — a replay running under different flags than the run it
+  +     // names, silent in the one direction a user cannot check.
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test 2>&1 | g… ✓ (1m 39s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs && s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 3s)
+  6 tools completed in 6m 46s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (331ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/GRANDFATHERED_OVERSIZED_MO… ✓ (234ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && s=$(grep -n "GRANDFATHERED_OVERS… ✓ (50ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.6s (3 ✓)
+
+Zero drift across all 25 register entries. Now the doc update:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rerunnable JSON manifes… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round.
+  + **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round. Day 175 (#815, the next session) closed that: the manifest carries **`pr`**, `build_spawn_manifest(run_id, tasks, results, pr)` takes it from the launching `SpawnArgs.pr`, `ParsedManifest.pr` reads it back, and the replay arm passes `pr: manifest.pr` instead of the hardcoded `false` — so a run launched with `--pr` replays with `--pr`. **A manifest written before the field existed keeps working and keeps today's behaviour**: `parse_spawn_manifest` reads `.get("pr").and_then(as_bool).unwrap_or(false)`, and that `false` is the *honest reading* of the absence rather than a fallback guess — those runs genuinely recorded no modifier. **The banner names it before it acts** (the pure `replay_banner(run_id, task_count, created_ts, pr)`, asserted at the emission point): a replay about to open draft PRs says so on the line announcing the replay, and when `pr` is false the string is **byte-identical** to the pre-#815 banner, which is every existing user's path and was the regression risk. Both directions are pinned plus the legacy near-miss (`pr: true` round-trips true, `pr: false` round-trips false, a no-`pr`-key JSON parses to `false` with its tasks intact) — a discriminator tested only on the side that fires is vacuous green. **Still not recorded, stated rather than implied: `pr` is the *only* modifier in the schema.** Worktree/isolation state, `--model`, `--system` and `-o` are absent from the manifest, so a replay is faithful about `--pr` and silent about the rest; widening the schema is separate work, not covered here.
+ ✓ (1m 2s)
+  - **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round.
+  + **Also not fixed, filed as #815:** the manifest records no launch modifiers at all, and the replay arm hardcodes `pr: false`, so `/spawn --parallel --pr` replays without `--pr` and nothing says so — a schema change too large to land safely inside the round. Day 175 (#815, the next session) closed that: the manifest carries **`pr`**, `build_spawn_manifest(run_id, tasks, results, pr)` takes it from the launching `SpawnArgs.pr`, `ParsedManifest.pr` reads it back, and the replay arm passes `pr: manifest.pr` instead of the hardcoded `false` — so a run launched with `--pr` replays with `--pr`. **A manifest written before the field existed keeps working and keeps today's behaviour**: `parse_spawn_manifest` reads `.get("pr").and_then(as_bool).unwrap_or(false)`, and that `false` is the *honest reading* of the absence rather than a fallback guess — those runs genuinely recorded no modifier. **The banner names it before it acts** (the pure `replay_banner(run_id, task_count, created_ts, pr)`, asserted at the emission point): a replay about to open draft PRs says so on the line announcing the replay, and when `pr` is false the string is **byte-identical** to the pre-#815 banner, which is every existing user's path and was the regression risk. Both directions are pinned plus the legacy near-miss (`pr: true` round-trips true, `pr: false` round-trips false, a no-`pr`-key JSON parses to `false` with its tasks intact) — a discriminator tested only on the side that fires is vacuous green. **Still not recorded, stated rather than implied: `pr` is the *only* modifier in the schema.** Worktree/isolation state, `--model`, `--system` and `-o` are absent from the manifest, so a replay is faithful about `--pr` and silent about the rest; widening the schema is separate work, not covered here.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (1m 3s)
+  3 tools completed in 2m 34s (3 ✓)
+
+All four checks green. Committing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (26ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Final verification:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (187ms)
+
+Done — committed as e5f89637, working tree clean.
+
+## What landed
+
+Step 1 (#815) — `/spawn replay` no longer silently drops `--pr`:
+
+• build_spawn_manifest(run_id, tasks, results, pr) now emits `"pr": pr, threaded from the launching SpawnArgs.pr at the one --parallel` call site.
+• ParsedManifest gained pr: bool, read defensively: .get("pr").and_then(as_bool).unwrap_or(false).
+• The replay arm passes pr: manifest.pr instead of the hardcoded false.
+• New pure `replay_banner(run_id, task_count, created_ts, pr)` — a replay about to open draft PRs says so *on the line announcing the replay*, before it acts. With `pr: false` the string is byte-identical to the pre-#815 banner.
+
+Five tests, both directions plus the near-miss (a discriminator tested only on the side that fires is vacuous green): `pr: true round-trips true, pr: false round-trips false, a legacy JSON with **no** pr key parses to false with its tasks intact, the banner names --pr when set, and the no-pr` banner is asserted as an exact string.
+
+The unwrap_or(false) is deliberate and documented in both the struct field and the parser: pre-#815 manifests genuinely recorded no modifier, so false is the honest reading of that absence rather than a guess.
+
+Step 2 — register drift paid off, done first as instructed:
+
+| file | was | now |
+|---|---|---|
+| src/watch.rs | 3472 | 3532 (+60 — 60% of its grace band, one bad day from fatal) |
+| src/repl.rs | 3357 | 3358 |
+| src/commands_spawn.rs | 3991 | 4099 (grown by step 1, updated in the same diff) |
+
+Verified all 25 register entries now equal wc -l — zero drift.
+
+Docs: the commands_spawn.rs bullet in CLAUDE.md records what landed and what did not — pr is the only modifier in the schema; worktree/isolation, --model, --system and -o are still absent, so a replay is faithful about --pr and silent about the rest. A partial fix must not read as complete.
+
+cargo fmt --check, build, test (5070 + integration), clippy --all-targets -D warnings — all green.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
