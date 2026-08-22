@@ -90,7 +90,7 @@ day-174 (2026-08-21 23:23:42): tasks 1/1 ✅ — build OK, tests OK
 
 It directly undermines the live #810 analysis: the creator's "post-fix: 5 sessions, 5/5 abstention-free, 0 fallbacks" is computed over these same session records, and **2 of those 5 sessions produced no output at all**. If a zero-output session can score `1/1 ✅`, the meter cannot see the failure mode #808/#810 are about.
 
-Wanted: establish what `outcome.json` actually recorded for those two sessions (needs an `audit-log` fetch), then make a zero-commit task record as something other than a success.
+Wanted: **confirmed from `audit-log` — see the addendum at the end of this document.** `outcome.json` records `tasks_succeeded: 1` for both, both ran the planner-fallback task, and my own abstention instrument scores both as clean. The meter is blind in three places at once.
 
 ### 2. `measure_abstentions.py` — creator asked for a specific change
 
@@ -122,4 +122,66 @@ Revert receipts (#773–#807) are all closed-loop history from the pre-Day-174 c
 
 ## Research Findings
 
-*(Research step — see below; this section written after the draft was committed.)*
+**Recall first (yopedia, `agent:yuanhao--yoyo`)**: I already hold 4+ competitive-landscape pages (`ai-coding-agents-2026-competitive-landscape`, `ai-coding-agent-competitive-landscape`, `agent-changelog-delta-analysis`, `ai-coding-agent-features-june-july-2026`). A fifth generic scan would be volume, not signal, so I looked for one *specific* unexposed capability instead and ingested only that.
+
+**The 2026 framing has shifted from model to harness.** Both the RockB capability matrix and the arihantdeva harness comparison argue the same thing: the frontier models have converged, so what differentiates agents is the runtime around them — MCP transport, repo instruction files, deterministic hooks, sandbox policy, network egress control. That is a favourable axis for me: it is exactly where I've been spending sessions.
+
+Scored honestly on it:
+
+| axis | yoyo |
+|---|---|
+| MCP stdio transport | ✅ with builtin-name collision guard |
+| MCP Streamable HTTP / remote | ❌ **and yoagent already provides it** |
+| repo instruction files | ✅ CLAUDE.md / YOYO.md / AGENTS.md / .cursorrules |
+| deterministic hooks | ⚠️ `HookRegistry` exists; `AuditHook` is observe-only and writes nothing |
+| sandbox — file tools | ✅ `dir_restrictions`, `/read` + `/plan` mode, spawn worktree confinement |
+| sandbox — bash | ❌ bash with an absolute path escapes the spawn worktree (documented) |
+| network egress control | ❌ |
+
+**The concrete, cheap gap.** yoagent **0.16.5** — the version I pin *today* — exposes both:
+
+- `Agent::with_mcp_server_stdio(cmd, args, env)` — `agent.rs:488`
+- `Agent::with_mcp_server_http(url)` — `agent.rs:504`
+
+I call **only** the stdio one (`src/agent_builder.rs:204`). Remote/hosted MCP servers are unreachable, and the missing piece is an upstream function that already exists. This is the "check yoagent before building" rule running *in reverse* — not a wheel reinvented, a wheel never taken off the shelf.
+
+Caveat the planner must carry if it picks this up: a URL in a project-local `.yoyo.toml` pointing at an arbitrary remote server is a strictly larger trust problem than a local command, so it must route through the **same #748 project-config trust boundary** as stdio entries, not around it. `gate_mcp_sources` already has the shape.
+
+*(Ingested to yopedia as "Harness-axis competitor gap: MCP HTTP transport unexposed (Day 175)".)*
+
+Not a gap, worth recording so it stops being re-proposed: repo indexing/repo-map (Aider's headline feature, Cursor's custom index) is covered by `symbols.rs` + `/index` + `/map` + `/outline`.
+
+## Addendum — ground truth on the two zero-output sessions
+
+Fetched `outcome.json` from the `audit-log` branch. Both sessions record verbatim:
+
+```json
+"tasks_attempted": 1, "tasks_succeeded": 1, "reverted": false, "fallback_phases": []
+```
+
+against **zero** assessment/plan/task/journal commits in git. The disagreement is confirmed at the source, not inferred.
+
+**What actually happened**, from the session directories' structural artifacts:
+
+| session | tasks | `plan_retry.log` | `unverified_task_*.md` | commits |
+|---|---|---|---|---|
+| day-174 22:30 | 2/2 | — | UNVERIFIED | 5 |
+| day-174 23:23 | 1/1 | **PLAN_RETRY** | UNVERIFIED | **0** |
+| day-175 02:10 | 1/1 | **PLAN_RETRY** | UNVERIFIED | **0** |
+
+Across the last 13 sessions, `plan_retry.log` present ⇔ `tasks_attempted == 1` in **6 of 6** cases. Both dead sessions ran the planner-fallback task (`Self-improvement (small, committed)` — the `FALLBACK_TASK_TITLE`), got the evaluator skipped on budget, filed issues **#813/#814**, and committed nothing.
+
+### The instrument is blind to exactly the events it was built to count
+
+I ran my own `scripts/measure_abstentions.py` over all three:
+
+```
+day-174-20260821T232342Z   abstentions=0  firings=0  fallback=0  gradeable=no
+day-175-20260822T021038Z   abstentions=0  firings=0  fallback=0  gradeable=no
+```
+
+`fallback=0` for two sessions that demonstrably ran the planner fallback. The cause is a **stream mismatch**: `PLANNER_ZERO_TASKS` / `PLANNER_FALLBACK` are anchored to lines `scripts/evolve.sh` prints to the **workflow log**, but a `sessions/day-*/` directory contains only `transcripts/` (agent output) + `outcome.json` — the harness's stdout is not in it. My own CLAUDE.md already states this ("the markers only appear in the workflow log") and I measured over the session dirs anyway.
+
+This is load-bearing for the live #810 thread: @yuanhao's "after the fix: 5 sessions, **0 fallbacks**" was computed this way. At least one of those five (day-174 10:42) has `plan_retry.log`, and the two sessions *since* his measurement are both fallbacks with zero output. **The recovery he observed has already ended, and the meter still reads clean.**
+
+The cheap fix is that `plan_retry.log` / `unverified_task_*.md` are *structural artifacts already sitting in the session directory* — no log grepping, no contamination surface (they cannot be written by my own prose, which was the #810 defect that forced the anchored-line design in the first place). Pairs naturally with the `--since-sha` boundary the creator asked for, and with giving the script a real arg parser.
