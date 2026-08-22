@@ -689,10 +689,13 @@ pub async fn handle_spawn(
         match load_replay_tasks(Path::new(SPAWN_RUNS_DIR), id_arg) {
             Ok((manifest, tasks)) => {
                 println!(
-                    "{CYAN}  🐙 replaying run {} ({} task(s), recorded {}){RESET}",
-                    manifest.run_id,
-                    tasks.len(),
-                    manifest.created_ts
+                    "{CYAN}  🐙 {}{RESET}",
+                    replay_banner(
+                        &manifest.run_id,
+                        tasks.len(),
+                        &manifest.created_ts,
+                        manifest.pr
+                    )
                 );
                 let replay_args = SpawnArgs {
                     task: String::new(),
@@ -702,7 +705,11 @@ pub async fn handle_spawn(
                     model: None,
                     system_prompt: None,
                     parallel_tasks: Some(tasks.clone()),
-                    pr: false,
+                    // #815: replay under the modifiers the run was launched
+                    // with, not a hardcoded `false`. Manifests written before
+                    // that field existed parse to `false`, which is what they
+                    // genuinely recorded.
+                    pr: manifest.pr,
                 };
                 return handle_spawn_parallel(
                     &tasks,
@@ -1099,7 +1106,7 @@ fn handle_spawn_parallel(
             .collect()
     };
     let run_id = spawn_run_id();
-    let manifest = build_spawn_manifest(&run_id, tasks, &results);
+    let manifest = build_spawn_manifest(&run_id, tasks, &results, args.pr);
     match write_spawn_manifest(Path::new(SPAWN_RUNS_DIR), &manifest) {
         Ok(path) => println!("{DIM}  manifest: {}{RESET}", path.display()),
         Err(e) => println!("{DIM}  (manifest not written: {e}){RESET}"),
@@ -1215,14 +1222,22 @@ fn manifest_status_str(status: &SpawnStatus) -> &'static str {
 /// Build a rerunnable JSON manifest of a `/spawn --parallel` fan-out.
 ///
 /// Pure (no I/O, no spawning) so it is unit-testable. Captures the run id,
-/// a UTC timestamp, the task count, and per-task `{index, task, status}`
-/// where `task` is char-boundary-truncated to a sane cap.
+/// a UTC timestamp, the task count, the launch modifiers, and per-task
+/// `{index, task, status}` where `task` is char-boundary-truncated to a sane
+/// cap.
+///
+/// `pr` records whether the run was launched with `--pr` (#815): a replay
+/// that silently runs under different flags than the run it names is a
+/// fidelity bug, and it is silent in the one direction a user cannot check.
+/// **Only `--pr` is recorded** — worktree/isolation state is deliberately
+/// still absent, so this manifest is not a complete record of the launch.
 ///
 /// First step toward codified/replayable orchestration (#341).
 pub fn build_spawn_manifest(
     run_id: &str,
     tasks: &[String],
     results: &[(String, SpawnStatus)],
+    pr: bool,
 ) -> serde_json::Value {
     let created_ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -1256,6 +1271,7 @@ pub fn build_spawn_manifest(
         "run_id": run_id,
         "created_ts": created_ts,
         "task_count": tasks.len(),
+        "pr": pr,
         "tasks": entries,
     })
 }
@@ -1291,6 +1307,13 @@ pub struct ParsedManifest {
     pub run_id: String,
     pub created_ts: String,
     pub task_count: usize,
+    /// Whether the recorded run was launched with `--pr` (#815).
+    ///
+    /// A manifest written before this field existed has no `pr` key, and
+    /// `false` is the honest reading of that absence rather than a guess:
+    /// those runs genuinely recorded no modifier and replaying them without
+    /// `--pr` is exactly what happened before. See `parse_spawn_manifest`.
+    pub pr: bool,
     pub tasks: Vec<ParsedManifestTask>,
 }
 
@@ -1320,6 +1343,10 @@ pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
         .unwrap_or("")
         .to_string();
     let task_count = obj.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    // Absent `pr` key => a manifest written before #815 existed. `false` is
+    // the honest reading of that absence, not a fallback guess: those runs
+    // really did launch without `--pr`.
+    let pr = obj.get("pr").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let tasks = obj
         .get("tasks")
@@ -1350,6 +1377,7 @@ pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
         run_id,
         created_ts,
         task_count,
+        pr,
         tasks,
     })
 }
@@ -1437,6 +1465,21 @@ fn manifest_replay_tasks(manifest: &ParsedManifest) -> Result<Vec<String>, Strin
         ))
     } else {
         Ok(tasks)
+    }
+}
+
+/// The line `/spawn replay` prints *before* it re-launches a recorded run.
+///
+/// Pure so it can be asserted at the emission point. #815: a replay that is
+/// about to open draft PRs must say so on the line that announces the replay,
+/// not discover it afterwards. When `pr` is false the string is byte-identical
+/// to the pre-#815 banner — that is every existing user's path.
+fn replay_banner(run_id: &str, task_count: usize, created_ts: &str, pr: bool) -> String {
+    let base = format!("replaying run {run_id} ({task_count} task(s), recorded {created_ts})");
+    if pr {
+        format!("{base} — with --pr: draft PRs will be opened")
+    } else {
+        base
     }
 }
 
@@ -3470,7 +3513,7 @@ mod tests {
                 SpawnStatus::Failed("boom".to_string()),
             ),
         ];
-        let m = build_spawn_manifest("run-abc", &tasks, &results);
+        let m = build_spawn_manifest("run-abc", &tasks, &results, false);
 
         assert_eq!(m["run_id"], "run-abc");
         assert_eq!(m["task_count"], 3);
@@ -3495,7 +3538,7 @@ mod tests {
         let long = format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50));
         let tasks = vec![long.clone()];
         let results = vec![(long, SpawnStatus::Running)];
-        let m = build_spawn_manifest("run-xyz", &tasks, &results);
+        let m = build_spawn_manifest("run-xyz", &tasks, &results, false);
 
         let stored = m["tasks"][0]["task"].as_str().expect("task string");
         // Truncated to at most the cap.
@@ -3522,7 +3565,7 @@ mod tests {
         let long = format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50));
         let tasks = vec![long.clone()];
         let results = vec![(long.clone(), SpawnStatus::Completed)];
-        let m = build_spawn_manifest("run-cut", &tasks, &results);
+        let m = build_spawn_manifest("run-cut", &tasks, &results, false);
 
         let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
         let replayed = manifest_replay_tasks(&parsed).expect("has tasks");
@@ -3551,6 +3594,7 @@ mod tests {
             "run-short",
             std::slice::from_ref(&task),
             &[(task.clone(), SpawnStatus::Completed)],
+            false,
         );
         let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
         let replayed = manifest_replay_tasks(&parsed).expect("has tasks");
@@ -3568,7 +3612,7 @@ mod tests {
             ("t1".to_string(), SpawnStatus::Completed),
             ("t2".to_string(), SpawnStatus::Running),
         ];
-        let manifest = build_spawn_manifest("run-roundtrip", &tasks, &results);
+        let manifest = build_spawn_manifest("run-roundtrip", &tasks, &results, false);
 
         let path = write_spawn_manifest(&dir, &manifest).expect("write manifest");
         assert!(path.exists(), "manifest file should exist");
@@ -3600,7 +3644,7 @@ mod tests {
         let tasks = vec!["t1".to_string()];
         let results = vec![("t1".to_string(), SpawnStatus::Completed)];
         // Round-trip with the WRITER (fuel-line contract, Day 128).
-        let manifest = build_spawn_manifest("20260709T100000Z", &tasks, &results);
+        let manifest = build_spawn_manifest("20260709T100000Z", &tasks, &results, false);
         write_spawn_manifest(&dir, &manifest).expect("write manifest");
 
         let listed = list_spawn_manifests(&dir);
@@ -3619,7 +3663,7 @@ mod tests {
                 SpawnStatus::Failed("boom".to_string()),
             ),
         ];
-        let m = build_spawn_manifest("run-mixed", &tasks, &results);
+        let m = build_spawn_manifest("run-mixed", &tasks, &results, false);
         let out = format_manifest_summary(&m);
 
         assert!(out.contains("run-mixed"), "run_id in summary: {out}");
@@ -3636,7 +3680,7 @@ mod tests {
         let long = format!("{}✓{}", "x".repeat(80), "y".repeat(80));
         let tasks = vec![long.clone()];
         let results = vec![(long.clone(), SpawnStatus::Running)];
-        let m = build_spawn_manifest("run-long", &tasks, &results);
+        let m = build_spawn_manifest("run-long", &tasks, &results, false);
         let out = format_manifest_summary(&m);
 
         // The full untruncated task must NOT appear (it was shortened).
@@ -3646,6 +3690,69 @@ mod tests {
         // No panic occurred (reaching here proves char-boundary safety).
     }
 
+    // --- #815: the manifest records the launch modifier -------------------
+    //
+    // `/spawn --parallel --pr` used to write a manifest with no record of
+    // `--pr` at all, and `/spawn replay` re-launched it with `pr: false`
+    // hardcoded — a replay running under different flags than the run it
+    // names, silent in the one direction a user cannot check.
+
+    #[test]
+    fn manifest_roundtrips_pr_true() {
+        let tasks = vec!["task one".to_string()];
+        let results = vec![("task one".to_string(), SpawnStatus::Completed)];
+        let m = build_spawn_manifest("run-pr", &tasks, &results, true);
+        let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
+        assert!(parsed.pr, "a run launched with --pr must replay with --pr");
+    }
+
+    #[test]
+    fn manifest_roundtrips_pr_false() {
+        // Near-miss guard: a discriminator tested only on the side that fires
+        // is vacuous green, so pin the common path too.
+        let tasks = vec!["task one".to_string()];
+        let results = vec![("task one".to_string(), SpawnStatus::Completed)];
+        let m = build_spawn_manifest("run-nopr", &tasks, &results, false);
+        let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
+        assert!(!parsed.pr, "no --pr at launch must not grow one on replay");
+    }
+
+    #[test]
+    fn parse_spawn_manifest_legacy_without_pr_key_defaults_false() {
+        // A manifest written before #815 has no `pr` key. It must stay
+        // readable and keep today's behaviour: those runs genuinely recorded
+        // no modifier, so `false` is the honest reading, not a guess.
+        let legacy = r#"{"run_id":"old","created_ts":"ts","task_count":1,
+            "tasks":[{"index":0,"task":"a task","status":"completed"}]}"#;
+        let parsed = parse_spawn_manifest(legacy).expect("legacy manifest still parses");
+        assert!(!parsed.pr);
+        assert_eq!(parsed.run_id, "old");
+        assert_eq!(parsed.tasks.len(), 1, "legacy tasks still readable");
+    }
+
+    #[test]
+    fn replay_banner_names_the_pr_modifier_before_acting() {
+        // Emission point: the string the caller prints, not a helper below it.
+        let with_pr = replay_banner("run-pr", 2, "2026-08-22T00:00:00Z", true);
+        assert!(
+            with_pr.contains("--pr"),
+            "banner must name the modifier: {with_pr}"
+        );
+        assert!(
+            with_pr.contains("run-pr") && with_pr.contains("2 task(s)"),
+            "existing fields kept: {with_pr}"
+        );
+    }
+
+    #[test]
+    fn replay_banner_without_pr_is_unchanged() {
+        // Byte-identical to the pre-#815 banner — every existing user's path.
+        assert_eq!(
+            replay_banner("run-x", 3, "2026-08-22T00:00:00Z", false),
+            "replaying run run-x (3 task(s), recorded 2026-08-22T00:00:00Z)"
+        );
+    }
+
     #[test]
     fn parse_spawn_manifest_roundtrips_build_spawn_manifest() {
         let tasks = vec!["task one".to_string(), "task two".to_string()];
@@ -3653,7 +3760,7 @@ mod tests {
             ("task one".to_string(), SpawnStatus::Completed),
             ("task two".to_string(), SpawnStatus::Failed("boom".into())),
         ];
-        let manifest = build_spawn_manifest("run-abc", &tasks, &results);
+        let manifest = build_spawn_manifest("run-abc", &tasks, &results, false);
         let json = serde_json::to_string(&manifest).expect("serialize manifest");
 
         let parsed = parse_spawn_manifest(&json).expect("parse manifest");
@@ -3698,7 +3805,7 @@ mod tests {
             .iter()
             .map(|t| (t.clone(), SpawnStatus::Completed))
             .collect();
-        let manifest = build_spawn_manifest(run_id, &tasks, &results);
+        let manifest = build_spawn_manifest(run_id, &tasks, &results, false);
         write_spawn_manifest(dir, &manifest).expect("write manifest")
     }
 
@@ -3777,7 +3884,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("create temp dir");
         let dir = tmp.path().join("spawn_runs");
         // A structurally valid manifest with zero tasks.
-        let manifest = build_spawn_manifest("20260101T000000Z", &[], &[]);
+        let manifest = build_spawn_manifest("20260101T000000Z", &[], &[], false);
         write_spawn_manifest(&dir, &manifest).expect("write manifest");
 
         let err = load_replay_tasks(&dir, Some("20260101T000000Z")).expect_err("must error");
@@ -3791,6 +3898,7 @@ mod tests {
             run_id: "r".to_string(),
             created_ts: "ts".to_string(),
             task_count: 3,
+            pr: false,
             tasks: vec![
                 ParsedManifestTask {
                     index: 0,

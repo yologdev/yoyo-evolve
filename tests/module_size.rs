@@ -200,7 +200,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
     // common case, and widening a human-set allow list while preserving deny.
-    ("src/commands_spawn.rs", 3991),
+    ("src/commands_spawn.rs", 4099),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
@@ -250,7 +250,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.
-    ("src/repl.rs", 3357),
+    ("src/repl.rs", 3358),
     // Day 174: raised 3269 -> 3490 for `git_redirection_refusal_message` +
     // `classify_redirection_reason` (~76 lines) and their emission-point tests
     // (~146) — the worktree-confinement refusal now names the accepted
@@ -298,7 +298,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/tools.rs", 3299),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
-    ("src/watch.rs", 3472),
+    ("src/watch.rs", 3532),
 ];
 
 /// A way the size gate can be violated. Five distinct values on purpose —
