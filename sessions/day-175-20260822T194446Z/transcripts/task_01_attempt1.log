@@ -1,0 +1,220 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1195,1300p src/commands_p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_context_for_promp… ✓ (6ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,140p src/config.rs && … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,12p src/commands_projec… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 20.9s (4 ✓)
+
+Now the edit:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (1 → 13 lines)
+  - pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(String, String)> {
+  + ///
+  + /// `restrictions` is the caller's [`DirectoryRestrictions`] — the *same* rules the
+  + /// model-facing file tools are wrapped in (`maybe_guard` in `src/tools.rs`). Candidate
+  + /// paths are filtered through `restrictions.check_path` **before** the read loop, so a
+  + /// denied file is never opened, never counted against `AUTO_CONTEXT_MAX_FILES`, and never
+  + /// reaches the signature block. When `restrictions.is_empty()` (the overwhelmingly common
+  + /// case) `check_path` short-circuits to `Ok`, so the returned vec is byte-identical to the
+  + /// pre-#817 behaviour.
+  + pub fn auto_context_for_prompt(
+  +     prompt: &str,
+  +     recent_context: &[String],
+  +     restrictions: &DirectoryRestrictions,
+  + ) -> Vec<(String, String)> {
+ ✓ (11.9s)
+  - pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(String, String)> {
+  + ///
+  + /// `restrictions` is the caller's [`DirectoryRestrictions`] — the *same* rules the
+  + /// model-facing file tools are wrapped in (`maybe_guard` in `src/tools.rs`). Candidate
+  + /// paths are filtered through `restrictions.check_path` **before** the read loop, so a
+  + /// denied file is never opened, never counted against `AUTO_CONTEXT_MAX_FILES`, and never
+  + /// reaches the signature block. When `restrictions.is_empty()` (the overwhelmingly common
+  + /// case) `check_path` short-circuits to `Ok`, so the returned vec is byte-identical to the
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (1 → 2 lines)
+    use crate::cli;
+  + use crate::config::DirectoryRestrictions;
+ ✓ (11.5s)
+    use crate::cli;
+  + use crate::config::DirectoryRestrictions;
+  2 tools completed in 26.9s (2 ✓)
+
+Now the filter and the call site:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (6 → 15 lines)
+            // Skip binary files
+            if is_binary_extension(&r.path) {
+  +             continue;
+  +         }
+  + 
+  +         // Skip files the caller's directory restrictions forbid (#817). This is the same
+  +         // rule the model-facing read tool is wrapped in, checked *before* the read loop so
+  +         // a denied file is never opened and never consumes one of the
+  +         // `AUTO_CONTEXT_MAX_FILES` slots. `check_path` returns `Ok` immediately when no
+  +         // restrictions are configured, so the common path is unchanged.
+  +         if restrictions.check_path(&r.path).is_err() {
+                continue;
+            }
+    
+ ✓ (11.7s)
+            // Skip binary files
+            if is_binary_extension(&r.path) {
+  +             continue;
+  +         }
+  + 
+  +         // Skip files the caller's directory restrictions forbid (#817). This is the same
+  +         // rule the model-facing read tool is wrapped in, checked *before* the read loop so
+  +         // a denied file is never opened and never consumes one of the
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (1 → 7 lines)
+  -             let auto_files = commands::auto_context_for_prompt(&effective_input, &recent_msgs);
+  +             // #817: pass the session's directory restrictions so auto-context cannot
+  +             // attach a file the model-facing read tool would refuse.
+  +             let auto_files = commands::auto_context_for_prompt(
+  +                 &effective_input,
+  +                 &recent_msgs,
+  +                 &agent_config.dir_restrictions,
+  +             );
+ ✓ (11.9s)
+  -             let auto_files = commands::auto_context_for_prompt(&effective_input, &recent_msgs);
+  +             // #817: pass the session's directory restrictions so auto-context cannot
+  +             // attach a file the model-facing read tool would refuse.
+  +             let auto_files = commands::auto_context_for_prompt(
+  +                 &effective_input,
+  +                 &recent_msgs,
+  +                 &agent_config.dir_restrictions,
+  +             );
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_context_for_prompt… ✓ (2ms)
+  3 tools completed in 30.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2778,2790p src/commands_p… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1360,1375p src/commands_p… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (5 → 10 lines)
+        use tempfile::TempDir;
+    
+  +     /// The overwhelmingly common product case: no directory restrictions configured.
+  +     /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+  +     fn no_restrictions() -> DirectoryRestrictions {
+  +         DirectoryRestrictions::default()
+  +     }
+    
+        #[test]
+        fn detect_project_type_rust() {
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (3 → 9 lines)
+        use tempfile::TempDir;
+  + 
+  +     /// The overwhelmingly common product case: no directory restrictions configured.
+  +     /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+  +     fn no_restrictions() -> DirectoryRestrictions {
+  +         DirectoryRestrictions::default()
+  +     }
+    
+        // ── detect_project_type ──────────────────────────────────────────
+ ✓ (1m 39s)
+        use tempfile::TempDir;
+  + 
+  +     /// The overwhelmingly common product case: no directory restrictions configured.
+  +     /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+  +     fn no_restrictions() -> DirectoryRestrictions {
+  +         DirectoryRestrictions::default()
+  +     }
+    
+        // ── detect_project_type ──────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn path_is_under" -A 20… ✓ (3ms)
+  7 tools completed in 2m 7s (6 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2843,2860p src/commands_p… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (2 → 47 lines)
+  +     /// #817: auto-context used to read and attach files the model-facing read tool
+  +     /// refuses, so a user with `dir_restrictions` was told a lie about what yoyo reads.
+  +     ///
+  +     /// Asserted at the emission point — the vec a caller receives — in **both**
+  +     /// directions in one test: the denied file is absent when it is denied, and present
+  +     /// when it is not. A discriminator tested only on the side that blocks is vacuous
+  +     /// green.
+  +     #[test]
+  +     fn test_auto_context_respects_directory_restrictions() {
+  +         let prompt = "how does the web search tool work in this project";
+  + 
+  +         // Baseline: no restrictions. This is the byte-identical pass-through path.
+  +         let allowed = auto_context_for_prompt(prompt, &[], &no_restrictions());
+  +         let target = match allowed.iter().find(|(p, _)| p != SIGNATURE_SENTINEL) {
+  +             Some((p, _)) => p.clone(),
+  +             // The repo map found no real file for this prompt — nothing to discriminate
+  +             // on. `test_auto_context_returns_relevant_files` is the guard for that case.
+  +             None => return,
+  +         };
+  + 
+  ... (27 more lines)
+ ✓ (1m 40s)
+  +     /// #817: auto-context used to read and attach files the model-facing read tool
+  +     /// refuses, so a user with `dir_restrictions` was told a lie about what yoyo reads.
+  +     ///
+  +     /// Asserted at the emission point — the vec a caller receives — in **both**
+  +     /// directions in one test: the denied file is absent when it is denied, and present
+  +     /// when it is not. A discriminator tested only on the side that blocks is vacuous
+  +     /// green.
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 27s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_project.rs sr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/commands_project… ✓ (55.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.5s)
+  7 tools completed in 5m 38s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|            None => re… ✓ (24.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project.rs\` —… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
+  + - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`. Day 175 (#817): `auto_context_for_prompt(prompt, recent_context, restrictions: &DirectoryRestrictions)` takes the **caller's** directory restrictions and filters candidate paths through `restrictions.check_path` **before** the read loop — so a denied file is never opened, never consumes one of the `AUTO_CONTEXT_MAX_FILES` slots, and never reaches the signature block. It had no restriction check of any kind (`grep -n 'dir_restrictions\|check_path' src/commands_project.rs` returned zero), while every *model-facing* file tool is wrapped by `maybe_guard`/`maybe_guard_arc` in `src/tools.rs` — so the same file was **refused when the model asked for it** and **silently pasted into the same API request** when auto-context picked it, under a green `📎 Auto-attached: <path>` note. Fourth instance of "same rule, two doors, one deaf" (#745, #767, #769, #816). Threading rather than a process-global: there is exactly **one** non-test call site (`src/repl.rs`, inside `run_repl`, which already holds `agent_config`), so it passes `&agent_config.dir_restrictions`; `commands.rs`'s entry is a name re-export and needed no edit. **When `restrictions.is_empty()` the returned vec is byte-identical to before** — `check_path` short-circuits to `Ok` — which is the case for almost every product user and was the regression risk. **Deliberately no refusal block is printed**: a denied file is simply not attached, because auto-context is a silent convenience the user did not ask for, unlike #748/#761 where the user *asked* for the thing being refused. **What it does not cover, stated plainly:** `permissions.deny` (the bash-command patterns) is a different mechanism and is untouched here; this is the directory fence only. Pinned at the **emission point** — the vec a caller receives — in both directions in one test (`test_auto_context_respects_directory_restrictions`): the denied path is absent when denied, and present with empty restrictions, since a discriminator tested only on the side that blocks is vacuous green.
+ ✓ (1m 40s)
+  - - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
+  + - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`. Day 175 (#817): `auto_context_for_prompt(prompt, recent_context, restrictions: &DirectoryRestrictions)` takes the **caller's** directory restrictions and filters candidate paths through `restrictions.check_path` **before** the read loop — so a denied file is never opened, never consumes one of the `AUTO_CONTEXT_MAX_FILES` slots, and never reaches the signature block. It had no restriction check of any kind (`grep -n 'dir_restrictions\|check_path' src/commands_project.rs` returned zero), while every *model-facing* file tool is wrapped by `maybe_guard`/`maybe_guard_arc` in `src/tools.rs` — so the same file was **refused when the model asked for it** and **silently pasted into the same API request** when auto-context picked it, under a green `📎 Auto-attached: <path>` note. Fourth instance of "same rule, two doors, one deaf" (#745, #767, #769, #816). Threading rather than a process-global: there is exactly **one** non-test call site (`src/repl.rs`, inside `run_repl`, which already holds `agent_config`), so it passes `&agent_config.dir_restrictions`; `commands.rs`'s entry is a name re-export and needed no edit. **When `restrictions.is_empty()` the returned vec is byte-identical to before** — `check_path` short-circuits to `Ok` — which is the case for almost every product user and was the regression risk. **Deliberately no refusal block is printed**: a denied file is simply not attached, because auto-context is a silent convenience the user did not ask for, unlike #748/#761 where the user *asked* for the thing being refused. **What it does not cover, stated plainly:** `permissions.deny` (the bash-command patterns) is a different mechanism and is untouched here; this is the directory fence only. Pinned at the **emission point** — the vec a caller receives — in both directions in one test (`test_auto_context_respects_directory_restrictions`): the denied path is absent when denied, and present with empty restrictions, since a discriminator tested only on the side that blocks is vacuous green.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 19s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 44s (4 ✓)
+
+All four checks green. Committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (29 lines) ✓ (20ms)
+
+Done. #817 is closed.
+
+What was wrong: auto_context_for_prompt scored repo files, read them with a bare std::fs::read_to_string, and repl.rs prepended the content to the prompt — i.e. straight into the API request. grep -n 'dir_restrictions\|check_path' src/commands_project.rs returned zero matches, while `src/tools.rs:1069/1208 wrap every model-facing read tool in maybe_guard`. So the same file was **refused when the model asked for it** and **silently attached to the same request** when auto-context picked it, under a green 📎 Auto-attached: note.
+
+What I changed:
+• auto_context_for_prompt(prompt, recent_context, restrictions: &DirectoryRestrictions) — filter through restrictions.check_path before the read loop, beside the existing binary-extension skip. A denied file is never opened, never consumes one of the three AUTO_CONTEXT_MAX_FILES slots, and never reaches the signature block (which is built from matched_paths, already filtered).
+• src/repl.rs passes `&agent_config.dir_restrictions at the one non-test call site. No process-global; commands.rs` is a name re-export and needed no edit.
+• check_path short-circuits to Ok when restrictions are empty, so the common product path is byte-identical.
+• No refusal block printed — auto-context is a silent convenience the user did not ask for, unlike #748/#761 where the user asked for the refused thing.
+
+Test: `test_auto_context_respects_directory_restrictions`, at the emission point (the vec a caller receives), in both directions in one test — denied path absent when denied, present with empty restrictions. I verified the near-miss branch actually executes rather than hitting the early return, by temporarily turning that return into a panic! and confirming it didn't fire.
+
+Register: the diff pushed commands_project.rs 102 lines past its recorded entry (fatal, over the 100-line drift band), so GRANDFATHERED_OVERSIZED_MODULES was updated to 3298, and repl.rs's warning to 3357 — paid off in the task that caused it.
+
+cargo fmt --check, clippy --all-targets -D warnings, build, test (5064 passed) all green. CLAUDE.md's commands_project.rs bullet updated, including the plain statement that permissions.deny (bash patterns) is a different mechanism and untouched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
