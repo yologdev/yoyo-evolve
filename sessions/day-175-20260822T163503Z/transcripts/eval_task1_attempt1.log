@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "risk_snapshots.jsonl\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "write_risk_snapshot_to… ✓ (7ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (659ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_snapshot… ✓ (187ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git check-ignore -v .yoyo/risk_f… ✓ (3ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 45s (7 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Evidence I actually gathered:
+
+• **Entry-point coverage**: `grep write_risk_snapshot_to src/` → only `auto_risk_snapshot` (the `/commit` + `YOYO_RISK_AUTOSNAPSHOT=1 path), handle_risk_snapshot (yoyo risk snapshot), the test helper auto_risk_snapshot_to`, and in-module tests. The append lives inside that one writer, so all three production doors inherit it.
+• Forward-only proof: ran ./target/debug/yoyo risk epistemic — no crash, never-forecast dark rows still present (src/git_commit_msg.rs, src/sync_util.rs, …), studied and family blocks intact. `.yoyo/risk_first_scored.jsonl does not exist, so read_first_scored yields an empty map, founding_ts is None, first_scored_age returns None` for every path and the closure falls through to git_added_ts — byte-identical by construction.
+• Gate: cargo test --test module_size → 24 passed, no stderr drift warnings; the two register payoffs (commands_file.rs 2804, commands_spawn.rs 3991) match wc -l, commands_risk.rs 5940 matches its +3, and both touched risk modules (1922 / 1623) are under the 2000 cap.
+• Touchpoints: signature change on write_risk_snapshot_to swept at all five call sites; never_forecast_files signature untouched as the task required; both inlined date blocks replaced by utc_timestamp rather than left as dead duplicates.
+
+One non-blocking note as cleanup feedback: write_risk_snapshot_to now shells date a second time (the snapshot line already computed a ts), so a snapshot and its ledger lines can differ by a second. Harmless — founding_ts takes the min — but the two could share one timestamp.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

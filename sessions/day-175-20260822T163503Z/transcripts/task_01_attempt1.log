@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by capturing the "before" baseline and reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && ls targe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --is-shallow-repos… ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'snapshots_path\|snapsh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (10ms)
+ ✓ (658ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn \|risk_snapshots\|Op… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:1..206 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'write_risk_snapshot_to… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 940,1010p src/commands_ri… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_risk_epistemi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn iso8601_sort_key\|fn… ✓ (4ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs:200..320 ✓ (0ms)
+  11 tools completed in 49.4s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls /tmp/be… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ./… ✓ (813ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.2s (2 ✓)
+
+Now the writer + reader in commands_risk_snapshots.rs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (2 → 30 lines)
+    /// Default path for risk snapshot JSONL file.
+    pub(crate) const RISK_SNAPSHOT_PATH: &str = ".yoyo/risk_snapshots.jsonl";
+  + 
+  + /// Default path for the first-scored ledger (see [`append_first_scored_to`]).
+  + pub(crate) const RISK_FIRST_SCORED_PATH: &str = ".yoyo/risk_first_scored.jsonl";
+  + 
+  + /// Filename of the first-scored ledger, resolved as a **sibling** of whatever
+  + /// snapshot path a caller passes so a tempdir test writes into its tempdir.
+  + const RISK_FIRST_SCORED_FILE: &str = "risk_first_scored.jsonl";
+  + 
+  + /// Current UTC instant in the `YYYY-MM-DDTHH:MM:SSZ` shape both JSONL ledgers
+  + /// use. One statement of the format — the snapshot line and the first-scored
+  + /// line are compared against each other by `forecast_opportunities`, so two
+  + /// producers with two shapes would be two chances to drift.
+  + fn utc_timestamp() -> String {
+  +     std::process::Command::new("date")
+  +         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  +         .output()
+  +         .ok()
+  +         .and_then(|o| {
+  ... (10 more lines)
+ ✓ (13.5s)
+    /// Default path for risk snapshot JSONL file.
+    pub(crate) const RISK_SNAPSHOT_PATH: &str = ".yoyo/risk_snapshots.jsonl";
+  + 
+  + /// Default path for the first-scored ledger (see [`append_first_scored_to`]).
+  + pub(crate) const RISK_FIRST_SCORED_PATH: &str = ".yoyo/risk_first_scored.jsonl";
+  + 
+  + /// Filename of the first-scored ledger, resolved as a **sibling** of whatever
+  + /// snapshot path a caller passes so a tempdir test writes into its tempdir.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (14 → 1 lines)
+  -     let ts = std::process::Command::new("date")
+  -         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  -         .output()
+  -         .ok()
+  -         .and_then(|o| {
+  -             if o.status.success() {
+  -                 String::from_utf8(o.stdout)
+  -                     .ok()
+  -                     .map(|s| s.trim().to_string())
+  -             } else {
+  -                 None
+  -             }
+  -         })
+  -         .unwrap_or_else(|| "unknown".to_string());
+  +     let ts = utc_timestamp();
+ ✗ (0ms)
+    │ old_text matches 2 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs. Include more surrounding context to make the match unique.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'date"' src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (23ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:96..126 ✓ (0ms)
+  5 tools completed in 28.0s (4 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n 'w… ✓ (10ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (18 → 202 lines)
+    /// Append a risk snapshot JSON line to the given path.
+  + ///
+  + /// This is the **single** place a snapshot line reaches disk — both production
+  + /// callers (`auto_risk_snapshot`, reached from `/commit` and the opt-in
+  + /// `YOYO_RISK_AUTOSNAPSHOT=1` REPL-exit path, and `handle_risk_snapshot` behind
+  + /// `yoyo risk snapshot`) go through it — so the first-scored ledger is appended
+  + /// here rather than at each entry point. A per-token pass is not a per-entry-
+  + /// point pass; wiring one caller would have been a receipt for the working half.
+  + ///
+  + /// `scored_paths` is the **whole scored universe**, not `top_10`: the point of
+  + /// the ledger is precisely the paths no prediction column ever names.
+  + ///
+  + /// The ledger append is best-effort and runs *after* the snapshot line lands —
+  + /// a failure there must never cost a snapshot, so its error is dropped.
+    pub(crate) fn write_risk_snapshot_to(
+        path: &std::path::Path,
+        json_line: &str,
+  +     scored_paths: &[&str],
+  +     day: u32,
+  +     git_hash: &str,
+  ... (177 more lines)
+ ✓ (12.0s)
+    /// Append a risk snapshot JSON line to the given path.
+  + ///
+  + /// This is the **single** place a snapshot line reaches disk — both production
+  + /// callers (`auto_risk_snapshot`, reached from `/commit` and the opt-in
+  + /// `YOYO_RISK_AUTOSNAPSHOT=1` REPL-exit path, and `handle_risk_snapshot` behind
+  + /// `yoyo risk snapshot`) go through it — so the first-scored ledger is appended
+  + /// here rather than at each entry point. A per-token pass is not a per-entry-
+  + /// point pass; wiring one caller would have been a receipt for the working half.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 47.9s (2 ✓)
+
+Now the callers.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.1s (2 ✓)
+
+Now the consumer in handle_risk_epistemic:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 20 lines)
+  -     // The add-date resolver is git, and it is consulted only for the
+  -     // never-forecast candidates — never once per scored file.
+  +     // The add-date resolver is consulted only for the never-forecast
+  +     // candidates — never once per scored file.
+  +     //
+  +     // Two sources, in order. First the first-scored ledger: a record of when
+  +     // *I* first scored a path, which is a fact about my own observation
+  +     // history and so survives a shallow clone. Then git, which in this
+  +     // checkout answers `None` for every pre-window file (the graft boundary
+  +     // dates them all to the clone, and `git_added_ts` correctly refuses it).
+  +     // Today the ledger discriminates nothing — every entry is in the founding
+  +     // batch, which `first_scored_age` deliberately reads as unknown — so this
+  +     // is byte-identical to git alone and starts paying off once paths appear
+  +     // *after* that batch.
+  +     let (first_scored, _dropped) =
+  +         read_first_scored(std::path::Path::new(RISK_FIRST_SCORED_PATH));
+  +     let founding = founding_ts(&first_scored);
+        let never = never_forecast_files(&snapshots, &risk_scores, &experiments, &|path| {
+  -         git_added_ts(path)
+  +         first_scored_age(path, &first_scored, founding)
+  ... (3 more lines)
+ ✓ (12.3s)
+  -     // The add-date resolver is git, and it is consulted only for the
+  -     // never-forecast candidates — never once per scored file.
+  +     // The add-date resolver is consulted only for the never-forecast
+  +     // candidates — never once per scored file.
+  +     //
+  +     // Two sources, in order. First the first-scored ledger: a record of when
+  +     // *I* first scored a path, which is a fact about my own observation
+  +     // history and so survives a shallow clone. Then git, which in this
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 5 lines)
+        use crate::commands_risk_snapshots::{
+  -         epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
+  -         SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +         epistemic_ledger_notes, first_scored_age, founding_ts, read_first_scored,
+  +         read_graded_ledger, read_snapshot_ledger, GradedLedger, SnapshotLedger,
+  +         RISK_FIRST_SCORED_PATH, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        };
+ ✓ (1m 37s)
+        use crate::commands_risk_snapshots::{
+  -         epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
+  -         SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +         epistemic_ledger_notes, first_scored_age, founding_ts, read_first_scored,
+  +         read_graded_ledger, read_snapshot_ledger, GradedLedger, SnapshotLedger,
+  +         RISK_FIRST_SCORED_PATH, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E '^(er… ✓ (156ms)
+  3 tools completed in 1m 56s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (665ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^#\[cfg(test)\]/,/^    … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'mod tests' src/commands… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.7s (3 ✓)
+
+Now the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (200 lines) ✓ (25.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test first_scored 2>&1 | g… ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.8s)
+  3 tools completed in 44.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (183ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_file.rs\|comma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (460ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.7s (3 ✓)
+
+Register clean. Now the full suite and a re-verify of the byte-identical claim:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'FAILE… ✓ (2m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ./… ✓ (828ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'yoyo' .gitignore | head… ✓ (5ms)
+  3 tools completed in 2m 15s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'harness checkout \*is\*… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (664ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (85 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 55s (5 ✓)
+
+Committed. Here's what landed:
+
+## The defect
+
+The too young to judge branch of never_forecast_files is a complete no-op in this checkout. Verified: shallow clone, 51 commits, one graft root ~20h old, so git log --diff-filter=A returns that same sha for every path and `shallow_boundary_hides_age` correctly refuses it. Every never-forecast file falls back to the dark set.
+
+CLAUDE.md documented that honestly. What it didn't say is that the consequence is live and steering task selection — this morning's trajectory handed the planner src/format/highlight_lang.rs and src/git_commit_msg.rs as the two darkest rooms. Both were created yesterday as pure moves. Zero bits of information, aimed at my scarcest resource.
+
+## What I built
+
+A first-scored ledger (.yoyo/risk_first_scored.jsonl) — one line per path, once ever, recording when I first scored it. That's a fact about my own observation history, so a graft boundary can't erase it.
+
+• Writer wired inside `write_risk_snapshot_to, the single function every snapshot line passes through, so all three entry points inherit it (/commit, YOYO_RISK_AUTOSNAPSHOT=1 REPL exit, yoyo risk snapshot). Records the whole scored universe, not top_10`. Failure is dropped — the snapshot still lands.
+• The founding-batch rule is load-bearing: the first write stamps every currently-scored path at the same instant, so "in the founding batch" means at least as old as the record → None, not a birthday. Reading it as a birthday would have emptied the dark set entirely.
+• Consumer in the same diff: handle_risk_epistemic's added_ts closure tries the ledger, falls back to git. never_forecast_files' signature untouched.
+
+## Proof it's forward-only
+
+diff /tmp/before.txt /tmp/after.txt → byte-identical. The ledger doesn't exist yet, so nothing reclassified. It discriminates nothing today and starts paying off around the fifth snapshot. The shallow-clone limitation isn't gone — this routes around it.
+
+8 new tests including the near-miss (a founding-batch path must not be called young) and unparseable-line counting. Module-size register: 3 warnings paid off, including the +3 my own change caused. Gate re-run clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
