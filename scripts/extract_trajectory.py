@@ -841,6 +841,33 @@ EPISTEMIC_NEVER_FORECAST_ROW_RE = re.compile(r"^\s*◦\s+(\S+)\s+\(risk\s")
 EPISTEMIC_NEVER_FORECAST_SHOWN = 2
 
 
+def never_forecast_clause(paths: list[str], shown_max: int) -> str:
+    """The value half of the "never forecast" line: the shown paths, plus an
+    **in-band** marker naming how many were dropped.
+
+    Two independent caps bound this list and only one of them used to say so.
+    The Rust renderer caps its own rows at `NEVER_FORECAST_SAMPLE = 5` and
+    marks that cut (`... (+N more)`); this collector then re-cut the survivors
+    to `EPISTEMIC_NEVER_FORECAST_SHOWN` and marked nothing. Measured Day 175:
+    5 dark files existed, the Rust side rendered all 5, and the planner was
+    handed 2 with no indication that 3 more were behind them — under a hint
+    reading "the never-forecast files are the darkest, point the self-driven
+    slot at one of these". The header line carrying the true count is consumed
+    and discarded by the parser, so the number survived nowhere.
+
+    Byte-identical to the old join whenever nothing is dropped, which is the
+    common case and the regression risk.
+    """
+    shown = paths[:shown_max] if shown_max > 0 else []
+    clause = ", ".join(shown)
+    hidden = len(paths) - len(shown)
+    if hidden > 0:
+        # Same shape as the Rust renderer's own marker, deliberately: a reader
+        # meeting both should not have to learn two elision vocabularies.
+        clause = f"{clause} (+{hidden} more)" if clause else f"({hidden} more)"
+    return clause
+
+
 def compact_epistemic_reason(reason: str) -> str:
     """Shrink a verbose report reason to a few words (2KB total budget)."""
     m = EPISTEMIC_STALE_RE.search(reason)
@@ -968,7 +995,7 @@ def render_epistemic(entries: list[str], never_forecast: list[str] | None = None
         return header + "\n(no epistemic data yet)"
     lines = [header] + entries[:EPISTEMIC_TOP_N]
     if never_forecast:
-        shown = ", ".join(never_forecast[:EPISTEMIC_NEVER_FORECAST_SHOWN])
+        shown = never_forecast_clause(never_forecast, EPISTEMIC_NEVER_FORECAST_SHOWN)
         lines.append(f"- never forecast (0 predictions ever, unranked): {shown}")
         lines.append(
             "(planner hint: point the self-driven slot at one of these — the never-forecast "
@@ -1534,6 +1561,42 @@ def run_self_tests() -> int:
     assert_true(
         "at most 2 never-forecast paths are rendered",
         "src/commands_lint.rs" not in rendered_never,
+    )
+    # 19h-bis (Day 175, blind round 72). The cut that the assertion directly
+    # above pins must be MARKED. This collector re-cuts a list the Rust
+    # renderer already cut and used to mark nothing, so the planner was handed
+    # 2 of 5 dark rooms under a hint calling them "the darkest" — with the
+    # header line carrying the real count consumed and discarded at the parse
+    # step. Asserted at the emission point: the string render_epistemic
+    # returns, which is the string that reaches the planner prompt.
+    assert_true(
+        "render_epistemic marks its own never-forecast cut in-band",
+        "(+" in rendered_never.split("never forecast", 1)[1].splitlines()[0],
+    )
+    five_dark = render_epistemic(
+        real_entries,
+        ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs", "src/e.rs"],
+    )
+    never_line = [ln for ln in five_dark.splitlines() if "never forecast" in ln][0]
+    assert_eq(
+        "5 dark rooms, 2 shown, the other 3 named as dropped",
+        never_line,
+        "- never forecast (0 predictions ever, unranked): src/a.rs, src/b.rs (+3 more)",
+    )
+    # Near-miss guard: a discriminator tested only on the side that fires is
+    # vacuous green. Exactly at the cap nothing is dropped, so the line must be
+    # byte-identical to the pre-fix ", ".join output — no marker at all.
+    at_cap = render_epistemic(real_entries, ["src/a.rs", "src/b.rs"])
+    at_cap_line = [ln for ln in at_cap.splitlines() if "never forecast" in ln][0]
+    assert_eq(
+        "at the cap the line is byte-identical to the old join (no marker)",
+        at_cap_line,
+        "- never forecast (0 predictions ever, unranked): src/a.rs, src/b.rs",
+    )
+    assert_eq(
+        "never_forecast_clause is byte-identical under budget",
+        never_forecast_clause(["src/a.rs"], 2),
+        "src/a.rs",
     )
     # 19i. Dark half alone: zero ranked entries but a live never-forecast list
     # must still render (this is exactly the starving-meter case).
