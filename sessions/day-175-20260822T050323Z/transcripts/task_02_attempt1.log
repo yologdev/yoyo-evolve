@@ -1,0 +1,350 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the instrument, then look at a real session directory before writing any code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/measure_abstention…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git fetch origin audit-log --dep… ✓ (7ms)
+ ✓ (523ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ ls /tmp/alog/sessions/ 2>/dev/null | tail -15; echo "---"; ls /tmp/alog 2>/dev/n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' scripts/measure_… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ ls /tmp/alog/sessions/ | grep -E 'day-17[45]' ; echo "=== count ==="; ls /tmp/al…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,330p' scripts/measur… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /tmp/alog/sessions && for d in day-174-20260821T232342Z day-175-20260822T0210… ✓ (10ms)
+  ▶ $ cd /tmp/alog/sessions && for d in day-174-20260821T232342Z day-175-20260822T0210…  ▶ $ cd /tmp/alog/sessions && echo "== all distinct filenames across sessions (top-le… ✓ (16ms)
+ ✓ (552ms)
+  ▶ $ cd /tmp/alog/sessions && echo "== transcript filenames (normalized) =="; for d i…  ▶ $ cd /tmp/alog/sessions && echo "== union of outcome.json keys… (10 lines) ✓ (42ms)
+ ✓ (575ms)
+  ▶ $ cd /tmp/alog/sessions && python3 -c " (8 lines) ✓ (50ms)
+  ▶ $ cd /tmp/alog/sessions && python3 -c " (8 lines) ✓ (39ms)
+  13 tools completed in 44.1s (13 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,520p' scripts/measur… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,600p' scripts/measur… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,792p' scripts/measur… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^import\|^from' scripts… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 43.8s (4 ✓)
+
+Now I have ground truth. Note the task file was wrong on one detail: plan_retry.log lives in transcripts/, not at the top level. Writing the code against what I measured.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (6 → 7 lines)
+    import argparse
+  + import json
+    import os
+    import re
+    import subprocess
+ ✓ (1m 15s)
+    import argparse
+  + import json
+    import os
+    import re
+    import subprocess
+
+Now the pure structural classifier, inserted between count_lines and apply_boundary:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 177 lines)
+  + # ---------------------------------------------------------------------------
+  + # The second stream: structural artifacts inside the session directory.
+  + # ---------------------------------------------------------------------------
+  + #
+  + # THE STREAM MISMATCH (day 175). Every marker above is anchored to a line
+  + # `scripts/evolve.sh` prints to the **workflow log**. A `sessions/day-*/` directory on
+  + # the `audit-log` branch does not contain the harness's stdout — it contains agent
+  + # transcripts and files the harness writes. So measuring a session *directory* for
+  + # planner fallbacks reads 0 by construction, no matter what happened.
+  + #
+  + # Measured, not inferred: `day-174-20260821T232342Z` and `day-175-20260822T021038Z`
+  + # both read `fallback=0` while both ran the planner-fallback path and committed nothing
+  + # but a wrap-up. Both carry `transcripts/plan_retry.log` and an `unverified_task_1.md`.
+  + #
+  + # Why artifacts rather than more greps: these files are written by the harness into the
+  + # directory. They cannot be produced by my own prose, which is the #810 contamination
+  + # defect that forced the anchored-line design in the first place. Their presence is a
+  + # fact about the run, not a string that happened to appear in a log.
+  + #
+  + # ENUMERATED BY LISTING ALL 453 SESSION DIRECTORIES ON `audit-log` (day 175), not from
+  ... (157 more lines)
+ ✓ (1m 14s)
+  + # ---------------------------------------------------------------------------
+  + # The second stream: structural artifacts inside the session directory.
+  + # ---------------------------------------------------------------------------
+  + #
+  + # THE STREAM MISMATCH (day 175). Every marker above is anchored to a line
+  + # `scripts/evolve.sh` prints to the **workflow log**. A `sessions/day-*/` directory on
+  + # the `audit-log` branch does not contain the harness's stdout — it contains agent
+  + # transcripts and files the harness writes. So measuring a session *directory* for
+  ... (13 more lines)
+
+Now wire the field onto SessionCounts, the I/O into session_from_path, and the rendering into main:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 5 lines)
+            self.ts = None
+            self.eligibility = ELIGIBLE
+  +         # The second (structural) stream, or None when this input was not a session
+  +         # directory. Never folded into the counts above.
+  +         self.structure = None
+ ✓ (1m 14s)
+            self.ts = None
+            self.eligibility = ELIGIBLE
+  +         # The second (structural) stream, or None when this input was not a session
+  +         # directory. Never folded into the counts above.
+  +         self.structure = None
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def session_from_path" … ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (14 → 39 lines)
+  + def read_outcome(path):
+  +     """I/O: the parsed outcome.json under a session directory, or None.
+  + 
+  +     None covers all three failure shapes — absent, unreadable, unparseable — because
+  +     the caller treats them identically: this stream did not carry the counts, which is
+  +     UNKNOWN and not zero.
+  +     """
+  +     try:
+  +         with open(
+  +             os.path.join(path, "outcome.json"), "r", encoding="utf-8", errors="replace"
+  +         ) as fh:
+  +             outcome = json.load(fh)
+  +     except (OSError, ValueError):
+  +         return None
+  +     return outcome if isinstance(outcome, dict) else None
+  + 
+  + 
+    def session_from_path(path):
+        """A file is one session; a directory is one session made of all files under it."""
+        if os.path.isdir(path):
+  ... (20 more lines)
+ ✓ (1m 14s)
+  + def read_outcome(path):
+  +     """I/O: the parsed outcome.json under a session directory, or None.
+  + 
+  +     None covers all three failure shapes — absent, unreadable, unparseable — because
+  +     the caller treats them identically: this stream did not carry the counts, which is
+  +     UNKNOWN and not zero.
+  +     """
+  +     try:
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 24s (2 ✓)
+
+Now the rendering in main:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (6 → 18 lines)
+        print(f"#810 abstention/firing measurement over {len(sessions)} session(s):")
+        for s in sessions:
+            print(s.row())
+  +         # The structural stream prints on its OWN lines, under the row it belongs to.
+  +         # A plain log file has no structure block, so an old-style invocation prints
+  +         # byte-identically to before.
+  +         if s.structure is not None:
+  +             print(s.structure.row())
+  +             note = s.structure.disagreement(s.fallback)
+  +             if note is not None:
+  +                 print(note)
+        print()
+  +     structural = summarize_structure(sessions)
+  +     if structural is not None:
+  +         print(structural)
+  +         print()
+        print(grade(sessions, boundary_label, boundary_ts))
+        return 0
+ ✓ (1m 15s)
+        print(f"#810 abstention/firing measurement over {len(sessions)} session(s):")
+        for s in sessions:
+            print(s.row())
+  +         # The structural stream prints on its OWN lines, under the row it belongs to.
+  +         # A plain log file has no structure block, so an old-style invocation prints
+  +         # byte-identically to before.
+  +         if s.structure is not None:
+  +             print(s.structure.row())
+  ... (10 more lines)
+
+Now the self-tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 147 lines)
+  +     # 10. The structural stream (day 175). A directory listing is a second, independent
+  +     # source with different coverage from the workflow log.
+  +     real_listing = [
+  +         "outcome.json",
+  +         "trajectory.md",
+  +         "trajectory.stderr.log",
+  +         "unverified_task_1.md",
+  +         "transcripts/assess.log",
+  +         "transcripts/plan.log",
+  +         "transcripts/plan_retry.log",
+  +         "transcripts/respond.log",
+  +         "transcripts/task_01_attempt1.log",
+  +     ]
+  +     real_outcome = {
+  +         "day": 175,
+  +         "ts": "2026-08-22T02:10:38Z",
+  +         "build_ok": True,
+  +         "test_ok": True,
+  +         "tasks_attempted": 1,
+  +         "tasks_succeeded": 1,
+  ... (127 more lines)
+ ✓ (1m 15s)
+  +     # 10. The structural stream (day 175). A directory listing is a second, independent
+  +     # source with different coverage from the workflow log.
+  +     real_listing = [
+  +         "outcome.json",
+  +         "trajectory.md",
+  +         "trajectory.stderr.log",
+  +         "unverified_task_1.md",
+  +         "transcripts/assess.log",
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (50ms)
+  ▶ $ cd /tmp && printf '  Planning agent produced 0 tasks — falling back to single ta… ✓ (42ms)
+  4 tools completed in 1m 26s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plain-log path is byte-identical to before. Now the module docstring:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 31 lines)
+  + THE STREAM MISMATCH, AND THE SECOND STREAM (day 175)
+  + ----------------------------------------------------
+  + Every marker below is anchored to a line `scripts/evolve.sh` prints to the **workflow
+  + log**. A `sessions/day-*/` directory contains agent transcripts and files the harness
+  + writes into it — *not* the harness's own stdout. So pointing this tool at a session
+  + directory reads `fallback=0` by construction, whatever happened.
+  + 
+  + Measured, not inferred: `day-174-20260821T232342Z` and `day-175-20260822T021038Z` both
+  + read `fallback=0` while both ran the planner-fallback path and committed nothing but a
+  + wrap-up. Both carry `transcripts/plan_retry.log` and an `unverified_task_1.md`.
+  + 
+  + So a session directory is read for **structural artifacts** as well — files the harness
+  + writes, which my own prose cannot forge (the #810 contamination defect that forced the
+  + anchored-line design). `classify_structure` is pure and reports three-valued fields:
+  + `False` is observed-and-absent, `UNKNOWN` is this-stream-cannot-say. The two streams are
+  + printed **side by side and never summed** — they have different coverage, and adding
+  + them would double-count exactly when both are available (the same rule already applied
+  + to evolve.sh:1567/1605 vs 1610).
+  + 
+  + RECORDED NEGATIVE FINDING — there is no structured source for the *counts*
+  ... (11 more lines)
+ ✓ (1m 14s)
+  + THE STREAM MISMATCH, AND THE SECOND STREAM (day 175)
+  + ----------------------------------------------------
+  + Every marker below is anchored to a line `scripts/evolve.sh` prints to the **workflow
+  + log**. A `sessions/day-*/` directory contains agent transcripts and files the harness
+  + writes into it — *not* the harness's own stdout. So pointing this tool at a session
+  + directory reads `fallback=0` by construction, whatever happened.
+  + 
+  + Measured, not inferred: `day-174-20260821T232342Z` and `day-175-20260822T021038Z` both
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RECORDED NEGATIVE FINDI… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '29,40p' scripts/measure_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (10 → 7 lines)
+    RECORDED NEGATIVE FINDING — there is no structured source to use instead
+    -----------------------------------------------------------------------
+  - `sessions/day-*/outcome.json` on the `audit-log` branch carries a `fallback_phases`
+  - field. It looks like the answer and is not: `scripts/evolve.sh:583` populates it from
+  - `STAGE_NAME` when a phase is served by the **fallback provider** (a different model
+  - answered), *not* when the planner falls back to a single task. No field in `outcome.json`
+  - records an A1 abstention or a planner fallback. Checked on day 174; do not spend the same
+  - twenty minutes.
+  + Superseded and kept rather than erased: see "RECORDED NEGATIVE FINDING — ... for the
+  + *counts*" below, which restates this after re-checking on day 175. Still true, and still
+  + the reason `fallback_phases` must not be read as a planner-fallback record.
+    
+    THE STREAM MISMATCH, AND THE SECOND STREAM (day 175)
+ ✓ (1m 15s)
+    RECORDED NEGATIVE FINDING — there is no structured source to use instead
+    -----------------------------------------------------------------------
+  - `sessions/day-*/outcome.json` on the `audit-log` branch carries a `fallback_phases`
+  - field. It looks like the answer and is not: `scripts/evolve.sh:583` populates it from
+  - `STAGE_NAME` when a phase is served by the **fallback provider** (a different model
+  - answered), *not* when the planner falls back to a single task. No field in `outcome.json`
+  - records an A1 abstention or a planner fallback. Checked on day 174; do not spend the same
+  - twenty minutes.
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 41s (4 ✓)
+
+Now the "WHAT IT CANNOT DO" section gets the honest limit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '87,95p' scripts/measure_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 10 lines)
+    checkable; correctness is not.
+  + 
+  + And it cannot tell you whether a session produced any output. Nothing in a session
+  + directory records the commits a session made — not one of `outcome.json`'s twelve keys,
+  + not any file. So `zero_output` is reported as **unknown**, always, and the tool says why
+  + rather than deriving it from `tasks_succeeded`. (`tasks_succeeded: 1` for a session that
+  + committed nothing is `scripts/evolve.sh`'s own defect; it is a protected file and cannot
+  + be fixed here. This makes the defect visible from the outside, which is all that can be
+  + done from here.) Likewise `plan_retry` means a planner retry artifact is present — that
+  + is evidence *toward* a fallback session, never a synonym for one.
+ ✓ (1m 15s)
+    checkable; correctness is not.
+  + 
+  + And it cannot tell you whether a session produced any output. Nothing in a session
+  + directory records the commits a session made — not one of `outcome.json`'s twelve keys,
+  + not any file. So `zero_output` is reported as **unknown**, always, and the tool says why
+  + rather than deriving it from `tasks_succeeded`. (`tasks_succeeded: 1` for a session that
+  + committed nothing is `scripts/evolve.sh`'s own defect; it is a protected file and cannot
+  + be fixed here. This makes the defect visible from the outside, which is all that can be
+  + done from here.) Likewise `plan_retry` means a planner retry artifact is present — that
+  + is evidence *toward* a fallback session, never a synonym for one.
+  2 tools completed in 1m 20s (2 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (121ms)
+
+Now the CLAUDE.md bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "measure_abstentions" CL… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 15s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+  5 tools completed in 2m 54s (5 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 33s (2 ✓)
+
+All green — 5045 tests, 0 failures across every suite. Committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (74 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Summary of what landed:
+
+**The defect (measured, not hypothesised): `scripts/measure_abstentions.py` anchors every marker to a line `scripts/evolve.sh` prints to the workflow log** — but a `sessions/day-/` directory holds agent transcripts plus files the harness writes into it, never the harness's own stdout. Pointing the tool at a session directory read `fallback=0` by construction*. Confirmed on day-174-20260821T232342Z and day-175-20260822T021038Z: both read fallback=0, both carry `transcripts/plan_retry.log + unverified_task_1.md`, both committed nothing but a wrap-up.
+
+One correction to the task file, worth naming: it said plan_retry.log is at the session dir's top level. It is not — it's in transcripts/. I enumerated all 453 session dirs on audit-log first (as the task itself instructed) and coded against the listing; a test pins that a top-level plan_retry.log does not match.
+
+What shipped:
+• classify_structure(relpaths, outcome) — pure, all I/O at the call site (read_outcome is its sibling). Fields: plan_retry (62/453 dirs), unverified (11/453), tasks_attempted/tasks_succeeded.
+• Every field three-valued: False = observed-and-absent, UNKNOWN = this stream can't say. Missing outcome.json, absent key, wrong-typed value, and no-listing all report UNKNOWN.
+• zero_output is UNKNOWN always, with the reason printed. None of outcome.json's twelve keys and no file records a session's commits, so deriving it from tasks_succeeded would be inventing the number the tool exists to stop inventing. evolve.sh is protected — this makes its `tasks_succeeded: 1` defect visible from outside, nothing more.
+• Two streams beside each other, never summed; a ! streams disagree line fires when a retry artifact is present while log-derived fallback=0.
+
+**Verified live:** the two named sessions now show `plan_retry=yes unverified=yes zero_output=unknown` + the disagreement line; the healthy sibling shows `plan_retry=no` (near-miss side exercised for real). A plain log file gets no structure block — old invocations byte-identical.
+
+--test passes; cargo fmt/clippy -D warnings/build/test green (5045 tests, 0 failed). CLAUDE.md bullet updated with the stream mismatch, the artifacts, the never-summed rule, and the zero_output limit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

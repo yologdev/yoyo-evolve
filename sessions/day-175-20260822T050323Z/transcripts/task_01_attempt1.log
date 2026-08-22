@@ -1,0 +1,428 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual file.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py:100..340 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py:339..404 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sessions/day-" scripts/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SESSION_DIR_RE" -A4 scr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '73,90p;254,296p' scripts… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '256,259p;290,293p' scrip… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=255 && NR<=260 {printf … ✓ (5ms)
+  8 tools completed in 1m 1s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^# ─' scripts/measure_a… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (19ms)
+  ▶ $ echo hello ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/… (7 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (7 lines) ✓ (164ms)
+  7 tools completed in 23.9s (6 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baseline captured, and --help traceback confirmed. Now the edits.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 6 lines)
+  + import argparse
+    import os
+    import re
+  + import subprocess
+    import sys
+  + from datetime import datetime, timezone
+ ✓ (1m 2s)
+  + import argparse
+    import os
+    import re
+  + import subprocess
+    import sys
+  + from datetime import datetime, timezone
+
+Now the eligibility constants and pure helpers, placed after MIN_GRADEABLE_SESSIONS:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 18 lines)
+    # Sessions below this many *gradeable* sessions get a wait, never a verdict (#810).
+    MIN_GRADEABLE_SESSIONS = 4
+  + 
+  + # Eligibility relative to a `--since-sha` / `--since` boundary. THREE states, and none
+  + # of them is folded into another. A session whose head predates the fix under test
+  + # could not have exercised it, so reporting it as "did not fire" is a category error:
+  + # "could not fire" and "did not fire" are different facts and only the second grades
+  + # the gate. UNKNOWN_AGE is the abstention case getting its own name (my standing rule:
+  + # a silently-absorbed unknown inside my own meter is the defect this tool exists for)
+  + # — it is neither eligible nor ineligible, is excluded from both halves, and is
+  + # COUNTED and reported rather than quietly promoted into the comfortable bucket.
+  + ELIGIBLE = "ELIGIBLE"
+  + INELIGIBLE = "INELIGIBLE"
+  + UNKNOWN_AGE = "UNKNOWN_AGE"
+  + 
+  + # `sessions/day-N-YYYYMMDDTHHMMSSZ` — written by scripts/evolve.sh:3471.
+  + SESSION_DIR_TS_RE = re.compile(r"^day-\d+-(\d{8}T\d{6}Z)$")
+  + COMPACT_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$")
+ ✓ (1m 3s)
+    # Sessions below this many *gradeable* sessions get a wait, never a verdict (#810).
+    MIN_GRADEABLE_SESSIONS = 4
+  + 
+  + # Eligibility relative to a `--since-sha` / `--since` boundary. THREE states, and none
+  + # of them is folded into another. A session whose head predates the fix under test
+  + # could not have exercised it, so reporting it as "did not fire" is a category error:
+  + # "could not fire" and "did not fire" are different facts and only the second grades
+  + # the gate. UNKNOWN_AGE is the abstention case getting its own name (my standing rule:
+  ... (10 more lines)
+
+Now the pure timestamp/eligibility functions, inserted before class SessionCounts:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 56 lines)
+  + def parse_timestamp(text):
+  +     """Pure: an aware UTC datetime from a compact or ISO-8601 stamp, else None.
+  + 
+  +     Accepts the compact `YYYYMMDDTHHMMSSZ` form the session directories use and the
+  +     ISO-8601 form `git show -s --format=%cI` and `--since` produce. A naive stamp is
+  +     read as UTC so a comparison can never raise; anything unparseable returns None,
+  +     which the caller must treat as UNKNOWN, never as a boundary decision.
+  +     """
+  +     if not text:
+  +         return None
+  +     text = text.strip()
+  +     m = COMPACT_TS_RE.match(text)
+  +     if m:
+  +         text = "{}-{}-{}T{}:{}:{}+00:00".format(*m.groups())
+  +     elif text.endswith("Z"):
+  +         text = text[:-1] + "+00:00"
+  +     try:
+  +         dt = datetime.fromisoformat(text)
+  +     except ValueError:
+  +         return None
+  ... (36 more lines)
+ ✓ (1m 2s)
+  + def parse_timestamp(text):
+  +     """Pure: an aware UTC datetime from a compact or ISO-8601 stamp, else None.
+  + 
+  +     Accepts the compact `YYYYMMDDTHHMMSSZ` form the session directories use and the
+  +     ISO-8601 form `git show -s --format=%cI` and `--since` produce. A naive stamp is
+  +     read as UTC so a comparison can never raise; anything unparseable returns None,
+  +     which the caller must treat as UNKNOWN, never as a boundary decision.
+  +     """
+  ... (13 more lines)
+
+Now SessionCounts gains the two fields and the row suffix:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (7 → 12 lines)
+            self.fallback = 0
+            self.firings = 0
+            self.prose_excluded = 0
+  +         # Age and eligibility. The default is ELIGIBLE so that every path with no
+  +         # `--since*` boundary behaves and renders exactly as it did before #810's
+  +         # boundary landed.
+  +         self.ts = None
+  +         self.eligibility = ELIGIBLE
+ ✓ (1m 2s)
+            self.fallback = 0
+            self.firings = 0
+            self.prose_excluded = 0
+  +         # Age and eligibility. The default is ELIGIBLE so that every path with no
+  +         # `--since*` boundary behaves and renders exactly as it did before #810's
+  +         # boundary landed.
+  +         self.ts = None
+  +         self.eligibility = ELIGIBLE
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (7 → 10 lines)
+        def row(self):
+  +         # The eligibility suffix is emitted ONLY when the session is not eligible, so a
+  +         # run with no boundary prints byte-identically to the pre-boundary tool.
+  +         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+            return (
+                f"  {self.name:<44} abstentions={self.abstentions:<3} "
+                f"firings={self.firings:<3} fallback={self.fallback:<3} "
+                f"gradeable={'yes' if self.gradeable else 'no ':<3} "
+  -             f"prose_excluded={self.prose_excluded}"
+  +             f"prose_excluded={self.prose_excluded}{suffix}"
+            )
+ ✓ (1m 2s)
+        def row(self):
+  +         # The eligibility suffix is emitted ONLY when the session is not eligible, so a
+  +         # run with no boundary prints byte-identically to the pre-boundary tool.
+  +         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+            return (
+                f"  {self.name:<44} abstentions={self.abstentions:<3} "
+                f"firings={self.firings:<3} fallback={self.fallback:<3} "
+                f"gradeable={'yes' if self.gradeable else 'no ':<3} "
+  ... (3 more lines)
+  2 tools completed in 2m 11s (2 ✓)
+
+Now grade() — boundary header plus the unchanged verdict over the eligible pool:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (23 → 56 lines)
+  - def grade(sessions):
+  + def apply_boundary(sessions, boundary_ts):
+  +     """Pure-ish: stamp each session's eligibility against the boundary. Mutates in place
+  +     and returns the list, so the decision lives in `classify_eligibility` alone."""
+  +     for s in sessions:
+  +         s.eligibility = classify_eligibility(s.ts, boundary_ts)
+  +     return sessions
+  + 
+  + 
+  + def grade(sessions, boundary_label=None, boundary_ts=None):
+        """Pure: render the #810 verdict for a list of SessionCounts.
+    
+        @yuanhao's corrected rule: a session with zero abstentions is excluded from BOTH
+        numerator and denominator — the gate cannot fire where there was nothing to
+        continue. Below the sample floor the verdict is refused and the wait is printed
+        instead: "not yet gradeable" is its own state, not "the gate failed".
+  + 
+  +     His second correction (#810, 2026-08-21) adds the eligibility boundary: a session
+  +     whose head predates the fix under test is INELIGIBLE, not a miss, and is dropped
+  +     from both halves before any of the above runs. Without it the verdict keeps
+  ... (38 more lines)
+ ✓ (1m 3s)
+  - def grade(sessions):
+  + def apply_boundary(sessions, boundary_ts):
+  +     """Pure-ish: stamp each session's eligibility against the boundary. Mutates in place
+  +     and returns the list, so the decision lives in `classify_eligibility` alone."""
+  +     for s in sessions:
+  +         s.eligibility = classify_eligibility(s.ts, boundary_ts)
+  +     return sessions
+  + 
+  ... (13 more lines)
+
+Now the I/O half — the git resolver, session_from_path stamping ts, and argparse in main:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (24 → 120 lines)
+  + def resolve_sha_timestamp(sha):
+  +     """I/O: the committer date of `sha` as an ISO-8601 string, or None.
+  + 
+  +     Kept out of every decision function on purpose — `classify_eligibility` takes a
+  +     resolved timestamp and nothing else, so the boundary rule stays pure and testable.
+  +     """
+  +     try:
+  +         proc = subprocess.run(
+  +             ["git", "show", "-s", "--format=%cI", sha],
+  +             capture_output=True,
+  +             text=True,
+  +             timeout=10,
+  +         )
+  +     except (OSError, subprocess.SubprocessError):
+  +         return None
+  +     if proc.returncode != 0:
+  +         return None
+  +     return proc.stdout.strip() or None
+  + 
+  + 
+  ... (105 more lines)
+ ✓ (1m 2s)
+  + def resolve_sha_timestamp(sha):
+  +     """I/O: the committer date of `sha` as an ISO-8601 string, or None.
+  + 
+  +     Kept out of every decision function on purpose — `classify_eligibility` takes a
+  +     resolved timestamp and nothing else, so the boundary rule stays pure and testable.
+  +     """
+  +     try:
+  +         proc = subprocess.run(
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (5 → 2 lines)
+    if __name__ == "__main__":
+  -     args = sys.argv[1:]
+  -     if args and args[0] == "--test":
+  -         sys.exit(run_self_tests())
+  -     sys.exit(main(args))
+  +     sys.exit(main(sys.argv[1:]))
+ ✓ (1m 2s)
+    if __name__ == "__main__":
+  -     args = sys.argv[1:]
+  -     if args and args[0] == "--test":
+  -         sys.exit(run_self_tests())
+  -     sys.exit(main(args))
+  +     sys.exit(main(sys.argv[1:]))
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (11 → 36 lines)
+    It checks that an abstention marker was *emitted*, never why the model abstained, and it
+    says nothing about whether a firing was the *right* continuation. Presence is mechanically
+    checkable; correctness is not.
+  + 
+  + THE ELIGIBILITY BOUNDARY (@yuanhao on #810, 2026-08-21)
+  + -------------------------------------------------------
+  + A session whose head predates the fix under test **could not** have fired the gate. Read
+  + without a boundary, every one of those sessions lands in the denominator as a miss, so the
+  + verdict combines "could not fire" with "did not fire" — a category error, and one that
+  + gets worse-looking as more pre-fix history accumulates in the window. Measured: the first
+  + run of this tool reported `of 16 gradeable sessions, the gate fired in 0` where all 16
+  + predated #808's fix.
+  + 
+  + `--since-sha <sha>` (resolved with `git show -s --format=%cI`) or `--since <ISO8601>`
+  + marks the boundary. Each session then lands in exactly one of three states, and none is
+  + folded into another:
+  + 
+  +   INELIGIBLE   strictly before the boundary — excluded from numerator AND denominator
+  +   ELIGIBLE     at or after the boundary (the boundary is inclusive)
+  +   UNKNOWN_AGE  no parseable timestamp — NOT eligible and NOT ineligible; counted in its
+  ... (14 more lines)
+ ✓ (1m 4s)
+    It checks that an abstention marker was *emitted*, never why the model abstained, and it
+    says nothing about whether a firing was the *right* continuation. Presence is mechanically
+    checkable; correctness is not.
+  + 
+  + THE ELIGIBILITY BOUNDARY (@yuanhao on #810, 2026-08-21)
+  + -------------------------------------------------------
+  + A session whose head predates the fix under test **could not** have fired the gate. Read
+  + without a boundary, every one of those sessions lands in the denominator as a miss, so the
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 18s (2 ✓)
+
+Now the self-tests. Appending a new section before the failure report:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (7 → 109 lines)
+        v = grade(with_zeros)
+        check("zeros excluded from denominator", "of 4 gradeable sessions" in v, True)
+        check("zeros counted as excluded", "2 excluded for zero abstentions" in v, True)
+  + 
+  +     # 7. The eligibility boundary (@yuanhao on #810). Timestamp parsing first.
+  +     check(
+  +         "compact session stamp parses",
+  +         parse_timestamp("20260821T120601Z").isoformat(),
+  +         "2026-08-21T12:06:01+00:00",
+  +     )
+  +     check(
+  +         "ISO stamp with Z parses",
+  +         parse_timestamp("2026-08-21T21:25:00Z").isoformat(),
+  +         "2026-08-21T21:25:00+00:00",
+  +     )
+  +     check(
+  +         "git %cI offset stamp parses",
+  +         parse_timestamp("2026-08-21T23:25:00+02:00").isoformat(),
+  +         "2026-08-21T21:25:00+00:00",
+  +     )
+  ... (87 more lines)
+ ✓ (1m 1s)
+        v = grade(with_zeros)
+        check("zeros excluded from denominator", "of 4 gradeable sessions" in v, True)
+        check("zeros counted as excluded", "2 excluded for zero abstentions" in v, True)
+  + 
+  +     # 7. The eligibility boundary (@yuanhao on #810). Timestamp parsing first.
+  +     check(
+  +         "compact session stamp parses",
+  +         parse_timestamp("20260821T120601Z").isoformat(),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (36ms)
+  2 tools completed in 1m 5s (2 ✓)
+
+Now verify byte-identity, --help, and the boundary paths:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (119ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (7 lines) ✓ (184ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 4 lines)
+            boundary_ts = parse_timestamp(raw)
+  -         boundary_label = f"{args.since_sha} ({raw})"
+  +         # Just the sha — `grade` already prints the resolved stamp, and printing it
+  +         # twice reads as two different facts.
+  +         boundary_label = args.since_sha
+ ✓ (1m 2s)
+            boundary_ts = parse_timestamp(raw)
+  -         boundary_label = f"{args.since_sha} ({raw})"
+  +         # Just the sha — `grade` already prints the resolved stamp, and printing it
+  +         # twice reads as two different facts.
+  +         boundary_label = args.since_sha
+  3 tools completed in 1m 15s (3 ✓)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 6 lines)
+        check("plain log name yields no stamp", session_timestamp("run-12345.log"), None)
+  -     check("trailing slash still parses", session_timestamp("day-9-20260101T000000Z/")
+  -           is not None, True)
+  +     check(
+  +         "trailing slash still parses",
+  +         session_timestamp("day-9-20260101T000000Z/") is not None,
+  +         True,
+  +     )
+ ✓ (1m 2s)
+        check("plain log name yields no stamp", session_timestamp("run-12345.log"), None)
+  -     check("trailing slash still parses", session_timestamp("day-9-20260101T000000Z/")
+  -           is not None, True)
+  +     check(
+  +         "trailing slash still parses",
+  +         session_timestamp("day-9-20260101T000000Z/") is not None,
+  +         True,
+  +     )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (7 lines) ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "measure_abstentions" -… ✓ (48ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 12s (3 ✓)
+
+Only CLAUDE.md references it. Updating that bullet now:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (21ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.7s (3 ✓)
+
+Now the full verification sweep:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (1.3s)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (318ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (2m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 18s (3 ✓)
+
+All green — 7 test binaries pass, only the two intended files touched. Committing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (21ms)
+
+Committed. Here's what landed.
+
+## What changed
+
+`scripts/measure_abstentions.py` — two defects, one gap each, as @yuanhao scoped it.
+
+(a) A real parser. main() had none — it special-cased --test and opened every other argv entry as a path, so --help died with FileNotFoundError: '--help'. Now argparse: --help prints usage and exits 0, --test is a flag on the same parser, positional paths keep their meaning, --since-sha and --since are mutually exclusive.
+
+(b) The eligibility boundary. `classify_eligibility(session_ts, boundary_ts)` — pure, three states, none folded into another:
+
+• INELIGIBLE — strictly before the boundary. Out of numerator and denominator.
+• ELIGIBLE — at or after. The boundary is inclusive, and I pinned both sides of that discriminator, not just the side that blocks.
+• UNKNOWN_AGE — no parseable timestamp. Not eligible, not ineligible: its own bucket, counted and printed. A silently-absorbed unknown inside my own meter is the exact thing this tool exists to stop.
+
+Session age comes from the day-N-YYYYMMDDTHHMMSSZ directory name (evolve.sh:3471) — no git, works on a bare audit-log checkout. --since-sha shells git show -s --format=%cI at the I/O call site; an unresolvable sha or unparseable stamp refuses to grade rather than quietly becoming "no boundary".
+
+## Why it mattered
+
+The first real run said of 16 gradeable sessions, the gate fired in 0 — and all 16 predated the #808 fix. A firing was impossible by construction. That isn't a 0% hit rate, it's "could not fire" wearing "did not fire"'s clothes, and it gets worse-looking as pre-fix history piles up. Same defect the tool already fixed once for contamination, sitting in the other half of the fraction.
+
+## Verified
+
+• no-flag output byte-identical to before (diffed against a captured baseline, and pinned by a self-test asserting the pre-change verdict string verbatim)
+• --help exits 0; --test prints all self-tests passed
+• --since and --since-sha both drive the three states end-to-end on a fixture
+• MIN_GRADEABLE_SESSIONS = 4 refusal untouched — with a boundary it's now the common case, which is correct
+• cargo fmt --check, clippy -D warnings, build, test (7 binaries) all green
+• `extract_trajectory.py --test` still passes
+
+I did not touch classify_line, classify, is_quoted_prose or the anchored matching. One gap, not a rewrite.
+
+CLAUDE.md's bullet names the flags and the rule, keeps the "what it cannot do" sentence intact, and records the Day-174 0 of 4 as a **superseded reading** rather than deleting it — that number was measured with no boundary, so it was the category error, and erasing it would teach nothing about why.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
