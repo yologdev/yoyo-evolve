@@ -38,6 +38,14 @@ pub(crate) struct UngradedScan {
     /// `experiment` lines with no usable `target`, so no key could be formed.
     /// Excluded from the pairing and reported as a count. Live ledger: 0.
     pub(crate) unkeyed_excluded: usize,
+    /// Non-blank lines that did not parse as JSON at all. Counted, never
+    /// silently dropped — a shrinking denominator inside my own meter is the
+    /// defect this module exists to catch, and it flatters me in the dangerous
+    /// direction: a dropped `experiment_result` raises a loud false alarm, but
+    /// a dropped `experiment` makes a genuinely ungraded round *vanish* from
+    /// the scan. Their `type` is unknowable (the line could not be read), so
+    /// this is deliberately a count of unreadable **lines**, not of rounds.
+    pub(crate) unparseable_excluded: usize,
 }
 
 /// Find blind rounds that were started and never graded.
@@ -66,7 +74,10 @@ pub(crate) struct UngradedScan {
 ///
 /// Detection only. Nothing here writes, renumbers or back-fills the ledger.
 /// Parses defensively like its neighbours: malformed or truncated lines
-/// contribute nothing, an empty ledger yields an empty scan, no panics.
+/// contribute no rounds, an empty ledger yields an empty scan, no panics. They
+/// are, however, **counted** in [`UngradedScan::unparseable_excluded`] rather
+/// than dropped in silence — the ledger is hand-authored, which makes me a
+/// second implementation of its format with no compiler between us.
 pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
     use std::collections::HashSet;
 
@@ -79,25 +90,33 @@ pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
         Some((val["round"].as_i64(), target.to_string()))
     }
 
-    fn parsed(ledger_text: &str, kind: &str) -> Vec<serde_json::Value> {
-        ledger_text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .filter(|v| v["type"].as_str() == Some(kind))
-            .collect()
+    // Parsed ONCE, not once per kind. A single unreadable line is a single
+    // real event, and parsing per pass would let it emit two counted records —
+    // the "one act, a quorum of itself" defect, here inside my own meter.
+    let mut values: Vec<serde_json::Value> = Vec::new();
+    let mut unparseable_excluded = 0usize;
+    for line in ledger_text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => values.push(v),
+            Err(_) => unparseable_excluded += 1,
+        }
     }
+    let of_kind = |kind: &'static str| {
+        values
+            .iter()
+            .filter(move |v| v["type"].as_str() == Some(kind))
+    };
 
-    let graded: HashSet<(Option<i64>, String)> = parsed(ledger_text, "experiment_result")
-        .iter()
-        .filter_map(key)
-        .collect();
+    let graded: HashSet<(Option<i64>, String)> =
+        of_kind("experiment_result").filter_map(key).collect();
 
-    let mut out = UngradedScan::default();
+    let mut out = UngradedScan {
+        unparseable_excluded,
+        ..UngradedScan::default()
+    };
     let mut seen: HashSet<(Option<i64>, String)> = HashSet::new();
-    for val in parsed(ledger_text, "experiment") {
-        let Some(k) = key(&val) else {
+    for val in of_kind("experiment") {
+        let Some(k) = key(val) else {
             out.unkeyed_excluded += 1;
             continue;
         };
@@ -114,8 +133,13 @@ pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
 }
 
 /// One line naming the rounds that were started and never graded, or `None`
-/// when the ledger is clean — a clean ledger prints nothing, so the common
-/// path stays byte-identical.
+/// when the ledger is clean *and was fully read* — a clean ledger prints
+/// nothing, so the common path stays byte-identical.
+///
+/// The qualifier is the point: with no owed rounds but unreadable lines this
+/// returns a line saying so, because "could not check" must never read as
+/// "checked; clean" — the unreadable line may be the very `experiment` whose
+/// absence makes the scan look empty.
 ///
 /// Detection only: this says a round is *owed*, it never grades one and never
 /// writes to the ledger. The wording deliberately contains no `never forecast`
@@ -123,8 +147,41 @@ pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
 /// regexes, so the planner's collection (which has already hard-stopped above
 /// this block) is unaffected.
 pub(crate) fn format_ungraded_rounds(scan: &UngradedScan) -> Option<String> {
+    // Two different reasons a line was not checked, kept distinct rather than
+    // summed: one had no key, the other could not be read at all. When only
+    // the first fires the clause is byte-identical to before this counter
+    // existed, so the common path is unchanged.
+    let mut notes: Vec<String> = Vec::new();
+    if scan.unkeyed_excluded > 0 {
+        notes.push(format!(
+            "{} line(s) had no target and could not be checked",
+            scan.unkeyed_excluded
+        ));
+    }
+    if scan.unparseable_excluded > 0 {
+        notes.push(format!(
+            "{} line(s) could not be parsed and were not checked",
+            scan.unparseable_excluded
+        ));
+    }
+    let excluded = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" {DIM}({}){RESET}", notes.join("; "))
+    };
+
     if scan.ungraded.is_empty() {
-        return None;
+        if excluded.is_empty() {
+            // Genuinely clean: prints nothing, byte-identical to before.
+            return None;
+        }
+        // Not clean — *unread*. The dangerous case is exactly here: the line
+        // that could not be parsed may have been the `experiment` whose
+        // absence makes this scan look empty, so "could not check" must never
+        // be allowed to read as "checked; clean".
+        return Some(format!(
+            "    {YELLOW}⚠{RESET} no ungraded rounds found, but the ledger was not fully read:{excluded}\n"
+        ));
     }
     let listed = scan
         .ungraded
@@ -142,13 +199,27 @@ pub(crate) fn format_ungraded_rounds(scan: &UngradedScan) -> Option<String> {
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let excluded = if scan.unkeyed_excluded > 0 {
-        format!(
-            " {DIM}({} line(s) had no target and could not be checked){RESET}",
+    // Two different reasons a line was not checked, kept distinct rather than
+    // summed: one had no key, the other could not be read at all. When only
+    // the first fires the clause is byte-identical to before this counter
+    // existed, so the common path is unchanged.
+    let mut notes: Vec<String> = Vec::new();
+    if scan.unkeyed_excluded > 0 {
+        notes.push(format!(
+            "{} line(s) had no target and could not be checked",
             scan.unkeyed_excluded
-        )
-    } else {
+        ));
+    }
+    if scan.unparseable_excluded > 0 {
+        notes.push(format!(
+            "{} line(s) could not be parsed and were not checked",
+            scan.unparseable_excluded
+        ));
+    }
+    let excluded = if notes.is_empty() {
         String::new()
+    } else {
+        format!(" {DIM}({}){RESET}", notes.join("; "))
     };
     Some(format!(
         "    {YELLOW}⚠{RESET} {} round(s) started but never graded: {listed}{excluded}\n",

@@ -654,4 +654,101 @@ mod ungraded_round_tests {
             ungraded_rounds(&[exp("1", 100, "src/a.rs"), res("1", 100, "src/a.rs")].join("\n"));
         assert!(format_ungraded_rounds(&scan).is_none());
     }
+
+    // --- round 68: unreadable lines are counted, and they speak --------------
+
+    /// A line that does not parse at all is *counted*, not dropped in silence.
+    /// The ledger is hand-authored, so a truncated or badly escaped line is a
+    /// live possibility, and a shrinking denominator inside my own meter is the
+    /// defect this module exists to catch.
+    #[test]
+    fn unparseable_lines_are_counted_not_silently_dropped() {
+        let ledger = [
+            "{\"type\":\"experiment\",\"round\":1,",
+            "not json at all",
+            &exp("5", 160, "src/x.rs"),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert_eq!(scan.unparseable_excluded, 2, "{scan:?}");
+        // The readable round is still found — counting must not cost detection.
+        assert_eq!(scan.ungraded.len(), 1, "{scan:?}");
+        assert_eq!(scan.ungraded[0].target, "src/x.rs");
+    }
+
+    /// One unreadable line is one real event. The scan parses the ledger once
+    /// rather than once per line-kind, so a bad line cannot emit two counted
+    /// records — the "one act, a quorum of itself" defect, here inside my own
+    /// meter.
+    #[test]
+    fn one_unreadable_line_is_counted_exactly_once() {
+        let scan = ungraded_rounds("{\"type\":\"experiment\",\"round\":1,");
+        assert_eq!(scan.unparseable_excluded, 1, "{scan:?}");
+    }
+
+    /// Emission point, and the sharp case: with no owed rounds but a line that
+    /// could not be read, the reader must not be told the ledger is clean —
+    /// the unreadable line may be the `experiment` whose absence empties the
+    /// scan.
+    #[test]
+    fn unread_ledger_with_no_owed_rounds_still_speaks() {
+        let ledger = [
+            exp("1", 100, "src/a.rs"),
+            res("1", 100, "src/a.rs"),
+            "{\"type\":\"experiment\",\"round\":9,".to_string(),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert!(scan.ungraded.is_empty(), "{scan:?}");
+        let line = format_ungraded_rounds(&scan).expect("an unread ledger must not stay silent");
+        assert!(line.contains("was not fully read"), "{line}");
+        assert!(
+            line.contains("1 line(s) could not be parsed and were not checked"),
+            "{line}"
+        );
+        // It must not claim rounds are owed when none were found.
+        assert!(
+            !line.contains("round(s) started but never graded"),
+            "{line}"
+        );
+        // Consumer guard: still invisible to `scripts/extract_trajectory.py`.
+        assert!(!line.contains("never forecast"), "{line}");
+    }
+
+    /// Near-miss guard for the branch above: a ledger that is clean *and* fully
+    /// read stays silent. A discriminator tested only on the side that fires is
+    /// vacuous green.
+    #[test]
+    fn clean_and_fully_read_ledger_stays_silent() {
+        let scan =
+            ungraded_rounds(&[exp("1", 100, "src/a.rs"), res("1", 100, "src/a.rs")].join("\n"));
+        assert_eq!(scan.unparseable_excluded, 0, "{scan:?}");
+        assert!(format_ungraded_rounds(&scan).is_none());
+    }
+
+    /// Emission point: the two exclusion reasons are reported as *distinct*
+    /// facts, never summed into one number — a line with no target and a line
+    /// that could not be read are different failures with different remedies.
+    #[test]
+    fn both_exclusion_reasons_are_named_separately() {
+        let ledger = [
+            "{\"type\":\"experiment\",\"round\":3,\"day\":170}".to_string(),
+            "{\"type\":\"experiment\",\"round\":4,".to_string(),
+            exp("11", 170, "src/owed.rs"),
+        ]
+        .join("\n");
+        let scan = ungraded_rounds(&ledger);
+        assert_eq!(scan.unkeyed_excluded, 1, "{scan:?}");
+        assert_eq!(scan.unparseable_excluded, 1, "{scan:?}");
+        let line = format_ungraded_rounds(&scan).expect("one round is owed");
+        assert!(
+            line.contains("1 line(s) had no target and could not be checked"),
+            "{line}"
+        );
+        assert!(
+            line.contains("1 line(s) could not be parsed and were not checked"),
+            "{line}"
+        );
+        assert!(line.contains("11 (day 170, src/owed.rs)"), "{line}");
+    }
 }
