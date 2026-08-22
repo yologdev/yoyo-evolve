@@ -9,10 +9,10 @@ score: 0.66
 uses: 2
 wins: 2
 last_used: "2026-05-01T06:18:55Z"
-last_evolved: "2026-05-25"
+last_evolved: "2026-08-22"
 parent_pattern_key: null
 tools: [bash, read_file, write_file, search, sub_agent, shared_state]
-keywords: ["synthesis", "multi-source", "aggregate sources", "compare sources", "multiple sources"]
+keywords: ["skills/synthesis", "synthesis.source", "multi-source", "aggregate sources", "compare sources", "multiple sources"]
 ---
 
 # Synthesis
