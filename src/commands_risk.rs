@@ -979,8 +979,11 @@ fn handle_risk_snapshot() {
 
     let json = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
+    // The whole scored universe, not `top_10`: the first-scored ledger exists
+    // for the paths no prediction column ever names.
+    let scored: Vec<&str> = risks.iter().map(|r| r.path.as_str()).collect();
 
-    match write_risk_snapshot_to(path, &json) {
+    match write_risk_snapshot_to(path, &json, &scored, day, &git_hash) {
         Ok(()) => {
             let count = risks.len().min(10);
             println!("  📸 Snapshot saved — {count} files scored, git HEAD {git_hash}");

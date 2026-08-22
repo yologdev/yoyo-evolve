@@ -766,8 +766,9 @@ pub(crate) fn format_epistemic_report(
 /// compute the ranking, print the report.
 pub(crate) fn handle_risk_epistemic() {
     use crate::commands_risk_snapshots::{
-        epistemic_ledger_notes, read_graded_ledger, read_snapshot_ledger, GradedLedger,
-        SnapshotLedger, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+        epistemic_ledger_notes, first_scored_age, founding_ts, read_first_scored,
+        read_graded_ledger, read_snapshot_ledger, GradedLedger, SnapshotLedger,
+        RISK_FIRST_SCORED_PATH, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
     };
     use crate::format::{RESET, YELLOW};
 
@@ -803,10 +804,24 @@ pub(crate) fn handle_risk_epistemic() {
     // Current risk scores, used only to break epistemic ties.
     let risk_scores = crate::commands_risk::top_risk_files(usize::MAX);
     let entries = compute_epistemic_ranking(&snapshots, &events, &risk_scores, &experiments);
-    // The add-date resolver is git, and it is consulted only for the
-    // never-forecast candidates — never once per scored file.
+    // The add-date resolver is consulted only for the never-forecast
+    // candidates — never once per scored file.
+    //
+    // Two sources, in order. First the first-scored ledger: a record of when
+    // *I* first scored a path, which is a fact about my own observation
+    // history and so survives a shallow clone. Then git, which in this
+    // checkout answers `None` for every pre-window file (the graft boundary
+    // dates them all to the clone, and `git_added_ts` correctly refuses it).
+    // Today the ledger discriminates nothing — every entry is in the founding
+    // batch, which `first_scored_age` deliberately reads as unknown — so this
+    // is byte-identical to git alone and starts paying off once paths appear
+    // *after* that batch.
+    let (first_scored, _dropped) = read_first_scored(std::path::Path::new(RISK_FIRST_SCORED_PATH));
+    let founding = founding_ts(&first_scored);
     let never = never_forecast_files(&snapshots, &risk_scores, &experiments, &|path| {
-        git_added_ts(path)
+        first_scored_age(path, &first_scored, founding)
+            .map(|ts| ts.to_string())
+            .or_else(|| git_added_ts(path))
     });
     // Same ledger text, read once: study history for the ranking, per-hypothesis
     // provenance for the guess-first scoreboard.

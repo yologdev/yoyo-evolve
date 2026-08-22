@@ -15,6 +15,34 @@ use crate::format::{DIM, RESET};
 /// Default path for risk snapshot JSONL file.
 pub(crate) const RISK_SNAPSHOT_PATH: &str = ".yoyo/risk_snapshots.jsonl";
 
+/// Default path for the first-scored ledger (see [`append_first_scored_to`]).
+pub(crate) const RISK_FIRST_SCORED_PATH: &str = ".yoyo/risk_first_scored.jsonl";
+
+/// Filename of the first-scored ledger, resolved as a **sibling** of whatever
+/// snapshot path a caller passes so a tempdir test writes into its tempdir.
+const RISK_FIRST_SCORED_FILE: &str = "risk_first_scored.jsonl";
+
+/// Current UTC instant in the `YYYY-MM-DDTHH:MM:SSZ` shape both JSONL ledgers
+/// use. One statement of the format — the snapshot line and the first-scored
+/// line are compared against each other by `forecast_opportunities`, so two
+/// producers with two shapes would be two chances to drift.
+fn utc_timestamp() -> String {
+    std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Pure predicate: is opt-in risk auto-snapshot enabled given this env value?
 /// Accepts "1"/"true"/"yes"; anything else (including None) is off.
 fn risk_autosnapshot_enabled_for(val: Option<&str>) -> bool {
@@ -38,20 +66,7 @@ pub(crate) fn build_risk_snapshot_json(
     day: u32,
     git_hash: &str,
 ) -> String {
-    let ts = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    let ts = utc_timestamp();
     let top_10: Vec<serde_json::Value> = risks
         .iter()
         .take(10)
@@ -89,9 +104,25 @@ pub(crate) fn build_risk_snapshot_json(
 }
 
 /// Append a risk snapshot JSON line to the given path.
+///
+/// This is the **single** place a snapshot line reaches disk — both production
+/// callers (`auto_risk_snapshot`, reached from `/commit` and the opt-in
+/// `YOYO_RISK_AUTOSNAPSHOT=1` REPL-exit path, and `handle_risk_snapshot` behind
+/// `yoyo risk snapshot`) go through it — so the first-scored ledger is appended
+/// here rather than at each entry point. A per-token pass is not a per-entry-
+/// point pass; wiring one caller would have been a receipt for the working half.
+///
+/// `scored_paths` is the **whole scored universe**, not `top_10`: the point of
+/// the ledger is precisely the paths no prediction column ever names.
+///
+/// The ledger append is best-effort and runs *after* the snapshot line lands —
+/// a failure there must never cost a snapshot, so its error is dropped.
 pub(crate) fn write_risk_snapshot_to(
     path: &std::path::Path,
     json_line: &str,
+    scored_paths: &[&str],
+    day: u32,
+    git_hash: &str,
 ) -> Result<(), std::io::Error> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -104,7 +135,175 @@ pub(crate) fn write_risk_snapshot_to(
         .append(true)
         .open(path)?;
     writeln!(file, "{json_line}")?;
+
+    let _ = append_first_scored_to(
+        &first_scored_ledger_path(path),
+        scored_paths,
+        &utc_timestamp(),
+        day,
+        git_hash,
+    );
     Ok(())
+}
+
+/// The first-scored ledger that belongs beside a given snapshot path.
+///
+/// Derived from the snapshot path rather than taken as a parameter so every
+/// caller — including tempdir tests — inherits a ledger in the same directory
+/// as the snapshots it accompanies, with no second path to keep in sync.
+fn first_scored_ledger_path(snapshot_path: &std::path::Path) -> std::path::PathBuf {
+    match snapshot_path.parent() {
+        Some(dir) => dir.join(RISK_FIRST_SCORED_FILE),
+        None => std::path::PathBuf::from(RISK_FIRST_SCORED_FILE),
+    }
+}
+
+/// Append one line per path that this ledger has **never seen before**.
+///
+/// Shape, one line per path, once ever:
+/// `{"path":"src/foo.rs","ts":"...","day":175,"git_hash":"abc1234"}`
+///
+/// Why a separate ledger rather than embedding the scored universe in every
+/// snapshot: the universe is ~200 paths and would add ~5KB to each of ~8
+/// snapshots a day, to a file already past 300KB — while the fact being
+/// recorded ("when did I *first* score this path") changes at most once per
+/// path, ever.
+///
+/// Existing lines are never rewritten or back-filled. A path already present
+/// is skipped, so re-running this is a no-op — the recorded instant is the
+/// *first* observation, which is the only thing that carries information.
+///
+/// Returns the number of lines appended.
+fn append_first_scored_to(
+    ledger_path: &std::path::Path,
+    scored_paths: &[&str],
+    ts: &str,
+    day: u32,
+    git_hash: &str,
+) -> Result<usize, std::io::Error> {
+    let content = std::fs::read_to_string(ledger_path).unwrap_or_default();
+    let (known, _dropped) = parse_first_scored(&content);
+
+    let mut fresh: Vec<&str> = scored_paths
+        .iter()
+        .copied()
+        .filter(|p| !p.trim().is_empty() && !known.contains_key(*p))
+        .collect();
+    fresh.sort_unstable();
+    fresh.dedup();
+    if fresh.is_empty() {
+        return Ok(0);
+    }
+
+    if let Some(parent) = ledger_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ledger_path)?;
+    for path in &fresh {
+        let line = serde_json::json!({
+            "path": path,
+            "ts": ts,
+            "day": day,
+            "git_hash": git_hash,
+        });
+        writeln!(file, "{line}")?;
+    }
+    Ok(fresh.len())
+}
+
+/// Parse the first-scored ledger into `path -> first-seen ts`.
+///
+/// Defensive, and the drop count is **returned, not swallowed**: a shrinking
+/// denominator inside my own meter is the defect I keep finding elsewhere
+/// (#764). Non-blank lines that fail to parse, or that carry no usable
+/// `path`/`ts` pair, are counted. When a path appears twice (it should not —
+/// the writer skips known paths), the **earliest** ts wins, since the whole
+/// value of the record is that it is the first observation.
+pub(crate) fn parse_first_scored(
+    content: &str,
+) -> (std::collections::BTreeMap<String, String>, usize) {
+    let mut map: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut dropped = 0usize;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            dropped += 1;
+            continue;
+        };
+        let (Some(path), Some(ts)) = (
+            v.get("path").and_then(|p| p.as_str()),
+            v.get("ts").and_then(|t| t.as_str()),
+        ) else {
+            dropped += 1;
+            continue;
+        };
+        if path.trim().is_empty() || ts.trim().is_empty() {
+            dropped += 1;
+            continue;
+        }
+        map.entry(path.to_string())
+            .and_modify(|existing| {
+                if ts < existing.as_str() {
+                    *existing = ts.to_string();
+                }
+            })
+            .or_insert_with(|| ts.to_string());
+    }
+    (map, dropped)
+}
+
+/// The earliest `ts` in the ledger — the "founding batch" instant.
+///
+/// `None` for an empty ledger. Comparison is lexicographic, which is exactly
+/// right here: every line in this file is written by [`utc_timestamp`] in one
+/// fixed `...Z` shape, unlike the git-sourced dates `iso8601_sort_key` exists
+/// to normalise.
+pub(crate) fn founding_ts(map: &std::collections::BTreeMap<String, String>) -> Option<&str> {
+    map.values().map(|s| s.as_str()).min()
+}
+
+/// When did I *first* observe this path in a scored risk universe?
+///
+/// This is the age signal that survives a shallow clone: it is a fact about my
+/// own observation history, not about git history, so a graft boundary cannot
+/// erase it. Three states, none folded into a convenient neighbour:
+///
+/// * path absent from the ledger → `None`. **Unknown age, not newborn.**
+/// * path recorded at the ledger's earliest ts → `None`. The load-bearing
+///   rule: the very first write stamps every currently-scored path at the same
+///   instant, so "present in the founding batch" means *at least as old as the
+///   record* — an unknown, not a birthday. Reading it as a birthday would
+///   relabel every long-standing dark room "too young to judge" and empty the
+///   dark set, which is the exact opposite of the point.
+/// * path first seen strictly after the founding batch → `Some(ts)`, a real
+///   observed birthday.
+pub(crate) fn first_scored_age<'a>(
+    path: &str,
+    map: &'a std::collections::BTreeMap<String, String>,
+    founding: Option<&str>,
+) -> Option<&'a str> {
+    let ts = map.get(path)?.as_str();
+    match founding {
+        Some(f) if ts == f => None,
+        _ => Some(ts),
+    }
+}
+
+/// I/O half: read the first-scored ledger. A missing file is an honest empty
+/// map (this ledger is forward-only — before its first write there is simply
+/// nothing to know), never an error.
+pub(crate) fn read_first_scored(
+    path: &std::path::Path,
+) -> (std::collections::BTreeMap<String, String>, usize) {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    parse_first_scored(&content)
 }
 
 /// Returns the `git_hash` of the last snapshot line in the given JSONL content,
@@ -150,7 +349,14 @@ pub(crate) fn auto_risk_snapshot() {
         .unwrap_or(0);
 
     let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
-    if let Err(e) = write_risk_snapshot_to(std::path::Path::new(RISK_SNAPSHOT_PATH), &json_line) {
+    let scored: Vec<&str> = risks.iter().map(|r| r.path.as_str()).collect();
+    if let Err(e) = write_risk_snapshot_to(
+        std::path::Path::new(RISK_SNAPSHOT_PATH),
+        &json_line,
+        &scored,
+        day,
+        &git_hash,
+    ) {
         eprintln!("  {DIM}(risk snapshot skipped: {e}){RESET}");
     }
 }
@@ -172,7 +378,9 @@ fn auto_risk_snapshot_to(path: &std::path::Path) {
         .unwrap_or(0);
 
     let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
-    write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
+    let scored: Vec<&str> = risks.iter().map(|r| r.path.as_str()).collect();
+    write_risk_snapshot_to(path, &json_line, &scored, day, &git_hash)
+        .expect("test snapshot write should succeed");
 }
 
 /// Default path for risk validation JSONL file.
@@ -212,20 +420,7 @@ pub(crate) fn write_validation_event(
     snapshot_git_hash: Option<&str>,
     ci_run_id: Option<u64>,
 ) -> std::io::Result<()> {
-    let ts = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    let ts = utc_timestamp();
 
     let mut event = serde_json::json!({
         "ts": ts,
@@ -744,11 +939,11 @@ mod tests {
         }];
 
         let json = build_risk_snapshot_json(&risks, &[], 42, "deadbee");
-        write_risk_snapshot_to(&path, &json).expect("write ok");
+        write_risk_snapshot_to(&path, &json, &[], 0, "abc1234").expect("write ok");
 
         // Write a second snapshot
         let json2 = build_risk_snapshot_json(&risks, &[], 43, "cafebab");
-        write_risk_snapshot_to(&path, &json2).expect("write ok");
+        write_risk_snapshot_to(&path, &json2, &[], 0, "abc1234").expect("write ok");
 
         // Read back and verify both lines are valid JSON
         let contents = std::fs::read_to_string(&path).expect("read");
@@ -897,7 +1092,8 @@ mod tests {
 
         // The exact two-step the non-interactive CLI feed performs.
         let json_line = build_risk_snapshot_json(&risks, &[], 130, "feed123");
-        write_risk_snapshot_to(&path, &json_line).expect("feed write must succeed");
+        write_risk_snapshot_to(&path, &json_line, &[], 0, "abc1234")
+            .expect("feed write must succeed");
 
         // Read back exactly as the downstream accuracy math does.
         let content = std::fs::read_to_string(&path).expect("feed read");
@@ -1516,5 +1712,211 @@ mod tests {
         );
         // ...and does not thereby masquerade as a green grade.
         assert!(!green_event_exists_for(&contents, "feedfac"));
+    }
+}
+
+/// Tests for the first-scored ledger — the age signal that survives a shallow
+/// clone. Kept in their own module so the discriminator (founding batch vs. a
+/// genuinely later first sighting) is covered in **both** directions: a rule
+/// tested only where it blocks is vacuous green.
+#[cfg(test)]
+mod first_scored_tests {
+    use super::*;
+    use crate::commands_risk_neverforecast::forecast_opportunities;
+
+    fn ledger(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        dir.path().join(RISK_FIRST_SCORED_FILE)
+    }
+
+    #[test]
+    fn founding_batch_paths_have_unknown_age_not_a_birthday() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = ledger(&dir);
+        let n = append_first_scored_to(
+            &path,
+            &["src/a.rs", "src/b.rs", "src/c.rs"],
+            "2026-08-22T15:40:00Z",
+            175,
+            "abc1234",
+        )
+        .expect("append");
+        assert_eq!(n, 3, "three fresh paths appended");
+
+        let (map, dropped) = read_first_scored(&path);
+        assert_eq!(dropped, 0, "well-formed ledger drops nothing");
+        assert_eq!(map.len(), 3);
+        let founding = founding_ts(&map);
+        assert_eq!(founding, Some("2026-08-22T15:40:00Z"));
+
+        // The load-bearing rule: everything stamped in the founding batch is
+        // "at least as old as the record", i.e. unknown — never young.
+        for p in ["src/a.rs", "src/b.rs", "src/c.rs"] {
+            assert_eq!(
+                first_scored_age(p, &map, founding),
+                None,
+                "{p} is in the founding batch, so its age is unknown, not new"
+            );
+        }
+        // ...and so it does not reach the too-young branch at all.
+        assert_eq!(
+            forecast_opportunities(
+                first_scored_age("src/a.rs", &map, founding),
+                &["2026-08-22T16:00:00Z".to_string()]
+            ),
+            None,
+            "unknown age must stay unknown all the way through the consumer"
+        );
+    }
+
+    #[test]
+    fn a_path_first_seen_after_the_founding_batch_has_a_real_birthday() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = ledger(&dir);
+        append_first_scored_to(
+            &path,
+            &["src/old.rs"],
+            "2026-08-22T15:40:00Z",
+            175,
+            "abc1234",
+        )
+        .expect("founding");
+        let n = append_first_scored_to(
+            &path,
+            &["src/old.rs", "src/new.rs"],
+            "2026-08-24T09:00:00Z",
+            177,
+            "def5678",
+        )
+        .expect("second batch");
+        assert_eq!(n, 1, "only the genuinely new path is appended");
+
+        let (map, _) = read_first_scored(&path);
+        let founding = founding_ts(&map);
+        // Near-miss guard: the founding path must NOT be called young.
+        assert_eq!(first_scored_age("src/old.rs", &map, founding), None);
+        // The discriminating side.
+        assert_eq!(
+            first_scored_age("src/new.rs", &map, founding),
+            Some("2026-08-24T09:00:00Z")
+        );
+        // And it reaches the consumer as a real, countable age.
+        assert_eq!(
+            forecast_opportunities(
+                first_scored_age("src/new.rs", &map, founding),
+                &[
+                    "2026-08-23T09:00:00Z".to_string(), // before  → not counted
+                    "2026-08-25T09:00:00Z".to_string(), // after   → counted
+                    "2026-08-26T09:00:00Z".to_string(), // after   → counted
+                ]
+            ),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn a_path_absent_from_the_ledger_has_unknown_age_not_zero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = ledger(&dir);
+        append_first_scored_to(&path, &["src/a.rs"], "2026-08-22T15:40:00Z", 175, "abc1234")
+            .expect("append");
+        let (map, _) = read_first_scored(&path);
+        let founding = founding_ts(&map);
+        assert_eq!(
+            first_scored_age("src/never_seen.rs", &map, founding),
+            None,
+            "absence is unknown age — never a birthday, never a zero"
+        );
+    }
+
+    #[test]
+    fn a_missing_ledger_is_an_honest_empty_not_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (map, dropped) = read_first_scored(&dir.path().join("nope.jsonl"));
+        assert!(map.is_empty());
+        assert_eq!(dropped, 0);
+        assert_eq!(founding_ts(&map), None);
+        assert_eq!(first_scored_age("src/a.rs", &map, None), None);
+    }
+
+    #[test]
+    fn unparseable_lines_are_counted_not_silently_dropped() {
+        let content = concat!(
+            "{\"path\":\"src/a.rs\",\"ts\":\"2026-08-22T15:40:00Z\",\"day\":175}\n",
+            "\n",
+            "not json at all\n",
+            "{\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+            "{\"path\":\"\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+            "{\"path\":\"src/b.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+        );
+        let (map, dropped) = parse_first_scored(content);
+        assert_eq!(map.len(), 2, "the two well-formed lines survive");
+        assert_eq!(
+            dropped, 3,
+            "unparseable, path-less and empty-path lines are counted; a blank line is not"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_path_keeps_the_earliest_ts() {
+        let content = concat!(
+            "{\"path\":\"src/a.rs\",\"ts\":\"2026-08-24T09:00:00Z\"}\n",
+            "{\"path\":\"src/a.rs\",\"ts\":\"2026-08-22T15:40:00Z\"}\n",
+        );
+        let (map, dropped) = parse_first_scored(content);
+        assert_eq!(dropped, 0);
+        assert_eq!(
+            map.get("src/a.rs").map(|s| s.as_str()),
+            Some("2026-08-22T15:40:00Z")
+        );
+    }
+
+    #[test]
+    fn writing_a_snapshot_also_lands_the_first_scored_ledger_beside_it() {
+        // The wiring test: every entry point inherits the ledger because the
+        // append lives inside the one function that writes the snapshot line.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snap = dir.path().join("risk_snapshots.jsonl");
+        write_risk_snapshot_to(
+            &snap,
+            "{\"ts\":\"x\"}",
+            &["src/a.rs", "src/b.rs"],
+            175,
+            "abc1234",
+        )
+        .expect("snapshot write");
+
+        let (map, dropped) = read_first_scored(&ledger(&dir));
+        assert_eq!(dropped, 0);
+        assert_eq!(map.len(), 2, "the whole scored universe is recorded once");
+        assert!(map.contains_key("src/a.rs") && map.contains_key("src/b.rs"));
+
+        // Second snapshot, same universe → no new lines (never back-filled,
+        // never rewritten).
+        write_risk_snapshot_to(
+            &snap,
+            "{\"ts\":\"y\"}",
+            &["src/a.rs", "src/b.rs"],
+            175,
+            "abc1234",
+        )
+        .expect("snapshot write");
+        let content = std::fs::read_to_string(ledger(&dir)).expect("read");
+        assert_eq!(
+            content.lines().filter(|l| !l.trim().is_empty()).count(),
+            2,
+            "a path is recorded once, ever"
+        );
+    }
+
+    #[test]
+    fn an_empty_scored_universe_writes_no_ledger_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snap = dir.path().join("risk_snapshots.jsonl");
+        write_risk_snapshot_to(&snap, "{\"ts\":\"x\"}", &[], 175, "abc1234").expect("write");
+        assert!(snap.exists(), "the snapshot still lands");
+        assert!(
+            !ledger(&dir).exists(),
+            "nothing to record means no file, not an empty one"
+        );
     }
 }

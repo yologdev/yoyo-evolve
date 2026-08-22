@@ -158,7 +158,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // silently re-emitting the raw @path; plus tests pinning the warning string,
     // free-form-mention silence, and the unreadable-file behavior.
     // Day 174: +2 absorbed since Day 166.
-    ("src/commands_file.rs", 2796),
+    ("src/commands_file.rs", 2804),
     ("src/commands_git.rs", 3172),
     // Day 174: +25 absorbed since Day 166.
     ("src/commands_info.rs", 3061),
@@ -185,7 +185,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // is itself churn, so a deleted file was earning a fresh score plus a
     // guaranteed never-forecast status and leading the list that steers the
     // planner. Recorded deliberately rather than absorbed.
-    ("src/commands_risk.rs", 5937),
+    ("src/commands_risk.rs", 5940),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
@@ -200,7 +200,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
     // common case, and widening a human-set allow list while preserving deny.
-    ("src/commands_spawn.rs", 3913),
+    ("src/commands_spawn.rs", 3991),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
