@@ -1153,6 +1153,35 @@ pub fn spawn_near_miss(rest: &str) -> Option<&'static str> {
 /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
 const MANIFEST_TASK_CAP: usize = 200;
 
+/// Appended in band when a task string is cut to fit `MANIFEST_TASK_CAP`.
+///
+/// Every elision layer marks its cuts — a silent elision is the bug. This one
+/// earns the rule twice over, because the manifest is not just a display: it is
+/// the input `/spawn replay` re-launches, so an unmarked cut hands a subagent a
+/// *different instruction* than the one that was recorded and says nothing.
+const MANIFEST_TRUNCATION_MARKER: &str = " …[truncated]";
+
+/// The `task` field a manifest entry stores, with any cut marked in band.
+///
+/// Under the cap the string is byte-identical to the task that was launched.
+/// Over it, the marker is included **inside** the `MANIFEST_TASK_CAP` budget,
+/// so the stored field never exceeds the cap it is named for.
+///
+/// What this does not do: it does not make a truncated replay faithful. The
+/// tail is gone and cannot be recovered from the manifest — the marker only
+/// makes the loss visible to whoever reads or replays the run.
+fn manifest_task_field(task: &str) -> String {
+    if task.len() <= MANIFEST_TASK_CAP {
+        return task.to_string();
+    }
+    let budget = MANIFEST_TASK_CAP.saturating_sub(MANIFEST_TRUNCATION_MARKER.len());
+    format!(
+        "{}{}",
+        safe_truncate(task, budget),
+        MANIFEST_TRUNCATION_MARKER
+    )
+}
+
 /// Generate a run id for a `/spawn --parallel` fan-out manifest.
 /// Timestamp-based (UTC, compact), falling back to a fixed label if `date`
 /// is unavailable so the write still succeeds.
@@ -1217,7 +1246,7 @@ pub fn build_spawn_manifest(
         .map(|(index, (task, status))| {
             serde_json::json!({
                 "index": index,
-                "task": safe_truncate(task, MANIFEST_TASK_CAP),
+                "task": manifest_task_field(task),
                 "status": manifest_status_str(status),
             })
         })
@@ -3479,6 +3508,55 @@ mod tests {
         // The stored slice is itself valid UTF-8 (it's a &str, so this is
         // implicit — but assert it's a proper prefix boundary explicitly).
         assert!(stored.is_char_boundary(stored.len()));
+    }
+
+    /// A task cut to fit the manifest cap must say so **in the string a replay
+    /// re-launches** — not one layer below, in the writer's own return value.
+    ///
+    /// The sibling test above pins that the cut HAPPENS. Nothing pinned that the
+    /// cut is VISIBLE, and that is the half a user meets: `/spawn replay` feeds
+    /// this exact string to a subagent as its instruction, so an unmarked cut is
+    /// a silently different task wearing the recorded task's name.
+    #[test]
+    fn replayed_task_carries_the_truncation_marker_in_band() {
+        let long = format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50));
+        let tasks = vec![long.clone()];
+        let results = vec![(long.clone(), SpawnStatus::Completed)];
+        let m = build_spawn_manifest("run-cut", &tasks, &results);
+
+        let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
+        let replayed = manifest_replay_tasks(&parsed).expect("has tasks");
+        let instruction = &replayed[0];
+
+        // The emission point: the instruction a subagent receives says it was cut.
+        assert!(
+            instruction.ends_with(MANIFEST_TRUNCATION_MARKER),
+            "replayed instruction hides its cut: {instruction:?}"
+        );
+        // The marker rides inside the cap, not past it.
+        assert!(
+            instruction.len() <= MANIFEST_TASK_CAP,
+            "len {}",
+            instruction.len()
+        );
+        assert!(instruction.len() < long.len());
+    }
+
+    /// The near-miss guard: a task under the cap must be byte-identical, or the
+    /// marker would be decorating instructions that were never truncated.
+    #[test]
+    fn replayed_task_under_the_cap_is_byte_identical() {
+        let task = "refactor the parser".to_string();
+        let m = build_spawn_manifest(
+            "run-short",
+            std::slice::from_ref(&task),
+            &[(task.clone(), SpawnStatus::Completed)],
+        );
+        let parsed = parse_spawn_manifest(&m.to_string()).expect("manifest parses");
+        let replayed = manifest_replay_tasks(&parsed).expect("has tasks");
+
+        assert_eq!(replayed[0], task);
+        assert!(!replayed[0].contains(MANIFEST_TRUNCATION_MARKER));
     }
 
     #[test]
