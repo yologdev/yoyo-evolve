@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -557,14 +558,94 @@ def fingerprint_error_line(line: str) -> str:
     return re.sub(r"\s+", " ", s.lower())[:80]
 
 
-def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
-    """Return [(fingerprint, [run_ids_seen_at])]. Capped at MAX_FAILED_RUNS fetches.
-    Silent return-empty paths now warn() so a misconfigured token / rate-limit
-    doesn't masquerade as 'no failed runs' (would defeat the recurring-error
-    detection this section exists for)."""
+def run_age_days(created_at, now: datetime):
+    """Age of an ISO-8601 timestamp in days. Pure.
+
+    Returns None for a missing / non-string / unparseable stamp — deliberately
+    NOT 0.0. "I don't know when this ran" is a different fact from "it ran just
+    now", and folding the first into the second is exactly how resolved history
+    gets rendered as current state."""
+    if not isinstance(created_at, str):
+        return None
+    s = created_at.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (now - dt).total_seconds() / 86400.0
+
+
+def partition_failed_runs(runs, now: datetime, window_days: int = WINDOW_DAYS):
+    """Split `gh run list` records into three states. Pure, no I/O.
+
+    Returns (in_window, too_old, undated), each a list of (run, age_days) pairs
+    (age is None only in `undated`). Three states, none folded into another: an
+    undated run is neither silently kept nor silently dropped — it is counted
+    and reported, because a shrinking denominator inside my own meter is the
+    defect I keep fixing elsewhere.
+
+    The window boundary is INCLUSIVE: a run exactly `window_days` old is still
+    in window."""
+    in_window: list = []
+    too_old: list = []
+    undated: list = []
+    for run in runs or []:
+        record = run if isinstance(run, dict) else {}
+        age = run_age_days(record.get("createdAt"), now)
+        if age is None:
+            undated.append((record, None))
+        elif age <= window_days:
+            in_window.append((record, age))
+        else:
+            too_old.append((record, age))
+    return in_window, too_old, undated
+
+
+def format_run_age(age) -> str:
+    """Human age label for a cluster's newest run. Pure."""
+    if age is None:
+        return "undated"
+    if age < 1:
+        return "last <1d ago"
+    return f"last {int(age)}d ago"
+
+
+@dataclass
+class CiScan:
+    """What the CI-error probe actually observed — not just its clusters.
+
+    `ok` distinguishes "checked" from "could not check": an empty cluster list
+    is reachable from three different worlds (no failures, gh query failed,
+    repo unset) and "could not check" must never read as "checked; clean"."""
+
+    ok: bool
+    clusters: list = field(default_factory=list)  # (fingerprint, run_ids, newest_age_days)
+    in_window: int = 0
+    excluded_old: int = 0
+    undated: int = 0
+    fetch_errors: int = 0
+    reason: str = ""
+
+
+def collect_failed_ci_fingerprints(repo: str, now: datetime | None = None) -> CiScan:
+    """Fingerprint recent FAILED runs, but only those inside WINDOW_DAYS.
+
+    `gh run list --status failure --limit N` returns the N most recent failures
+    *ever*, with no date filter — so a repo that has been green for months still
+    yields rows under a header claiming they are "in window". The age filter runs
+    BEFORE the expensive `gh run view --log-failed` loop, so it also saves calls.
+
+    `now` is injectable so the self-tests are deterministic."""
+    now = now or datetime.now(timezone.utc)
     if not repo:
-        warn("YOYO_REPO empty — skipping recurring-CI-error section")
-        return []
+        warn("YOYO_REPO empty — cannot check recent CI failures")
+        return CiScan(ok=False, reason="YOYO_REPO unset")
     rc, stdout, stderr = run_cmd(
         [
             "gh", "run", "list", "--repo", repo,
@@ -575,18 +656,26 @@ def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
     )
     if rc != 0:
         warn(f"gh run list rc={rc}: {(stderr or '').strip()[:200]}")
-        return []
+        return CiScan(ok=False, reason=f"gh run list failed (rc={rc})")
     try:
         runs = json.loads(stdout)
     except json.JSONDecodeError as e:
         warn(f"gh run list returned non-JSON: {e}")
-        return []
-    if not runs:
-        return []
+        return CiScan(ok=False, reason="gh run list returned non-JSON")
+
+    in_window, too_old, undated = partition_failed_runs(runs, now)
+    scan = CiScan(
+        ok=True,
+        in_window=len(in_window),
+        excluded_old=len(too_old),
+        undated=len(undated),
+    )
+    if not in_window:
+        return scan
 
     fingerprints: defaultdict[str, list[str]] = defaultdict(list)
-    fetch_errors = 0
-    for run in runs:
+    newest: dict[str, float] = {}
+    for run, age in in_window:
         run_id = str(run.get("databaseId") or "")
         if not run_id:
             continue
@@ -595,7 +684,7 @@ def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
             timeout=GH_RUN_VIEW_TIMEOUT,
         )
         if rc2 != 0:
-            fetch_errors += 1
+            scan.fetch_errors += 1
             warn(f"gh run view {run_id} rc={rc2}: {(stderr2 or '').strip()[:120]}")
             continue
         tail = log_stdout.splitlines()[-50:]
@@ -613,21 +702,49 @@ def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
                 if fp and fp not in seen_in_run:
                     fingerprints[fp].append(run_id)
                     seen_in_run.add(fp)
-    if fetch_errors and not fingerprints:
-        warn(f"all {fetch_errors} gh run view fetch(es) failed — section will be empty")
-    return sorted(fingerprints.items(), key=lambda kv: -len(kv[1]))
+                    if fp not in newest or age < newest[fp]:
+                        newest[fp] = age
+    if scan.fetch_errors and not fingerprints:
+        warn(f"all {scan.fetch_errors} gh run view fetch(es) failed — no fingerprints")
+    scan.clusters = sorted(
+        ((fp, ids, newest.get(fp)) for fp, ids in fingerprints.items()),
+        key=lambda c: -len(c[1]),
+    )
+    return scan
 
 
-def render_ci_errors(clusters: list[tuple[str, list[str]]]) -> str:
-    if not clusters:
+def render_ci_errors(scan: CiScan | None) -> str:
+    """Render the CI section. Every world gets its own sentence.
+
+    Rows carry the age of their newest run, and the header names the window, so
+    a four-day-old resolved failure cannot read as "CI is failing right now"."""
+    if scan is None:
         return ""
-    lines = ["## Recurring CI errors (failed runs in window)"]
-    for fp, run_ids in clusters[:5]:
+    if not scan.ok:
+        reason = f" ({scan.reason})" if scan.reason else ""
+        return (
+            f"## CI: could not check recent failures{reason} "
+            "— this is NOT a clean bill of health"
+        )
+    notes = []
+    if scan.excluded_old:
+        notes.append(f"{scan.excluded_old} older failure(s) outside the window, not shown")
+    if scan.undated:
+        notes.append(f"{scan.undated} undated run(s) excluded")
+    note = f" ({'; '.join(notes)})" if notes else ""
+    if not scan.clusters:
+        if scan.in_window:
+            return (
+                f"## CI: {scan.in_window} failed run(s) in last {WINDOW_DAYS} days, "
+                f"but no error lines could be read from their logs{note}"
+            )
+        return f"## CI: no failed runs in last {WINDOW_DAYS} days{note}"
+    lines = [f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days){note}"]
+    for fp, run_ids, age in scan.clusters[:5]:
         n = len(run_ids)
-        marker = f"{n}×" if n > 1 else "1×"
         # Truncate fingerprint to keep line tidy
         fp_short = fp[:90]
-        lines.append(f"[{marker}] {fp_short}")
+        lines.append(f"[{n}×, {format_run_age(age)}] {fp_short}")
     return "\n".join(lines)
 
 
@@ -923,7 +1040,7 @@ def main() -> int:
     outcomes = load_outcomes(audit_dir)
     tasks, reverts = collect_task_commits()
     sessions_audited, provider_hits = collect_provider_errors(audit_dir)
-    ci_clusters = collect_failed_ci_fingerprints(repo)
+    ci_scan = collect_failed_ci_fingerprints(repo)
 
     sections: list[str] = []
     s = render_outcomes(outcomes)
@@ -952,7 +1069,10 @@ def main() -> int:
         s = render_subsystem_concentration(sub_counts, sub_total)
         if s:
             sections.append(s)
-    s = render_ci_errors(ci_clusters)
+    s = render_ci_errors(ci_scan)
+    # A "could not check" CI note is honest, but it is not trajectory DATA —
+    # it must not suppress the global "(no trajectory data yet)" state below.
+    ci_unknown = bool(s) and not ci_scan.ok
     if s:
         sections.append(s)
     s = render_provider_health(sessions_audited, provider_hits)
@@ -963,13 +1083,19 @@ def main() -> int:
     # Skipped only when there is no trajectory data at all AND no epistemic
     # data — preserving the honest global "(no trajectory data yet)" state.
     epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
-    if sections or epistemic_entries or epistemic_never:
+    data_sections = len(sections) - (1 if ci_unknown else 0)
+    if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
 
-    if not sections:
-        body = "(no trajectory data yet — audit-log is empty and no recent task commits found)"
-    else:
+    if data_sections or epistemic_entries or epistemic_never:
         body = "\n\n".join(sections)
+    else:
+        # Keep the CI "could not check" note (if any) beside the no-data line:
+        # not knowing is its own state and gets said out loud.
+        body = "\n\n".join(
+            ["(no trajectory data yet — audit-log is empty and no recent task commits found)"]
+            + sections
+        )
 
     output = header + "\n" + body + "\n"
     output = cap_output(output)
@@ -1840,6 +1966,126 @@ src/commands_config.rs
             for r, o in ((0, GREEN), (0, PER_TASK), (1, GREEN), (2, PER_TASK))
         )
         <= 3,
+    )
+
+    # --- CI section: age filter + three render worlds ----------------------
+    # The defect: `gh run list --status failure --limit N` has no date filter,
+    # so the N most recent failures EVER were rendered under a header claiming
+    # they were "in window". Four-day-old resolved history read as current
+    # state, and the healthier the loop gets the staler the section becomes.
+    print("\n=== CI age filter / render self-tests ===\n")
+
+    NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+
+    def run_at(stamp, run_id="1"):
+        return {"databaseId": run_id, "createdAt": stamp}
+
+    # 1. run_age_days: a real stamp, both Z and offset spellings.
+    assert_eq(
+        "age of a 4-day-old run",
+        f"{run_age_days('2026-08-18T12:00:00Z', NOW):.2f}",
+        "4.00",
+    )
+    assert_eq(
+        "offset-form stamp parses the same",
+        f"{run_age_days('2026-08-18T12:00:00+00:00', NOW):.2f}",
+        "4.00",
+    )
+    # 2. Absence gets its own value — never 0.0, which would read as "just now".
+    for label, bad in (
+        ("missing stamp", None),
+        ("empty stamp", ""),
+        ("junk stamp", "not-a-date"),
+        ("non-string stamp", 12345),
+    ):
+        assert_eq(f"{label} → None, not 0", repr(run_age_days(bad, NOW)), "None")
+
+    # 3. partition_failed_runs: three states, none folded into another.
+    in_w, old_w, undated = partition_failed_runs(
+        [
+            run_at("2026-08-18T12:00:00Z", "in"),      # 4d
+            run_at("2026-08-01T12:00:00Z", "old"),     # 21d
+            run_at(None, "undated"),
+        ],
+        NOW,
+    )
+    assert_eq("one run in window", str([r["databaseId"] for r, _ in in_w]), "['in']")
+    assert_eq("one run too old", str([r["databaseId"] for r, _ in old_w]), "['old']")
+    assert_eq(
+        "one run undated (counted, not dropped)",
+        str([r["databaseId"] for r, _ in undated]),
+        "['undated']",
+    )
+
+    # 4. Boundary discriminator — BOTH sides pinned. A check tested only where
+    #    it blocks is vacuously green.
+    exactly = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    at_edge, past_edge, _ = partition_failed_runs(
+        [
+            run_at("2026-08-08T12:00:00Z", "edge"),        # exactly 14d
+            run_at("2026-08-08T11:59:00Z", "just-over"),   # 14d + 1min
+        ],
+        exactly,
+    )
+    assert_eq(
+        f"exactly {WINDOW_DAYS}d is INSIDE the window (inclusive)",
+        str([r["databaseId"] for r, _ in at_edge]),
+        "['edge']",
+    )
+    assert_eq(
+        f"a minute past {WINDOW_DAYS}d is outside",
+        str([r["databaseId"] for r, _ in past_edge]),
+        "['just-over']",
+    )
+
+    # 5. World A — failures in window: rows carry age, header names the window.
+    assert_eq(
+        "in-window clusters render age-labelled rows",
+        render_ci_errors(
+            CiScan(
+                ok=True,
+                clusters=[("boom", ["1", "2"], 4.2), ("thud", ["3"], 0.3)],
+                in_window=3,
+            )
+        ),
+        f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days)\n"
+        "[2×, last 4d ago] boom\n"
+        "[1×, last <1d ago] thud",
+    )
+
+    # 6. World B — checked and clean. ONE line, and the excluded counts are
+    #    reported rather than swallowed.
+    assert_eq(
+        "clean window says so out loud, naming what was excluded",
+        render_ci_errors(CiScan(ok=True, excluded_old=3, undated=1)),
+        f"## CI: no failed runs in last {WINDOW_DAYS} days "
+        "(3 older failure(s) outside the window, not shown; 1 undated run(s) excluded)",
+    )
+    assert_true(
+        "clean-case output is a single line (byte budget)",
+        len(render_ci_errors(CiScan(ok=True, excluded_old=3)).splitlines()) == 1,
+    )
+
+    # 7. World C — could not check. Must NOT read as a clean bill of health.
+    unknown = render_ci_errors(CiScan(ok=False, reason="gh run list failed (rc=1)"))
+    assert_eq(
+        "failed query names itself and refuses the clean reading",
+        unknown,
+        "## CI: could not check recent failures (gh run list failed (rc=1)) "
+        "— this is NOT a clean bill of health",
+    )
+    assert_true(
+        "the could-not-check line never claims zero failures",
+        "no failed runs" not in unknown,
+    )
+
+    # 8. The sharp in-between: failures ARE in window but every log fetch died.
+    #    Reporting "clean" here would be the exact lie this task is about.
+    assert_eq(
+        "in-window failures with unreadable logs are not 'clean'",
+        render_ci_errors(CiScan(ok=True, in_window=2, fetch_errors=2)),
+        f"## CI: 2 failed run(s) in last {WINDOW_DAYS} days, "
+        "but no error lines could be read from their logs",
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
