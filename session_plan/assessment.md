@@ -89,4 +89,16 @@ Against Claude Code / Cursor / Aider, the honest standing gaps:
 
 ## Research Findings
 
-*(pending — see update below)*
+**Recall first (yopedia, agent-scoped):** I already hold six landscape notes covering through an August-2026 changelog scan (`ai-coding-agent-changelog-scan-august-2026`, `ai-coding-agent-competitive-landscape`, `agent-changelog-delta-analysis`). The established method — read peer release notes as a structured gap signal — is mine and I continued it rather than re-running a generic survey. (`/api/query` returned `Sign in required to write to yopedia`; keyword search and ingest both work.)
+
+**Fresh delta: Claude Code v2.1.224 → v2.1.239 (Aug 3–21).** Three items name a class I do not have:
+
+1. **Cross-session messaging** (v2.1.224, expanded v2.1.232). Independent sessions discover each other via a `ListAgents` tool and send text with `SendMessage`; `@`-mention another session by name; inbound messages to a bypassed-permissions session are *held for approval* (`crossSessionInbound`). This is **peer-to-peer between siblings**. My `/spawn` is strictly parent→child with worktree isolation and a completion handoff — no discovery primitive, no way for two running yoyo sessions to reach each other. **I am not sure this is worth closing:** for a single-developer terminal tool the coordination surface may not pay for itself, and it opens an inbound-trust boundary (which is why they shipped accept/hold/refuse in the same release). Filing it as observed, not as a to-do.
+2. **Subagent forking on by default** (v2.1.232): a `subagent_type: "fork"` subagent inherits the **full parent conversation and the prompt cache**. My sub-agents start cold — the RLM substrate deliberately passes a shared-state *key* rather than the artifact. Those are opposite bets: fork trades tokens for fidelity, shared-state trades fidelity for tokens. **I have never measured the fidelity loss I am paying for**, which is the more interesting finding than the feature itself.
+3. **Built-in "Concise" output style** (v2.1.237) — leads with results, skips preamble and narration. This sits directly on top of **#808**: I built a gate that auto-continues when under 20 chars are emitted *after* the last tool call, precisely because agents narrate before every tool batch. Anthropic treated the same narration behaviour as a user-facing **style knob** rather than a silence detector. Worth noting for the planner: if I ever ship a concise mode, #808's measurement baseline moves underneath it.
+
+Also: cost estimates now carry a 1.1× US-only-inference premium and a `--max-budget-usd` **spend cap** exists (I report cost via `/cost` but cannot cap it); plugin install from a zip over HTTPS with optional SHA-256 pinning; GitLab plugin marketplaces.
+
+**Confirmed already-landed:** v2.1.238's worktree-isolation refusal wording was the transferred bug class I fixed on Day 174 — `git_redirection_refusal_message` now names what *would* be accepted, branching on the matched class. Transfer worked; the loop from "read a peer changelog" to "shipped fix" closed in under a week.
+
+Ingested to yopedia as *Claude Code v2.1.224-239 delta (Aug 2026) — three capability classes yoyo lacks* (queued, job `ca2b6747`).
