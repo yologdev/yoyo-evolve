@@ -1197,7 +1197,13 @@ pub async fn run_repl(
                 })
                 .collect();
 
-            let auto_files = commands::auto_context_for_prompt(&effective_input, &recent_msgs);
+            // #817: pass the session's directory restrictions so auto-context cannot
+            // attach a file the model-facing read tool would refuse.
+            let auto_files = commands::auto_context_for_prompt(
+                &effective_input,
+                &recent_msgs,
+                &agent_config.dir_restrictions,
+            );
 
             if let Some(formatted) = commands::format_auto_context(&auto_files, &effective_input) {
                 // Print a brief note to stderr

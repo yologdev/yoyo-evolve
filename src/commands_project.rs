@@ -3,6 +3,7 @@
 use crate::cli;
 use crate::commands_map::build_repo_map;
 use crate::commands_search::is_binary_extension;
+use crate::config::DirectoryRestrictions;
 use crate::docs;
 use crate::format::*;
 use crate::symbols::{FileSymbols, SymbolKind};
@@ -1206,7 +1207,19 @@ fn get_recent_git_files() -> std::collections::HashSet<String> {
 ///
 /// Files that were recently edited (in the last ~5 commits) receive a 1.5× score
 /// boost, making them more likely to clear the threshold and appear in results.
-pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(String, String)> {
+///
+/// `restrictions` is the caller's [`DirectoryRestrictions`] — the *same* rules the
+/// model-facing file tools are wrapped in (`maybe_guard` in `src/tools.rs`). Candidate
+/// paths are filtered through `restrictions.check_path` **before** the read loop, so a
+/// denied file is never opened, never counted against `AUTO_CONTEXT_MAX_FILES`, and never
+/// reaches the signature block. When `restrictions.is_empty()` (the overwhelmingly common
+/// case) `check_path` short-circuits to `Ok`, so the returned vec is byte-identical to the
+/// pre-#817 behaviour.
+pub fn auto_context_for_prompt(
+    prompt: &str,
+    recent_context: &[String],
+    restrictions: &DirectoryRestrictions,
+) -> Vec<(String, String)> {
     // Gate: skip slash commands, @-mention prompts, and very short follow-ups
     if prompt.starts_with('/') || prompt.contains('@') || prompt.len() < 20 {
         return Vec::new();
@@ -1250,6 +1263,15 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
 
         // Skip binary files
         if is_binary_extension(&r.path) {
+            continue;
+        }
+
+        // Skip files the caller's directory restrictions forbid (#817). This is the same
+        // rule the model-facing read tool is wrapped in, checked *before* the read loop so
+        // a denied file is never opened and never consumes one of the
+        // `AUTO_CONTEXT_MAX_FILES` slots. `check_path` returns `Ok` immediately when no
+        // restrictions are configured, so the common path is unchanged.
+        if restrictions.check_path(&r.path).is_err() {
             continue;
         }
 
@@ -1345,6 +1367,12 @@ mod tests {
     use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
+
+    /// The overwhelmingly common product case: no directory restrictions configured.
+    /// `auto_context_for_prompt` must behave exactly as it did before #817 here.
+    fn no_restrictions() -> DirectoryRestrictions {
+        DirectoryRestrictions::default()
+    }
 
     // ── detect_project_type ──────────────────────────────────────────
 
@@ -2756,8 +2784,11 @@ mod tests {
         // A prompt about "web search" should return web-related files from this repo.
         // With recency boosting, recently-edited files with matching symbols (e.g.,
         // tools.rs containing WebSearchTool) may rank higher than commands_web.rs.
-        let results =
-            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        let results = auto_context_for_prompt(
+            "how does the web search tool work in this project",
+            &[],
+            &no_restrictions(),
+        );
         // Should return at least one file, and it should be web-related
         assert!(
             !results.is_empty(),
@@ -2793,30 +2824,47 @@ mod tests {
     #[test]
     fn test_auto_context_empty_and_short_queries_return_empty() {
         // Empty prompt
-        assert!(auto_context_for_prompt("", &[]).is_empty());
+        assert!(auto_context_for_prompt("", &[], &no_restrictions()).is_empty());
         // Very short prompt (< 20 chars)
-        assert!(auto_context_for_prompt("fix the bug", &[]).is_empty());
+        assert!(auto_context_for_prompt("fix the bug", &[], &no_restrictions()).is_empty());
         // Prompt of only stop words (tokens empty after filtering)
-        assert!(auto_context_for_prompt("the a an to for with and or but", &[]).is_empty());
+        assert!(auto_context_for_prompt(
+            "the a an to for with and or but",
+            &[],
+            &no_restrictions()
+        )
+        .is_empty());
     }
 
     #[test]
     fn test_auto_context_slash_commands_return_empty() {
         // Slash commands should be skipped entirely
-        assert!(auto_context_for_prompt("/help me with web search stuff", &[]).is_empty());
-        assert!(auto_context_for_prompt("/add src/main.rs to context", &[]).is_empty());
-        // @-mention prompts should also be skipped
         assert!(
-            auto_context_for_prompt("look at @src/main.rs and fix the issue there", &[]).is_empty()
+            auto_context_for_prompt("/help me with web search stuff", &[], &no_restrictions())
+                .is_empty()
         );
+        assert!(
+            auto_context_for_prompt("/add src/main.rs to context", &[], &no_restrictions())
+                .is_empty()
+        );
+        // @-mention prompts should also be skipped
+        assert!(auto_context_for_prompt(
+            "look at @src/main.rs and fix the issue there",
+            &[],
+            &no_restrictions()
+        )
+        .is_empty());
     }
 
     #[test]
     fn test_auto_context_threshold_filtering() {
         // A query with a very obscure/nonsense keyword should return nothing
         // because no files will score >= AUTO_CONTEXT_MIN_SCORE
-        let results =
-            auto_context_for_prompt("xyzzyplugh frobnicate the glorpweasel machinery", &[]);
+        let results = auto_context_for_prompt(
+            "xyzzyplugh frobnicate the glorpweasel machinery",
+            &[],
+            &no_restrictions(),
+        );
         assert!(
             results.is_empty(),
             "nonsense keywords should not match any files above threshold, got: {:?}",
@@ -2824,11 +2872,59 @@ mod tests {
         );
     }
 
+    /// #817: auto-context used to read and attach files the model-facing read tool
+    /// refuses, so a user with `dir_restrictions` was told a lie about what yoyo reads.
+    ///
+    /// Asserted at the emission point — the vec a caller receives — in **both**
+    /// directions in one test: the denied file is absent when it is denied, and present
+    /// when it is not. A discriminator tested only on the side that blocks is vacuous
+    /// green.
+    #[test]
+    fn test_auto_context_respects_directory_restrictions() {
+        let prompt = "how does the web search tool work in this project";
+
+        // Baseline: no restrictions. This is the byte-identical pass-through path.
+        let allowed = auto_context_for_prompt(prompt, &[], &no_restrictions());
+        let target = match allowed.iter().find(|(p, _)| p != SIGNATURE_SENTINEL) {
+            Some((p, _)) => p.clone(),
+            // The repo map found no real file for this prompt — nothing to discriminate
+            // on. `test_auto_context_returns_relevant_files` is the guard for that case.
+            None => return,
+        };
+
+        // Now deny exactly that path. `path_is_under` matches an exact path as well as a
+        // directory prefix, so a single-file deny entry is a real restriction.
+        let restricted = DirectoryRestrictions {
+            allow: Vec::new(),
+            deny: vec![target.clone()],
+        };
+        let filtered = auto_context_for_prompt(prompt, &[], &restricted);
+
+        assert!(
+            !filtered.iter().any(|(p, _)| p == &target),
+            "denied file {} must not be attached by auto-context, got: {:?}",
+            target,
+            filtered.iter().map(|r| &r.0).collect::<Vec<_>>()
+        );
+
+        // Near-miss guard: the same file IS attached with no restrictions configured,
+        // so the assertion above is about the deny rule and not about the file simply
+        // never matching.
+        assert!(
+            allowed.iter().any(|(p, _)| p == &target),
+            "baseline run should attach {} — otherwise the deny assertion is vacuous",
+            target
+        );
+    }
+
     #[test]
     fn test_auto_context_skips_files_in_context() {
         // First get results without context filtering
-        let results_all =
-            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        let results_all = auto_context_for_prompt(
+            "how does the web search tool work in this project",
+            &[],
+            &no_restrictions(),
+        );
         if results_all.is_empty() {
             return; // skip if repo map doesn't find matches (unlikely in this repo)
         }
@@ -2839,8 +2935,11 @@ mod tests {
             None => return, // only signatures, no files to test
         };
         let recent = vec![format!("I already loaded {}", first_path)];
-        let results_filtered =
-            auto_context_for_prompt("how does the web search tool work in this project", &recent);
+        let results_filtered = auto_context_for_prompt(
+            "how does the web search tool work in this project",
+            &recent,
+            &no_restrictions(),
+        );
         // The first file should no longer appear
         let filtered_paths: Vec<&str> = results_filtered
             .iter()
@@ -3064,8 +3163,11 @@ mod tests {
     #[test]
     fn test_auto_context_includes_signatures() {
         // A prompt about "web search" should include a signature block
-        let results =
-            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        let results = auto_context_for_prompt(
+            "how does the web search tool work in this project",
+            &[],
+            &no_restrictions(),
+        );
         if results.is_empty() {
             return; // skip if repo map doesn't find matches
         }
