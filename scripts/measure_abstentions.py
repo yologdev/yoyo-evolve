@@ -122,6 +122,32 @@ Session age comes from the `sessions/day-N-YYYYMMDDTHHMMSSZ` directory name
 With no boundary flag every session is eligible and the output is byte-identical to the
 pre-boundary tool.
 
+THE FOURTH BUCKET — PROVIDER ERRORS (day 175, @yuanhao on #810)
+---------------------------------------------------------------
+A zero-task outcome has at least three distinct causes, and only ONE of them grades
+#808: closing silence (the gate SHOULD fire), an API error / rate limit (the gate MUST
+NOT fire — `piped_should_continue` requires `!had_error`, and continuing after a
+provider refusal would burn the remaining budget re-hitting the same limit), and a
+genuine early stop with an error (same). Counting the second as a gradeable miss
+manufactures evidence against #808 out of Anthropic's rate limiter.
+
+Both post-fix sessions that scored as gradeable were rate-limit failures: 08-21T21:25
+and 08-22T01:17, each ending its planner turn on ``error: Rate limited, retry after
+Some(14454000)ms`` — a ~4h retry-after. Every healthy post-fix session (03:42, 06:41,
+12:40, 15:22) has zero such lines. So a session carrying provider-error evidence
+alongside its zero-task outcome becomes ``EXCLUDED_PROVIDER_ERROR``: out of numerator
+and denominator both, reported as its own bucket, **never summed** into ``INELIGIBLE``,
+``UNKNOWN_AGE`` or the zero-abstention exclusions. Different fact, different remedy.
+
+**Coarseness, named rather than dressed up:** this is SESSION-level presence. Nothing
+attributes the error to the phase that produced the zero-task outcome, because the
+concatenated lines of a session directory carry no cheap phase anchor. It is a judgment
+threshold, not a measurement, and the printed output says so. ``MIN_GRADEABLE_SESSIONS``
+is unchanged at 4, so ``NOT YET GRADEABLE`` becomes more common — which is correct.
+
+With no provider-error lines anywhere the output is byte-identical to the pre-bucket
+tool (verified by running both).
+
 Usage::
 
     python3 scripts/measure_abstentions.py <logfile|dir> [...]
@@ -158,6 +184,12 @@ MIN_GRADEABLE_SESSIONS = 4
 ELIGIBLE = "ELIGIBLE"
 INELIGIBLE = "INELIGIBLE"
 UNKNOWN_AGE = "UNKNOWN_AGE"
+
+# The FOURTH exclusion state (#810, @yuanhao 2026-08-22). Reported as its own bucket and
+# never summed into the three above: "the provider refused this turn" is a different
+# fact from "this session predates the fix" and from "I cannot date this session", and
+# each has a different remedy.
+EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
 
 # `sessions/day-N-YYYYMMDDTHHMMSSZ` — written by scripts/evolve.sh:3471.
 SESSION_DIR_TS_RE = re.compile(r"^day-\d+-(\d{8}T\d{6}Z)$")
@@ -203,6 +235,37 @@ _MARKER_PATTERNS = (
         AUTO_CONTINUE_FIRING,
         # The glyph is the anchor: my prose says "auto-continuing", the gate says "⚡".
         re.compile(r"(?:^|\s)⚡ auto-continuing \(\d+/\d+ — more work pending\)\.\.\.$"),
+    ),
+)
+
+# Provider-error evidence (#810, @yuanhao 2026-08-22). A zero-task outcome has at least
+# three distinct causes and only ONE of them is gradeable for #808: closing silence (the
+# gate SHOULD fire), an API error / rate limit (the gate MUST NOT fire — `piped_should_
+# continue` requires `!had_error`, and continuing after a provider refusal would burn the
+# remaining budget re-hitting the same limit), and a genuine early stop with an error
+# (same). Counting the second as a gradeable miss manufactures evidence against #808 out
+# of Anthropic's rate limiter.
+#
+# Anchored exactly as `_MARKER_PATTERNS` are: from the emission's first word to
+# end-of-line, with only the numbers loose, and a runner `job\tjob\tTIMESTAMP` prefix
+# allowed by the leading `(?:^|\s)`. Every candidate still runs through
+# `is_quoted_prose` (see `classify_provider_error`) — the whole reason that machinery
+# exists is that my own prose contaminated this meter, and #810's own thread carries the
+# string "Rate limited" inside a markdown table.
+_PROVIDER_ERROR_PATTERNS = (
+    # src/prompt.rs:725/736/752 print `\n{RED}  error: {msg}{RESET}`, where {msg} is the
+    # provider's own text. This is the exact shape both #810 sessions carried.
+    re.compile(r"(?:^|\s)error: Rate limited, retry after Some\(\d+\)ms$"),
+    # src/prompt.rs:756/897/1071/1399 print `{YELLOW}  💡 {diagnostic}{RESET}`; this is
+    # the first line of `diagnose_api_error`'s rate-limit branch (prompt_retry.rs:497).
+    re.compile(r"(?:^|\s)💡 Rate limited by provider '[^']*'\.$"),
+    # The same `error:` emission carrying any other rate-limit wording the provider may
+    # use. Anchored at `error:` and run to end-of-line; the body is loose because it is
+    # the PROVIDER's string, not the harness's, and the phrase list mirrors
+    # `diagnose_api_error`'s own rate-limit branch (prompt_retry.rs:491-495).
+    re.compile(
+        r"(?:^|\s)error: .*(?:rate limit|rate_limit|too many requests|429).*$",
+        re.IGNORECASE,
     ),
 )
 
@@ -258,6 +321,33 @@ def classify(line):
     if is_quoted_prose(line):
         return (None, True)
     return (marker, False)
+
+
+def classify_provider_error_line(line):
+    """Pure: True when the line shape-matches a provider-error emission.
+
+    Shape only — says nothing about provenance, exactly as `classify_line` doesn't.
+    """
+    line = strip_ansi(line).rstrip("\n").rstrip()
+    for pattern in _PROVIDER_ERROR_PATTERNS:
+        if pattern.search(line):
+            return True
+    return False
+
+
+def classify_provider_error(line):
+    """Return (is_provider_error, excluded_as_prose) — the two halves combined.
+
+    A line whose shape matches but whose provenance is my own writing is reported as
+    excluded, never silently dropped. Here the direction of the damage is the sharp
+    one: a false positive **shrinks** my own denominator by excluding a session that
+    really did test the gate, so the prose filter is load-bearing rather than cosmetic.
+    """
+    if not classify_provider_error_line(line):
+        return (False, False)
+    if is_quoted_prose(line):
+        return (False, True)
+    return (True, False)
 
 
 def parse_timestamp(text):
@@ -325,6 +415,9 @@ class SessionCounts:
         self.fallback = 0
         self.firings = 0
         self.prose_excluded = 0
+        # Provider-error evidence (#810). Session-level presence — see
+        # `provider_error_excluded` for the coarseness disclosure.
+        self.provider_errors = 0
         # Age and eligibility. The default is ELIGIBLE so that every path with no
         # `--since*` boundary behaves and renders exactly as it did before #810's
         # boundary landed.
@@ -341,13 +434,42 @@ class SessionCounts:
         return self.a1 + self.zero_tasks
 
     @property
+    def provider_error_excluded(self):
+        """The fourth exclusion state: a zero-task outcome WITH provider-error evidence.
+
+        The gate is *required* not to fire after a provider refusal, so such a session
+        cannot grade #808 in either direction — it leaves the numerator and the
+        denominator both, and is reported as its own bucket, never summed into
+        INELIGIBLE, UNKNOWN_AGE, or the zero-abstention exclusions.
+
+        **Coarseness, named rather than dressed up:** @yuanhao's wording is "a provider
+        error in the same phase as the zero-task outcome". This is SESSION-level
+        presence — nothing here attributes the error to the phase that produced the
+        zero-task outcome, because a session directory's concatenated lines carry no
+        cheap phase anchor. It is a judgment threshold, not a measurement, and the only
+        evidence for it is that every healthy post-#808 session (03:42, 06:41, 12:40,
+        15:22) had zero such lines while both zero-task sessions had them. A session
+        that hit a rate limit in an unrelated phase and *also* abstained for closing
+        silence would be excluded here — a lost data point, which is the safe direction
+        for a meter that must not manufacture evidence.
+        """
+        return self.abstentions > 0 and self.provider_errors > 0
+
+    @property
     def gradeable(self):
-        return self.abstentions > 0
+        return self.abstentions > 0 and not self.provider_error_excluded
 
     def row(self):
-        # The eligibility suffix is emitted ONLY when the session is not eligible, so a
-        # run with no boundary prints byte-identically to the pre-boundary tool.
+        # The eligibility suffix is emitted ONLY when the session is not eligible, and
+        # the provider-error suffix ONLY when such a line was seen, so a run with no
+        # boundary and no provider errors prints byte-identically to before.
         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+        if self.provider_errors:
+            suffix += (
+                f" [{EXCLUDED_PROVIDER_ERROR}: {self.provider_errors} line(s)]"
+                if self.provider_error_excluded
+                else f" [provider_error_lines={self.provider_errors}]"
+            )
         return (
             f"  {self.name:<44} abstentions={self.abstentions:<3} "
             f"firings={self.firings:<3} fallback={self.fallback:<3} "
@@ -360,6 +482,16 @@ def count_lines(name, lines):
     """Pure: fold an iterable of lines into a SessionCounts."""
     counts = SessionCounts(name)
     for line in lines:
+        # Provider-error evidence first; its shapes are disjoint from the markers', so
+        # the order is for readability, not precedence. Prose exclusions from BOTH
+        # detectors land in the one `prose_excluded` counter — same fact, same remedy.
+        is_provider_error, provider_prose = classify_provider_error(line)
+        if provider_prose:
+            counts.prose_excluded += 1
+            continue
+        if is_provider_error:
+            counts.provider_errors += 1
+            continue
         marker, excluded = classify(line)
         if excluded:
             counts.prose_excluded += 1
@@ -593,18 +725,40 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
         )
     gradeable = [s for s in sessions if s.gradeable]
     n = len(gradeable)
+    # The fourth bucket. A zero-task outcome with provider-error evidence cannot grade
+    # #808 in either direction — the gate is REQUIRED not to fire after a provider
+    # refusal — so it leaves numerator and denominator both, and is named here rather
+    # than folded into any of the three exclusions above.
+    provider_excluded = [s for s in sessions if s.provider_error_excluded]
+    if provider_excluded:
+        header += (
+            f"excluded (provider error): {len(provider_excluded)} session(s) had a "
+            f"zero-task outcome alongside provider-error evidence — the gate is "
+            f"required NOT to fire after a provider refusal, so these grade nothing "
+            f"and are excluded from numerator and denominator both. Session-level "
+            f"presence, not per-phase attribution: a judgment threshold, not a "
+            f"measurement.\n"
+        )
+    prov_clause = (
+        f", {len(provider_excluded)} excluded for provider errors"
+        if provider_excluded
+        else ""
+    )
     if n < MIN_GRADEABLE_SESSIONS:
         return header + (
             f"NOT YET GRADEABLE: {n} of {MIN_GRADEABLE_SESSIONS} gradeable sessions "
-            f"({len(sessions)} session(s) read, {len(sessions) - n} with zero "
-            f"abstentions and so excluded from both numerator and denominator). "
+            f"({len(sessions)} session(s) read, "
+            f"{len(sessions) - n - len(provider_excluded)} with zero "
+            f"abstentions and so excluded from both numerator and denominator"
+            f"{prov_clause}). "
             f"Recording the wait, not a verdict."
         )
     fired = sum(1 for s in gradeable if s.firings > 0)
     return header + (
         f"VERDICT: of {n} gradeable sessions, the gate fired in {fired} "
-        f"({len(sessions)} session(s) read, {len(sessions) - n} excluded for zero "
-        f"abstentions)."
+        f"({len(sessions)} session(s) read, "
+        f"{len(sessions) - n - len(provider_excluded)} excluded for zero "
+        f"abstentions{prov_clause})."
     )
 
 
@@ -1174,6 +1328,181 @@ def run_self_tests():
         "unreadable listing is disclosed",
         "(0 with a readable listing)" in unknown_block,
         True,
+    )
+
+    # 11. The provider-error bucket (#810, @yuanhao 2026-08-22). The detector in BOTH
+    # directions first: the real emissions match, and the same strings wearing my prose
+    # tells do not — this issue's own thread carries "Rate limited" in a markdown table.
+    check(
+        "API-path rate-limit line matches",
+        classify_provider_error_line(
+            "  error: Rate limited, retry after Some(14454000)ms"
+        ),
+        True,
+    )
+    check(
+        "diagnostic hint line matches",
+        classify_provider_error_line("  💡 Rate limited by provider 'anthropic'."),
+        True,
+    )
+    check(
+        "coloured emission matches after ANSI strip",
+        classify_provider_error_line(
+            "\x1b[31m  error: Rate limited, retry after Some(9)ms\x1b[0m"
+        ),
+        True,
+    )
+    check(
+        "runner tab prefix is allowed",
+        classify_provider_error_line(
+            "job\tjob\t2026-08-22T01:17:03.1234567Z   error: Rate limited, "
+            "retry after Some(14454000)ms"
+        ),
+        True,
+    )
+    check(
+        "other 429 wording still matches",
+        classify_provider_error_line("  error: HTTP 429 too many requests"),
+        True,
+    )
+    # Both directions of the prose filter — the near-miss that must pass through, and
+    # the three tells that must not.
+    check(
+        "markdown table cell is prose",
+        classify_provider_error("| 08-21T21:25 | error: Rate limited, retry after "
+                                "Some(14454000)ms |"),
+        (False, True),
+    )
+    check(
+        "backticked quote is prose",
+        classify_provider_error(
+            "The planner turn ended with `this`:   error: Rate limited, retry "
+            "after Some(1)ms"
+        ),
+        (False, True),
+    )
+    check(
+        "grep prefix is prose",
+        classify_provider_error(
+            "logs/run.log:42:  error: Rate limited, retry after Some(1)ms"
+        ),
+        (False, True),
+    )
+    check(
+        "real emission is not prose",
+        classify_provider_error("  error: Rate limited, retry after Some(14454000)ms"),
+        (True, False),
+    )
+    check(
+        "ordinary log noise is neither",
+        classify_provider_error("  Running `cargo test`"),
+        (False, False),
+    )
+    # A provider-error line must not be mistaken for an abstention marker, and vice
+    # versa — the two detectors read disjoint shapes.
+    check(
+        "abstention marker is not a provider error",
+        classify_provider_error_line(
+            "Planning agent produced 0 tasks — falling back to single task."
+        ),
+        False,
+    )
+
+    # `count_lines` folds it: the shaped line counts, the quoted twin is reported as
+    # prose rather than silently dropped.
+    prov_session = count_lines(
+        "day-175-20260821T212500Z",
+        [
+            "WARNING: No assessment produced — planning agent will read source "
+            "directly (slower).",
+            "  error: Rate limited, retry after Some(14454000)ms",
+            "  💡 Rate limited by provider 'anthropic'.",
+            "| a | error: Rate limited, retry after Some(3)ms |",
+            "Planning agent produced 0 tasks — falling back to single task.",
+        ],
+    )
+    check("provider errors counted", prov_session.provider_errors, 2)
+    check("quoted provider error reported", prov_session.prose_excluded, 1)
+    check("abstention still counted", prov_session.abstentions, 1)
+    check("fallback still counted", prov_session.fallback, 1)
+    check("rate-limited session is not gradeable", prov_session.gradeable, False)
+    check("bucket fires", prov_session.provider_error_excluded, True)
+    check(
+        "row names the bucket",
+        f"[{EXCLUDED_PROVIDER_ERROR}: 2 line(s)]" in prov_session.row(),
+        True,
+    )
+
+    # THE NEAR-MISS GUARD: an abstention with NO provider error must grade exactly as it
+    # does today. A discriminator tested only on the side that blocks is vacuous green,
+    # and this one silently shrinks my own denominator when it is wrong.
+    clean_session = count_lines(
+        "day-175-20260822T034200Z",
+        [
+            "WARNING: No assessment produced — planning agent will read source "
+            "directly (slower).",
+            "  Running `cargo test`",
+        ],
+    )
+    check("clean session has no provider errors", clean_session.provider_errors, 0)
+    check("clean session still gradeable", clean_session.gradeable, True)
+    check("clean session bucket silent", clean_session.provider_error_excluded, False)
+    check("clean row carries no suffix", "[" in clean_session.row(), False)
+
+    # A provider error in a session with NO abstention changes nothing that is graded —
+    # such a session was already excluded for zero abstentions, so the bucket must not
+    # claim it. The line is still surfaced on the row, labelled as evidence, not a
+    # verdict.
+    noisy_zero = count_lines(
+        "day-175-20260822T064100Z",
+        ["  error: Rate limited, retry after Some(5)ms"],
+    )
+    check("no abstention → bucket silent", noisy_zero.provider_error_excluded, False)
+    check("no abstention → not gradeable anyway", noisy_zero.gradeable, False)
+    check(
+        "line still disclosed on the row",
+        "[provider_error_lines=1]" in noisy_zero.row(),
+        True,
+    )
+
+    # `grade`: the bucket leaves BOTH halves and is never summed into the others.
+    def mk_prov(name, abstentions, firings, provider_errors):
+        s = mk(name, abstentions, firings)
+        s.provider_errors = provider_errors
+        return s
+
+    mixed = [
+        mk("a", 1, 1),
+        mk("b", 1, 0),
+        mk("c", 1, 1),
+        mk("d", 1, 0),
+        mk_prov("rate-1", 2, 0, 3),
+        mk_prov("rate-2", 2, 0, 15),
+        mk("zero", 0, 0),
+    ]
+    gv = grade(mixed)
+    check("rate-limited pair leaves the denominator", "of 4 gradeable sessions" in gv, True)
+    check("rate-limited pair leaves the numerator", "the gate fired in 2" in gv, True)
+    check("bucket named in the header", "excluded (provider error): 2 session(s)" in gv, True)
+    check("bucket named in the verdict", "2 excluded for provider errors" in gv, True)
+    check(
+        "zero-abstention count is not inflated by the bucket",
+        "1 excluded for zero abstentions" in gv,
+        True,
+    )
+    check("coarseness disclosed", "not per-phase attribution" in gv, True)
+    # Below the floor the wait names it too, and MIN_GRADEABLE_SESSIONS is unchanged.
+    waiting = grade([mk("a", 1, 1), mk_prov("rate", 2, 0, 4)])
+    check("wait names the bucket", "1 excluded for provider errors" in waiting, True)
+    check("wait still refuses a verdict", waiting.endswith("Recording the wait, not a verdict."), True)
+    check("floor unchanged", MIN_GRADEABLE_SESSIONS, 4)
+    # Byte-identity: with no provider errors anywhere, `grade` returns the pre-change
+    # string verbatim.
+    check(
+        "no provider errors → pre-change verdict verbatim",
+        grade([mk("a", 1, 1), mk("b", 1, 0), mk("c", 1, 1), mk("d", 1, 0), mk("z", 0, 0)]),
+        "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
+        "(5 session(s) read, 1 excluded for zero abstentions).",
     )
 
     if failures:
