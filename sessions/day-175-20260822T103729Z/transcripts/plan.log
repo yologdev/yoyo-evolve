@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of session_plan and the key evidence I need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null && … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 810 --repo yologde… ✓ (646ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 794 --repo yologde… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ … ✓ (13ms)
+  ▶ read /tmp/cwdcount.txt ✓ (0ms)
+  7 tools completed in 1m 5s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/cwd.txt ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only 5 of those 21 lines are actual calls — the rest are comments. That corrects the assessment: CLAUDE.md's "5 remaining" is right.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=… ✓ (849ms)
+  ▶ read /tmp/unv.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.4s (2 ✓)
+
+All three UNVERIFIED receipts say the same thing: no objection exists, the evaluator was skipped. Writing the plan now.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (5ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (125 lines) ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (130 lines) ✓ (1m 1s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (86 lines) ✓ (1m 1s)
+  4 tools completed in 5m 1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four files present. Committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's the ephemeral per-session directory — CLAUDE.md documents it as such), so the commit is a no-op. The files exist on disk, which is what the Phase B agents read.
+
+## Plan written — Day 175
+
+Task 01 — `#780`: remove the last 2 test-side CWD movers in `src/dispatch_sub.rs` (Kind: evolve)
+
+Priority 0: the trajectory carries a live intermittent CI failure — setup::tests::test_wizard_saves_key_when_confirmed and its sibling, `4939 passed; 2 failed. setup.rs already has its dir seam, so those are **victims** of a process-global set_current_dir elsewhere. A cargo test failure means git reset --hard`, so this flake costs whole finished tasks, not just a test run.
+
+While planning I ran the grep the assessment cited, and the assessment was wrong: of 21 set_current_dir matches, 16 are comments on existing seams. Only 5 are real calls — 2 in dispatch_sub.rs, 2 in commands_git.rs, and the production /cd. CLAUDE.md's "5 remaining" was telling the truth; the assessment indicted it from a raw count without reading the lines. The task file carries the corrected table.
+
+Scope is hard-bounded to one file: three prior attempts at this class were reverted (#790/#791/#797), all scoped as "sweep the class"; the three that landed each did one file, one seam. commands_git.rs is explicitly the next task.
+
+**Task 02 — Blind round 68 on `src/commands_risk_ungraded.rs`* (Kind: evolve, DREAM slot)*
+
+The trajectory's own hint names two never-forecast files. I took the one that is **a piece of my own meter** — the detector that answers "which blind rounds were never graded" — over highlight_lang.rs, which is a Day-174 pure move and therefore the least likely place for a fresh defect. Three hypotheses, not five, with the grade written per bet as it settles: rounds 42/43/44 all landed the prediction and ran out of clock on the grade, and two rescues running means "the grade is recoverable" was funding a deferral.
+
+Issue responses: #794 → comment and close (both named halves shipped; the does it help question has its own home in #810, and two issues tracking one question is how both stop being read). #810 → silence, deliberately — I asked @yuanhao a direct question and the disposition is already stated; a comment with no new measurement is noise.
+
+On the eight UNVERIFIED receipts: I read the three newest and they carry no objection — all three say the evaluator produced no verdict line. I refused to close them on green CI (that's the container standing in for the payload). What I did record: three receipts across two days with the same cause reads as the evaluator being systematically budget-gated at session end, which is one finding, not eight items.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,276 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding the test in src/dispatch_sub.rs that moves the CWD.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/di…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/dispatch_su… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1490,1545p src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1605,1660p src/dispatch_s… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "goal" src/dispatch_sub.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_goal\|fn handle_go… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/commands_goal.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,200p src/commands_goa… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GOAL_BASE_DIR\|fn with_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 15,35p src/commands_goal.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 18,30p src/commands_goal.… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:17..31 ✓ (0ms)
+  12 tools completed in 38.2s (12 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: no edits made yet. The seam already exists in commands_goal.rs — a #[cfg(test)] thread-local GOAL_BASE_DIR (added for #780 itself), but it's private. Let me check whether the goal set route is fully covered by it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The whole route (handle_goal → save_goal → goal_path → goal_base, and the read-back via load_goal) resolves through goal_base(). So the seam exists — it's just private. Let me expose it as a pub(crate) test-only helper.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs:31..51 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (4 → 24 lines)
+  + /// Run `f` with every goal path rooted at `dir` instead of the process CWD.
+  + ///
+  + /// Test-only, and `pub(crate)` so a *sibling* module's tests can drive a route
+  + /// that reaches this file's writers (`src/dispatch_sub.rs`'s `goal set` routing
+  + /// test) without calling `std::env::set_current_dir`, which is process-global
+  + /// and so corrupts any concurrently-running test that resolves a relative path
+  + /// (#780). The previous value is restored rather than cleared, so nesting is
+  + /// safe, and it is restored on panic too — a failing test must not re-root a
+  + /// later one at a deleted directory.
+  + #[cfg(test)]
+  + pub(crate) fn with_goal_base_dir<F: FnOnce()>(dir: &Path, f: F) {
+  +     let prev = GOAL_BASE_DIR.with(|b| b.borrow().clone());
+  +     GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(dir.to_path_buf()));
+  +     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+  +     GOAL_BASE_DIR.with(|b| *b.borrow_mut() = prev);
+  +     if let Err(payload) = result {
+  +         std::panic::resume_unwind(payload);
+  +     }
+  + }
+  + 
+  ... (3 more lines)
+ ✓ (14.3s)
+  + /// Run `f` with every goal path rooted at `dir` instead of the process CWD.
+  + ///
+  + /// Test-only, and `pub(crate)` so a *sibling* module's tests can drive a route
+  + /// that reaches this file's writers (`src/dispatch_sub.rs`'s `goal set` routing
+  + /// test) without calling `std::env::set_current_dir`, which is process-global
+  + /// and so corrupts any concurrently-running test that resolves a relative path
+  + /// (#780). The previous value is restored rather than cleared, so nesting is
+  + /// safe, and it is restored on panic too — a failing test must not re-root a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.9s (2 ✓)
+
+Now the consumer in the same edit (my "never add a definition without its consumer" rule):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:1501..1537 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (31 → 37 lines)
+        #[test]
+  -     #[serial]
+        fn goal_set_routing_stores_multi_word_goal_without_quotes() {
+            // #679 finding 2, twin arm (Day 151 sweep): the `goal` CLI arm must
+            // plain-join, not re-quote, because handle_goal's `set` takes its
+            // remainder verbatim (no tokenize_quoted in commands_goal.rs).
+            // End-to-end through try_dispatch_subcommand: what lands in
+            // .yoyo/goal.md must be the words, never `"words"`.
+  +         //
+  +         // #780: this drives the real route (handle_goal -> save_goal ->
+  +         // goal_path -> goal_base) rooted at a temp dir via the goal module's
+  +         // own thread-local seam, instead of moving the process CWD. The chdir
+  +         // it used to do was process-global, so it corrupted any concurrently
+  +         // running test resolving a relative path — `#[serial]` did not help,
+  +         // since that only serialises against other `#[serial]` tests and left
+  +         // unmarked CWD *readers* (setup::tests) exposed. The `#[serial]` was
+  +         // removed with the chdir: keeping it would be a false record of which
+  +         // tests are dangerous.
+            let tmp = tempfile::TempDir::new().expect("create temp dir");
+  -         let prev = std::env::current_dir().expect("get cwd");
+  ... (39 more lines)
+ ✓ (1m 40s)
+        #[test]
+  -     #[serial]
+        fn goal_set_routing_stores_multi_word_goal_without_quotes() {
+            // #679 finding 2, twin arm (Day 151 sweep): the `goal` CLI arm must
+            // plain-join, not re-quote, because handle_goal's `set` takes its
+            // remainder verbatim (no tokenize_quoted in commands_goal.rs).
+            // End-to-end through try_dispatch_subcommand: what lands in
+            // .yoyo/goal.md must be the words, never `"words"`.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_goal.rs (9 → 4 lines)
+        fn with_temp_dir<F: FnOnce()>(f: F) {
+            let tmp = TempDir::new().expect("create temp dir");
+  -         GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(tmp.path().to_path_buf()));
+  -         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+  -         GOAL_BASE_DIR.with(|b| *b.borrow_mut() = None);
+  -         if let Err(payload) = result {
+  -             std::panic::resume_unwind(payload);
+  -         }
+  +         with_goal_base_dir(tmp.path(), f);
+        }
+ ✓ (1m 39s)
+        fn with_temp_dir<F: FnOnce()>(f: F) {
+            let tmp = TempDir::new().expect("create temp dir");
+  -         GOAL_BASE_DIR.with(|b| *b.borrow_mut() = Some(tmp.path().to_path_buf()));
+  -         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+  -         GOAL_BASE_DIR.with(|b| *b.borrow_mut() = None);
+  -         if let Err(payload) = result {
+  -             std::panic::resume_unwind(payload);
+  -         }
+  +         with_goal_base_dir(tmp.path(), f);
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.5s)
+  4 tools completed in 3m 42s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build and clippy are green. Now the test run.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 9s (3 ✓)
+
+5047 passed, 0 failed. Now verify the count claim with the actual grep — separating calls from comments:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== all matches ===" && gr… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly 3 calls left, as predicted. Confirming the target file and its #[serial] state:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "dispatch_sub set_current_d… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal_set_routing_stor… ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/goal.md 2>&1 | head… ✓ (4ms)
+  3 tools completed in 14.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The repo's real .yoyo/goal.md (7 bytes) stayed untouched while the test asserted an 18-char goal — proof the write landed in the temp dir. Let me pin that permanently rather than leave it as a one-off observation:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (7 → 16 lines)
+                assert!(
+                    !stored.contains('"'),
+                    "stored goal must not contain literal quote chars, got: {stored}"
+  +             );
+  +             // The seam is load-bearing, so assert it at the emission point —
+  +             // the file on disk, not just the value read back. Without this a
+  +             // future regression that resolved against the process CWD again
+  +             // could still pass every assertion above by writing the real repo's
+  +             // .yoyo/goal.md, which is exactly the damage #780 is about.
+  +             assert!(
+  +                 tmp.path().join(".yoyo/goal.md").exists(),
+  +                 "goal must be written under the temp root, not the process CWD"
+                );
+            });
+ ✓ (1m 38s)
+                assert!(
+                    !stored.contains('"'),
+                    "stored goal must not contain literal quote chars, got: {stored}"
+  +             );
+  +             // The seam is load-bearing, so assert it at the emission point —
+  +             // the file on disk, not just the value read back. Without this a
+  +             // future regression that resolved against the process CWD again
+  +             // could still pass every assertion above by writing the real repo's
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test goal_set… ✓ (1.3s)
+  2 tools completed in 1m 43s (2 ✓)
+
+Now the docs. Let me find the exact CLAUDE.md sentence:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Still moving the CWD" C… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Still moving the CWD, deliberately out of scope:** 2 lines in `dispatch_sub.rs`, 2 in `commands_git.rs`, and the production `/cd` site in `dispatch.rs` — **5** of the original 22, down from 12.
+  + **Still moving the CWD:** 2 test-side lines in `commands_git.rs` and the production `/cd` site in `dispatch.rs` — **3** calls of the original 22, down from 5. (Count from `grep -rn "set_current_dir" src/ --include=*.rs` run Day 175: 20 matching lines, of which 17 are comments documenting these seams and 3 are calls. Reading the matched lines rather than the raw count matters — a Day-175 assessment read "21 matches" as 21 chdirs and indicted this bullet as fictional bookkeeping when it was accurate.) `dispatch_sub.rs` left the list on Day 175 (#780, third cluster), and by a different route than its two siblings: its one offender was `goal_set_routing_stores_multi_word_goal_without_quotes`, which drives the whole `yoyo goal set …` route end-to-end (`try_dispatch_subcommand` → `handle_goal` → `save_goal` → `goal_path` → `goal_base`), so a dir-taking seam would have meant threading a root through the 36-arm dispatcher. `commands_goal.rs` already owned the right seam — the `#[cfg(test)]` thread-local `GOAL_BASE_DIR` every goal path resolves through — so it was made reachable from a sibling module's tests as `pub(crate) fn with_goal_base_dir(dir, f)` (restores the **previous** value rather than clearing, so nesting is safe, and restores on panic); `commands_goal.rs`'s own private `with_temp_dir` now delegates to it, so the rule has one statement rather than two copies. A thread-local is strictly better than a chdir here and that is the reason to prefer it: each test thread gets its own, so it cannot leak the way the process CWD does. The `#[serial]` went with the chdir; the file's two remaining `#[serial]` attributes are on `ANTHROPIC_API_KEY` env-var tests — a different process-global, still legitimately serial — so `use serial_test::serial;` stays. The test gained an assertion at the **emission point** (`tmp.path().join(".yoyo/goal.md").exists()`), because every assertion it already had could be satisfied by a regression that wrote the *real* repo's goal file, which is the exact damage #780 names.
+ ✓ (1m 0s)
+  - **Still moving the CWD, deliberately out of scope:** 2 lines in `dispatch_sub.rs`, 2 in `commands_git.rs`, and the production `/cd` site in `dispatch.rs` — **5** of the original 22, down from 12.
+  + **Still moving the CWD:** 2 test-side lines in `commands_git.rs` and the production `/cd` site in `dispatch.rs` — **3** calls of the original 22, down from 5. (Count from `grep -rn "set_current_dir" src/ --include=*.rs` run Day 175: 20 matching lines, of which 17 are comments documenting these seams and 3 are calls. Reading the matched lines rather than the raw count matters — a Day-175 assessment read "21 matches" as 21 chdirs and indicted this bullet as fictional bookkeeping when it was accurate.) `dispatch_sub.rs` left the list on Day 175 (#780, third cluster), and by a different route than its two siblings: its one offender was `goal_set_routing_stores_multi_word_goal_without_quotes`, which drives the whole `yoyo goal set …` route end-to-end (`try_dispatch_subcommand` → `handle_goal` → `save_goal` → `goal_path` → `goal_base`), so a dir-taking seam would have meant threading a root through the 36-arm dispatcher. `commands_goal.rs` already owned the right seam — the `#[cfg(test)]` thread-local `GOAL_BASE_DIR` every goal path resolves through — so it was made reachable from a sibling module's tests as `pub(crate) fn with_goal_base_dir(dir, f)` (restores the **previous** value rather than clearing, so nesting is safe, and restores on panic); `commands_goal.rs`'s own private `with_temp_dir` now delegates to it, so the rule has one statement rather than two copies. A thread-local is strictly better than a chdir here and that is the reason to prefer it: each test thread gets its own, so it cannot leak the way the process CWD does. The `#[serial]` went with the chdir; the file's two remaining `#[serial]` attributes are on `ANTHROPIC_API_KEY` env-var tests — a different process-global, still legitimately serial — so `use serial_test::serial;` stays. The test gained an assertion at the **emission point** (`tmp.path().join(".yoyo/goal.md").exists()`), because every assertion it already had could be satisfied by a regression that wrote the *real* repo's goal file, which is the exact damage #780 names.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 14s (2 ✓)
+
+Let me verify that "17 comments" claim rather than assert it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "total: $(grep -rn 'set_cur… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: 20 lines, 3 calls, 17 comments. Full verification:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 1s)
+  2 tools completed in 1m 4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Checking diff scope before committing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_goal.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.6s (2 ✓)
+
+commands_goal.rs is entirely #[cfg(test)] — zero production change. Committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (47 lines) ✓ (18ms)
+
+Committed. 🐙
+
+## What I did
+
+src/dispatch_sub.rs had one test bracketing itself with set_current_dir(tmp) … set_current_dir(prev). That call is process-global, so it corrupted any test resolving a relative path at that moment — the live setup::tests flake in the trajectory. Those tests are victims, not culprits; #[serial] never protected them because it only serialises against other #[serial] tests.
+
+The seam, and why not a dir-taking one. The task suggested thing_in(root, …). I didn't do that, and the reason is the route: this test drives try_dispatch_subcommand → handle_goal → save_goal → goal_path → goal_base end-to-end, so a root parameter would have had to thread through a 36-arm dispatcher — two risks in a revert-all-or-nothing task. commands_goal.rs already owned the right seam: a #[cfg(test)] thread-local `GOAL_BASE_DIR that *every* goal path resolves through. I made it reachable from a sibling module as pub(crate) fn with_goal_base_dir(dir, f)` (restores the **previous** value, not `None`, so nesting is safe; restores on panic), and pointed the module's own private with_temp_dir at it so the rule has one statement instead of two copies. A thread-local beats a chdir on the property that matters here: each test thread gets its own, so it cannot leak.
+
+#[serial] came off with the chdir. The file's two remaining ones are on ANTHROPIC_API_KEY env-var tests — a different process-global, still legitimately serial — so use serial_test::serial; stays.
+
+One thing I added beyond the ask. Every assertion the test already had could have been satisfied by a regression that wrote the real repo's `.yoyo/goal.md — which is exactly the damage #780 names. So it now asserts at the emission point: tmp/.yoyo/goal.md` must exist. Verified the repo's own goal file stayed untouched through the run.
+
+## The count, from a grep I just ran
+
+grep -rn set_current_dir src/ --include=*.rs → 20 lines: 17 comments, 3 calls.
+
+| site | status |
+|---|---|
+| src/dispatch_sub.rs | zero — gone |
+| src/commands_git.rs ×2 | test-side, next task, deliberately untouched |
+| src/dispatch.rs:1416 | production /cd — correct, stays |
+
+Also corrected the record: a Day-175 assessment read the raw count of 21 as 21 chdirs and called CLAUDE.md's bookkeeping fictional. It wasn't — 16 of those were comments. That's my own "never write 'the only X' unless the sentence came from a command I just ran" lesson pointing the other way for once: the count was run, the lines weren't read.
+
+cargo fmt --check, clippy -D warnings, build, 5047 tests — all green. commands_goal.rs's diff is #[cfg(test)]-only; production is byte-identical.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

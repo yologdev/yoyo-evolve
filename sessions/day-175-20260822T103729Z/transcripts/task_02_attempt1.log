@@ -1,0 +1,353 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by confirming round 68 is unused, then write the prediction before opening the target.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '"round": *[0-9]*' dream…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_ungraded"… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 53.6s (2 ✓)
+
+Round 68 is unused (max is 67). Now the prediction — written before opening the target.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 400 dreams/experiments.j… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (49ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.9s (2 ✓)
+
+Prediction is written. Committing it alone, before opening the target.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/experiments.jsonl… ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction committed. Now step 2 — run the settling commands, grading each bet as it settles.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h3: format_ungraded_ro…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1: bounds ===" && gre… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.7s (2 ✓)
+
+h3 settles immediately: miss. Let me record that and read the file for h1/h2.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h1 and h2 both settle as hits. Let me verify h2's direction claim (that the sibling gate counts what this one doesn't) before grading it.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sibling gate: does it …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -3 ; … ✓ (4ms)
+ ✓ (826ms)
+  2 tools completed in 828ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both h1 and h2 confirmed. h2's direction is verified: the sibling gate has unparseable counted (lines 341–342, 366–367) and a test for it; this module has neither. Recording grades now, then landing the h2 fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,665p' src/commands_r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix — h2's silent parse-failure drop. Parsing once (so one bad line can't be counted twice):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs (4 → 12 lines)
+        /// `experiment` lines with no usable `target`, so no key could be formed.
+        /// Excluded from the pairing and reported as a count. Live ledger: 0.
+        pub(crate) unkeyed_excluded: usize,
+  +     /// Non-blank lines that did not parse as JSON at all. Counted, never
+  +     /// silently dropped — a shrinking denominator inside my own meter is the
+  +     /// defect this module exists to catch, and it flatters me in the dangerous
+  +     /// direction: a dropped `experiment_result` raises a loud false alarm, but
+  +     /// a dropped `experiment` makes a genuinely ungraded round *vanish* from
+  +     /// the scan. Their `type` is unknowable (the line could not be read), so
+  +     /// this is deliberately a count of unreadable **lines**, not of rounds.
+  +     pub(crate) unparseable_excluded: usize,
+    }
+ ✓ (1m 35s)
+        /// `experiment` lines with no usable `target`, so no key could be formed.
+        /// Excluded from the pairing and reported as a count. Live ledger: 0.
+        pub(crate) unkeyed_excluded: usize,
+  +     /// Non-blank lines that did not parse as JSON at all. Counted, never
+  +     /// silently dropped — a shrinking denominator inside my own meter is the
+  +     /// defect this module exists to catch, and it flatters me in the dangerous
+  +     /// direction: a dropped `experiment_result` raises a loud false alarm, but
+  +     /// a dropped `experiment` makes a genuinely ungraded round *vanish* from
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs (48 → 59 lines)
+    /// Detection only. Nothing here writes, renumbers or back-fills the ledger.
+    /// Parses defensively like its neighbours: malformed or truncated lines
+  - /// contribute nothing, an empty ledger yields an empty scan, no panics.
+  + /// contribute no rounds, an empty ledger yields an empty scan, no panics. They
+  + /// are, however, **counted** in [`UngradedScan::unparseable_excluded`] rather
+  + /// than dropped in silence — the ledger is hand-authored, which makes me a
+  + /// second implementation of its format with no compiler between us.
+    pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
+        use std::collections::HashSet;
+    
+  ···
+            Some((val["round"].as_i64(), target.to_string()))
+        }
+    
+  -     fn parsed(ledger_text: &str, kind: &str) -> Vec<serde_json::Value> {
+  -         ledger_text
+  -             .lines()
+  -             .map(str::trim)
+  -             .filter(|l| !l.is_empty())
+  -             .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+  ... (39 more lines)
+ ✓ (1m 37s)
+    /// Detection only. Nothing here writes, renumbers or back-fills the ledger.
+    /// Parses defensively like its neighbours: malformed or truncated lines
+  - /// contribute nothing, an empty ledger yields an empty scan, no panics.
+  + /// contribute no rounds, an empty ledger yields an empty scan, no panics. They
+  + /// are, however, **counted** in [`UngradedScan::unparseable_excluded`] rather
+  + /// than dropped in silence — the ledger is hand-authored, which makes me a
+  + /// second implementation of its format with no compiler between us.
+    pub(crate) fn ungraded_rounds(ledger_text: &str) -> UngradedScan {
+  ... (13 more lines)
+  2 tools completed in 3m 29s (2 ✓)
+
+Now the renderer — keeping the existing single-note case byte-identical:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs (8 → 22 lines)
+  -     let excluded = if scan.unkeyed_excluded > 0 {
+  -         format!(
+  -             " {DIM}({} line(s) had no target and could not be checked){RESET}",
+  +     // Two different reasons a line was not checked, kept distinct rather than
+  +     // summed: one had no key, the other could not be read at all. When only
+  +     // the first fires the clause is byte-identical to before this counter
+  +     // existed, so the common path is unchanged.
+  +     let mut notes: Vec<String> = Vec::new();
+  +     if scan.unkeyed_excluded > 0 {
+  +         notes.push(format!(
+  +             "{} line(s) had no target and could not be checked",
+                scan.unkeyed_excluded
+  -         )
+  -     } else {
+  +         ));
+  +     }
+  +     if scan.unparseable_excluded > 0 {
+  +         notes.push(format!(
+  +             "{} line(s) could not be parsed and were not checked",
+  +             scan.unparseable_excluded
+  ... (7 more lines)
+ ✓ (1m 36s)
+  -     let excluded = if scan.unkeyed_excluded > 0 {
+  -         format!(
+  -             " {DIM}({} line(s) had no target and could not be checked){RESET}",
+  +     // Two different reasons a line was not checked, kept distinct rather than
+  +     // summed: one had no key, the other could not be read at all. When only
+  +     // the first fires the clause is byte-identical to before this counter
+  +     // existed, so the common path is unchanged.
+  +     let mut notes: Vec<String> = Vec::new();
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One gap in my own fix: with zero owed rounds the early return fires, so an unreadable line that hid the only ungraded round would print nothing — "could not check" reading as "checked; clean".
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs (4 → 37 lines)
+    pub(crate) fn format_ungraded_rounds(scan: &UngradedScan) -> Option<String> {
+  +     // Two different reasons a line was not checked, kept distinct rather than
+  +     // summed: one had no key, the other could not be read at all. When only
+  +     // the first fires the clause is byte-identical to before this counter
+  +     // existed, so the common path is unchanged.
+  +     let mut notes: Vec<String> = Vec::new();
+  +     if scan.unkeyed_excluded > 0 {
+  +         notes.push(format!(
+  +             "{} line(s) had no target and could not be checked",
+  +             scan.unkeyed_excluded
+  +         ));
+  +     }
+  +     if scan.unparseable_excluded > 0 {
+  +         notes.push(format!(
+  +             "{} line(s) could not be parsed and were not checked",
+  +             scan.unparseable_excluded
+  +         ));
+  +     }
+  +     let excluded = if notes.is_empty() {
+  +         String::new()
+  ... (18 more lines)
+ ✓ (1m 34s)
+    pub(crate) fn format_ungraded_rounds(scan: &UngradedScan) -> Option<String> {
+  +     // Two different reasons a line was not checked, kept distinct rather than
+  +     // summed: one had no key, the other could not be read at all. When only
+  +     // the first fires the clause is byte-identical to before this counter
+  +     // existed, so the common path is unchanged.
+  +     let mut notes: Vec<String> = Vec::new();
+  +     if scan.unkeyed_excluded > 0 {
+  +         notes.push(format!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,145p' src/commands_r… ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '135,143p' src/commands_r… ✓ (3ms)
+  3 tools completed in 1m 41s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs:135..144 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_ungraded.rs (3 → 8 lines)
+    /// One line naming the rounds that were started and never graded, or `None`
+  - /// when the ledger is clean — a clean ledger prints nothing, so the common
+  - /// path stays byte-identical.
+  + /// when the ledger is clean *and was fully read* — a clean ledger prints
+  + /// nothing, so the common path stays byte-identical.
+  + ///
+  + /// The qualifier is the point: with no owed rounds but unreadable lines this
+  + /// returns a line saying so, because "could not check" must never read as
+  + /// "checked; clean" — the unreadable line may be the very `experiment` whose
+  + /// absence makes the scan look empty.
+ ✓ (1m 34s)
+    /// One line naming the rounds that were started and never graded, or `None`
+  - /// when the ledger is clean — a clean ledger prints nothing, so the common
+  - /// path stays byte-identical.
+  + /// when the ledger is clean *and was fully read* — a clean ledger prints
+  + /// nothing, so the common path stays byte-identical.
+  + ///
+  + /// The qualifier is the point: with no owed rounds but unreadable lines this
+  + /// returns a line saying so, because "could not check" must never read as
+  + /// "checked; clean" — the unreadable line may be the very `experiment` whose
+  + /// absence makes the scan look empty.
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 41s (2 ✓)
+
+Now the tests, pinned at the emission point:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic_tests.rs (9 → 103 lines)
+        /// byte-identical to before this detector existed.
+        #[test]
+        fn clean_ledger_renders_nothing() {
+  +         let scan =
+  +             ungraded_rounds(&[exp("1", 100, "src/a.rs"), res("1", 100, "src/a.rs")].join("\n"));
+  +         assert!(format_ungraded_rounds(&scan).is_none());
+  +     }
+  + 
+  +     // --- round 68: unreadable lines are counted, and they speak --------------
+  + 
+  +     /// A line that does not parse at all is *counted*, not dropped in silence.
+  +     /// The ledger is hand-authored, so a truncated or badly escaped line is a
+  +     /// live possibility, and a shrinking denominator inside my own meter is the
+  +     /// defect this module exists to catch.
+  +     #[test]
+  +     fn unparseable_lines_are_counted_not_silently_dropped() {
+  +         let ledger = [
+  +             "{\"type\":\"experiment\",\"round\":1,",
+  +             "not json at all",
+  +             &exp("5", 160, "src/x.rs"),
+  ... (82 more lines)
+ ✓ (1m 32s)
+        /// byte-identical to before this detector existed.
+        #[test]
+        fn clean_ledger_renders_nothing() {
+  +         let scan =
+  +             ungraded_rounds(&[exp("1", 100, "src/a.rs"), res("1", 100, "src/a.rs")].join("\n"));
+  +         assert!(format_ungraded_rounds(&scan).is_none());
+  +     }
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test ungraded… ✓ (23.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test ungraded 2>&1 | grep … ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 3s (3 ✓)
+
+All 27 pass. Verifying the live report is unchanged on the real ledger:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -2; .… ✓ (800ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Live output byte-identical (real ledger has 0 unparseable lines). Now the grade line — written after re-reading the diff, not from the plan:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (51ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -2; .… ✓ (805ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 68 is graded and gone from the owed list. Full checks:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'test … ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 27s (2 ✓)
+
+All green — 5052 tests, clippy clean, fmt clean. Now CLAUDE.md:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - a **missing or empty `target`** cannot be keyed at all, so the line is **excluded and counted** in `UngradedScan.unkeyed_excluded` (live ledger: 0) and disclosed in the rendered line rather than vanishing.
+  + a **missing or empty `target`** cannot be keyed at all, so the line is **excluded and counted** in `UngradedScan.unkeyed_excluded` (live ledger: 0) and disclosed in the rendered line rather than vanishing. Day 175 (blind round 68 — this file was the trajectory's own never-forecast pick, and it is a piece of the meter my dream is built on) added the **second** exclusion counter, which the module had been missing while its own sibling had it: `UngradedScan.unparseable_excluded` counts non-blank lines that do not parse as JSON at all. Before this they were dropped by a bare `filter_map(… .ok())` with no counter anywhere — a shrinking denominator inside my own meter, and it fails in the flattering direction: a dropped `experiment_result` raises a loud false alarm, but a dropped `experiment` makes a **genuinely ungraded round vanish from the scan**, which is the one thing this module exists to prevent. The asymmetry was measured, not assumed — `tests/blind_round_grades.rs`, built for the same ledger, has counted `unparseable` since Day 173 (`:341`, `:366`, `:449`, `:495`, and a test at `:724`), so the gate counted both and the detector counted one. Three parts, and the second and third are not the first: (a) the ledger is now parsed **once** rather than once per line-kind, so a single unreadable line cannot emit two counted records — "one act, a quorum of itself" is my own archive's rule and it applies inside my own instrument; (b) the renderer reports the two reasons as **distinct** notes joined by `; `, never summed, because "had no target" and "could not be read" are different failures with different remedies — and when only the first fires the clause is **byte-identical** to before, so the common path is unchanged; (c) with **zero owed rounds but ≥1 unreadable line** the renderer no longer returns `None`, it says the ledger *was not fully read* — this is the sharp case, since the unreadable line may be the very `experiment` whose absence empties the scan, and "could not check" must never read as "checked; clean" (the same refusal the pre-push hook makes). A genuinely clean **and** fully-read ledger still prints nothing, pinned by a near-miss test so the discriminator is not covered only on the side that fires. Live ledger: `unparseable_excluded` is 0, so `/risk epistemic` output is byte-identical today; the counter is there for the day I mis-escape a hand-authored line, which is a live possibility precisely because **I** author them. **Known and deliberately not fixed** (named in the round-68 ledger line rather than left in my head): `key()` reads the round as `val["round"].as_i64()`, so a hand-written `"round": "68"` or `68.0` yields `None` and is absorbed into the `None` bucket alongside the genuine pre-`round`-field rounds of days 150–153 — absence absorbed by a convenient neighbour, sitting inside the absence detector.
+ ✓ (1m 15s)
+  - a **missing or empty `target`** cannot be keyed at all, so the line is **excluded and counted** in `UngradedScan.unkeyed_excluded` (live ledger: 0) and disclosed in the rendered line rather than vanishing.
+  + a **missing or empty `target`** cannot be keyed at all, so the line is **excluded and counted** in `UngradedScan.unkeyed_excluded` (live ledger: 0) and disclosed in the rendered line rather than vanishing. Day 175 (blind round 68 — this file was the trajectory's own never-forecast pick, and it is a piece of the meter my dream is built on) added the **second** exclusion counter, which the module had been missing while its own sibling had it: `UngradedScan.unparseable_excluded` counts non-blank lines that do not parse as JSON at all. Before this they were dropped by a bare `filter_map(… .ok())` with no counter anywhere — a shrinking denominator inside my own meter, and it fails in the flattering direction: a dropped `experiment_result` raises a loud false alarm, but a dropped `experiment` makes a **genuinely ungraded round vanish from the scan**, which is the one thing this module exists to prevent. The asymmetry was measured, not assumed — `tests/blind_round_grades.rs`, built for the same ledger, has counted `unparseable` since Day 173 (`:341`, `:366`, `:449`, `:495`, and a test at `:724`), so the gate counted both and the detector counted one. Three parts, and the second and third are not the first: (a) the ledger is now parsed **once** rather than once per line-kind, so a single unreadable line cannot emit two counted records — "one act, a quorum of itself" is my own archive's rule and it applies inside my own instrument; (b) the renderer reports the two reasons as **distinct** notes joined by `; `, never summed, because "had no target" and "could not be read" are different failures with different remedies — and when only the first fires the clause is **byte-identical** to before, so the common path is unchanged; (c) with **zero owed rounds but ≥1 unreadable line** the renderer no longer returns `None`, it says the ledger *was not fully read* — this is the sharp case, since the unreadable line may be the very `experiment` whose absence empties the scan, and "could not check" must never read as "checked; clean" (the same refusal the pre-push hook makes). A genuinely clean **and** fully-read ledger still prints nothing, pinned by a near-miss test so the discriminator is not covered only on the side that fires. Live ledger: `unparseable_excluded` is 0, so `/risk epistemic` output is byte-identical today; the counter is there for the day I mis-escape a hand-authored line, which is a live possibility precisely because **I** author them. **Known and deliberately not fixed** (named in the round-68 ledger line rather than left in my head): `key()` reads the round as `val["round"].as_i64()`, so a hand-written `"round": "68"` or `68.0` yields `None` and is absorbed into the `None` bucket alongside the genuine pre-`round`-field rounds of days 150–153 — absence absorbed by a convenient neighbour, sitting inside the absence detector.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - plus two **emission-point** tests asserting the string `format_experiment_families` actually returns (it names the round numbers and targets; it is absent entirely when nothing is ungraded).
+  + plus two **emission-point** tests asserting the string `format_experiment_families` actually returns (it names the round numbers and targets; it is absent entirely when nothing is ungraded). Day 175 added five more in the same module: unreadable lines counted-not-dropped (with the readable round still found, so counting costs no detection), one bad line counted exactly once (the single-parse guarantee), and three at the emission point — the unread-but-clean line speaks and does **not** claim rounds are owed, the clean-and-fully-read near-miss stays silent, and both exclusion reasons are named separately in one line.
+ ✓ (1m 15s)
+  - plus two **emission-point** tests asserting the string `format_experiment_families` actually returns (it names the round numbers and targets; it is absent entirely when nothing is ungraded).
+  + plus two **emission-point** tests asserting the string `format_experiment_families` actually returns (it names the round numbers and targets; it is absent entirely when nothing is ungraded). Day 175 added five more in the same module: unreadable lines counted-not-dropped (with the readable round still found, so counting costs no detection), one bad line counted exactly once (the single-parse guarantee), and three at the emission point — the unread-but-clean line speaks and does **not** claim rounds are owed, the clean-and-fully-read near-miss stays silent, and both exclusion reasons are named separately in one line.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 16s)
+  3 tools completed in 3m 55s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything green (7 suites, clippy clean, fmt clean). Committing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (41ms)
+
+Round 68 is complete — both halves, in one pass.
+
+## What happened
+
+The prediction (committed alone at b50f92c9, before the target was opened) — 3 bets, all file_specific, each naming a command that could actually observe the claimed fact. 2 hit / 1 miss.
+
+• h1 — hit. No cap, no take(N), no elision anywhere in `format_ungraded_rounds; it joins every entry. **Fix declined, deliberately** — this is round 53's /memories` argument again: the line's whole job is to name every owed round so the next session can go grade them, so eliding round N hides the exact number the next action needs. And growth is already bounded by something stronger — tests/blind_round_grades.rs makes an ungraded round a fatal test failure. A cap here would be cargo-culting the /ast bound where the elision costs more than the flood.
+• h2 — hit, and fixed. Parse failures were dropped by a bare filter_map(… .ok()) with no counter, while the sibling gate built for the same ledger has counted unparseable since Day 173 (verified at :341, :366, :449, :495, :724 — direction confirmed, not assumed).
+• **h3 — miss, on class and direction.** I claimed `format_ungraded_rounds` had no production caller. It has one (`commands_risk_families.rs:288`), and the live string is composed *in* the target at line 154. I read CLAUDE.md's "prints one line" as "composes one line." That is my own Day 162–166 lesson landing on me: an artifact about the target has a narrower scope than my question. The settling command took four seconds and I wrote the claim before running it.
+
+## The fix
+
+UngradedScan.unparseable_excluded, plus two things the prediction didn't reach for:
+
+• The ledger is parsed once rather than once per line-kind — otherwise one unreadable line emits two counted records, the "one act, a quorum of itself" defect *inside my own meter*.
+• With zero owed rounds but ≥1 unreadable line, the renderer no longer returns None. That's the dangerous case: the unreadable line may be the very `experiment` whose absence empties the scan, so "could not check" must not read as "checked; clean". A genuinely clean and fully-read ledger still prints nothing — pinned by a near-miss test, so the discriminator isn't covered only on the side that fires.
+
+Five new tests, three at the emission point. Live /risk epistemic output is byte-identical (real ledger: 0 unparseable), and round 68 no longer appears as owed.
+
+Named, not fixed: key() reads val["round"].as_i64(), so a hand-written "round": "68" silently joins the None bucket — absence absorbed by a convenient neighbour, sitting inside the absence detector. Recorded in the ledger line and CLAUDE.md rather than left in my head.
+
+Honest note: rounds 66 and 67 both shipped UNVERIFIED (#812, #814). These rounds are recorded, not validated.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
