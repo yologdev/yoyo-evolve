@@ -63,6 +63,12 @@ mod tests {
             ("risk", "/risk", crate::commands_risk::RISK_SUBCOMMANDS),
             ("skill", "/skill", crate::commands_skill::SKILL_SUBCOMMANDS),
             ("spawn", "/spawn", crate::commands_spawn::SPAWN_SUBCOMMANDS),
+            // Added Day 175 (blind round 69). This table is named TODO_VERBS,
+            // not `*_SUBCOMMANDS`, which is exactly why it sat outside this
+            // fixture for so long: the fixture is hand-maintained and every
+            // mental (and grep) model of "find the verb tables" keys on the
+            // `_SUBCOMMANDS` suffix. `/todo` is the command #702 was about.
+            ("todo", "/todo", crate::commands_todo::TODO_VERBS),
             ("watch", "/watch", crate::watch::WATCH_SUBCOMMANDS),
             ("web", "/web", crate::commands_web::WEB_SUBCOMMANDS),
         ]
@@ -86,6 +92,12 @@ mod tests {
         //    CONTEXT_SUBCOMMANDS (src/commands_project.rs) are private to their
         //    modules and are NOT covered here. Widening their visibility is a
         //    separate sweep, deliberately not done in this task.
+        //    ^ SUPERSEDED, recorded rather than erased (Day 175, round 69):
+        //    both were made pub(crate) and added to the fixture by #730 on Day
+        //    164, so this disclosure has been claiming a gap that no longer
+        //    exists for eleven days. A stale scope-limit is the worse direction
+        //    of the two — it invites a future reader to "fix" coverage that is
+        //    already there, and it makes the rest of the list less believable.
         //  - A verb documented only inside an alternation ("/plan on|open")
         //    does not count: `/help` readers scan usage lines, and an alias
         //    hidden behind a pipe is what the drift looked like in practice.
@@ -149,6 +161,7 @@ mod tests {
             "risk" => "src/commands_risk.rs",
             "skill" => "src/commands_skill.rs",
             "spawn" => "src/commands_spawn.rs",
+            "todo" => "src/commands_todo.rs", // handle_todo
             "watch" => "src/watch.rs",
             "web" => "src/commands_web.rs",
             other => panic!(
@@ -187,11 +200,23 @@ mod tests {
             "src/dispatch.rs:207 `rest == \"config get\"`",
         ),
         // /lint fix is an exact-match arm on the whole command string, and runs
-        // commands::handle_lint_fix (src/dispatch.rs:662) — not handle_lint.
+        // commands::handle_lint_fix (src/dispatch.rs:671) — not handle_lint.
+        // (Was cited as :662 until Day 175; that line is now handle_test. Line
+        // numbers in exoneration prose rot, and nothing re-checks them — the
+        // citation is still the audit, so it is worth keeping correct.)
         (
             "lint",
             "fix",
             "src/dispatch.rs:163 `\"/lint fix\" => CommandRoute::LintFix`",
+        ),
+        // /todo remove is routed on a PREFIX literal with a trailing space,
+        // because the verb takes an id argument (`/todo remove 3`). The bare
+        // `"remove"` literal genuinely does not appear in handle_todo — this is
+        // the "implemented under a different literal" case, not a phantom.
+        (
+            "todo",
+            "remove",
+            "src/commands_todo.rs:199 `arg.strip_prefix(\"remove \")`",
         ),
     ];
 
@@ -201,10 +226,27 @@ mod tests {
         format!("#[cfg{}]\nmod tests", "(test)")
     }
 
-    /// Drop `*_SUBCOMMANDS` table declarations from a dispatcher's source.
-    /// Ten of the eighteen tables live in the same file as their dispatcher, so
-    /// without this the search would find the token in the table itself and the
-    /// whole test would be vacuously green — a guard that cannot fail.
+    /// Drop const verb-table declarations from a dispatcher's source.
+    /// Most tables live in the same file as their dispatcher, so without this
+    /// the search would find the token in the table itself and the whole test
+    /// would be vacuously green — a guard that cannot fail.
+    ///
+    /// Matched by DECLARATION SHAPE (`const NAME: &[&str] = &[`), not by the
+    /// `_SUBCOMMANDS` name it used to key on. Day 175 (blind round 69): the
+    /// name-based rule silently exempted every table christened anything else,
+    /// and there is a live one — `TODO_VERBS` in src/commands_todo.rs. Adding
+    /// `/todo` to the fixture under the old rule would have added a guard that
+    /// could never fail, since the unstripped declaration vouches for its own
+    /// tokens. Keying on shape means a table cannot opt out by being renamed.
+    fn is_verb_table_decl(line: &str) -> bool {
+        let t = line.trim_start();
+        let t = t
+            .strip_prefix("pub(crate) ")
+            .or_else(|| t.strip_prefix("pub "))
+            .unwrap_or(t);
+        t.starts_with("const ") && t.contains(": &[&str]") && t.contains("&[")
+    }
+
     fn strip_subcommand_tables(src: &str) -> String {
         let mut out = String::new();
         let mut skipping = false;
@@ -215,7 +257,7 @@ mod tests {
                 }
                 continue;
             }
-            if line.contains("_SUBCOMMANDS") && line.contains("&[") {
+            if is_verb_table_decl(line) {
                 if !line.contains("];") {
                     skipping = true;
                 }
@@ -225,6 +267,43 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn test_strip_subcommand_tables_drops_tables_whatever_they_are_named() {
+        // Round-69 regression guard. The old rule keyed on the literal
+        // `_SUBCOMMANDS`, so a verb table named anything else survived into the
+        // haystack and vouched for its OWN tokens — the dispatcher guard would
+        // then pass for a command it had no evidence about. `TODO_VERBS` is the
+        // live instance this was found on.
+        //
+        // Asserted at the emission point: the haystack string the guard's
+        // `contains(&format!("\"{sub}\""))` check actually consumes.
+        let src = "\
+pub(crate) const TODO_VERBS: &[&str] = &[\"list\", \"remove\", \"board\"];
+pub fn handle_todo(arg: &str) -> String {
+    if arg == \"list\" { return list(); }
+    String::new()
+}
+";
+        let haystack = strip_subcommand_tables(src);
+        assert!(
+            !haystack.contains("\"board\""),
+            "a table named TODO_VERBS must be stripped like any *_SUBCOMMANDS table, \
+             otherwise it vouches for its own tokens; haystack was:\n{haystack}"
+        );
+        assert!(
+            haystack.contains("\"list\""),
+            "real dispatch code must survive stripping — a guard that strips the \
+             dispatcher too would pass by finding nothing to check; haystack was:\n{haystack}"
+        );
+        // Near-miss: prose merely mentioning a const is not a declaration.
+        let mentions =
+            "// see TODO_VERBS for the list\nmatch v { \"board\" => board(), _ => {} }\n";
+        assert!(
+            strip_subcommand_tables(mentions).contains("\"board\""),
+            "only const table DECLARATIONS are stripped, not lines that mention one"
+        );
     }
 
     #[test]
