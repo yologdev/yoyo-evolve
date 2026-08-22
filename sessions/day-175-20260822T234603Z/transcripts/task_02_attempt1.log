@@ -1,0 +1,426 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the issue comment and the current state of the script.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 810 --comments 2>&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/measure_abstention… ✓ (4ms)
+ ✓ (676ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,420p scripts/measure_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 216,262p scripts/measure_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,660p scripts/measure_… ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 656,790p scripts/measure_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Rate limited" src/ scr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls sessions 2>/dev/null | head; … ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480,520p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "error: " src/prompt.rs… ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "diagnose_api_error" sr… ✓ (8ms)
+  11 tools completed in 32.0s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '💡' src/prompt.rs | hea… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Let me make the change.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 895,1000p scripts/measure… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/measure_abstentions.py (3 → 34 lines)
+  + # Provider-error evidence (#810, @yuanhao 2026-08-22). A zero-task outcome has at least
+  + # three distinct causes and only ONE of them is gradeable for #808: closing silence (the
+  + # gate SHOULD fire), an API error / rate limit (the gate MUST NOT fire — `piped_should_
+  + # continue` requires `!had_error`, and continuing after a provider refusal would burn the
+  + # remaining budget re-hitting the same limit), and a genuine early stop with an error
+  + # (same). Counting the second as a gradeable miss manufactures evidence against #808 out
+  + # of Anthropic's rate limiter.
+  + #
+  + # Anchored exactly as `_MARKER_PATTERNS` are: from the emission's first word to
+  + # end-of-line, with only the numbers loose, and a runner `job\tjob\tTIMESTAMP` prefix
+  + # allowed by the leading `(?:^|\s)`. Every candidate still runs through
+  + # `is_quoted_prose` (see `classify_provider_error`) — the whole reason that machinery
+  + # exists is that my own prose contaminated this meter, and #810's own thread carries the
+  + # string "Rate limited" inside a markdown table.
+  + _PROVIDER_ERROR_PATTERNS = (
+  +     # src/prompt.rs:725/736/752 print `\n{RED}  error: {msg}{RESET}`, where {msg} is the
+  +     # provider's own text. This is the exact shape both #810 sessions carried.
+  +     re.compile(r"(?:^|\s)error: Rate limited, retry after Some\(\d+\)ms$"),
+  +     # src/prompt.rs:756/897/1071/1399 print `{YELLOW}  💡 {diagnostic}{RESET}`; this is
+  +     # the first line of `diagnose_api_error`'s rate-limit branch (prompt_retry.rs:497).
+  ... (14 more lines)
+ ✓ (53.9s)
+  + # Provider-error evidence (#810, @yuanhao 2026-08-22). A zero-task outcome has at least
+  + # three distinct causes and only ONE of them is gradeable for #808: closing silence (the
+  + # gate SHOULD fire), an API error / rate limit (the gate MUST NOT fire — `piped_should_
+  + # continue` requires `!had_error`, and continuing after a provider refusal would burn the
+  + # remaining budget re-hitting the same limit), and a genuine early stop with an error
+  + # (same). Counting the second as a gradeable miss manufactures evidence against #808 out
+  + # of Anthropic's rate limiter.
+  + #
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 16s (2 ✓)
+
+Now the pure detector, next to classify:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (6 → 33 lines)
+        if is_quoted_prose(line):
+            return (None, True)
+        return (marker, False)
+  + 
+  + 
+  + def classify_provider_error_line(line):
+  +     """Pure: True when the line shape-matches a provider-error emission.
+  + 
+  +     Shape only — says nothing about provenance, exactly as `classify_line` doesn't.
+  +     """
+  +     line = strip_ansi(line).rstrip("\n").rstrip()
+  +     for pattern in _PROVIDER_ERROR_PATTERNS:
+  +         if pattern.search(line):
+  +             return True
+  +     return False
+  + 
+  + 
+  + def classify_provider_error(line):
+  +     """Return (is_provider_error, excluded_as_prose) — the two halves combined.
+  + 
+  ... (10 more lines)
+ ✓ (54.0s)
+        if is_quoted_prose(line):
+            return (None, True)
+        return (marker, False)
+  + 
+  + 
+  + def classify_provider_error_line(line):
+  +     """Pure: True when the line shape-matches a provider-error emission.
+  + 
+  ... (13 more lines)
+
+Now SessionCounts — the field, the exclusion property, and the row:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (2 → 5 lines)
+            self.firings = 0
+            self.prose_excluded = 0
+  +         # Provider-error evidence (#810). Session-level presence — see
+  +         # `provider_error_excluded` for the coarseness disclosure.
+  +         self.provider_errors = 0
+ ✓ (53.6s)
+            self.firings = 0
+            self.prose_excluded = 0
+  +         # Provider-error evidence (#810). Session-level presence — see
+  +         # `provider_error_excluded` for the coarseness disclosure.
+  +         self.provider_errors = 0
+  ▶ edit scripts/measure_abstentions.py (8 → 37 lines)
+  +     @property
+  +     def provider_error_excluded(self):
+  +         """The fourth exclusion state: a zero-task outcome WITH provider-error evidence.
+  + 
+  +         The gate is *required* not to fire after a provider refusal, so such a session
+  +         cannot grade #808 in either direction — it leaves the numerator and the
+  +         denominator both, and is reported as its own bucket, never summed into
+  +         INELIGIBLE, UNKNOWN_AGE, or the zero-abstention exclusions.
+  + 
+  +         **Coarseness, named rather than dressed up:** @yuanhao's wording is "a provider
+  +         error in the same phase as the zero-task outcome". This is SESSION-level
+  +         presence — nothing here attributes the error to the phase that produced the
+  +         zero-task outcome, because a session directory's concatenated lines carry no
+  +         cheap phase anchor. It is a judgment threshold, not a measurement, and the only
+  +         evidence for it is that every healthy post-#808 session (03:42, 06:41, 12:40,
+  +         15:22) had zero such lines while both zero-task sessions had them. A session
+  +         that hit a rate limit in an unrelated phase and *also* abstained for closing
+  +         silence would be excluded here — a lost data point, which is the safe direction
+  +         for a meter that must not manufacture evidence.
+  +         """
+  ... (20 more lines)
+ ✓ (1m 6s)
+  +     @property
+  +     def provider_error_excluded(self):
+  +         """The fourth exclusion state: a zero-task outcome WITH provider-error evidence.
+  + 
+  +         The gate is *required* not to fire after a provider refusal, so such a session
+  +         cannot grade #808 in either direction — it leaves the numerator and the
+  +         denominator both, and is reported as its own bucket, never summed into
+  +         INELIGIBLE, UNKNOWN_AGE, or the zero-abstention exclusions.
+  ... (13 more lines)
+  2 tools completed in 2m 17s (2 ✓)
+
+Now the constant, count_lines, and grade:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (3 → 9 lines)
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+    UNKNOWN_AGE = "UNKNOWN_AGE"
+  + 
+  + # The FOURTH exclusion state (#810, @yuanhao 2026-08-22). Reported as its own bucket and
+  + # never summed into the three above: "the provider refused this turn" is a different
+  + # fact from "this session predates the fix" and from "I cannot date this session", and
+  + # each has a different remedy.
+  + EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
+ ✓ (1m 6s)
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+    UNKNOWN_AGE = "UNKNOWN_AGE"
+  + 
+  + # The FOURTH exclusion state (#810, @yuanhao 2026-08-22). Reported as its own bucket and
+  + # never summed into the three above: "the provider refused this turn" is a different
+  + # fact from "this session predates the fix" and from "I cannot date this session", and
+  + # each has a different remedy.
+  + EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/measure_abstentions.py (5 → 15 lines)
+        counts = SessionCounts(name)
+        for line in lines:
+  +         # Provider-error evidence first; its shapes are disjoint from the markers', so
+  +         # the order is for readability, not precedence. Prose exclusions from BOTH
+  +         # detectors land in the one `prose_excluded` counter — same fact, same remedy.
+  +         is_provider_error, provider_prose = classify_provider_error(line)
+  +         if provider_prose:
+  +             counts.prose_excluded += 1
+  +             continue
+  +         if is_provider_error:
+  +             counts.provider_errors += 1
+  +             continue
+            marker, excluded = classify(line)
+            if excluded:
+                counts.prose_excluded += 1
+ ✓ (1m 6s)
+        counts = SessionCounts(name)
+        for line in lines:
+  +         # Provider-error evidence first; its shapes are disjoint from the markers', so
+  +         # the order is for readability, not precedence. Prose exclusions from BOTH
+  +         # detectors land in the one `prose_excluded` counter — same fact, same remedy.
+  +         is_provider_error, provider_prose = classify_provider_error(line)
+  +         if provider_prose:
+  +             counts.prose_excluded += 1
+  ... (7 more lines)
+  ▶ edit scripts/measure_abstentions.py (3 → 2 lines)
+        gradeable = [s for s in sessions if s.gradeable]
+        n = len(gradeable)
+  -     if n < MIN_GRADEABLE_SESSIONS:
+ ✓ (1m 6s)
+        gradeable = [s for s in sessions if s.gradeable]
+        n = len(gradeable)
+  -     if n < MIN_GRADEABLE_SESSIONS:
+  ▶ edit scripts/measure_abstentions.py (14 → 37 lines)
+        gradeable = [s for s in sessions if s.gradeable]
+        n = len(gradeable)
+  +     # The fourth bucket. A zero-task outcome with provider-error evidence cannot grade
+  +     # #808 in either direction — the gate is REQUIRED not to fire after a provider
+  +     # refusal — so it leaves numerator and denominator both, and is named here rather
+  +     # than folded into any of the three exclusions above.
+  +     provider_excluded = [s for s in sessions if s.provider_error_excluded]
+  +     if provider_excluded:
+  +         header += (
+  +             f"excluded (provider error): {len(provider_excluded)} session(s) had a "
+  +             f"zero-task outcome alongside provider-error evidence — the gate is "
+  +             f"required NOT to fire after a provider refusal, so these grade nothing "
+  +             f"and are excluded from numerator and denominator both. Session-level "
+  +             f"presence, not per-phase attribution: a judgment threshold, not a "
+  +             f"measurement.\n"
+  +         )
+  +     prov_clause = (
+  +         f", {len(provider_excluded)} excluded for provider errors"
+  +         if provider_excluded
+  +         else ""
+  ... (21 more lines)
+ ✓ (1m 6s)
+        gradeable = [s for s in sessions if s.gradeable]
+        n = len(gradeable)
+  +     # The fourth bucket. A zero-task outcome with provider-error evidence cannot grade
+  +     # #808 in either direction — the gate is REQUIRED not to fire after a provider
+  +     # refusal — so it leaves numerator and denominator both, and is named here rather
+  +     # than folded into any of the three exclusions above.
+  +     provider_excluded = [s for s in sessions if s.provider_error_excluded]
+  +     if provider_excluded:
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 32s (3 ✓)
+
+Now the self-tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (2 → 1 lines)
+        check("ineligible not in numerator", "fired in" in bounded, False)
+  - 
+ ✗ (1ms)
+    │ old_text not found in scripts/measure_abstentions.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1128,1180p scripts/measur… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 scripts/measure_abstent… ✓ (2ms)
+  ▶ edit scripts/measure_abstentions.py (7 → 179 lines)
+        check(
+            "unreadable listing is disclosed",
+            "(0 with a readable listing)" in unknown_block,
+  +         True,
+  +     )
+  + 
+  +     # 11. The provider-error bucket (#810, @yuanhao 2026-08-22). The detector in BOTH
+  +     # directions first: the real emissions match, and the same strings wearing my prose
+  +     # tells do not — this issue's own thread carries "Rate limited" in a markdown table.
+  +     check(
+  +         "API-path rate-limit line matches",
+  +         classify_provider_error_line(
+  +             "  error: Rate limited, retry after Some(14454000)ms"
+  +         ),
+  +         True,
+  +     )
+  +     check(
+  +         "diagnostic hint line matches",
+  +         classify_provider_error_line("  💡 Rate limited by provider 'anthropic'."),
+  +         True,
+  ... (159 more lines)
+ ✓ (1m 7s)
+        check(
+            "unreadable listing is disclosed",
+            "(0 with a readable listing)" in unknown_block,
+  +         True,
+  +     )
+  + 
+  +     # 11. The provider-error bucket (#810, @yuanhao 2026-08-22). The detector in BOTH
+  +     # directions first: the real emissions match, and the same strings wearing my prose
+  ... (13 more lines)
+  4 tools completed in 1m 41s (3 ✓, 1 ✗)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/measure_abstentions.py (5 → 8 lines)
+        check(
+            "backticked quote is prose",
+  -         classify_provider_error("`error: Rate limited, retry after Some(1)ms`"),
+  +         classify_provider_error(
+  +             "The planner turn ended with `this`:   error: Rate limited, retry "
+  +             "after Some(1)ms"
+  +         ),
+            (False, True),
+        )
+ ✓ (1m 6s)
+        check(
+            "backticked quote is prose",
+  -         classify_provider_error("`error: Rate limited, retry after Some(1)ms`"),
+  +         classify_provider_error(
+  +             "The planner turn ended with `this`:   error: Rate limited, retry "
+  +             "after Some(1)ms"
+  +         ),
+            (False, True),
+        )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (30ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 22s (3 ✓)
+
+Now byte-identity verification against the pre-change tool on a real, provider-error-free input:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (8 lines) ✓ (69ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cd /tmp/abs … (10 lines) ✓ (68ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.1s (2 ✓)
+
+The two rate-limited sessions now land in the new bucket instead of reading as failed grades — 2 of 4 gradeable → `0 of 4`, matching @yuanhao's hand-computed standings. Now the docstring:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p scripts/measure_abs… ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/measure_abstentions.py (3 → 29 lines)
+  + THE FOURTH BUCKET — PROVIDER ERRORS (day 175, @yuanhao on #810)
+  + ---------------------------------------------------------------
+  + A zero-task outcome has at least three distinct causes, and only ONE of them grades
+  + #808: closing silence (the gate SHOULD fire), an API error / rate limit (the gate MUST
+  + NOT fire — `piped_should_continue` requires `!had_error`, and continuing after a
+  + provider refusal would burn the remaining budget re-hitting the same limit), and a
+  + genuine early stop with an error (same). Counting the second as a gradeable miss
+  + manufactures evidence against #808 out of Anthropic's rate limiter.
+  + 
+  + Both post-fix sessions that scored as gradeable were rate-limit failures: 08-21T21:25
+  + and 08-22T01:17, each ending its planner turn on ``error: Rate limited, retry after
+  + Some(14454000)ms`` — a ~4h retry-after. Every healthy post-fix session (03:42, 06:41,
+  + 12:40, 15:22) has zero such lines. So a session carrying provider-error evidence
+  + alongside its zero-task outcome becomes ``EXCLUDED_PROVIDER_ERROR``: out of numerator
+  + and denominator both, reported as its own bucket, **never summed** into ``INELIGIBLE``,
+  + ``UNKNOWN_AGE`` or the zero-abstention exclusions. Different fact, different remedy.
+  + 
+  + **Coarseness, named rather than dressed up:** this is SESSION-level presence. Nothing
+  + attributes the error to the phase that produced the zero-task outcome, because the
+  + concatenated lines of a session directory carry no cheap phase anchor. It is a judgment
+  ... (9 more lines)
+ ✓ (1m 6s)
+  + THE FOURTH BUCKET — PROVIDER ERRORS (day 175, @yuanhao on #810)
+  + ---------------------------------------------------------------
+  + A zero-task outcome has at least three distinct causes, and only ONE of them grades
+  + #808: closing silence (the gate SHOULD fire), an API error / rate limit (the gate MUST
+  + NOT fire — `piped_should_continue` requires `!had_error`, and continuing after a
+  + provider refusal would burn the remaining budget re-hitting the same limit), and a
+  + genuine early stop with an error (same). Counting the second as a gradeable miss
+  + manufactures evidence against #808 out of Anthropic's rate limiter.
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now CLAUDE.md — the measure_abstentions.py bullet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation.
+  + **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation. Day 175 (third task, @yuanhao on #810) added the **fourth exclusion bucket**, `EXCLUDED_PROVIDER_ERROR`, because a zero-task outcome has at least three distinct causes and only one of them grades #808: closing silence (the gate *should* fire), an **API error / rate limit** (the gate **must not** fire — `piped_should_continue` requires `!had_error`, and continuing after a provider refusal would burn the remaining budget re-hitting the same limit), and a genuine early stop with an error (same). Both post-fix sessions that scored as *gradeable* were rate-limit failures — 08-21T21:25 and 08-22T01:17, each ending its planner turn on `error: Rate limited, retry after Some(14454000)ms`, a ~4h retry-after — while every healthy post-fix session (03:42, 06:41, 12:40, 15:22) carries zero such lines. So every rate-limit event was **manufacturing a gradeable session showing `firings=0`, which reads as accumulating evidence against #808 when it is evidence about Anthropic's rate limiter**. The detector (`classify_provider_error_line` / `classify_provider_error`) is anchored exactly as `classify_line` is — the emission's first word to end-of-line, numbers loose, a runner `job\tjob\tTIMESTAMP` prefix allowed — and every candidate still runs through `is_quoted_prose`, which is load-bearing rather than cosmetic here: #810's own thread carries the string `Rate limited` inside a markdown table, and a false positive **shrinks my own denominator** by excluding a session that really did test the gate. A shape-match that trips the prose filter is **counted** in `prose_excluded`, never silently dropped. A session with provider-error evidence *and* a zero-task outcome leaves **numerator and denominator both** and is reported as its own bucket, never summed into `INELIGIBLE`, `UNKNOWN_AGE` or the zero-abstention exclusions. **The coarseness is named rather than dressed up**: this is **session-level presence**, not the per-phase attribution @yuanhao's wording ("a provider error in the same phase as the zero-task outcome") describes — the concatenated lines of a session directory carry no cheap phase anchor, so it is a judgment threshold whose only evidence is that healthy sessions had zero such lines, and both the code comment and the printed verdict say so. `MIN_GRADEABLE_SESSIONS = 4` is **unchanged**, so `NOT YET GRADEABLE` becomes more common — which is correct, since "not yet gradeable" is its own state and not "the gate failed". **With no provider-error lines anywhere the output is byte-identical to the pre-bucket tool** (verified by running both), and `classify_line`, `classify`, `is_quoted_prose` and the anchored matching were not touched. Measured standings over the post-#808 window: the two rate-limited sessions move out of the graded set, taking the verdict from `2 of 4 gradeable sessions, gate fired in 0` to **`0 of 4 gradeable sessions`** — the number @yuanhao computed by hand, now computed by the instrument. **Sessions that actually tested the closing-silence gate: still 0.**
+ ✓ (1m 7s)
+  - **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation.
+  + **What it cannot do:** it checks that an abstention marker was *emitted*, never why the model abstained, and never whether a firing was the *right* continuation. Day 175 (third task, @yuanhao on #810) added the **fourth exclusion bucket**, `EXCLUDED_PROVIDER_ERROR`, because a zero-task outcome has at least three distinct causes and only one of them grades #808: closing silence (the gate *should* fire), an **API error / rate limit** (the gate **must not** fire — `piped_should_continue` requires `!had_error`, and continuing after a provider refusal would burn the remaining budget re-hitting the same limit), and a genuine early stop with an error (same). Both post-fix sessions that scored as *gradeable* were rate-limit failures — 08-21T21:25 and 08-22T01:17, each ending its planner turn on `error: Rate limited, retry after Some(14454000)ms`, a ~4h retry-after — while every healthy post-fix session (03:42, 06:41, 12:40, 15:22) carries zero such lines. So every rate-limit event was **manufacturing a gradeable session showing `firings=0`, which reads as accumulating evidence against #808 when it is evidence about Anthropic's rate limiter**. The detector (`classify_provider_error_line` / `classify_provider_error`) is anchored exactly as `classify_line` is — the emission's first word to end-of-line, numbers loose, a runner `job\tjob\tTIMESTAMP` prefix allowed — and every candidate still runs through `is_quoted_prose`, which is load-bearing rather than cosmetic here: #810's own thread carries the string `Rate limited` inside a markdown table, and a false positive **shrinks my own denominator** by excluding a session that really did test the gate. A shape-match that trips the prose filter is **counted** in `prose_excluded`, never silently dropped. A session with provider-error evidence *and* a zero-task outcome leaves **numerator and denominator both** and is reported as its own bucket, never summed into `INELIGIBLE`, `UNKNOWN_AGE` or the zero-abstention exclusions. **The coarseness is named rather than dressed up**: this is **session-level presence**, not the per-phase attribution @yuanhao's wording ("a provider error in the same phase as the zero-task outcome") describes — the concatenated lines of a session directory carry no cheap phase anchor, so it is a judgment threshold whose only evidence is that healthy sessions had zero such lines, and both the code comment and the printed verdict say so. `MIN_GRADEABLE_SESSIONS = 4` is **unchanged**, so `NOT YET GRADEABLE` becomes more common — which is correct, since "not yet gradeable" is its own state and not "the gate failed". **With no provider-error lines anywhere the output is byte-identical to the pre-bucket tool** (verified by running both), and `classify_line`, `classify`, `is_quoted_prose` and the anchored matching were not touched. Measured standings over the post-#808 window: the two rate-limited sessions move out of the graded set, taking the verdict from `2 of 4 gradeable sessions, gate fired in 0` to **`0 of 4 gradeable sessions`** — the number @yuanhao computed by hand, now computed by the instrument. **Sessions that actually tested the closing-silence gate: still 0.**
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (81ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff <(python3 /tmp/abs/old.py /… ✓ (160ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (38.4s)
+  5 tools completed in 3m 12s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/abs/test.… ✓ (48.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 7 test binaries green, zero failures. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt &&… (50 lines) ✓ (787ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && python3 sc… ✓ (37ms)
+  2 tools completed in 8.6s (2 ✓)
+
+Done and committed. 🐙
+
+## What I built
+
+A fourth exclusion bucket in scripts/measure_abstentions.py — EXCLUDED_PROVIDER_ERROR.
+
+The defect: my instrument counted produced 0 tasks as an abstention regardless of cause. Both post-#808 sessions that scored as "gradeable" ended their planner turn on error: Rate limited, retry after Some(14454000)ms — a ~4h retry-after. The turn wasn't silent after a tool; it was refused by the provider, and 0 firings there is correct behaviour (piped_should_continue requires !had_error). So every rate-limit event was manufacturing a gradeable session showing firings=0, which reads as evidence against #808 when it's evidence about Anthropic's rate limiter.
+
+The shape, matching what this file already does:
+• `classify_provider_error_line / classify_provider_error — pure, anchored exactly as classify_line is (first word → end-of-line, numbers loose, runner tab prefix allowed), every candidate through is_quoted_prose`. That filter is load-bearing here, not polish: #810's own thread carries `Rate limited` inside a markdown table — and note the direction of damage is the sharp one, since a false positive shrinks my own denominator. A shape-match that trips it is counted in prose_excluded, never dropped.
+• The bucket leaves numerator and denominator both, reported on its own, never summed into INELIGIBLE / UNKNOWN_AGE / the zero-abstention exclusions.
+• `MIN_GRADEABLE_SESSIONS = 4` unchanged.
+
+I named the coarseness rather than dressing it up. @yuanhao asked for "a provider error in the same phase as the zero-task outcome." There's no cheap phase anchor in a session directory's concatenated lines, so this is session-level presence — a judgment threshold whose only evidence is that healthy sessions had zero such lines. That sentence is in the code comment and in the printed verdict. I didn't claim attribution the code doesn't perform.
+
+Tests extended in run_self_tests(): detector both directions, three prose tells, disjointness from the abstention markers, and the near-miss guard — an abstention with no provider error grades exactly as before (Day 124: a discriminator tested only where it blocks is vacuous green). Byte-identity verified by running both tools side by side. classify_line, classify, is_quoted_prose untouched.
+
+## The deliverable — the number
+
+```
+before: 2 of 4 gradeable sessions, the gate fired in 0
+after:  0 of 4 gradeable sessions — 2 excluded for provider errors
+```
+
+Which is the number @yuanhao computed by hand, now computed by the instrument. **Sessions that actually tested the closing-silence gate: still 0.** The fix remains unproven, the floor is unmet, and the two data points that looked like evidence against it were about the rate limiter.
+
+Green: --test passes, cargo build/clippy -D warnings/test (7 binaries, 0 failures). Nothing in src/ changed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,276 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code — the sibling gates and the hook parse site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gate_project_permission…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 220,260p src/hooks.rs && … ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 820,970p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1040,1120p src/cli.rs && … ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_hooks\|shell_ho…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_CMD_MAX_BYTES" … ✓ (2ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 935,950p src/main.rs && e… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 205,226p src/hooks.rs && … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum HookPhase" -B4 -A8… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 906,915p src/cli.rs ✓ (3ms)
+  10 tools completed in 40.0s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean. Now writing the gate, beside its siblings in cli.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 106 lines)
+  + /// Outcome of the project-local shell-hook trust gate (#820).
+  + ///
+  + /// Carries the hooks that survive plus the ones that were refused, so the
+  + /// refusal can be announced with its commands named instead of happening
+  + /// silently.
+  + #[derive(Debug)]
+  + pub(crate) struct HookGateOutcome {
+  +     pub hooks: Vec<crate::hooks::ShellHook>,
+  +     pub refused: Vec<crate::hooks::ShellHook>,
+  + }
+  + 
+  + /// Gate the shell hooks declared by a project-local config.
+  + ///
+  + /// A hook's value is a shell command that `hooks.rs` hands to
+  + /// `Command::new("sh").arg("-c")` on the first matching tool call, so cloning a
+  + /// stranger's repo whose `.yoyo.toml` carries `hooks.pre.bash = "…"` used to run
+  + /// that string with no prompt and no display of what was about to run. Refused
+  + /// **only** when the loaded config is project-local and `--trust-project` was
+  + /// not passed; every other input is a byte-identical pass-through (home/XDG
+  + /// configs, trusted runs, repos with no hooks at all).
+  ... (86 more lines)
+ ✓ (10.0s)
+  + /// Outcome of the project-local shell-hook trust gate (#820).
+  + ///
+  + /// Carries the hooks that survive plus the ones that were refused, so the
+  + /// refusal can be announced with its commands named instead of happening
+  + /// silently.
+  + #[derive(Debug)]
+  + pub(crate) struct HookGateOutcome {
+  +     pub hooks: Vec<crate::hooks::ShellHook>,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/cli.rs (3 → 2 lines)
+    /// silently.
+  - #[derive(Debug)]
+    pub(crate) struct HookGateOutcome {
+ ✓ (11.5s)
+    /// silently.
+  - #[derive(Debug)]
+    pub(crate) struct HookGateOutcome {
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.5s (2 ✓)
+
+Expected — the consumer lands next (my own "no definition without its consumer" rule).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 16 lines)
+        // Parse shell hooks from config file
+  -     let shell_hooks = crate::hooks::parse_hooks_from_config(&file_config);
+  +     // #820: a `./.yoyo.toml`'s hooks are shell commands handed to `sh -c` on the
+  +     // first matching tool call, so a repo cannot supply them unless
+  +     // --trust-project says so. Provenance is read from the single place that
+  +     // records it (`config::loaded_config_is_project_local`), never re-derived.
+  +     let gated_hooks = gate_project_hooks(
+  +         crate::hooks::parse_hooks_from_config(&file_config),
+  +         crate::config::loaded_config_is_project_local(),
+  +         is_trust_project(),
+  +     );
+  +     if !gated_hooks.refused.is_empty() && !is_quiet() {
+  +         let msg =
+  +             project_hook_refusal_message(&gated_hooks.refused, crate::format::is_plain_output());
+  +         eprintln!("{YELLOW}{msg}{RESET}");
+  +     }
+  +     let shell_hooks = gated_hooks.hooks;
+ ✓ (1m 14s)
+        // Parse shell hooks from config file
+  -     let shell_hooks = crate::hooks::parse_hooks_from_config(&file_config);
+  +     // #820: a `./.yoyo.toml`'s hooks are shell commands handed to `sh -c` on the
+  +     // first matching tool call, so a repo cannot supply them unless
+  +     // --trust-project says so. Provenance is read from the single place that
+  +     // records it (`config::loaded_config_is_project_local`), never re-derived.
+  +     let gated_hooks = gate_project_hooks(
+  +         crate::hooks::parse_hooks_from_config(&file_config),
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (35.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 -A 25… ✓ (36.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 33s (3 ✓)
+
+My own module-size gate fired — I'll update the register after the tests land. Tests first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_dir_restrictions_a… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/cli.rs (2 → 127 lines)
+  +     // --- #820: project-local shell-hook trust boundary (the fourth door) ----
+  + 
+  +     fn hook(phase: crate::hooks::HookPhase, tool: &str, cmd: &str) -> crate::hooks::ShellHook {
+  +         let phase_str = match phase {
+  +             crate::hooks::HookPhase::Pre => "pre",
+  +             crate::hooks::HookPhase::Post => "post",
+  +         };
+  +         crate::hooks::ShellHook {
+  +             name: format!("{phase_str}:{tool}"),
+  +             phase,
+  +             tool_pattern: tool.to_string(),
+  +             command: cmd.to_string(),
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_project_hook_gate_covers_all_four_provenance_combinations() {
+  +         use crate::hooks::HookPhase;
+  +         // Both phases in the fixture: a `pre` hook produces its blocking effect
+  +         // by running arbitrary shell first, so it is refused exactly like a
+  ... (107 more lines)
+ ✓ (1m 10s)
+  +     // --- #820: project-local shell-hook trust boundary (the fourth door) ----
+  + 
+  +     fn hook(phase: crate::hooks::HookPhase, tool: &str, cmd: &str) -> crate::hooks::ShellHook {
+  +         let phase_str = match phase {
+  +             crate::hooks::HookPhase::Pre => "pre",
+  +             crate::hooks::HookPhase::Post => "post",
+  +         };
+  +         crate::hooks::ShellHook {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(err… ✓ (33.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_hook_refusal_mes… ✓ (128ms)
+  ▶ edit src/cli.rs (7 → 7 lines)
+        let marker = if plain { "" } else { "⚠ " };
+        let plural = if refused.len() == 1 { "" } else { "s" };
+  +     let them = if refused.len() == 1 { "it" } else { "them" };
+        let mut msg = format!(
+  -         "{marker}A project-local .yoyo.toml asked to run {} shell hook{plural} around tool calls. yoyo did not run {}:",
+  +         "{marker}A project-local .yoyo.toml asked to run {} shell hook{plural} around tool calls. yoyo did not run {them}:",
+            refused.len(),
+  -         if refused.len() == 1 { "it" } else { "them" }
+        );
+ ✓ (1m 11s)
+        let marker = if plain { "" } else { "⚠ " };
+        let plural = if refused.len() == 1 { "" } else { "s" };
+  +     let them = if refused.len() == 1 { "it" } else { "them" };
+        let mut msg = format!(
+  -         "{marker}A project-local .yoyo.toml asked to run {} shell hook{plural} around tool calls. yoyo did not run {}:",
+  +         "{marker}A project-local .yoyo.toml asked to run {} shell hook{plural} around tool calls. yoyo did not run {them}:",
+            refused.len(),
+  -         if refused.len() == 1 { "it" } else { "them" }
+        );
+  ▶ edit src/cli.rs (5 → 5 lines)
+  -     msg.push_str(
+  -         "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run them this session, or use --safe-mode to disable\n  all project customizations.",
+  -     );
+  +     msg.push_str(&format!(
+  +         "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run {them} this session, or use --safe-mode to disable\n  all project customizations."
+  +     ));
+        msg
+    }
+ ✓ (1m 12s)
+  -     msg.push_str(
+  -         "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run them this session, or use --safe-mode to disable\n  all project customizations.",
+  -     );
+  +     msg.push_str(&format!(
+  +         "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run {them} this session, or use --safe-mode to disable\n  all project customizations."
+  +     ));
+        msg
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/assert!(singular.conta… ✓ (1m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 5m 37s (6 ✓)
+
+All unit tests green. Now paying the register entry my own gate asked for:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"' tests/mod… ✓ (2ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '142s/("src\/cli.rs", 432… ✓ (341ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Deliberately not covere… ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - **Deliberately not covered yet** (follow-up #749 items 1 and 2): no persisted per-directory trust decision and no interactive prompt — `--trust-project` applies to one run and must be re-passed.
+  + Day 175 (#820) closed the **fourth door on the same boundary**: `parse_args`' shell-hook parse (`crate::hooks::parse_hooks_from_config`) sat two lines below the `gate_project_permissions` call and read none of the provenance answer already computed there, while `hooks.rs` hands each configured string to `Command::new("sh").arg("-c")` on the first matching tool call — so cloning a stranger's repo whose `.yoyo.toml` carried `hooks.pre.bash = "…"` executed it during a normal session with no prompt and no display. The pure `gate_project_hooks(hooks, project_local, trusted) -> HookGateOutcome` refuses **only** when the config is project-local and `--trust-project` was not passed; home/XDG configs, trusted runs and repos with no hooks are byte-identical pass-throughs. **Both phases are refused, `pre` and `post` alike, and that is the direction rule applied correctly rather than a lapse in it** — #820's own body (which I wrote) argued a blocking `hooks.pre.*` *restricts* yoyo and so should survive like `permissions.deny`; that does not survive contact with the mechanism, because a pre-hook produces its blocking effect **by running arbitrary shell first**, so the narrowing cannot be had without the execution. The Day-166 asymmetry sorts *declarative* values yoyo interprets (a deny pattern, a path list — kept verbatim, since a repo may always confine yoyo further); a hook's entire content is **executable code**, so direction is decided by what the entry **is**, not by what it does after it runs. Refusal is announced by the pure `project_hook_refusal_message`, which names every refused hook in the shape it has in the file (`pre.bash = <command>`, so the user can grep for it) with the command echoed verbatim — capped at `REFUSAL_HOOK_CMD_MAX_BYTES = 400` on a **char** boundary with the cut marked in band — plus both escape hatches and the outright claim that **nothing was executed**; silent under `is_quiet()`, glyph-free under `is_plain_output()`. The second door needed **no** code: `/hooks` (`commands_config::handle_hooks`) is reached only from `dispatch.rs:829` passing `ctx.agent_config.shell_hooks`, which `main.rs:943` builds from `config.shell_hooks` — the gated vec — so it (and `/config show`'s `hook_count`) inherits the gate; traced rather than assumed, and duplicating a gate that already flows through would be ceremony, not coverage. **Deliberately not covered yet** (follow-up #749 items 1 and 2): no persisted per-directory trust decision and no interactive prompt — `--trust-project` applies to one run and must be re-passed.
+ ✓ (53.4s)
+  - **Deliberately not covered yet** (follow-up #749 items 1 and 2): no persisted per-directory trust decision and no interactive prompt — `--trust-project` applies to one run and must be re-passed.
+  + Day 175 (#820) closed the **fourth door on the same boundary**: `parse_args`' shell-hook parse (`crate::hooks::parse_hooks_from_config`) sat two lines below the `gate_project_permissions` call and read none of the provenance answer already computed there, while `hooks.rs` hands each configured string to `Command::new("sh").arg("-c")` on the first matching tool call — so cloning a stranger's repo whose `.yoyo.toml` carried `hooks.pre.bash = "…"` executed it during a normal session with no prompt and no display. The pure `gate_project_hooks(hooks, project_local, trusted) -> HookGateOutcome` refuses **only** when the config is project-local and `--trust-project` was not passed; home/XDG configs, trusted runs and repos with no hooks are byte-identical pass-throughs. **Both phases are refused, `pre` and `post` alike, and that is the direction rule applied correctly rather than a lapse in it** — #820's own body (which I wrote) argued a blocking `hooks.pre.*` *restricts* yoyo and so should survive like `permissions.deny`; that does not survive contact with the mechanism, because a pre-hook produces its blocking effect **by running arbitrary shell first**, so the narrowing cannot be had without the execution. The Day-166 asymmetry sorts *declarative* values yoyo interprets (a deny pattern, a path list — kept verbatim, since a repo may always confine yoyo further); a hook's entire content is **executable code**, so direction is decided by what the entry **is**, not by what it does after it runs. Refusal is announced by the pure `project_hook_refusal_message`, which names every refused hook in the shape it has in the file (`pre.bash = <command>`, so the user can grep for it) with the command echoed verbatim — capped at `REFUSAL_HOOK_CMD_MAX_BYTES = 400` on a **char** boundary with the cut marked in band — plus both escape hatches and the outright claim that **nothing was executed**; silent under `is_quiet()`, glyph-free under `is_plain_output()`. The second door needed **no** code: `/hooks` (`commands_config::handle_hooks`) is reached only from `dispatch.rs:829` passing `ctx.agent_config.shell_hooks`, which `main.rs:943` builds from `config.shell_hooks` — the gated vec — so it (and `/config show`'s `hook_count`) inherits the gate; traced rather than assumed, and duplicating a gate that already flows through would be ceremony, not coverage. **Deliberately not covered yet** (follow-up #749 items 1 and 2): no persisted per-directory trust decision and no interactive prompt — `--trust-project` applies to one run and must be re-passed.
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 16s (3 ✓)
+
+Now the end-to-end verification the task asks for — real binary, real config files:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build … (7 lines) ✓ (131ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/hooktest && BIN=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/y… ✓ (158ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_config_file" -… ✓ (3ms)
+  3 tools completed in 23.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/hooktest && cat > .yoyo.toml <<'EOF' (7 lines) ✓ (163ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enable_quiet()" src/cli… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1228,1258p src/cli.rs ✓ (3ms)
+  ▶ $ cd /tmp/hooktest && BIN=/home/runner/work/yoyo-evolve/yoyo-e… (3 lines) ✓ (168ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 21.0s (4 ✓)
+
+Refusal fires with both commands named verbatim. Now the two pass-through directions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/hooktest && BIN=/home/runner/work/yoyo-evolve/yoyo-e… (5 lines) ✓ (404ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three directions verified live. Final checks:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (37.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (939ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now clippy explicitly, as the last check:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (42 lines) ✓ (14ms)
+  2 tools completed in 26.6s (2 ✓)
+
+Committed. The fourth door on the trust boundary is closed.
+
+What shipped (src/cli.rs, CLAUDE.md, tests/module_size.rs):
+
+• **gate_project_hooks(hooks, project_local, trusted)** — pure, refuses only when the loaded config is project-local *and* `--trust-project` wasn't passed. Every other input is a byte-identical pass-through.
+• `project_hook_refusal_message` — names each refused hook as pre.bash = <command> (the shape it has in the file, so a user can grep for it), command verbatim, capped at 400 bytes on a char boundary with the cut marked in band, both escape hatches, and "Nothing was executed." said outright. Glyph-free under is_plain_output(), silent under is_quiet().
+• One call site wrapping the old parse_hooks_from_config line.
+
+The direction argument in the issue was wrong and I said so in the code. #820's body (which I wrote during assessment) claimed a blocking hooks.pre.* *restricts yoyo, so the gate should spare it. It doesn't survive the mechanism: a pre-hook produces its blocking effect by running arbitrary shell first*. The Day-166 asymmetry sorts **declarative** values yoyo interprets (`permissions.deny`, `dir_restrictions` — kept verbatim, a repo may always confine me further); a hook's entire content is executable code. Both phases refused.
+
+Second door checked, needed nothing. handle_hooks is reached only from dispatch.rs:829 → ctx.agent_config.shell_hooks → main.rs:943 → config.shell_hooks, the gated vec. Traced rather than assumed; commands_config.rs untouched.
+
+Verified live, not just by unit test — three real configs through the built binary: project-local untrusted → refused with both commands printed; --trust-project → no refusal; the same hooks moved to ~/.yoyo.toml → untouched.
+
+Tests: four-combination table on the gate (including the pass-through side — a discriminator tested only where it blocks is vacuous green), emission-point assertions on the message string a caller receives, plain-output glyph check, and a truncation test with multi-byte input plus its under-budget near-miss. build, test (5074 + integration), clippy -D warnings, fmt --check all green.
+
+One honest cost: src/cli.rs went 4325 → 4570 lines, so I paid the register entry my own module-size gate asked for rather than absorbing it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/cli.rs
+
