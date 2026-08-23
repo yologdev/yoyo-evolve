@@ -8,12 +8,18 @@
 //! `Agent::prompt_with_sender` so run/tool events are actually recorded. All
 //! four agent-start call sites in `src/prompt.rs` go through those helpers.
 //!
-//! Ported from the sidecar, and **only these three arms**: `session-start`
-//! (`session_start`), `task` (`task_planned`) and `session-end`
-//! (`session_end`), plus the `ensure_goal` helper the first two share.
-//! `task-result` is **still only in `tools/gasp-emit`** — unported, but **not
-//! blocked**. Read that as two separate facts, because conflating them cost
-//! five sessions.
+//! Ported from the sidecar: **all four arms** — `session-start`
+//! (`session_start`), `task` (`task_planned`), `session-end` (`session_end`)
+//! and, as of Day 175, `task-result` ([`task_result`]) — plus the
+//! `ensure_goal` helper they share.
+//!
+//! **Superseded claim, recorded rather than erased** (Day-165 rule): this
+//! paragraph read "`task-result` is **still only in `tools/gasp-emit`** —
+//! unported, but **not blocked**" from Day 172 until Day 175. Both halves were
+//! accurate when written; only the first is now false. It is kept because the
+//! *earlier* version of this sentence — which said `task-result` was
+//! *unreachable* — is what cost six sessions, and the correction is worth more
+//! than the tidy text.
 //!
 //! <!-- yoagent-version-claim: 0.16.5 -->
 //!
@@ -81,8 +87,9 @@ use std::sync::OnceLock;
 
 use tokio::sync::mpsc;
 use yoagent::gasp::{
-    ActorRef, EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, RunId, StateError, Task,
-    TaskId, TaskStatus, YoAgentState,
+    ActorRef, ArtifactRef, Decision, DecisionId, DecisionStatus, EvalId, EvalResult, EvalStatus,
+    EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, PatchId, PatchStatus, ProjectRef,
+    RunId, StateError, StatePatch, Task, TaskId, TaskStatus, YoAgentState,
 };
 use yoagent::{Agent, AgentEvent, AgentMessage, Content, Message};
 
@@ -586,6 +593,212 @@ pub(crate) async fn session_end(
     Ok(sha)
 }
 
+/// Record a finished task: the patch it produced, the oracle that judged it,
+/// the decision that followed, and — when reverted — the failure node.
+///
+/// Ported from the sidecar's `"task-result"` arm
+/// (`tools/gasp-emit/src/main.rs:166-268`), the last of the four session-graph
+/// arms and the one that stayed unported longest. It was **never blocked by
+/// upstream**: `ProjectRef`/`ArtifactRef` landed in yoagent 0.16.4 (#115) and
+/// `PatchStatus` in 0.16.5 (#117), all re-exported from `yoagent::gasp`. A
+/// stale "unreachable" claim in this module's own doc — true against 0.16.3,
+/// false the moment the pin moved — is what actually held it up: six sessions
+/// opened this file, read the claim, and exited with an empty diff (#763,
+/// #765, #782, #785, #787, #789, #803). The claim was corrected on Day 172;
+/// this is the port it was blocking.
+///
+/// Split like [`task_planned`] rather than [`session_end`]: every call here is
+/// an `EventStore` trait method, so the body **is** expressible generically —
+/// unlike `session_end`, whose `commit_run`/`release_lease` are `GitEventStore`
+/// inherent methods.
+///
+/// **That generic split does not currently buy a behavioural test, and saying
+/// so is the point.** This module's older doc claims the `*_in` bodies are
+/// "testable against a scratch store"; they are not, today. `MemoryEventStore`
+/// lives in `yoagent-state`, which is deliberately *not* a direct dependency
+/// (see Cargo.toml: a default build must never pull it in), and
+/// `yoagent::gasp` does not re-export it. Probed and confirmed: the name does
+/// not resolve. So zero tests drive any `*_in` body, this one included — the
+/// split is kept because it is the right shape and becomes testable the moment
+/// upstream re-exports the store, not because it is exercised now. What IS
+/// tested here is the pure decision half ([`eval_command_or_default`]) and the
+/// node-id shapes, which is the same coverage the three siblings actually
+/// have.
+///
+/// `verdict` is compared against `"promoted"` exactly as the sidecar does —
+/// the two graphs must agree on what a promotion is, so this is deliberately a
+/// byte-identical comparison and not a looser parse.
+// Dormant for the same reason as its three siblings: the caller is #683 items
+// (3)+(7) (the operator-lane env bridge), which cannot exist until the
+// sidecar's session record is retired.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn task_result(
+    recorder: &GaspRecorder,
+    run_id: &str,
+    num: &str,
+    title: &str,
+    verdict: &str,
+    pre_sha: &str,
+    post_sha: &str,
+    repo: &str,
+    branch: Option<&str>,
+    reason: &str,
+    eval_command: Option<&str>,
+    goal: Option<&str>,
+) -> Result<(), StateError> {
+    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    task_result_in(
+        recorder.state(),
+        recorder.actor(),
+        run_id,
+        num,
+        title,
+        verdict,
+        pre_sha,
+        post_sha,
+        repo,
+        branch,
+        reason,
+        eval_command,
+        &goal,
+    )
+    .await
+}
+
+/// The oracle named when the caller does not name one. Byte-identical to the
+/// sidecar's fallback: a differently-worded oracle is a different claim about
+/// what was checked.
+pub(crate) const DEFAULT_EVAL_COMMAND: &str = "cargo fmt+clippy+build+test; evaluator agent";
+
+/// Resolve the oracle string, treating empty exactly as absent.
+pub(crate) fn eval_command_or_default(eval_command: Option<&str>) -> &str {
+    match eval_command {
+        Some(c) if !c.is_empty() => c,
+        _ => DEFAULT_EVAL_COMMAND,
+    }
+}
+
+/// Store-generic body of [`task_result`].
+#[allow(clippy::too_many_arguments)]
+async fn task_result_in<S: EventStore>(
+    state: &YoAgentState<S>,
+    actor: &ActorRef,
+    run_id: &str,
+    num: &str,
+    title: &str,
+    verdict: &str,
+    pre_sha: &str,
+    post_sha: &str,
+    repo: &str,
+    branch: Option<&str>,
+    reason: &str,
+    eval_command: Option<&str>,
+    goal: &str,
+) -> Result<(), StateError> {
+    let promoted = verdict == "promoted";
+    let suffix = format!("{run_id}_{num}");
+    ensure_goal(state, goal, actor).await?;
+
+    let mut patch = StatePatch::new(
+        PatchId::new(format!("patch_{suffix}")),
+        title.to_string(),
+        format!("commits {pre_sha}..{post_sha} in {repo}"),
+        actor.clone(),
+    );
+    patch.base_project_ref = Some(ProjectRef {
+        repo: repo.to_string(),
+        branch: branch.map(str::to_string),
+        commit: Some(pre_sha.to_string()),
+        worktree: None,
+    });
+    patch.artifacts =
+        vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)];
+    let patch_id = state.propose_patch(patch).await?;
+    state
+        .link(
+            actor.clone(),
+            NodeId::new(format!("patch_{suffix}")),
+            "advances",
+            NodeId::new(goal),
+        )
+        .await?;
+
+    // The session's mechanical gate, folded into one eval fact — the caller
+    // names its actual oracle so the record never overclaims what was checked.
+    let eval_command = eval_command_or_default(eval_command);
+    state
+        .record_eval(
+            actor.clone(),
+            EvalResult {
+                id: EvalId::new(format!("eval_{suffix}")),
+                command: eval_command.into(),
+                status: if promoted {
+                    EvalStatus::Passed
+                } else {
+                    EvalStatus::Failed
+                },
+                score: Some(if promoted { 1.0 } else { 0.0 }),
+                metadata: serde_json::json!({ "reason": reason }),
+            },
+            Some(patch_id.clone()),
+        )
+        .await?;
+
+    state
+        .record_decision_node(
+            actor.clone(),
+            Decision {
+                id: DecisionId::new(format!("decision_{suffix}")),
+                status: if promoted {
+                    DecisionStatus::Approved
+                } else {
+                    DecisionStatus::Rejected
+                },
+                reason: if promoted {
+                    format!("oracle passed ({eval_command}); kept")
+                } else {
+                    format!("reverted to {pre_sha}: {reason}")
+                },
+                decided_by: actor.clone(),
+                metadata: serde_json::json!({}),
+            },
+            Some(NodeId::new(format!("patch_{suffix}"))),
+        )
+        .await?;
+    state
+        .update_patch_status(
+            patch_id,
+            if promoted {
+                PatchStatus::Promoted
+            } else {
+                PatchStatus::Rejected
+            },
+            (!reason.is_empty()).then(|| reason.to_string()),
+        )
+        .await?;
+
+    if !promoted {
+        state
+            .record_failure(
+                actor.clone(),
+                NodeId::new(format!("failure_{suffix}")),
+                format!("task reverted: {title}"),
+                reason.to_string(),
+            )
+            .await?;
+        state
+            .link(
+                actor.clone(),
+                NodeId::new(format!("failure_{suffix}")),
+                "produced_by",
+                NodeId::new(run_id),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +963,47 @@ mod tests {
                 "summary of {goal:?}"
             );
         }
+    }
+
+    #[test]
+    fn eval_command_defaults_only_when_absent_or_empty() {
+        // Empty must behave exactly as absent: the sidecar uses
+        // `.filter(|s| !s.is_empty())` before its `unwrap_or`, and an empty
+        // string reaching the graph would record an oracle that names nothing.
+        assert_eq!(eval_command_or_default(None), DEFAULT_EVAL_COMMAND);
+        assert_eq!(eval_command_or_default(Some("")), DEFAULT_EVAL_COMMAND);
+        // A caller-named oracle is passed through verbatim — the record must
+        // say what was actually checked, not a generic stand-in.
+        assert_eq!(
+            eval_command_or_default(Some("cargo test --lib")),
+            "cargo test --lib"
+        );
+        assert_eq!(eval_command_or_default(Some(" ")), " ");
+    }
+
+    #[test]
+    fn default_eval_command_matches_the_sidecar_byte_for_byte() {
+        // Same discipline as standing_goal_title/summary: this string is an
+        // identity in a shared graph, so a reworded constant is a different
+        // claim about what judged the patch, not a nicer sentence.
+        // Source: tools/gasp-emit/src/main.rs, the "task-result" arm.
+        assert_eq!(
+            DEFAULT_EVAL_COMMAND,
+            "cargo fmt+clippy+build+test; evaluator agent"
+        );
+    }
+
+    #[test]
+    fn task_result_node_ids_have_the_sidecar_shape() {
+        // The sidecar builds every task-result node id off
+        // `format!("{}_{num}", run_id.as_str())`. These ids are how the two
+        // writers' graphs line up, so the shape is pinned rather than assumed.
+        let suffix = format!("{}_{}", "run_abc", "02");
+        assert_eq!(suffix, "run_abc_02");
+        assert_eq!(format!("patch_{suffix}"), "patch_run_abc_02");
+        assert_eq!(format!("eval_{suffix}"), "eval_run_abc_02");
+        assert_eq!(format!("decision_{suffix}"), "decision_run_abc_02");
+        assert_eq!(format!("failure_{suffix}"), "failure_run_abc_02");
     }
 
     #[test]
