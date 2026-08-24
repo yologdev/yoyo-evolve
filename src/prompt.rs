@@ -157,8 +157,12 @@ pub struct PromptOutcome {
 use crate::prompt_retry::{
     build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
-    retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    StopHandling, MAX_AUTO_RETRIES,
 };
+// Rate-limit aware retry (Day 177) — imported from its own module rather than
+// re-exported through `prompt_retry`, so a pass-through can't outlive its
+// callers.
+use crate::prompt_retry_limits::{rate_limit_giveup_message, retry_wait_decision, RetryWait};
 // MAX_RETRIES is pub(crate), so import without re-exporting.
 use crate::prompt_retry::MAX_RETRIES;
 
@@ -1066,14 +1070,33 @@ pub async fn run_prompt_with_changes(
                 accumulate_usage(&mut total_usage, &usage);
 
                 if attempt < MAX_RETRIES {
-                    let delay = retry_delay(attempt + 1);
-                    let delay_secs = delay.as_secs();
-                    let next = attempt + 2; // human-readable attempt number
-                    eprintln!(
-                        "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
-                        MAX_RETRIES + 1
-                    );
-                    tokio::time::sleep(delay).await;
+                    // One decision, both retry loops (the other is in
+                    // `run_prompt_auto_retry_with_content`) — a per-token pass
+                    // is not a per-entry-point pass.
+                    match retry_wait_decision(
+                        attempt + 1,
+                        &error_msg,
+                        crate::prompt_budget::session_budget_remaining(),
+                    ) {
+                        RetryWait::Wait(delay) => {
+                            let delay_secs = delay.as_secs();
+                            let next = attempt + 2; // human-readable attempt number
+                            eprintln!(
+                                "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+                                MAX_RETRIES + 1
+                            );
+                            tokio::time::sleep(delay).await;
+                        }
+                        RetryWait::GiveUp { retry_after } => {
+                            eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                            eprintln!(
+                                "{YELLOW}  ⏳ {}{RESET}",
+                                rate_limit_giveup_message(retry_after)
+                            );
+                            api_error = Some(error_msg);
+                            break;
+                        }
+                    }
                 } else {
                     // Exhausted all retries — show the final error with diagnostic
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
@@ -1395,14 +1418,31 @@ pub async fn run_prompt_with_content_and_changes(
                 accumulate_usage(&mut total_usage, &usage);
 
                 if attempt < MAX_RETRIES {
-                    let delay = retry_delay(attempt + 1);
-                    let delay_secs = delay.as_secs();
-                    let next = attempt + 2;
-                    eprintln!(
-                        "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
-                        MAX_RETRIES + 1
-                    );
-                    tokio::time::sleep(delay).await;
+                    // Same shared decision as `run_prompt_auto_retry` above.
+                    match retry_wait_decision(
+                        attempt + 1,
+                        &error_msg,
+                        crate::prompt_budget::session_budget_remaining(),
+                    ) {
+                        RetryWait::Wait(delay) => {
+                            let delay_secs = delay.as_secs();
+                            let next = attempt + 2;
+                            eprintln!(
+                                "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+                                MAX_RETRIES + 1
+                            );
+                            tokio::time::sleep(delay).await;
+                        }
+                        RetryWait::GiveUp { retry_after } => {
+                            eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                            eprintln!(
+                                "{YELLOW}  ⏳ {}{RESET}",
+                                rate_limit_giveup_message(retry_after)
+                            );
+                            api_error = Some(error_msg);
+                            break;
+                        }
+                    }
                 } else {
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
                     eprintln!("{DIM}  (failed after {} attempts){RESET}", MAX_RETRIES + 1);

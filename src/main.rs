@@ -110,6 +110,7 @@ mod memory;
 mod prompt;
 mod prompt_budget;
 mod prompt_retry;
+mod prompt_retry_limits;
 mod prompt_utils;
 mod providers;
 mod repl;

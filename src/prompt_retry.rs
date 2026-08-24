@@ -287,8 +287,13 @@ pub fn retry_delay(attempt: u32) -> Duration {
     let jitter_bp = (nanos % 1000) as u64; // 0..=999 basis points
     let factor_bp = 500 + jitter_bp; // 500..=1499 → 0.5x..~1.5x
     let jittered_ms = capped * factor_bp; // capped(sec) * factor_bp == capped*1000*factor_bp/1000 (ms)
-    Duration::from_millis(jittered_ms.max(500))
+    Duration::from_millis(jittered_ms.max(MIN_RETRY_DELAY_MS))
 }
+
+/// Floor for any retry sleep, in milliseconds. Shared by `retry_delay`'s
+/// jitter and by `prompt_retry_limits::retry_wait_decision`, so a provider that answers
+/// `retry after 1ms` cannot turn the retry loop into a hot loop.
+pub(crate) const MIN_RETRY_DELAY_MS: u64 = 500;
 
 /// Classify whether an API error message looks transient (worth retrying).
 /// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
