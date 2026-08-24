@@ -641,9 +641,22 @@ echo ""
 SELF_ISSUES=""
 if command -v gh &>/dev/null; then
     echo "→ Fetching self-issues..."
+    # No --author filter, for the reason the agent-revert fetch below already
+    # states: applying a label requires write access, so any agent-self issue
+    # is operator-blessed regardless of who opened it. With the filter on, an
+    # issue the CREATOR filed as agent-self was silently invisible to the
+    # planner. Verified there is no public path to the label: all three issue
+    # templates apply agent-input, none applies agent-self, and there is no
+    # blank-issue config.
+    #
+    # --limit raised 5 -> 12 in the same edit, because the filter was NOT the
+    # binding constraint and fixing only it would have been theatre. Measured
+    # 2026-08-23: 10 open agent-self, 4 creator-filed. At limit 5, newest-first,
+    # removing the filter surfaced exactly one creator issue and evicted the
+    # oldest bot one — #683, open since 2026-08-06 and the item the creator has
+    # actually been waiting on, stayed invisible either way.
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
-        --label "agent-self" --limit 5 \
-        --author "${BOT_LOGIN}" \
+        --label "agent-self" --limit 12 \
         --json number,title,body \
         --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number)\n**Title:** \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
         | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
