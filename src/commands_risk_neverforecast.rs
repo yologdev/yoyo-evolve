@@ -103,6 +103,25 @@ pub(crate) struct NeverForecastGroups {
     /// Never forecast but younger than the prediction history — absence here
     /// says nothing about the model.
     pub(crate) too_new: Vec<TooNewNeverForecast>,
+    /// How many of the files in [`dark`](Self::dark) got there with an age
+    /// that **could not be observed at all** — the resolver answered `None`,
+    /// or answered something unparseable (#819).
+    ///
+    /// This is a *count*, not a fourth group: every one of these files is
+    /// still in `dark`, because an unknown must never be promoted into the
+    /// comfortable bucket (Day 144). What it fixes is the reading: `dark`
+    /// mixes files verified old enough that the columns had real chances
+    /// with files whose age nothing could measure, and printing them under
+    /// one header renders "could not check" as "checked; clean".
+    ///
+    /// The shallow-clone case is the *common* one here — the harness
+    /// checkout is shallow, so `git_added_ts` declines for every file older
+    /// than the clone window (see [`shallow_boundary_hides_age`]).
+    ///
+    /// Only files that actually land in `dark` are counted. A studied file
+    /// is classified before the age question is ever asked, so counting one
+    /// there would be reporting an unknown that changed nothing.
+    pub(crate) age_unobservable: usize,
 }
 
 /// Every scored path that appears in **no** snapshot's `predicted` column and
@@ -165,6 +184,7 @@ pub(crate) fn never_forecast_files(
     let mut dark: Vec<NeverForecast> = Vec::new();
     let mut studied: Vec<StudiedNeverForecast> = Vec::new();
     let mut too_new: Vec<TooNewNeverForecast> = Vec::new();
+    let mut age_unobservable = 0usize;
     for (path, score) in risk_scores.iter() {
         if forecast.contains(path.as_str()) {
             continue;
@@ -180,8 +200,8 @@ pub(crate) fn never_forecast_files(
         }
         // 2. too new to have been forecast.
         let added = added_ts(path);
-        if let Some(n) = forecast_opportunities(added.as_deref(), &snapshot_ts) {
-            if n < MIN_FORECAST_OPPORTUNITIES {
+        match forecast_opportunities(added.as_deref(), &snapshot_ts) {
+            Some(n) if n < MIN_FORECAST_OPPORTUNITIES => {
                 too_new.push(TooNewNeverForecast {
                     path: path.clone(),
                     risk_score: *score,
@@ -190,6 +210,12 @@ pub(crate) fn never_forecast_files(
                 });
                 continue;
             }
+            Some(_) => {}
+            // The age could not be observed: no resolver answer, or one that
+            // did not parse. The file still goes to `dark` (#819 adds a
+            // report, never a reclassification) — but it is counted, so the
+            // dark list stops reading as a measurement it never made.
+            None => age_unobservable += 1,
         }
         // 3. dark — including unknown age.
         dark.push(NeverForecast {
@@ -204,6 +230,7 @@ pub(crate) fn never_forecast_files(
         dark,
         studied,
         too_new,
+        age_unobservable,
     }
 }
 
@@ -505,6 +532,80 @@ mod tests {
     }
 
     #[test]
+    fn test_report_age_unobservable_clause_present_and_absent() {
+        // Emission point: the string a caller receives. Both directions —
+        // the clause with its real count when > 0, and *nothing* when the
+        // whole set's age was observable (the byte-identical common path).
+        let snapshots: Vec<ParsedSnapshot> =
+            (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+        let pairs = scores(&[("src/a.rs", 5.0), ("src/b.rs", 4.0)]);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
+
+        // (a) one of the two cannot be dated.
+        let mixed = never_forecast_files(&snapshots, &pairs, &[], &|p| {
+            if p == "src/b.rs" {
+                Some("2020-01-01T00:00:00Z".to_string())
+            } else {
+                None
+            }
+        });
+        assert_eq!(mixed.age_unobservable, 1);
+        let with =
+            format_epistemic_report(&snapshots, &ranking, &mixed, &ExperimentFamilies::default());
+        assert!(
+            with.contains("age unobservable for 1 of these"),
+            "the count must reach the reader, got: {with}"
+        );
+        assert!(
+            with.contains("not evidence the columns ever had a chance"),
+            "what the count *means* is the other half of the clause, got: {with}"
+        );
+
+        // (b) near-miss: every age observed → the clause must not appear.
+        let observed = never_forecast_files(&snapshots, &pairs, &[], &|_| {
+            Some("2020-01-01T00:00:00Z".to_string())
+        });
+        assert_eq!(observed.age_unobservable, 0);
+        let without = format_epistemic_report(
+            &snapshots,
+            &ranking,
+            &observed,
+            &ExperimentFamilies::default(),
+        );
+        assert!(
+            !without.contains("age unobservable"),
+            "a fully observable run says nothing, got: {without}"
+        );
+    }
+
+    #[test]
+    fn test_age_unobservable_clause_does_not_collide_with_the_trajectory_parser() {
+        // scripts/extract_trajectory.py hard-stops collecting at the literal
+        // "never forecast" and matches dark rows with `^\s*◦\s+(\S+)\s+\(risk`.
+        // The clause must trip neither, or the planner's dark-room list moves.
+        let snapshots = vec![snap(100, &["src/seen.rs"], &[])];
+        let pairs = scores(&[("src/a.rs", 5.0)]);
+        let never = never_forecast_files(&snapshots, &pairs, &[], &|_| None);
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
+        let report =
+            format_epistemic_report(&snapshots, &ranking, &never, &ExperimentFamilies::default());
+        for line in report.lines().filter(|l| l.contains("age unobservable")) {
+            let plain = line
+                .replace(RESET.0, "")
+                .replace(DIM.0, "")
+                .replace(YELLOW.0, "");
+            assert!(
+                !plain.contains("never forecast"),
+                "clause must not re-trigger the hard stop: {plain}"
+            );
+            assert!(
+                !plain.trim_start().starts_with('◦'),
+                "clause must not read as a dark row: {plain}"
+            );
+        }
+    }
+
+    #[test]
     fn test_report_never_forecast_total_and_sample_cap() {
         let snapshots = vec![snap(100, &["src/seen.rs"], &[])];
         let mut pairs: Vec<(String, f64)> = Vec::new();
@@ -708,6 +809,74 @@ mod tests {
         let never = never_forecast_files(&snapshots, &scores(&[("src/x.rs", 4.0)]), &[], &|_| None);
         assert_eq!(never.dark.len(), 1, "unknown age stays dark");
         assert!(never.too_new.is_empty(), "unknown age is not too-new");
+        assert_eq!(
+            never.age_unobservable, 1,
+            "#819: still dark, but the unknown is now counted rather than absorbed"
+        );
+    }
+
+    #[test]
+    fn test_age_unobservable_counts_only_the_unmeasurable_dark_files() {
+        // Both directions in one fixture (a discriminator tested only on the
+        // side that fires is vacuous green): one file whose age nothing can
+        // observe, one whose age is observed and genuinely old. Both land in
+        // `dark`; only the first is counted.
+        let snapshots: Vec<ParsedSnapshot> =
+            (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[("src/unknown.rs", 5.0), ("src/old.rs", 4.0)]),
+            &[],
+            &|p| {
+                if p == "src/old.rs" {
+                    Some("2020-01-01T00:00:00Z".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(never.dark.len(), 2, "#819 reports, it does not reclassify");
+        assert_eq!(
+            never.age_unobservable, 1,
+            "only the file whose age could not be observed is counted"
+        );
+    }
+
+    #[test]
+    fn test_unparseable_add_date_counts_as_unobservable() {
+        // A date that does not parse is not a measurement either — the
+        // resolver spoke, but nothing usable came back.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let never = never_forecast_files(&snapshots, &scores(&[("src/x.rs", 4.0)]), &[], &|_| {
+            Some("not-a-date".to_string())
+        });
+        assert_eq!(never.dark.len(), 1);
+        assert_eq!(never.age_unobservable, 1);
+    }
+
+    #[test]
+    fn test_studied_file_with_unobservable_age_is_not_counted() {
+        // Classification order is studied → too_new → dark, so a studied file
+        // never reaches the age question. Counting one there would report an
+        // unknown that changed nothing.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let visits = vec![crate::commands_risk_epistemic::ExperimentVisit {
+            path: "src/lit.rs".to_string(),
+            day: 170,
+            state: StudyState::Graded("hit".to_string()),
+        }];
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[("src/lit.rs", 4.0)]),
+            &visits,
+            &|_| None,
+        );
+        assert_eq!(never.studied.len(), 1);
+        assert!(never.dark.is_empty());
+        assert_eq!(
+            never.age_unobservable, 0,
+            "the age question was never asked for this file"
+        );
     }
 
     #[test]

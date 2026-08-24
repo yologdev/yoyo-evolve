@@ -669,6 +669,21 @@ pub(crate) fn format_epistemic_report(
                 dark.len() - NEVER_FORECAST_SAMPLE
             ));
         }
+        // Fourth reported state (#819): not a group — a count. Every one of
+        // these files is *in* the list above; what could not be observed is
+        // its age. Emitted only when > 0, so a fully observable run is
+        // byte-identical to before. Deliberately avoids the literal substring
+        // the trajectory extractor hard-stops on, and matches neither its row
+        // regex (no leading `◦`) nor its numbered-entry regex.
+        if never.age_unobservable > 0 {
+            out.push_str(&format!(
+                "    {DIM}age unobservable for {} of these — a shallow clone or a path git does not know hides the add date.{RESET}\n",
+                never.age_unobservable
+            ));
+            out.push_str(&format!(
+                "    {DIM}For those, absence from every column is not evidence the columns ever had a chance.{RESET}\n"
+            ));
+        }
         // Keep each sentence on one line: the caveat is the honest part of this
         // section, and a mid-sentence wrap makes it unmatchable for any reader
         // (test or human) scanning line by line.
