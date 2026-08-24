@@ -1,0 +1,180 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing test and the marker sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat tests/gasp_doc_version.rs &&… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p tests/gasp_doc_vers… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_doc_version.rs (32 lines) ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:55..95 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:620..645 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 41.7s (5 ✓)
+
+Now the new scanner test (test-first — it'll fail until the second marker lands... actually it passes with one; the ≥2 comes from step 4). Writing it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/doc_version_claims.rs (225 lines)
+  + //! Freshness gate for prose claims about what an **external dependency**
+  + //! cannot do.
+  + //!
+  + //! Why this exists, stated plainly: `src/gasp.rs` used to assert that
+  + //! `task-result` (#683 item 5) was *unreachable* because `ProjectRef`,
+  + //! `ArtifactRef` and `PatchStatus` "do not appear anywhere in the published
+  + //! yoagent source". That was true when it was written against yoagent 0.16.3.
+  + //! It went stale the moment the pin moved to 0.16.4/0.16.5, where all three
+  + //! are re-exported from `yoagent::gasp` — and nothing failed, because prose
+  + //! has no compiler. **Eight sessions** (#763, #765, #782, #785, #787, #789,
+  + //! #803, plus the docs-only #788) opened that file, read an authoritative
+  + //! "impossible", believed it, and exited with an empty diff.
+  + //!
+  + //! The convention that came out of it: any prose claim asserting what an
+  + //! external dependency *cannot* do carries a marker naming the yoagent
+  + //! version it was checked against, and this test pins every such marker to
+  + //! whatever `Cargo.lock` actually resolves. When the pin moves, this fails and
+  + //! names the file, the line and the remedy — instead of the sentence quietly
+  + //! becoming false again.
+  + //!
+  ... (205 more lines)
+ ✓ (55.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rm -q tests/gasp_doc_version… ✓ (5ms)
+  2 tools completed in 58.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls tests/ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the second live marker — the MemoryEventStore claim in task_result's doc, which is the same genre (what an external dep cannot do) and is load-bearing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (4 → 12 lines)
+    /// tested here is the pure decision half ([`eval_command_or_default`]) and the
+    /// node-id shapes, which is the same coverage the three siblings actually
+    /// have.
+  + ///
+  + /// That last paragraph is a claim about what an external dependency *cannot*
+  + /// do — exactly the genre that went stale above and cost eight sessions — so
+  + /// it carries the same freshness marker, pinned by
+  + /// `tests/doc_version_claims.rs`. If upstream ever re-exports the store, this
+  + /// becomes false silently and the `*_in` bodies stay untested for no reason.
+  + ///
+  + /// <!-- yoagent-version-claim: 0.16.6 -->
+    ///
+ ✓ (55.9s)
+    /// tested here is the pure decision half ([`eval_command_or_default`]) and the
+    /// node-id shapes, which is the same coverage the three siblings actually
+    /// have.
+  + ///
+  + /// That last paragraph is a claim about what an external dependency *cannot*
+  + /// do — exactly the genre that went stale above and cost eight sessions — so
+  + /// it carries the same freshness marker, pinned by
+  + /// `tests/doc_version_claims.rs`. If upstream ever re-exports the store, this
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "yoagent-version-claim:… ✓ (162ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 3s (2 ✓)
+
+Two markers, green. Now the load-bearing verification — run the failure path and read the actual message:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '649s/0.16.6/0.16.3/' src… ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Actionable. Restore, then verify the vacuous-green branch too (a scanner that finds nothing must not pass quietly):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '649s/0.16.3/0.16.6/' src… ✓ (144ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both failure branches verified. Now CLAUDE.md — the convention paragraph and the stale bullet text:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "once the file is compil… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - and the corrected claim carries a single machine-readable `yoagent-version-claim` marker pinned to `Cargo.lock`'s resolved `yoagent` version by `tests/gasp_doc_version.rs` — an integration test, because this module is behind the default-off `gasp` feature and a `#[cfg(test)]` guard inside it would never run in a plain `cargo test`; the test also asserts the marker appears exactly once, since two markers are two sources of truth.
+  + and the corrected claim carries a machine-readable `yoagent-version-claim` marker pinned to `Cargo.lock`'s resolved `yoagent` version by `tests/doc_version_claims.rs` (see the dependency-version-claim gate above) — an integration test, because this module is behind the default-off `gasp` feature and a `#[cfg(test)]` guard inside it would never run in a plain `cargo test`. Day 177 (#821) widened that test from one hardcoded file to a scan and **retired its old exactly-once assertion**: once the marker is a convention rather than a single instance, "exactly one in the repo" forbids the second consumer, so the invariant that survives is *every marker agrees with `Cargo.lock`* plus *at least one marker exists*.
+ ✓ (54.6s)
+  - and the corrected claim carries a single machine-readable `yoagent-version-claim` marker pinned to `Cargo.lock`'s resolved `yoagent` version by `tests/gasp_doc_version.rs` — an integration test, because this module is behind the default-off `gasp` feature and a `#[cfg(test)]` guard inside it would never run in a plain `cargo test`; the test also asserts the marker appears exactly once, since two markers are two sources of truth.
+  + and the corrected claim carries a machine-readable `yoagent-version-claim` marker pinned to `Cargo.lock`'s resolved `yoagent` version by `tests/doc_version_claims.rs` (see the dependency-version-claim gate above) — an integration test, because this module is behind the default-off `gasp` feature and a `#[cfg(test)]` guard inside it would never run in a plain `cargo test`. Day 177 (#821) widened that test from one hardcoded file to a scan and **retired its old exactly-once assertion**: once the marker is a convention rather than a single instance, "exactly one in the repo" forbids the second consumer, so the invariant that survives is *every marker agrees with `Cargo.lock`* plus *at least one marker exists*.
+  2 tools completed in 1m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - and `yoagent::gasp` does not re-export it (probed at port time: the name does not resolve). **Zero tests drive any `*_in` body.**
+  + and `yoagent::gasp` does not re-export it (probed at port time: the name does not resolve). **Zero tests drive any `*_in` body.** That sentence is itself a claim about what an external dependency cannot do, so it carries the second live `yoagent-version-claim` marker (`src/gasp.rs`, in `task_result`'s doc) — if upstream ever re-exports the store it goes stale silently and the `*_in` bodies stay untested for no reason.
+ ✓ (55.1s)
+  - and `yoagent::gasp` does not re-export it (probed at port time: the name does not resolve). **Zero tests drive any `*_in` body.**
+  + and `yoagent::gasp` does not re-export it (probed at port time: the name does not resolve). **Zero tests drive any `*_in` body.** That sentence is itself a claim about what an external dependency cannot do, so it carries the second live `yoagent-version-claim` marker (`src/gasp.rs`, in `task_result`'s doc) — if upstream ever re-exports the store it goes stale silently and the `*_in` bodies stay untested for no reason.
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the convention paragraph, alongside the other three deterministic gates:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '67,68p' CLAUDE.md | cut … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (174ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.8s (2 ✓)
+
+CLAUDE.md's description of the rule doesn't itself become a marker (the colon is what makes one — pinned by a unit test). Full gate run:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (44.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets --fea… ✓ (11.6s)
+  3 tools completed in 1m 20s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -rn "… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && git log --oneline -… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 6befc0e8 | tail … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.6s (3 ✓)
+
+The deletion landed in an auto-commit; committing the rest:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (30 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo test… ✓ (1.0s)
+  2 tools completed in 8.1s (2 ✓)
+
+Done and committed (f3eed60d), tree clean.
+
+## What shipped
+
+`tests/gasp_doc_version.rs` → `tests/doc_version_claims.rs`, widened from one hardcoded file to a scan of src/**/*.rs + CLAUDE.md. (The rename's delete half had already been swept into an auto-commit, 6befc0e8.)
+
+• Scan, not hardcode — pure `markers_in(source) -> Vec<(line, version)>` over every file, all I/O at the call site. Failure collects *all* mismatches and prints each as file:line, claimed, resolved, and the sentence "re-read the paragraph above this marker — it may have gone stale".
+• Exactly-once retired, replaced with something stronger. Once the marker is a convention, "exactly one in the repo" forbids the second consumer. What survives: every marker agrees with `Cargo.lock` plus at least one marker exists — a scanner that finds nothing and passes is the vacuous-green shape.
+• Second live marker on the MemoryEventStore claim in task_result's doc. Same genre (what an external dep cannot do), load-bearing (it's the stated reason four ported arms have no behavioural test), and it rots silently if upstream re-exports the store. No substitution needed — the claim was where the task said it would be.
+• CLAUDE.md: convention paragraph beside the other three deterministic gates, plus the two stale spots in the gasp.rs bullet (tests/gasp_doc_version.rs, the exactly-once rule).
+
+## Both failure paths were run, not assumed
+
+Edited marker → 0.16.3: fired with the full remedy text. Broke the marker string repo-wide: the at-least-one assertion fired with "a scanner with nothing to scan passes for the wrong reason." Restored both. A gate whose failure path was never executed is a gate whose message is a guess.
+
+## Limits stated in the test's own doc comment
+
+A marker proves someone looked at the current version, never that the prose is correct — presence is mechanically checkable, truth is not. No blanket scan for "impossible"/"unreachable" wording; no markers on claims about my own code.
+
+Green: build, test (5074 + 4 new), clippy --all-targets -D warnings, fmt --check, and clippy --features gasp (the module I edited only compiles under that flag).
+
+One detail I enjoyed: CLAUDE.md now describes the convention without becoming an instance of it, because the colon is what makes a marker — and there's a unit test pinning exactly that.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
