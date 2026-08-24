@@ -191,6 +191,20 @@ UNKNOWN_AGE = "UNKNOWN_AGE"
 # each has a different remedy.
 EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
 
+# The FIFTH exclusion state (#810, @yuanhao 2026-08-24) — the fourth *bucket* in the
+# verdict, and the one that guards the input itself rather than the session. An empty or
+# truncated log scored IDENTICALLY to a genuinely healthy session:
+#
+#     $ printf '' > empty.log
+#     $ python3 scripts/measure_abstentions.py empty.log
+#     empty.log   abstentions=0  firings=0  fallback=0  gradeable=no  prose_excluded=0
+#
+# How it bit: a shell-quoting slip made three `gh run view --log` redirects write 0 bytes,
+# and the tool reported three clean sessions. "Could not check" must never read as
+# "checked; clean" — the refusal the pre-push hook makes, the refusal CiScan's
+# could-not-run branch makes, the refusal UngradedScan's unread-lines clause makes.
+EXCLUDED_NO_HARNESS_OUTPUT = "EXCLUDED_NO_HARNESS_OUTPUT"
+
 # `sessions/day-N-YYYYMMDDTHHMMSSZ` — written by scripts/evolve.sh:3471.
 SESSION_DIR_TS_RE = re.compile(r"^day-\d+-(\d{8}T\d{6}Z)$")
 COMPACT_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$")
@@ -275,6 +289,48 @@ _PROVIDER_ERROR_PATTERNS = (
 _GREP_PREFIX_RE = re.compile(r"^\s*[\w./~-]*:?\d+:")
 _BLOCKQUOTE_RE = re.compile(r"^\s*>")
 
+# Harness-output evidence (#810, @yuanhao 2026-08-24). These six lines are `echo`
+# statements to stdout in `scripts/evolve.sh` — read at HEAD, not trusted from a list:
+#
+#   :136   echo "=== Day $DAY ($DATE $SESSION_TIME) ==="
+#   :1167  echo "  Phase A1: Assessment (${ASSESS_TIMEOUT}s)..."
+#   :1291  echo "  Phase A2: Planning (${PLAN_TIMEOUT}s)..."
+#   :1709  echo "  Phase B: Implementation..."
+#   :1784  echo "  → Task $TASK_NUM: $task_title [$task_kind]"
+#   :3586  echo "=== Day $DAY complete ==="
+#
+# The anchor is a MARKER, not a byte count, and that is the whole design: byte size
+# misses the subtler half of this bug — a truncated or partially-downloaded log which
+# HAS bytes and no phase line, and which scores as clean today.
+#
+# Deliberately NOT anchored on: `=== YOUR TRAJECTORY ===` and the sibling `=== SECTION
+# ===` banners near evolve.sh:1175/:1313. Those live inside heredocs composing *prompt
+# text*, not harness stdout, so a log containing nothing but an echoed prompt would
+# match them and read as a real session.
+#
+# Each is the whole emitted line from its first word to end-of-line, with only counters,
+# timeouts and task titles loose, and `(?:^|\s)` to allow `gh run view`'s
+# `job\tjob\tTIMESTAMP` prefix. Presence of ANY ONE of them means the log carries
+# harness output.
+SESSION_HEADER = "SESSION_HEADER"
+PHASE_A1 = "PHASE_A1"
+PHASE_A2 = "PHASE_A2"
+PHASE_B = "PHASE_B"
+TASK_START = "TASK_START"
+SESSION_FOOTER = "SESSION_FOOTER"
+
+_HARNESS_OUTPUT_PATTERNS = (
+    (
+        SESSION_HEADER,
+        re.compile(r"(?:^|\s)=== Day \d+ \(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\) ===$"),
+    ),
+    (PHASE_A1, re.compile(r"(?:^|\s)Phase A1: Assessment \(\d+s\)\.\.\.$")),
+    (PHASE_A2, re.compile(r"(?:^|\s)Phase A2: Planning \(\d+s\)\.\.\.$")),
+    (PHASE_B, re.compile(r"(?:^|\s)Phase B: Implementation\.\.\.$")),
+    (TASK_START, re.compile(r"(?:^|\s)→ Task \d+: .*\[[^\[\]]*\]$")),
+    (SESSION_FOOTER, re.compile(r"(?:^|\s)=== Day \d+ complete ===$")),
+)
+
 
 def strip_ansi(text):
     """Remove ANSI escapes so a coloured emission matches its plain shape."""
@@ -350,6 +406,49 @@ def classify_provider_error(line):
     return (True, False)
 
 
+def classify_harness_output_line(line):
+    """Pure: the harness-marker name this line shape-matches, else None.
+
+    Shape only — says nothing about provenance, exactly as `classify_line` doesn't.
+    """
+    line = strip_ansi(line).rstrip("\n").rstrip()
+    for marker, pattern in _HARNESS_OUTPUT_PATTERNS:
+        if pattern.search(line):
+            return marker
+    return None
+
+
+def classify_harness_output(line):
+    """Return (marker, excluded_as_prose) — the two halves combined.
+
+    The prose filter is not ceremony here, it is the defect this tool was born from:
+    #810's own thread, its task file and the CLAUDE.md paragraph documenting this fix
+    all contain the literal strings `Phase A1` and `Phase A2`. A markdown-quoted or
+    grep-prefixed mention must NOT count as harness output — otherwise a log holding
+    only my own prose *about* the detector is judged a real session, which is the
+    permissive direction and the one that reinstates the bug.
+    """
+    marker = classify_harness_output_line(line)
+    if marker is None:
+        return (None, False)
+    if is_quoted_prose(line):
+        return (None, True)
+    return (marker, False)
+
+
+def has_harness_output(lines):
+    """Pure: True when any line carries an UNQUOTED harness marker.
+
+    The decision half of the fourth bucket. Presence, not a count: one real phase line
+    is enough to prove the log carries harness stdout.
+    """
+    for line in lines:
+        marker, _prose = classify_harness_output(line)
+        if marker is not None:
+            return True
+    return False
+
+
 def parse_timestamp(text):
     """Pure: an aware UTC datetime from a compact or ISO-8601 stamp, else None.
 
@@ -418,6 +517,18 @@ class SessionCounts:
         # Provider-error evidence (#810). Session-level presence — see
         # `provider_error_excluded` for the coarseness disclosure.
         self.provider_errors = 0
+        # Harness-output evidence (#810, 2026-08-24). THREE states, and the third is
+        # the point: an int is a real observation folded by `count_lines`; None means
+        # no line stream was folded at all, which is reachable only from a hand-built
+        # fixture (every production path goes through `session_from_path` ->
+        # `count_lines`). An unobserved stream must not be reported as an absent one.
+        self.harness_markers = None
+        # Harness-marker lines that were my own prose. Reported in the row ONLY when
+        # the session is excluded — that is the one place the number is a decision
+        # input ("your log has phase lines and every one of them is quoted"). Keeping
+        # it out of `prose_excluded` is deliberate: that counter is rendered on every
+        # healthy row, and folding these in would change the healthy path's output.
+        self.harness_prose_excluded = 0
         # Age and eligibility. The default is ELIGIBLE so that every path with no
         # `--since*` boundary behaves and renders exactly as it did before #810's
         # boundary landed.
@@ -456,14 +567,33 @@ class SessionCounts:
         return self.abstentions > 0 and self.provider_errors > 0
 
     @property
+    def no_harness_output(self):
+        """The fourth bucket: a line stream WAS folded and carried no harness marker.
+
+        `harness_markers is None` (no stream folded — hand-built fixture only) is
+        deliberately NOT this state: "nobody looked" is not "nothing was there".
+        """
+        return self.harness_markers == 0
+
+    @property
     def gradeable(self):
-        return self.abstentions > 0 and not self.provider_error_excluded
+        return (
+            self.abstentions > 0
+            and not self.provider_error_excluded
+            and not self.no_harness_output
+        )
 
     def row(self):
         # The eligibility suffix is emitted ONLY when the session is not eligible, and
         # the provider-error suffix ONLY when such a line was seen, so a run with no
         # boundary and no provider errors prints byte-identically to before.
         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+        if self.no_harness_output:
+            suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+            if self.harness_prose_excluded:
+                suffix += (
+                    f" [harness_markers_quoted={self.harness_prose_excluded}]"
+                )
         if self.provider_errors:
             suffix += (
                 f" [{EXCLUDED_PROVIDER_ERROR}: {self.provider_errors} line(s)]"
@@ -481,8 +611,17 @@ class SessionCounts:
 def count_lines(name, lines):
     """Pure: fold an iterable of lines into a SessionCounts."""
     counts = SessionCounts(name)
+    counts.harness_markers = 0
     for line in lines:
-        # Provider-error evidence first; its shapes are disjoint from the markers', so
+        # Harness-output evidence first, and deliberately WITHOUT `continue`: its six
+        # shapes are disjoint from the marker and provider-error shapes, and falling
+        # through guarantees every pre-existing counter is byte-identical to before.
+        harness_marker, harness_prose = classify_harness_output(line)
+        if harness_marker is not None:
+            counts.harness_markers += 1
+        elif harness_prose:
+            counts.harness_prose_excluded += 1
+        # Provider-error evidence next; its shapes are disjoint from the markers', so
         # the order is for readability, not precedence. Prose exclusions from BOTH
         # detectors land in the one `prose_excluded` counter — same fact, same remedy.
         is_provider_error, provider_prose = classify_provider_error(line)
@@ -729,7 +868,23 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
     # #808 in either direction — the gate is REQUIRED not to fire after a provider
     # refusal — so it leaves numerator and denominator both, and is named here rather
     # than folded into any of the three exclusions above.
-    provider_excluded = [s for s in sessions if s.provider_error_excluded]
+    # The fifth exclusion state / fourth bucket (#810, 2026-08-24). An input carrying
+    # no unquoted harness marker was not measured at all, so it must not stand in for a
+    # measured zero. It takes PRECEDENCE over the provider-error bucket below (an
+    # untrustworthy input cannot be evidence of anything, including a rate limit), and
+    # the two lists are kept disjoint so nothing is counted twice.
+    no_output_excluded = [s for s in sessions if s.no_harness_output]
+    if no_output_excluded:
+        header += (
+            f"excluded (no harness output): {len(no_output_excluded)} session(s) "
+            f"carried no unquoted `scripts/evolve.sh` phase marker — empty, truncated "
+            f"or the wrong stream, so nothing was measured. Excluded from numerator "
+            f"and denominator both, because an absent input must never stand in for a "
+            f"measured zero.\n"
+        )
+    provider_excluded = [
+        s for s in sessions if s.provider_error_excluded and not s.no_harness_output
+    ]
     if provider_excluded:
         header += (
             f"excluded (provider error): {len(provider_excluded)} session(s) had a "
@@ -744,11 +899,16 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
         if provider_excluded
         else ""
     )
+    if no_output_excluded:
+        prov_clause += (
+            f", {len(no_output_excluded)} excluded for no harness output"
+        )
+    other_excluded = len(provider_excluded) + len(no_output_excluded)
     if n < MIN_GRADEABLE_SESSIONS:
         return header + (
             f"NOT YET GRADEABLE: {n} of {MIN_GRADEABLE_SESSIONS} gradeable sessions "
             f"({len(sessions)} session(s) read, "
-            f"{len(sessions) - n - len(provider_excluded)} with zero "
+            f"{len(sessions) - n - other_excluded} with zero "
             f"abstentions and so excluded from both numerator and denominator"
             f"{prov_clause}). "
             f"Recording the wait, not a verdict."
@@ -757,7 +917,7 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
     return header + (
         f"VERDICT: of {n} gradeable sessions, the gate fired in {fired} "
         f"({len(sessions)} session(s) read, "
-        f"{len(sessions) - n - len(provider_excluded)} excluded for zero "
+        f"{len(sessions) - n - other_excluded} excluded for zero "
         f"abstentions{prov_clause})."
     )
 
@@ -1036,6 +1196,9 @@ def run_self_tests():
     session = count_lines(
         "fixture",
         [
+            # A real log carries harness stdout; without a phase marker this
+            # fixture would be EXCLUDED_NO_HARNESS_OUTPUT (#810, 2026-08-24).
+            "  Phase B: Implementation...",
             "  WARNING: No assessment produced — planning agent will read source "
             "directly (slower).",
             "  Planning agent produced 0 tasks — one corrective retry "
@@ -1282,7 +1445,11 @@ def run_self_tests():
     # a session with no structure block renders and grades exactly as before.
     structural_session = count_lines(
         "day-175-20260822T021038Z",
-        ["ordinary log noise", "  ⚡ auto-continuing (1/5 — more work pending)..."],
+        [
+            "  Phase B: Implementation...",
+            "ordinary log noise",
+            "  ⚡ auto-continuing (1/5 — more work pending)...",
+        ],
     )
     before_row = structural_session.row()
     before_counts = (
@@ -1413,6 +1580,7 @@ def run_self_tests():
     prov_session = count_lines(
         "day-175-20260821T212500Z",
         [
+            "  Phase B: Implementation...",
             "WARNING: No assessment produced — planning agent will read source "
             "directly (slower).",
             "  error: Rate limited, retry after Some(14454000)ms",
@@ -1439,6 +1607,9 @@ def run_self_tests():
     clean_session = count_lines(
         "day-175-20260822T034200Z",
         [
+            # A real log carries harness stdout; without a phase marker this
+            # fixture would be EXCLUDED_NO_HARNESS_OUTPUT (#810, 2026-08-24).
+            "  Phase B: Implementation...",
             "WARNING: No assessment produced — planning agent will read source "
             "directly (slower).",
             "  Running `cargo test`",
@@ -1455,7 +1626,10 @@ def run_self_tests():
     # verdict.
     noisy_zero = count_lines(
         "day-175-20260822T064100Z",
-        ["  error: Rate limited, retry after Some(5)ms"],
+        [
+            "  Phase B: Implementation...",
+            "  error: Rate limited, retry after Some(5)ms",
+        ],
     )
     check("no abstention → bucket silent", noisy_zero.provider_error_excluded, False)
     check("no abstention → not gradeable anyway", noisy_zero.gradeable, False)
@@ -1504,6 +1678,143 @@ def run_self_tests():
         "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
         "(5 session(s) read, 1 excluded for zero abstentions).",
     )
+
+    # ------------------------------------------------------------------
+    # 14. THE FOURTH BUCKET (#810, @yuanhao 2026-08-24): an empty or marker-less log
+    # must not score as a clean session. "Could not check" is not "checked; clean".
+    # ------------------------------------------------------------------
+
+    # (a) The reported reproduction, verbatim: a 0-byte log.
+    empty = count_lines("empty.log", [])
+    check("empty log has no harness output", empty.no_harness_output, True)
+    check("empty log is not gradeable", empty.gradeable, False)
+    check(
+        "empty log row names the bucket",
+        f"[{EXCLUDED_NO_HARNESS_OUTPUT}]" in empty.row(),
+        True,
+    )
+
+    # (b) Bytes but no marker — the truncated/partial download a byte-size anchor
+    # would wave through. This is the half the marker anchor exists for.
+    truncated = count_lines(
+        "truncated.log",
+        [
+            "  Running `cargo build`",
+            "   Compiling yoyo v0.1.0 (/home/runner/work/yoyo-evolve/yoyo-evolve)",
+            "    Finished dev [unoptimized + debuginfo] target(s) in 41.02s",
+            "ordinary log noise with plenty of bytes and no phase line at all",
+        ],
+    )
+    check("truncated log has bytes", len(truncated.name) > 0, True)
+    check("truncated log excluded", truncated.no_harness_output, True)
+
+    # (c) THE NEAR-MISS GUARD, and the positive control in miniature: ONE unquoted
+    # marker is enough, and every other number is what it was before this bucket
+    # existed. If the marker set is wrong, EVERY real session excludes itself, the
+    # denominator goes to zero and the tool says NOT YET GRADEABLE forever — the same
+    # "cannot fail loudly" defect wearing the opposite sign, and quieter.
+    real = count_lines(
+        "real.log",
+        [
+            "  Phase A2: Planning (5400s)...",
+            "  WARNING: No assessment produced — planning agent will read source "
+            "directly (slower).",
+            "  ⚡ auto-continuing (1/5 — more work pending)...",
+        ],
+    )
+    check("one marker is enough", real.no_harness_output, False)
+    check("marker does not disturb abstentions", real.abstentions, 1)
+    check("marker does not disturb firings", real.firings, 1)
+    check("real session still gradeable", real.gradeable, True)
+    check("real row carries no exclusion suffix", "[" in real.row(), False)
+
+    # (d) A log whose ONLY marker occurrence is my own prose is still excluded — the
+    # #810 contamination defect, one level up. This file, #810's thread and the
+    # CLAUDE.md paragraph documenting the fix all contain these strings.
+    prose_only = count_lines(
+        "prose.log",
+        [
+            # A backticked mention in my own prose, ending at the marker.
+            "the harness `echo`es:   Phase A1: Assessment (5400s)...",
+            "scripts/evolve.sh:1291:  Phase A2: Planning (5400s)...",
+            "> === Day 177 complete ===",
+        ],
+    )
+    check("quoted markers do not count", prose_only.no_harness_output, True)
+    check("quoted markers are counted, not dropped", prose_only.harness_prose_excluded, 3)
+    check(
+        "row discloses the quoted count",
+        "[harness_markers_quoted=3]" in prose_only.row(),
+        True,
+    )
+
+    # (e) Each of the six markers, individually. A marker set is only real where every
+    # member is exercised — one unexercised member is a silent hole in the anchor.
+    for label, line in (
+        (SESSION_HEADER, "=== Day 177 (2026-08-24 22:41) ==="),
+        (PHASE_A1, "  Phase A1: Assessment (5400s)..."),
+        (PHASE_A2, "  Phase A2: Planning (5400s)..."),
+        (PHASE_B, "  Phase B: Implementation..."),
+        (TASK_START, "  → Task 2: #810 — the fourth bucket [evolve]"),
+        (SESSION_FOOTER, "=== Day 177 complete ==="),
+    ):
+        check(f"marker {label} recognised", classify_harness_output_line(line), label)
+        check(f"marker {label} unquoted", classify_harness_output(line), (label, False))
+        # And with `gh run view --log`'s runner prefix in front.
+        prefixed = f"evolve\tevolve\t2026-08-24T22:41:03.1234567Z {line.strip()}"
+        check(f"marker {label} survives the runner prefix",
+              classify_harness_output_line(prefixed), label)
+
+    # The prompt-text banners are deliberately NOT markers: a log holding only an
+    # echoed prompt must not read as a real session.
+    check(
+        "prompt banner is not a harness marker",
+        classify_harness_output_line("=== YOUR TRAJECTORY ==="),
+        None,
+    )
+    check(
+        "pure fold agrees with the per-line half",
+        has_harness_output(["noise", "  Phase B: Implementation..."]),
+        True,
+    )
+    check("pure fold on an empty stream", has_harness_output([]), False)
+
+    # (f) The verdict names the bucket and folds it into nothing else.
+    def mk_noout(name, abstentions, firings):
+        c = mk(name, abstentions, firings)
+        c.harness_markers = 0
+        return c
+
+    def mk_seen(name, abstentions, firings):
+        c = mk(name, abstentions, firings)
+        c.harness_markers = 3
+        return c
+
+    v = grade([mk_seen("a", 1, 1), mk_seen("b", 1, 0), mk_noout("dead", 1, 0)])
+    check("verdict names the bucket", "excluded (no harness output): 1 session(s)" in v, True)
+    check("bucket named in the tail", "1 excluded for no harness output" in v, True)
+    check("not folded into provider errors", "excluded for provider errors" in v, False)
+    check("not folded into zero abstentions", "0 with zero abstentions" in v, True)
+    check("marker-less session left the denominator", "2 of 4 gradeable sessions" in v, True)
+    check("floor still unchanged", MIN_GRADEABLE_SESSIONS, 4)
+
+    # (g) Byte-identity for the healthy path: with harness output everywhere, `grade`
+    # returns the pre-change string verbatim. This is the whole common path and the
+    # regression risk.
+    check(
+        "harness output present → pre-change verdict verbatim",
+        grade([
+            mk_seen("a", 1, 1), mk_seen("b", 1, 0), mk_seen("c", 1, 1),
+            mk_seen("d", 1, 0), mk_seen("z", 0, 0),
+        ]),
+        "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
+        "(5 session(s) read, 1 excluded for zero abstentions).",
+    )
+
+    # (h) The third state: a hand-built SessionCounts folded NO line stream, so
+    # "nobody looked" must not be reported as "nothing was there".
+    check("unobserved stream is not the bucket", mk("hand", 1, 0).no_harness_output, False)
+    check("unobserved stream stays gradeable", mk("hand", 1, 0).gradeable, True)
 
     if failures:
         for f in failures:
