@@ -640,6 +640,14 @@ pub(crate) async fn session_end(
 /// node-id shapes, which is the same coverage the three siblings actually
 /// have.
 ///
+/// That last paragraph is a claim about what an external dependency *cannot*
+/// do — exactly the genre that went stale above and cost eight sessions — so
+/// it carries the same freshness marker, pinned by
+/// `tests/doc_version_claims.rs`. If upstream ever re-exports the store, this
+/// becomes false silently and the `*_in` bodies stay untested for no reason.
+///
+/// <!-- yoagent-version-claim: 0.16.6 -->
+///
 /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
 /// the two graphs must agree on what a promotion is, so this is deliberately a
 /// byte-identical comparison and not a looser parse.
