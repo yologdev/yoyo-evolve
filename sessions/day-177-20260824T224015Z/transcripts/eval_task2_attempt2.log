@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,730p src/format/mod.r… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '^  … (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 0577bfe7 2>… ✓ (9ms)
+ ✓ (25ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 21s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 59s (5 ✓)
+
+Verdict: PASS
+
+Both steps of the task landed correctly:
+
+Step 1 (cost.rs): The false "Cargo.lock is gitignored" mechanism is replaced with what actually happened, and the superseded claim is recorded rather than erased — including the commit (0577bfe7, 2026-08-24) that made it stale. I verified all three factual claims independently: the lockfile is tracked, git check-ignore finds nothing, and that commit exists with the stated message and date. The test logic (deriving from anthropic_preset) is untouched.
+
+Step 2 (format/mod.rs): Three of five racing tests fixed via the gate's first stated remedy — pure *_with cores (usage_print_line, context_usage_line, contextual_hint_with) plus one-line wrappers that are the sole global read. No #[serial] added. Production output is byte-identical, including print_usage's `!quiet && is_verbose()` short-circuit preserving the original read order. The three rewritten tests went from "must not panic" no-ops to both-direction assertions with near-miss guards.
+
+The register ratchet is the real proof here: branch 2 is fatal on a registered test that stopped violating, so a green suite means exactly the three fixed entries were removed. I counted the register directly — 14 entries with the per-file breakdown matching CLAUDE.md's new numbers exactly. The two left behind (test_enable_quiet_is_callable, test_disable_notify_is_callable) have the honest reason written into the register: the function under test is the setter, so there's no core to extract, and the compliant remedy would be deleting a vacuous test.
+
+tests/module_size.rs was also touched (2456 → 2568) — required by the size gate, with the growth explained, not a scope violation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (6ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git ls-files --error-unmatch Car… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "src/format/mod.rs" test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '("src/' tests/global_st… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,80p tests/global_state… ✓ (6ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 20s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 2m 21s (8 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+The code is genuinely good — this is a doc-sync rejection, not a code rejection:
+
+What's right:
+• cost.rs: the mechanism rewrite is factually correct and better than the task's framing — I verified 0577bfe7 build: track Cargo.lock and pin CI/release with --locked exists, so "it was true when written, went stale on this commit" is more accurate than "it was always wrong", and it records the superseded claim as the rule requires. Test logic untouched.
+• format/mod.rs: three pure cores (usage_print_line, context_usage_line, contextual_hint_with) with thin wrappers; no #[serial] anywhere; the !quiet && is_verbose() short-circuit preserves the original read order so print_usage is byte-identical. Rewritten tests went from asserting nothing to asserting both directions plus near-miss guards.
+• Register: exactly 3 removed (14 entries remain, 2 for format/mod.rs), ratchet green. The 2 left behind carry a real reason — the function under test is the setter, OnceLock::set is one-way, and the only compliant remedy would be deleting a vacuous test.
+
+What blocks it: git diff HEAD~1 --name-only shows four files, none of them CLAUDE.md. The Docs step was explicit and threefold, and all three are missing. CLAUDE.md line 74 still reads "17 do not ... `format/mod.rs` 5" against a register that now holds 14/2 — a false measurement left in the authoritative doc by the same commit whose step 1 existed to correct a false claim in a comment. Cheap to fix in a follow-up pass; not something to wave through.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

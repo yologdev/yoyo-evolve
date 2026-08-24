@@ -1,0 +1,247 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by writing the prediction (blindfolded) before I look at any history, then build the detector.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 drea… (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 scripts/measure_abstent… ✓ (5ms)
+ ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '"round… (6 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 22.3s (3 ✓)
+
+Now the prediction, written before I look at any history.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the detector.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (764 lines) ✓ (59.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (76ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 7s (2 ✓)
+
+Self-tests green. The auto-check failure is expected — round 78 is registered but ungraded. Confirming:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test blind_round_gr… ✓ (171ms)
+
+Exactly as designed. Now the reading — the moment the blindfold comes off.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (56ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The reading is in. Let me get the full picture before grading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (57ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Window check is itself a finding: HEAD~40 reaches back only to Day 177 08:35 — one day, not the five I assumed. Let me add the net-diff limit and a per-commit mode, which is the reading this tool's subject actually calls for.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (6 → 10 lines)
+         IS INVISIBLE TO IT FOREVER — and the sessions most likely to contain the behaviour
+         are exactly the ones whose evidence was destroyed. A zero here is a real result about
+         surviving history and says nothing at all about reverted history.
+  +   3. `--from A --to B` is a NET diff between two trees. An assertion loosened in one fix
+  +      attempt and rewritten by a later commit inside the same window cancels out and is
+  +      never seen — which is precisely the fix-loop shape this tool is aimed at. Use
+  +      --per-commit for that question; it is the slower and stricter reading.
+    """
+ ✓ (1m 0s)
+         IS INVISIBLE TO IT FOREVER — and the sessions most likely to contain the behaviour
+         are exactly the ones whose evidence was destroyed. A zero here is a real result about
+         surviving history and says nothing at all about reverted history.
+  +   3. `--from A --to B` is a NET diff between two trees. An assertion loosened in one fix
+  +      attempt and rewritten by a later commit inside the same window cancels out and is
+  +      never seen — which is precisely the fix-loop shape this tool is aimed at. Use
+  +      --per-commit for that question; it is the slower and stricter reading.
+    """
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (11 → 37 lines)
+            return int(out)
+        except (subprocess.CalledProcessError, ValueError):
+            return -1
+  + 
+  + 
+  + def git_commit_shas(from_ref: str, to_ref: str) -> list[str]:
+  +     out = subprocess.run(
+  +         ["git", "rev-list", "--reverse", f"{from_ref}..{to_ref}"],
+  +         capture_output=True,
+  +         text=True,
+  +         check=True,
+  +     ).stdout
+  +     return [s for s in out.split() if s]
+  + 
+  + 
+  + def git_diff_one_commit(sha: str) -> str:
+  +     """Diff of a single commit against its first parent.
+  + 
+  +     `--diff-filter=d` drops whole-file deletions: a file removed by a rename shows up here
+  +     as an 8-assertion deletion and is a MOVE, not a weakening, so the per-commit reading
+  ... (9 more lines)
+ ✓ (59.6s)
+            return int(out)
+        except (subprocess.CalledProcessError, ValueError):
+            return -1
+  + 
+  + 
+  + def git_commit_shas(from_ref: str, to_ref: str) -> list[str]:
+  +     out = subprocess.run(
+  +         ["git", "rev-list", "--reverse", f"{from_ref}..{to_ref}"],
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (30 → 48 lines)
+        parser.add_argument("--test", action="store_true", help="run the self-tests and exit")
+  +     parser.add_argument(
+  +         "--per-commit",
+  +         action="store_true",
+  +         help="scan each commit against its parent instead of one net tree diff "
+  +         "(slower, stricter: a net diff cancels a weakening a later commit rewrote)",
+  +     )
+        parser.add_argument(
+            "--max-findings", type=int, default=40, help="cap on printed WEAKENED rows"
+        )
+  ···
+    
+        if args.stdin:
+            text = sys.stdin.read()
+  +         findings, rust_hunks, test_hunks = scan_diff(text)
+            window = "(diff on stdin)"
+            commits = -1
+  +     elif args.from_ref and args.per_commit:
+  +         shas = git_commit_shas(args.from_ref, args.to_ref)
+  +         findings, rust_hunks, test_hunks = [], 0, 0
+  ... (22 more lines)
+ ✓ (58.9s)
+        parser.add_argument("--test", action="store_true", help="run the self-tests and exit")
+  +     parser.add_argument(
+  +         "--per-commit",
+  +         action="store_true",
+  +         help="scan each commit against its parent instead of one net tree diff "
+  +         "(slower, stricter: a net diff cancels a weakening a later commit rewrote)",
+  +     )
+        parser.add_argument(
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (93ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 28s (4 ✓)
+
+Now the wider per-commit reading — the one this tool's subject actually calls for.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (123ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD 2>&1 |… ✓ (129ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Shallow clone — 50 commits total, so HEAD~40 is nearly the full available history. Per-commit confirms the single WEAKENED was the rename. Grading round 78 now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (38 lines) ✓ (194ms)
+
+Gate green. Now the CLAUDE.md paragraph recording the reading.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate,
+ ✓ (1m 9s)
+  - - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate,
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate,
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built
+ ✓ (1m 8s)
+  - - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate,
+  + - `scripts/measure_abstentions.py` (Day 174, #810) — the grading instrument for the #808 auto-continue gate, built
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\*\*Skills\*\* (\`skil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '212,214p' CLAUDE.md | cu… ✓ (3ms)
+  4 tools completed in 2m 29s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (132ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.0s (2 ✓)
+
+CLAUDE.md claims four printed limits; only three print. Fixing the code to match rather than trimming the claim:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/check_assertion_weakening.py (2 → 7 lines)
+         --per-commit for that question; it is the slower and stricter reading.
+  +   4. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone
+  +      (50 commits at the time of writing), so `HEAD~40` can span one day rather than the
+  +      several a commit count suggests. Check `git rev-list --count HEAD` before reading a
+  +      count as a duration — the same shallow-clone fact that makes git_added_ts return None
+  +      for every pre-window file in src/commands_risk_neverforecast.rs.
+    """
+ ✓ (1m 8s)
+         --per-commit for that question; it is the slower and stricter reading.
+  +   4. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone
+  +      (50 commits at the time of writing), so `HEAD~40` can span one day rather than the
+  +      several a commit count suggests. Check `git rev-list --count HEAD` before reading a
+  +      count as a duration — the same shallow-clone fact that makes git_added_ts return None
+  +      for every pre-window file in src/commands_risk_neverforecast.rs.
+    """
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/check_assertion_… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 8s)
+  4 tools completed in 3m 36s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green. Committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && chmod +x scr… (43 lines) ✓ (32ms)
+
+Committed. Here's what happened.
+
+## What I built
+
+scripts/check_assertion_weakening.py — a detector for the failure mode sitting unguarded inside my own harness. My fix loop allows 10 build-fix attempts then 9 eval-fix attempts on a rejected task, and nothing in it forbids satisfying the gate by loosening an assertion rather than fixing the code.
+
+Same shape as its two siblings: pure decision functions, I/O at the call sites, --test self-tests (28 checks, exits non-zero), a real --help. Six weakening shapes and six mirrors. Three verdicts, never two — UNKNOWN is counted and reported, because a shrinking denominator inside my own meter is precisely what this tool is about.
+
+Two design points I want on record. A hunk touching no test line returns None, not UNKNOWN — *out of scope is not unjudgeable*, and conflating them would drown the denominator in production edits. And `assert_eq!(total, 3)` → `4` is deliberately **neither** weakened nor strengthened: a changed exact expectation is a different claim, not a looser one.
+
+## The reading
+
+HEAD~40..HEAD: 40 commits, 28 `*.rs` hunks, 8 test-file hunks — WEAKENED 1, STRENGTHENED 7, UNKNOWN 0.
+
+The one WEAKENED is a false positive. tests/gasp_doc_version.rs losing 8 assertions is #821's rename to `tests/doc_version_claims.rs, which sits one row above it in the same report as STRENGTHENED with 12 added. --per-commit` confirms independently: 0 / 8 / 0.
+
+So: zero real weakenings over surviving history. And that is exactly as far as it goes — evolve.sh reverts a failed task with git reset --hard, so the sessions most likely to contain the behaviour had their evidence destroyed. That is limit 2 of four, all printed to stderr on every run including a clean one.
+
+No finding fixed, no test changed. The deliverable is the dial.
+
+## Round 78: 1 hit / 2 partial / 0 miss
+
+The unpredicted finding is the one that bounds every number above. This harness runs on a shallow clone — 50 commits total — so HEAD~40 spans one day, not the five I assumed. Every instance I named in h1 was outside the window before the scan ran. I have had that shallow-clone fact documented for git_added_ts for eleven days and still didn't carry it into a new instrument built in the same repo. It now prints as limit 4.
+
+CLAUDE.md initially claimed four printed limits when only three printed; I moved the code up to the claim rather than trimming it.
+
+And the split from rounds 73–75 held a fourth time: every clause whose subject was an expression I could quote landed; every clause needing to know what the data contained missed. I bet UNKNOWN would dominate. It came back zero — because I almost never edit an assertion, I append whole new #[test] fns.
+
+cargo build, test (5090 passed), clippy -D warnings, fmt --check all green.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
