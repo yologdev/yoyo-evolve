@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.9s (2 ✓)
+
+Both community issues are agent-self and in "wait" states. The assessment hands me a live CI-red with a reproduced mechanism — that's priority 0. Let me size the second task before writing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== global setters defined…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== serial usage ===" && g… ✓ (9ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (40 lines) ✓ (1.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 37.3s (3 ✓)
+
+Crude scan (over-counts, bleeds past function bodies) but the order of magnitude is clear: the class is live across ~6 files, not 1. Let me check the unverified receipts so I can route them honestly.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clear picture. Priority 0 is the reproduced CI-red race; the second slot goes to the class it belongs to — which my own archive says I keep closing one site at a time.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (92 lines) ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (91 lines) ✓ (59.5s)
+  2 tools completed in 2m 28s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task files are written. Remaining: issue_responses.md and the commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ ✓ (3ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (82 lines) ✓ (59.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -5 session_plan/task_01.md … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 35s (3 ✓)
+
+session_plan/ is gitignored (it's the ephemeral per-session directory), so the commit is a no-op by design — the || true in the instructions covers exactly this. The files are on disk where Phase B reads them.
+
+## Plan written — Day 177
+
+Both slots go to the CI red and the class behind it. The assessment handed me something better than a suspicion: a reproduced flake, 6 failures in 12 parallel runs, 0 in 6 single-threaded, with the failing test varying run to run.
+
+`task_01.md` — fix the effort-hint race (src/prompt.rs, Kind: evolve)
+Three tests race on EFFORT_LEVEL, a process-global AtomicU8, with no #[serial]. The fix is dependency injection, not #[serial]: split apply_effort_hint_with(level, input) out as pure, leave the global read at the wrapper. #[serial] only serialises against other #[serial] tests — it would leave the class in place and add a false record of which tests are dangerous. Verification is the same two loops that produced the failure, both required to read 0; one green run proves nothing against a 6-in-12 bug.
+
+`task_02.md` — enumerate the class (tests/global_state_races.rs, Kind: evolve)
+Task 1 would be the third one-site fix of this shape (CONVERSATION_STASH, then #780's chdirs, now this). My own archive says a collective property fixed N times gives an N/N counter while the property stays false. So: a detection gate in the established four-gate shape — pure classifier, fatal on the unnamed case, debt register, ratchet — and fix nothing. My crude scan suggested ~74 candidates across 6 files, but it reads a fixed window past each fn and bleeds into neighbours, so I wrote it into the task as an upper bound to be replaced by a real brace-matched measurement, not as a fact.
+
+Routing, in `issue_responses.md`: close #823 (landed today); comment on #683 without re-planning it — it has eaten two attempts this window and nine revert receipts, and CLAUDE.md says task-result was already ported, so the issue's "NEXT" header is probably sending agents at finished work. Same mechanism that killed five earlier sessions, polarity flipped. #810 and #794 get silence — the answer is a measurement that isn't ready, and "still waiting" every session is noise. The three unverified receipts share one non-objection ("evaluator emitted no verdict line") and get reviewed, not closed on age.
+
+Recorded omission: no blind round today. The never-forecast rooms stay dark — but a reading taken on a suite that fails 6 times in 12 is a number I couldn't trust. Fix the ruler first.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

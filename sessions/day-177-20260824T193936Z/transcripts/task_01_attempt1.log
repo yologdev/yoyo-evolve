@@ -1,0 +1,239 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply_effort_hint" -r s… ✓ (6ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Confirmed. Let me reproduce the flake first, then fix.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,90p' src/cli_config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --bin yoyo 2>&1 | ta… ✓ (4ms)
+ ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Reproduced — 6 of 8 failed. Now the fix.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,30p' src/prompt.rs &&… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The second site builds a separate `Content::Text` block ("[Effort: {hint}]", no \n\n join) — provably not the same string as the wrapper's. Per the task, leaving it alone. Now step 1:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (8 → 20 lines)
+    pub(crate) fn apply_effort_hint(input: &str) -> String {
+  -     let hint = crate::cli_config::effort_level().system_hint();
+  +     apply_effort_hint_with(crate::cli_config::effort_level(), input)
+  + }
+  + 
+  + /// Decision half of [`apply_effort_hint`], with the effort level injected.
+  + ///
+  + /// The level lives in a process-global `AtomicU8` (`cli_config::EFFORT_LEVEL`), so a
+  + /// test that exercised the wrapper had to *write* that global — and three such tests
+  + /// raced each other on libtest's parallel threads, turning a green suite red at random
+  + /// (`cargo test --bin yoyo apply_effort_hint` failed 6 of 12 runs; CI run 32748888895).
+  + /// The global read now lives at the wrapper and the decision is pure, so the tests need
+  + /// no process-global write at all. Same shape as `context_budget_warning_with`.
+  + pub(crate) fn apply_effort_hint_with(level: crate::cli_config::EffortLevel, input: &str) -> String {
+  +     let hint = level.system_hint();
+        if hint.is_empty() {
+            input.to_string()
+        } else {
+ ✓ (1m 38s)
+    pub(crate) fn apply_effort_hint(input: &str) -> String {
+  -     let hint = crate::cli_config::effort_level().system_hint();
+  +     apply_effort_hint_with(crate::cli_config::effort_level(), input)
+  + }
+  + 
+  + /// Decision half of [`apply_effort_hint`], with the effort level injected.
+  + ///
+  + /// The level lives in a process-global `AtomicU8` (`cli_config::EFFORT_LEVEL`), so a
+  ... (10 more lines)
+
+Now step 2 — rewrite the three tests in place, same names, same assertions, no global write:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (34 → 41 lines)
+        #[test]
+        fn test_apply_effort_hint_low_prepends() {
+  -         use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  -         let original = effort_level();
+  -         set_effort_level(EffortLevel::Low);
+  -         let result = apply_effort_hint("Hello agent");
+  -         set_effort_level(original);
+  +         use crate::cli_config::EffortLevel;
+  +         // Level injected, not stored: these three tests used to write the process-global
+  +         // EFFORT_LEVEL and raced each other on libtest's threads (6 of 12 runs red).
+  +         let result = apply_effort_hint_with(EffortLevel::Low, "Hello agent");
+            assert!(result.starts_with("[Effort: "));
+            assert!(result.contains("concise"));
+            assert!(result.ends_with("Hello agent"));
+  ···
+    
+        #[test]
+        fn test_apply_effort_hint_medium_noop() {
+  -         use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  -         let original = effort_level();
+  ... (34 more lines)
+ ✓ (12.8s)
+        #[test]
+        fn test_apply_effort_hint_low_prepends() {
+  -         use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  -         let original = effort_level();
+  -         set_effort_level(EffortLevel::Low);
+  -         let result = apply_effort_hint("Hello agent");
+  -         set_effort_level(original);
+  +         use crate::cli_config::EffortLevel;
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#[serial] isn't in scope — and on reflection it shouldn't be. Reintroducing a global write in a test is exactly the hazard I'm removing. Let me use the repo's existing source-level connectivity pattern instead:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needle\|CARGO_MANIFEST_… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (14 → 26 lines)
+  -     /// The wrapper still reads the process-global level, so production behaviour is
+  -     /// unchanged by the split. Serialised because it is the one test here that touches
+  -     /// the global — and it is the only one that needs to.
+  +     /// The wrapper must still read the process-global level, or the split would have
+  +     /// silently disconnected `/effort` from every prompt. Pinned at the **source** level
+  +     /// rather than by driving the global: writing `EFFORT_LEVEL` from a test is the exact
+  +     /// hazard this split removed (three tests raced on it, 6 of 12 runs red), and one
+  +     /// test doing it would leave the class alive for the next one. Needle built at
+  +     /// runtime so it cannot match itself. **This is a weak check** — it proves the call
+  +     /// is present, not that its result is used; the pure half above carries the real
+  +     /// assertions.
+        #[test]
+  -     #[serial]
+        fn test_apply_effort_hint_wrapper_reads_the_global_level() {
+  -         use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  -         let original = effort_level();
+  -         set_effort_level(EffortLevel::High);
+  -         let result = apply_effort_hint("Hello agent");
+  -         set_effort_level(original);
+  -         assert_eq!(result, apply_effort_hint_with(EffortLevel::High, "Hello agent"));
+  ... (16 more lines)
+ ✓ (1m 40s)
+  -     /// The wrapper still reads the process-global level, so production behaviour is
+  -     /// unchanged by the split. Serialised because it is the one test here that touches
+  -     /// the global — and it is the only one that needs to.
+  +     /// The wrapper must still read the process-global level, or the split would have
+  +     /// silently disconnected `/effort` from every prompt. Pinned at the **source** level
+  +     /// rather than by driving the global: writing `EFFORT_LEVEL` from a test is the exact
+  +     /// hazard this split removed (three tests raced on it, 6 of 12 runs red), and one
+  +     /// test doing it would leave the class alive for the next one. Needle built at
+  ... (13 more lines)
+  2 tools completed in 1m 50s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the current state and run the checks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '14,36p' src/prompt.rs &&… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits are in. Now the verification loops that produced the failure — 12 parallel, 6 single-threaded:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --bin yoyo 2>&1 | ta… ✓ (1.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+12 of 12 green (was 6 of 12 red). Now the single-threaded loop:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 6 SINGLE-THREADED RUNS… ✓ (870ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both loops read 0 failures. Now the positive control — my own lesson says a discriminator tested only on the side that passes is vacuous green. Does the new guard actually fail if the wrapper stops reading the global?
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (14 lines) ✓ (46.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed — the guard fails when the wrapper stops reading the global, green when restored. Now the docs line:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`prompt.rs\` — prom… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion.
+  + assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion. Day 177: `apply_effort_hint` was split into a one-line wrapper that reads the process-global `cli_config::effort_level()` and the pure `apply_effort_hint_with(level, input)` holding the whole decision — production behaviour is **byte-identical**, the wrapper is the only global read, and the point is the tests: the three `test_apply_effort_hint_*` tests each wrote `EFFORT_LEVEL` (an `AtomicU8`) and raced each other on libtest's parallel threads, so `cargo test --bin yoyo apply_effort_hint` failed **6 of 12** runs while `--test-threads=1` failed 0 of 6 — a flaky red, which in `scripts/evolve.sh` means `git reset --hard` on whatever correct work was sitting beside it (CI run `32748888895` on `f3719406`). They now pass an explicit `EffortLevel` and touch no global, and **no `#[serial]` was added** — it only serialises against other `#[serial]` tests and would leave the class alive for the next test to trip on, plus a false record of which tests are dangerous (the #780 reason). The wrapper's global read is pinned by `test_apply_effort_hint_wrapper_reads_the_global_level`, a deliberately **weak** source-level check (needle built at runtime so it cannot match itself) — it proves the call is present, not that its result is used — verified against a broken wrapper before landing rather than only in the passing direction. **Deliberately not unified:** `run_prompt_with_content_and_changes` re-reads the global and builds its own `[Effort: {hint}]` as a *separate* `Content::Text` block, which is provably **not** the same string as the wrapper's `[Effort: {hint}]\n\n{input}`, so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested.
+ ✓ (1m 26s)
+  - assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion.
+  + assert `tool_call_count() == 1` while `edit_count() == 0` — the whole defect in one assertion. Day 177: `apply_effort_hint` was split into a one-line wrapper that reads the process-global `cli_config::effort_level()` and the pure `apply_effort_hint_with(level, input)` holding the whole decision — production behaviour is **byte-identical**, the wrapper is the only global read, and the point is the tests: the three `test_apply_effort_hint_*` tests each wrote `EFFORT_LEVEL` (an `AtomicU8`) and raced each other on libtest's parallel threads, so `cargo test --bin yoyo apply_effort_hint` failed **6 of 12** runs while `--test-threads=1` failed 0 of 6 — a flaky red, which in `scripts/evolve.sh` means `git reset --hard` on whatever correct work was sitting beside it (CI run `32748888895` on `f3719406`). They now pass an explicit `EffortLevel` and touch no global, and **no `#[serial]` was added** — it only serialises against other `#[serial]` tests and would leave the class alive for the next test to trip on, plus a false record of which tests are dangerous (the #780 reason). The wrapper's global read is pinned by `test_apply_effort_hint_wrapper_reads_the_global_level`, a deliberately **weak** source-level check (needle built at runtime so it cannot match itself) — it proves the call is present, not that its result is used — verified against a broken wrapper before landing rather than only in the passing direction. **Deliberately not unified:** `run_prompt_with_content_and_changes` re-reads the global and builds its own `[Effort: {hint}]` as a *separate* `Content::Text` block, which is provably **not** the same string as the wrapper's `[Effort: {hint}]\n\n{input}`, so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested.
+  2 tools completed in 1m 39s (2 ✓)
+
+Now the full gate:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy and build are green. Now the full test suite, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exit 141 was SIGPIPE from head. Re-running cleanly:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/testout.txt | grep -c "… ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 12s (2 ✓)
+
+All 7 test binaries green, fmt clean, only the two intended files touched. Re-running the flake loops one final time post-fmt, since those numbers are the commit message's headline claim:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && P=0; for i in $(seq 12); do carg… ✓ (2.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (54 lines) ✓ (23ms)
+  2 tools completed in 20.9s (2 ✓)
+
+Committed as 38b398d1.
+
+## What happened
+
+Reproduced first, fixed second. Before the change, cargo test --bin yoyo apply_effort_hint failed 6 of 12 parallel runs and 0 of 6 single-threaded. After: 12/12 and 6/6 green. Both numbers are in the commit message, because one green run proves nothing against a 6-in-12 bug.
+
+The mechanism was exactly as the task described: three tests each writing EFFORT_LEVEL, a process-global AtomicU8, on libtest's parallel threads. _medium_noop's store lands between _low_prepends's store and its read, the low test sees Medium's empty hint, contains("concise") is false.
+
+The fix is injection, not scheduling. `apply_effort_hint_with(level, input) holds the whole old body; apply_effort_hint(input)` is a one-line wrapper reading the global. Production is byte-identical. All three test names and every assertion survived; they now pass an explicit EffortLevel and touch no global. No `#[serial]` — it only serialises against other #[serial] tests, so it would leave the class alive for the next test and leave a false record of which tests are dangerous.
+
+## Two judgment calls worth flagging
+
+I ran the positive control. My own archive says a discriminator tested only on the side that passes is vacuous green — so I hardcoded the wrapper to Medium and confirmed the new source-level guard actually fails with the right message, then restored. It's a weak check and the doc comment says so outright: it proves the call is present, not that its result is used. The pure half carries the real assertions.
+
+I declined the optional tail, on evidence. run_prompt_with_content_and_changes builds [Effort: {hint}] as a separate Content::Text block — not the same string as the wrapper's [Effort: {hint}]\n\n{input}. Unifying them would change what reaches the model, so the duplication stands and CLAUDE.md now records that the second path is untested rather than quietly leaving it looking handled.
+
+## What I won't claim
+
+This proves the class is gone at this site. The three mutation readings in CLAUDE.md are caveated on "the flaky class is not proven gone repo-wide" — and they still should be. One cured site is not a repo-wide proof, and the temporal link between the 16:06 red and that session's revert remains unverified.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

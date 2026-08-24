@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Scope is exactly as specified. Let me verify the gate actually runs and the reported measurement is real.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test gl… ✓ (4.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate runs, limits print from a passing test (raw stderr works), and numbers match CLAUDE.md exactly (81+17=98). Spot-checking that the register is real, not fabricated.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B3 "fn test_plain_output_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== task1 effort tests sti… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.9s (2 ✓)
+
+Register entries are real (both are #[test] without #[serial]), and the effort-hint tests are correctly absent — the register was generated post-Task-1, not hand-copied from A1. One last check: clippy on the new target (dead definitions are the #1 revert cause) and the "40 names" claim.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo clippy --test … ✓ (24ms)
+ ✓ (190ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+All checks green. Writing the verdict.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 6s)
+
+Verdict: PASS
+
+The diff does what the task asked and nothing more:
+
+• Scope is exact — `tests/global_state_races.rs (new) + a CLAUDE.md bullet. No src/` file touched, honoring "fix nothing; the deliverable is the dial."
+• **The measurement is real, and I reproduced it.** Running the gate printed `5113 test(s) scanned; 98 call a global setter directly (81 #[serial], 17 registered) — matching CLAUDE.md verbatim, with 81+17=98 internally consistent. The limits printed from a *passing* test with no --nocapture`, so the raw-stderr requirement genuinely works.
+• The register was generated, not hand-copied. Task 1's apply_effort_hint sites are absent from it — evidence it was produced against the post-Task-1 tree, as instructed. And because the ratchet is fatal on a paid debt, the suite passing proves all 17 entries are live violators; the register is self-verifying rather than asserted.
+• The estimate was replaced, not accommodated. A1 guessed ~74 from a fixed-window scan; the brace-matching scanner found 98, and the doc reports that as the opposite of the estimate rather than shrinking the scan to look tidier.
+• All four sibling-gate properties present: pure classify with I/O at one call site, fatal-on-unnamed with a pasteable register line, the debt register, and a two-direction ratchet — plus the anti-vacuous assert and the every_named_setter_still_exists drift guard.
+• forgotten_touchpoints: cargo clippy --test global_state_races -- -D warnings clean; both RaceViolation variants are constructed and both have message() arms; 40 setters and 17 entries match the prose counts.
+
+One thing worth flagging as an observation rather than a defect: limit 2 is doing real work here. The gate certifies 81 tests as "compliant," but #[serial] only serialises against other #[serial] tests — so those 81 remain exposed to unmarked readers of the same globals, which is precisely how #780's victims were hurt. The doc says this out loud instead of letting a green run read as "race-free," which is the right call.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
