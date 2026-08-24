@@ -10,12 +10,12 @@
 //!
 //! Ported from the sidecar: **all four arms** — `session-start`
 //! (`session_start`), `task` (`task_planned`), `session-end` (`session_end`)
-//! and, as of Day 175, `task-result` ([`task_result`]) — plus the
+//! and, as of Day 177, `task-result` ([`task_result`]) — plus the
 //! `ensure_goal` helper they share.
 //!
 //! **Superseded claim, recorded rather than erased** (Day-165 rule): this
 //! paragraph read "`task-result` is **still only in `tools/gasp-emit`** —
-//! unported, but **not blocked**" from Day 172 until Day 175. Both halves were
+//! unported, but **not blocked**" from Day 172 until Day 177. Both halves were
 //! accurate when written; only the first is now false. It is kept because the
 //! *earlier* version of this sentence — which said `task-result` was
 //! *unreachable* — is what cost six sessions, and the correction is worth more
@@ -53,17 +53,29 @@
 //! analysis being re-run. That guard is the reason this correction cannot go
 //! stale the way the last one did.
 //!
-//! What is still true: `task-result` is **not ported**, and porting it is out
-//! of scope here. It needs `patch.base_project_ref`, `patch.artifacts` and
-//! `update_patch_status(…, PatchStatus::Promoted, …)`
-//! (`tools/gasp-emit/src/main.rs:166-268`). `session_end` is the odd one of
-//! the three: it has no store-generic `*_in` body, because `commit_run` /
-//! `release_lease` are `GitEventStore` *inherent* methods rather than
-//! `EventStore` trait methods, so it cannot be driven against a scratch store
-//! and is compile-tested only (its two pure halves are table-tested). All
-//! three ship **dormant**: nothing calls them yet, since their consumers are
-//! #683 items (3)+(7) (the operator-lane env bridge). They compile, they
-//! unit-test, they record nothing.
+//! **Superseded claim, corrected in the same commit that falsified it**: this
+//! paragraph opened "What is still true: `task-result` is **not ported**, and
+//! porting it is out of scope here", listing `patch.base_project_ref`,
+//! `patch.artifacts` and `update_patch_status(…, PatchStatus::Promoted, …)`
+//! (`tools/gasp-emit/src/main.rs:166-268`) as what it would need. All three
+//! are named by [`task_result`] below, so that sentence is now false. It is
+//! recorded rather than deleted because a stale *sibling* of it — the earlier
+//! "unreachable" wording — is precisely what cost eight sessions, and the
+//! lesson is that the half an agent opens to do the work is the half that has
+//! to be true.
+//!
+//! `session_end` is the odd one of the four: it has no store-generic `*_in`
+//! body, because `commit_run` / `release_lease` are `GitEventStore` *inherent*
+//! methods rather than `EventStore` trait methods, so it cannot be written
+//! against a generic store at all and is compile-tested only (its two pure
+//! halves are table-tested).
+//!
+//! All four ship **dormant**: nothing calls any of them, since their consumer
+//! is #683 items (3)+(7) (the operator-lane env bridge). They compile, their
+//! pure halves unit-test, and they record nothing. **Zero tests drive any
+//! `*_in` body** — see [`task_result`]'s doc for the measured reason
+//! (`MemoryEventStore` is not reachable from this crate's dependency set), so
+//! "store-generic" here means the right *shape*, never an exercised one.
 //!
 //! Redaction is not optional here: recorded summaries land in a *shareable*
 //! git repo, so the recorder is opened with `with_summarizer(redact_secrets)`
@@ -424,8 +436,11 @@ pub(crate) async fn session_start(
     .await
 }
 
-/// Store-generic body of [`session_start`], so the behaviour is testable
-/// against a scratch store without a live recorder.
+/// Store-generic body of [`session_start`]. **Not** currently exercised: this
+/// doc used to claim the shape made the behaviour "testable against a scratch
+/// store without a live recorder", and no such test exists or can exist today
+/// — see [`task_result`] for the measured reason. Generic for shape, not for
+/// coverage.
 #[allow(clippy::too_many_arguments)]
 async fn session_start_in<S: EventStore>(
     state: &YoAgentState<S>,
