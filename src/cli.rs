@@ -1068,6 +1068,21 @@ fn parse_permission_and_dir_config(
         }
     };
 
+    // #823: `[directories]` entries are matched by prefix, never globbed, so a
+    // `src/*` can never match anything — an allow list that fails safe but
+    // baffling, a deny list that fails open and silent. Warn; nothing is
+    // refused or rewritten. Wired at BOTH parse_directories_from_config call
+    // sites (here and dispatch_sub's `permissions` arm) — a per-token pass is
+    // not a per-entry-point pass.
+    let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+    if !is_quiet() {
+        if let Some(msg) =
+            crate::config::directory_wildcard_warning(&wildcards, crate::format::is_plain_output())
+        {
+            eprintln!("{YELLOW}{msg}{RESET}");
+        }
+    }
+
     (permissions, dir_restrictions)
 }
 

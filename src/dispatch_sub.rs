@@ -434,6 +434,18 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 }
                 let permissions = gated.permissions;
                 let dir_restrictions = crate::config::parse_directories_from_config(&raw_config);
+                // #823: the door a user walks through *specifically to check
+                // what is in force* must not list `src/*` as an active fence
+                // when it matches nothing. Same two helpers as parse_args.
+                let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+                if !crate::format::is_quiet() {
+                    if let Some(msg) = crate::config::directory_wildcard_warning(
+                        &wildcards,
+                        crate::format::is_plain_output(),
+                    ) {
+                        eprintln!("{YELLOW}{msg}{RESET}");
+                    }
+                }
                 let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
                 crate::commands_config::handle_permissions(
                     auto_approve,

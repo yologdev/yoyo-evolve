@@ -350,6 +350,116 @@ pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
     config
 }
 
+/// Glob metacharacters that make a `[directories]` entry unmatchable (#823).
+///
+/// `*` is the one [`glob_match`] actually honours in `[permissions]`, which is
+/// where the confusion comes from. `?` is included even though `glob_match`
+/// treats it literally too, because a user who writes it plainly *meant* a
+/// wildcard — and over-reporting here costs exactly one printed line, since
+/// nothing is refused, dropped or rewritten. `[` is deliberately **not**
+/// detected: bracket ranges are rarer still and `[` is a plausible literal in
+/// a real directory name.
+const DIRECTORY_GLOB_METACHARS: [char; 2] = ['*', '?'];
+
+/// Which half of `[directories]` an offending entry came from.
+///
+/// Kept distinct because the *consequence* differs, not for cosmetics: an
+/// unmatchable `allow` entry denies everything (fails safe, loudly), while an
+/// unmatchable `deny` entry protects nothing (fails **open**, silently).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectoryList {
+    Allow,
+    Deny,
+}
+
+impl DirectoryList {
+    fn key(self) -> &'static str {
+        match self {
+            DirectoryList::Allow => "allow",
+            DirectoryList::Deny => "deny",
+        }
+    }
+
+    fn consequence(self) -> &'static str {
+        match self {
+            // An allow list that is non-empty but matches nothing denies every
+            // path: "not under any allowed directory" for every file tool call.
+            DirectoryList::Allow => "matches nothing, so every file access is denied",
+            // A deny entry that matches nothing is a fence that does not exist.
+            DirectoryList::Deny => "matches nothing, so it protects nothing",
+        }
+    }
+}
+
+/// Entries in `[directories]` that carry a glob metacharacter (#823).
+///
+/// `[permissions]` patterns are globbed by [`glob_match`]; `[directories]`
+/// entries are matched by `path_is_under`, a plain resolved-string prefix test
+/// with **no globbing at all**. So a `*` in a `[directories]` entry is a literal
+/// `*` character: `src/*` resolves to `$CWD/src/*`, a directory that cannot
+/// exist, and the entry can never match anything.
+///
+/// Scans **both** lists, `allow` first then `deny`, returning the offending
+/// entries verbatim. Detection only — nothing here refuses, drops or rewrites
+/// an entry.
+pub(crate) fn wildcard_directory_entries(
+    dirs: &DirectoryRestrictions,
+) -> Vec<(DirectoryList, String)> {
+    let has_meta = |e: &String| e.chars().any(|c| DIRECTORY_GLOB_METACHARS.contains(&c));
+    dirs.allow
+        .iter()
+        .filter(|e| has_meta(e))
+        .map(|e| (DirectoryList::Allow, e.clone()))
+        .chain(
+            dirs.deny
+                .iter()
+                .filter(|e| has_meta(e))
+                .map(|e| (DirectoryList::Deny, e.clone())),
+        )
+        .collect()
+}
+
+/// Render the `[directories]` wildcard warning (#823), or `None` when there is
+/// nothing true to say.
+///
+/// `None` for an empty slice is the byte-identical common path: every user who
+/// does not write a wildcard sees output unchanged. Glyph-free under `plain`
+/// (no bullets, no em dashes), mirroring `cli::project_permission_refusal_message`.
+///
+/// This is a **warning only** — the restrictions pass through untouched, and
+/// `[directories]` still has no glob support.
+pub(crate) fn directory_wildcard_warning(
+    entries: &[(DirectoryList, String)],
+    plain: bool,
+) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let marker = if plain { "" } else { "⚠ " };
+    let (noun, verb) = if entries.len() == 1 {
+        ("entry", "contains")
+    } else {
+        ("entries", "contain")
+    };
+    let mut msg = format!(
+        "{marker}{} [directories] {noun} {verb} a wildcard. [directories] takes literal paths:",
+        entries.len()
+    );
+    for (list, entry) in entries {
+        msg.push_str(&format!(
+            "\n    {} = \"{}\"  ({})",
+            list.key(),
+            entry,
+            list.consequence()
+        ));
+    }
+    let sep = if plain { "." } else { " —" };
+    msg.push_str(&format!(
+        "\n  [directories] entries are matched by prefix, never globbed{sep} a `*` or `?` in one is a literal character.\n  Name the directory itself instead (`src`, not `src/*`): a directory entry already covers everything beneath it.\n  ([permissions] allow/deny patterns ARE globbed. The two blocks use different matchers.)"
+    ));
+    Some(msg)
+}
+
 /// Parse `[mcp_servers.<name>]` sections from raw config content.
 ///
 /// Each section defines a named MCP server with a command, optional args, and optional env vars:
@@ -2799,5 +2909,193 @@ mod tilde_restriction_tests {
                 "expand_tilde_with({input:?}, {home:?})"
             );
         }
+    }
+}
+
+/// #823 — `[directories]` wildcard detection and its warning.
+///
+/// The matcher itself is deliberately untouched by these tests: `check_path` /
+/// `path_is_under` still treat `*` as a literal character, and this task adds a
+/// warning, not glob support.
+#[cfg(test)]
+mod directory_wildcard_tests {
+    use super::*;
+
+    fn dirs(allow: &[&str], deny: &[&str]) -> DirectoryRestrictions {
+        DirectoryRestrictions {
+            allow: allow.iter().map(|s| s.to_string()).collect(),
+            deny: deny.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Pure table over the detector: both metacharacters, both lists, empty,
+    /// and a literal entry carrying neither.
+    #[test]
+    fn wildcard_directory_entries_table() {
+        type Case<'a> = (&'a [&'a str], &'a [&'a str], &'a [(DirectoryList, &'a str)]);
+        let cases: &[Case] = &[
+            // No restrictions at all.
+            (&[], &[], &[]),
+            // Plain literal entries — the common case, nothing reported.
+            (&["src", "tests"], &["secrets"], &[]),
+            // `*` in allow.
+            (&["src/*"], &[], &[(DirectoryList::Allow, "src/*")]),
+            // `?` in allow — over-reported on purpose (see DIRECTORY_GLOB_METACHARS).
+            (
+                &["src/mod?.rs"],
+                &[],
+                &[(DirectoryList::Allow, "src/mod?.rs")],
+            ),
+            // `*` in deny — the direction that fails OPEN.
+            (&[], &["secrets/*"], &[(DirectoryList::Deny, "secrets/*")]),
+            // Both lists at once: allow entries come first, deny after.
+            (
+                &["src", "gen/*"],
+                &["secrets/*", "vendor"],
+                &[
+                    (DirectoryList::Allow, "gen/*"),
+                    (DirectoryList::Deny, "secrets/*"),
+                ],
+            ),
+            // A path that merely *contains* a directory named with no
+            // metacharacter stays clean.
+            (&["/abs/path/to/src"], &[], &[]),
+        ];
+
+        for (allow, deny, expected) in cases {
+            let got = wildcard_directory_entries(&dirs(allow, deny));
+            let want: Vec<(DirectoryList, String)> =
+                expected.iter().map(|(l, s)| (*l, s.to_string())).collect();
+            assert_eq!(got, want, "allow={allow:?} deny={deny:?}");
+        }
+    }
+
+    /// Emission point: the string a caller actually receives, not a helper one
+    /// layer below it. Names the entry verbatim, says it is literal, and gives
+    /// the `src` escape hatch.
+    #[test]
+    fn allow_wildcard_warning_names_entry_and_escape_hatch() {
+        let content = "[directories]\nallow = [\"src/*\"]\n";
+        let parsed = parse_directories_from_config(content);
+        let entries = wildcard_directory_entries(&parsed);
+        let msg =
+            directory_wildcard_warning(&entries, false).expect("a wildcard allow entry must warn");
+
+        assert!(
+            msg.contains("src/*"),
+            "must quote the entry verbatim: {msg}"
+        );
+        assert!(
+            msg.contains("literal"),
+            "must say the entry is matched literally: {msg}"
+        );
+        assert!(
+            msg.contains("never globbed"),
+            "must say [directories] is not globbed: {msg}"
+        );
+        assert!(
+            msg.contains("`src`"),
+            "must name the escape hatch (the bare directory): {msg}"
+        );
+        assert!(
+            msg.contains("[permissions]"),
+            "must explain why the two blocks differ: {msg}"
+        );
+        assert!(
+            msg.contains("every file access is denied"),
+            "an allow wildcard denies everything: {msg}"
+        );
+    }
+
+    /// The dangerous direction: a deny wildcard fails OPEN, and the message
+    /// must distinguish it from an allow entry rather than lumping both under
+    /// one consequence.
+    #[test]
+    fn deny_wildcard_warning_is_distinguished_from_allow() {
+        let content = "[directories]\nallow = [\"src/*\"]\ndeny = [\"secrets/*\"]\n";
+        let parsed = parse_directories_from_config(content);
+        let entries = wildcard_directory_entries(&parsed);
+        let msg =
+            directory_wildcard_warning(&entries, false).expect("both halves must be reported");
+
+        assert!(
+            msg.contains("secrets/*"),
+            "must quote the deny entry: {msg}"
+        );
+        assert!(
+            msg.contains("allow = \"src/*\""),
+            "must say which half src/* came from: {msg}"
+        );
+        assert!(
+            msg.contains("deny = \"secrets/*\""),
+            "must say which half secrets/* came from: {msg}"
+        );
+        assert!(
+            msg.contains("protects nothing"),
+            "the deny half fails open and must say so: {msg}"
+        );
+    }
+
+    /// Near-miss guard: a discriminator tested only on the side that fires is
+    /// vacuous green. A plain literal entry must produce no warning at all —
+    /// this is every existing user's path and the regression risk.
+    #[test]
+    fn literal_directory_entry_produces_no_warning() {
+        let content = "[directories]\nallow = [\"src\"]\ndeny = [\"secrets\"]\n";
+        let parsed = parse_directories_from_config(content);
+        let entries = wildcard_directory_entries(&parsed);
+        assert!(entries.is_empty(), "no metacharacters, nothing to report");
+        assert_eq!(
+            directory_wildcard_warning(&entries, false),
+            None,
+            "output must be byte-identical for a wildcard-free config"
+        );
+    }
+
+    /// Grammar: the singular case must read "1 entry contains", not
+    /// "1 entry contain" — a warning that reads as broken is easier to dismiss.
+    #[test]
+    fn singular_and_plural_warnings_agree_with_their_counts() {
+        let one =
+            directory_wildcard_warning(&wildcard_directory_entries(&dirs(&["src/*"], &[])), true)
+                .expect("must warn");
+        assert!(one.starts_with("1 [directories] entry contains"), "{one}");
+
+        let two = directory_wildcard_warning(
+            &wildcard_directory_entries(&dirs(&["src/*"], &["secrets/*"])),
+            true,
+        )
+        .expect("must warn");
+        assert!(two.starts_with("2 [directories] entries contain"), "{two}");
+    }
+
+    /// Glyph-free under plain output (screen readers), same house style as
+    /// `cli::project_permission_refusal_message`.
+    #[test]
+    fn plain_output_warning_carries_no_glyphs() {
+        let entries = wildcard_directory_entries(&dirs(&["src/*"], &[]));
+        let plain = directory_wildcard_warning(&entries, true).expect("must warn");
+        for glyph in ['⚠', '—', '•', '▪', '◦'] {
+            assert!(
+                !plain.contains(glyph),
+                "plain output must not contain {glyph:?}: {plain}"
+            );
+        }
+        // Still says the load-bearing things.
+        assert!(plain.contains("src/*"));
+        assert!(plain.contains("never globbed"));
+    }
+
+    /// The warning is a warning: the matcher is unchanged and the restrictions
+    /// pass through byte-identically. Pinned so a future "fix" that quietly
+    /// adds globbing has to face this assertion.
+    #[test]
+    fn wildcard_entry_still_matches_nothing() {
+        let parsed = parse_directories_from_config("[directories]\nallow = [\"src/*\"]\n");
+        assert_eq!(parsed.allow, vec!["src/*".to_string()]);
+        assert!(
+            parsed.check_path("src/main.rs").is_err(),
+            "detection must not have changed the matcher"
+        );
     }
 }
