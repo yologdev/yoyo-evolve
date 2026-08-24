@@ -15,7 +15,7 @@
 //! blocked**. Read that as two separate facts, because conflating them cost
 //! five sessions.
 //!
-//! <!-- yoagent-version-claim: 0.16.5 -->
+//! <!-- yoagent-version-claim: 0.16.6 -->
 //!
 //! This paragraph used to say `task-result` was *unreachable* from yoyo,
 //! because it names `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of

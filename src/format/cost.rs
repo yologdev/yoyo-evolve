@@ -964,9 +964,25 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // Sonnet 5 preset: input $3/MTok, output $15/MTok
+        // Derived from the preset, never hardcoded. CLAUDE.md states the
+        // preset is the source of truth for fleet-model pricing, so a literal
+        // here is a second source that goes stale silently: yoagent 0.16.6
+        // corrected this preset from $3/$15 to $2/$10 (it had been carrying
+        // Sonnet 4.6 pricing), and because Cargo.lock is gitignored CI picked
+        // the new version up on its own and reported an upstream FIX as a
+        // yoyo regression. What this test owns is the arithmetic —
+        // input/1M * rate + output/1M * rate — not Anthropic price list.
+        let preset = crate::agent_builder::anthropic_preset("claude-sonnet-5")
+            .expect("claude-sonnet-5 must resolve to a preset");
+        let expected = 1.0 * preset.cost.input_per_million + 0.1 * preset.cost.output_per_million;
         let cost = estimate_cost(&usage, "claude-sonnet-5").unwrap();
-        assert!((cost - 4.5).abs() < 0.001);
+        assert!(
+            (cost - expected).abs() < 0.001,
+            "estimate_cost disagreed with the preset it reads: got {cost}, \
+             preset implies {expected} (input {}/MTok, output {}/MTok)",
+            preset.cost.input_per_million,
+            preset.cost.output_per_million
+        );
     }
 
     #[test]
