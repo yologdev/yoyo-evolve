@@ -176,14 +176,18 @@ const REGISTERED_GLOBAL_RACES: &[(&str, &str)] = &[
         "src/conversations.rs",
         "test_last_side_store_set_get_overwrite_empty",
     ),
+    // The two below have NO pure-core seam to extract, and that is the honest
+    // reason they are still here rather than a deferral: the function under
+    // test IS the global setter (`enable_quiet` is `QUIET.set(true)`,
+    // `disable_notify` is `NOTIFY_DISABLED.set(true)`), and each test's only
+    // assertion is the tautology `f() == f()`. Worth naming precisely, because
+    // it is worse than a race: `OnceLock::set` is a ONE-WAY door, so these two
+    // poison QUIET/NOTIFY_DISABLED for every one of the ~5,000 tests that runs
+    // after them in the same binary, and which tests those are depends on
+    // libtest's thread scheduling. The compliant remedy is deleting a vacuous
+    // test, which the repo's rules forbid, so they stay named here.
     ("src/format/mod.rs", "test_disable_notify_is_callable"),
     ("src/format/mod.rs", "test_enable_quiet_is_callable"),
-    ("src/format/mod.rs", "test_hint_priority_first_turn_wins"),
-    (
-        "src/format/mod.rs",
-        "test_print_context_usage_quiet_suppressed",
-    ),
-    ("src/format/mod.rs", "test_print_usage_quiet_suppressed"),
     ("src/format/tools.rs", "test_plain_output_flag_roundtrip"),
 ];
 

@@ -220,7 +220,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: +17 absorbed since Day 166.
     ("src/format/markdown.rs", 3177),
     // Day 174: +1 absorbed since Day 166.
-    ("src/format/mod.rs", 2456),
+    // Day 177: 2456 → 2568 (+112, past the 100-line grace band, so the gate
+    // demanded this line rather than absorbing it). The growth is the #780-class
+    // race paydown: two pure `*_with`-style cores lifted out of `print_usage` /
+    // `print_context_usage` / `contextual_hint` with their doc comments, one
+    // source-level wrapper pin, and three test bodies that grew because they
+    // went from asserting nothing to asserting both directions.
+    ("src/format/mod.rs", 2568),
     // Day 162 (#665): +27 lines — the test-output filter is now gated on tool
     // provenance, so read_file results stop being eaten. Signature recorded
     // retroactively during Day 162 reflection: the raise itself shipped

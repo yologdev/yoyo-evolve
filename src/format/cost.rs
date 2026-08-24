@@ -968,9 +968,22 @@ mod tests {
         // preset is the source of truth for fleet-model pricing, so a literal
         // here is a second source that goes stale silently: yoagent 0.16.6
         // corrected this preset from $3/$15 to $2/$10 (it had been carrying
-        // Sonnet 4.6 pricing), and because Cargo.lock is gitignored CI picked
-        // the new version up on its own and reported an upstream FIX as a
-        // yoyo regression. What this test owns is the arithmetic —
+        // Sonnet 4.6 pricing), CI resolved dependencies fresh on every run and
+        // so picked the new version up unasked, and main was red for 31 hours
+        // reporting an upstream FIX as a yoyo regression.
+        //
+        // Superseded claim, recorded rather than erased: this comment used to
+        // read "because Cargo.lock is gitignored". That was TRUE when written
+        // — the lockfile was ignored from the initial commit and never tracked
+        // in any commit — and went stale on 2026-08-24 at 09:56 (0577bfe7),
+        // which tracked Cargo.lock and added --locked to every CI invocation
+        // that resolves dependencies. So the specific route described above is
+        // now closed; the reason to derive from the preset is not. A dated
+        // measurement of my own repo decays exactly like a measurement of a
+        // dependency does, and the present tense is what makes it read as a
+        // standing fact rather than as the 2026-08-23 observation it is.
+        //
+        // What this test owns is the arithmetic —
         // input/1M * rate + output/1M * rate — not Anthropic price list.
         let preset = crate::agent_builder::anthropic_preset("claude-sonnet-5")
             .expect("claude-sonnet-5 must resolve to a preset");

@@ -693,16 +693,35 @@ pub fn format_usage_line(
 }
 
 /// Print usage stats after a prompt response.
+/// Decide what [`print_usage`] should emit. **Pure** — both process globals the
+/// printing wrapper consults (`is_quiet()` and `cli::is_verbose()`) arrive as
+/// arguments, so a test can drive the quiet branch without writing either one.
+/// `None` means "print nothing".
+pub(crate) fn usage_print_line(
+    quiet: bool,
+    verbose: bool,
+    usage: &yoagent::Usage,
+    total: &yoagent::Usage,
+    model: &str,
+    elapsed: std::time::Duration,
+) -> Option<String> {
+    if quiet {
+        return None;
+    }
+    format_usage_line(usage, total, model, elapsed, verbose)
+}
+
 pub fn print_usage(
     usage: &yoagent::Usage,
     total: &yoagent::Usage,
     model: &str,
     elapsed: std::time::Duration,
 ) {
-    if is_quiet() {
-        return;
-    }
-    if let Some(line) = format_usage_line(usage, total, model, elapsed, crate::cli::is_verbose()) {
+    let quiet = is_quiet();
+    // `&&` short-circuits, so a quiet run never reads cli::VERBOSE — the same
+    // read order the pre-seam body had, where the quiet check returned early.
+    let verbose = !quiet && crate::cli::is_verbose();
+    if let Some(line) = usage_print_line(quiet, verbose, usage, total, model, elapsed) {
         println!("\n{DIM}  {line}{RESET}");
     }
 }
@@ -734,19 +753,31 @@ pub fn context_usage_label(used_tokens: u64, max_tokens: u64) -> String {
     }
 }
 
-/// Print a context window usage indicator line.
-/// Shows percentage of context consumed, color-coded by fullness.
-pub fn print_context_usage(used_tokens: u64, max_tokens: u64) {
-    if is_quiet() {
-        return;
+/// Decide the context-usage line [`print_context_usage`] should emit. **Pure** —
+/// the one process global the wrapper consults (`is_quiet()`) arrives as an
+/// argument. `None` means "print nothing", which has **two** distinct causes
+/// kept in one place: quiet mode, and an unknown context window (`max == 0`).
+pub(crate) fn context_usage_line(quiet: bool, used_tokens: u64, max_tokens: u64) -> Option<String> {
+    if quiet {
+        return None;
     }
     if max_tokens == 0 {
-        return;
+        return None;
     }
     let pct = ((used_tokens as f64 / max_tokens as f64) * 100.0).min(100.0) as u32;
     let color = context_usage_color(pct);
     let label = context_usage_label(used_tokens, max_tokens);
-    println!("{DIM}  {color}⬤{RESET}{DIM} {label} of context window used{RESET}");
+    Some(format!(
+        "{DIM}  {color}⬤{RESET}{DIM} {label} of context window used{RESET}"
+    ))
+}
+
+/// Print a context window usage indicator line.
+/// Shows percentage of context consumed, color-coded by fullness.
+pub fn print_context_usage(used_tokens: u64, max_tokens: u64) {
+    if let Some(line) = context_usage_line(is_quiet(), used_tokens, max_tokens) {
+        println!("{line}");
+    }
 }
 
 /// Tracks the last warned context budget threshold (0, 60, 80, 90, 95).
@@ -870,7 +901,18 @@ pub struct HintContext {
 /// printing.
 pub fn contextual_hint(ctx: &HintContext) -> Option<String> {
     let mut guard = shown_hints().lock().ok()?;
+    contextual_hint_with(&mut guard, ctx)
+}
 
+/// The decision half of [`contextual_hint`]. **Pure** in the sense that matters
+/// here: the once-per-session memory arrives as a `&mut` parameter instead of
+/// being read out of the process-wide `SHOWN_HINTS`, so a test drives local
+/// state and never calls `reset_shown_hints()`. Same shape as
+/// [`context_budget_warning_with`], for the same reason.
+pub(crate) fn contextual_hint_with(
+    shown: &mut HashSet<&'static str>,
+    ctx: &HintContext,
+) -> Option<String> {
     // Priority-ordered rules. First match wins.
     let candidates: &[(&str, bool, &str)] = &[
         (
@@ -906,8 +948,8 @@ pub fn contextual_hint(ctx: &HintContext) -> Option<String> {
     ];
 
     for &(category, condition, message) in candidates {
-        if condition && !guard.contains(category) {
-            guard.insert(category);
+        if condition && !shown.contains(category) {
+            shown.insert(category);
             return Some(message.to_string());
         }
     }
@@ -2252,13 +2294,53 @@ mod tests {
         // If we got here, the platform-specific branch didn't panic.
     }
 
+    /// Reads this file's own source to check the three wrappers whose decision
+    /// halves were moved to `*_with`-style pure cores still perform the one
+    /// global read each. **This proves the call is PRESENT, not that its result
+    /// is used** — it guards against silent deletion and nothing more. Needles
+    /// are built at runtime so this test cannot match itself.
+    #[test]
+    fn test_print_wrappers_still_read_their_globals() {
+        let src =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/format/mod.rs"))
+                .expect("read src/format/mod.rs");
+        let quiet_needle = format!("{}{}", "is_quiet", "()");
+        for (sig, needle) in [
+            ("pub fn print_usage(", quiet_needle.clone()),
+            (
+                "pub fn print_context_usage(used_tokens: u64, max_tokens: u64) {",
+                quiet_needle,
+            ),
+            (
+                "pub fn contextual_hint(ctx: &HintContext) -> Option<String> {",
+                format!("{}{}", "shown_hints", "()"),
+            ),
+        ] {
+            let body = src
+                .split(sig)
+                .nth(1)
+                .and_then(|rest| rest.split("\n}").next())
+                .unwrap_or_else(|| panic!("locate body after `{sig}`"));
+            assert!(
+                body.contains(&needle),
+                "the wrapper at `{sig}` no longer calls `{needle}`. The wrapper is the \
+                 ONLY place that global is read now that the decision lives in a pure \
+                 core; without it the core is driven with a default and the global is \
+                 dead. Body was:\n{body}"
+            );
+        }
+    }
+
     #[test]
     fn test_print_usage_quiet_suppressed() {
-        // When quiet mode is active, print_usage should return early
-        // without panicking. Since we can't easily capture stdout in
-        // parallel tests, we verify the guard logic: is_quiet() gates
-        // the function. enable_quiet() + print_usage() must not panic.
-        enable_quiet();
+        // Drives the pure core, not the wrapper. It used to call the
+        // quiet-mode setter and then `print_usage`, and asserted nothing at
+        // all ("must not panic"). That setter is a `OnceLock::set`, i.e. a
+        // ONE-WAY door that left QUIET=true for every other test in the
+        // binary — the hazard here is order-dependent process poisoning, not
+        // only a data race.
+        // (Setter names are deliberately written without call parens in this
+        // comment: tests/global_state_races.rs matches them as plain text.)
         let usage = yoagent::Usage {
             input: 100,
             output: 50,
@@ -2266,21 +2348,41 @@ mod tests {
             cache_write: 0,
             total_tokens: 150,
         };
-        // This should be a no-op (early return) when quiet.
-        print_usage(
-            &usage,
-            &usage,
-            "test-model",
-            std::time::Duration::from_secs(2),
+        let elapsed = std::time::Duration::from_secs(2);
+        assert!(
+            usage_print_line(true, false, &usage, &usage, "test-model", elapsed).is_none(),
+            "quiet must suppress the usage line entirely"
+        );
+        // Near-miss guard: a discriminator tested only on the side that blocks
+        // is vacuous green, so pin that the non-quiet side still emits.
+        let shown = usage_print_line(false, false, &usage, &usage, "test-model", elapsed);
+        assert!(
+            shown.is_some(),
+            "non-quiet must still produce a usage line (else the quiet \
+             assertion above is satisfied by a function that never emits)"
         );
     }
 
     #[test]
     fn test_print_context_usage_quiet_suppressed() {
-        // When quiet mode is active, print_context_usage should return early.
-        enable_quiet();
-        // This should be a no-op (early return) when quiet.
-        print_context_usage(5000, 200_000);
+        // Same move as the sibling above: the pure core takes `quiet` as an
+        // argument, so this no longer writes the process-wide QUIET.
+        assert!(
+            context_usage_line(true, 5000, 200_000).is_none(),
+            "quiet must suppress the context-usage line"
+        );
+        // Near-miss guard, plus the OTHER cause of `None`, kept distinct:
+        // an unknown context window suppresses the line even when not quiet.
+        let shown = context_usage_line(false, 5000, 200_000)
+            .expect("non-quiet with a known window must emit a line");
+        assert!(
+            shown.contains("of context window used"),
+            "unexpected context-usage line: {shown}"
+        );
+        assert!(
+            context_usage_line(false, 5000, 0).is_none(),
+            "max_tokens == 0 must suppress the line for its own reason"
+        );
     }
 
     // ── Contextual hint tests ──────────────────────────────────────────
@@ -2439,7 +2541,9 @@ mod tests {
 
     #[test]
     fn test_hint_priority_first_turn_wins() {
-        reset_shown_hints();
+        // Drives the pure core with a LOCAL set, so this no longer calls the
+        // global hint-reset setter. Same seam as `context_budget_warning_with`.
+        let mut shown: HashSet<&'static str> = HashSet::new();
         // Multiple conditions true, but first_turn is highest priority
         let ctx = HintContext {
             turn_count: 1,
@@ -2449,8 +2553,16 @@ mod tests {
             context_usage_ratio: 0.8,
             turns_since_slash_command: 5,
         };
-        let hint = contextual_hint(&ctx);
+        let hint = contextual_hint_with(&mut shown, &ctx);
         assert!(hint.is_some());
         assert!(hint.unwrap().contains("/help"));
+        // The once-per-session memory is real, and now checkable without
+        // touching the process global: the same ctx must not fire twice.
+        assert!(shown.contains("first_turn"));
+        let second = contextual_hint_with(&mut shown, &ctx);
+        assert!(
+            second.is_some_and(|h| !h.contains("/help")),
+            "first_turn must not repeat; a lower-priority hint should win"
+        );
     }
 }
