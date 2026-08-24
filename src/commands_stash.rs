@@ -368,6 +368,7 @@ pub fn stash_default_description(index: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use yoagent::agent::Agent;
 
     #[test]
@@ -424,6 +425,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_stash_list_empty() {
         // Clear the global stash for this test
         {
@@ -435,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_stash_drop_empty() {
         {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
@@ -448,6 +451,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_stash_drop_out_of_range() {
         {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
@@ -467,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_stash_pop_empty() {
         use yoagent::provider::AnthropicProvider;
         // Clear the global stash, then pop — should return a graceful message, not panic
@@ -486,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_auto_checkpoint_triggers_at_5() {
         use yoagent::provider::AnthropicProvider;
         {
@@ -514,6 +520,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_auto_checkpoint_skips_non_multiple() {
         use yoagent::provider::AnthropicProvider;
         {
@@ -543,6 +550,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_push_pre_clear_entry_replaces_existing() {
         let mut entries = vec![
             StashEntry {
@@ -574,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_push_pre_clear_entry_appends_when_no_existing() {
         let mut entries = vec![
             StashEntry {
@@ -605,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_stash_pre_clear_noop_on_empty_conversation() {
         use yoagent::provider::AnthropicProvider;
         let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
@@ -616,6 +626,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_take_pre_clear_entry_empty() {
         let mut entries: Vec<StashEntry> = Vec::new();
         assert!(take_pre_clear_entry(&mut entries).is_none());
@@ -623,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_take_pre_clear_entry_none_present() {
         let mut entries = vec![
             StashEntry {
@@ -644,6 +656,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_take_pre_clear_entry_removes_and_returns() {
         let mut entries = vec![
             StashEntry {
@@ -674,6 +687,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_take_pre_clear_entry_takes_most_recent() {
         // Two pre-clear entries (shouldn't happen via push_pre_clear_entry,
         // but be defensive): the most recent one wins.
@@ -696,6 +710,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_auto_checkpoint_prune_limit() {
         use yoagent::provider::AnthropicProvider;
         {
