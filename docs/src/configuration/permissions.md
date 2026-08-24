@@ -111,6 +111,16 @@ allow = ["./src", "./tests"]
 deny = ["~/.ssh", "/etc"]
 ```
 
+> **`[directories]` takes literal paths — not globs.** The two blocks use
+> different matchers: `[permissions]` patterns *are* globbed (`git *` matches
+> `git status`), while `[directories]` entries are matched by **prefix**, so a
+> `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
+> resolves to a directory that cannot exist and matches nothing — which denies
+> every file access — and `deny = ["secrets/*"]` builds a fence that protects
+> nothing. Name the directory itself (`src`, not `src/*`): an entry already
+> covers everything beneath it. yoyo prints a warning naming the offending
+> entries if it sees one.
+
 ### Precedence
 
 CLI flags override config file values:
