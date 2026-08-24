@@ -1,0 +1,66 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking a few key facts the assessment flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && echo "--- mutants.t… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat scripts/run_mutants.sh | hea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial" src/commands_s… ✓ (4ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (time cargo test --quiet 2>&1 | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 790 2>/dev/null | … ✓ (863ms)
+ ✓ (58.8s)
+  ▶ $ cd /tmp && curl -s https://api.github.com/repos/sourcefrog/cargo-mutants/release…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/config_paths.rs src… ✓ (22ms)
+ ✓ (110ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 2m 11s (8 ✓)
+
+Prebuilt Linux binary exists — that kills the "multi-minute compile" concern. Let me verify feasibility so the task file is precise.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && time (curl -sL https://github.com/sourcefrog/cargo-mutants/releases/d… ✓ (322ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p ~/.cargo/bin && cp /tmp/cargo-mutants ~/.cargo/bin/ && cd /home/runner/… ✓ (2.9s)
+  2 tools completed in 10.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need — feasibility is now measured, not guessed. Writing the plan.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (131 lines) ✓ (1m 23s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (90 lines) ✓ (1m 22s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (105 lines) ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 5m 37s (4 ✓)
+
+session_plan/ is gitignored (as CLAUDE.md documents — it's ephemeral), so the commit is a no-op by design. Confirming the deliverables exist:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ && echo "--- he… ✓ (5ms)
+
+Plan written. Both task files plus issue_responses.md are in session_plan/.
+
+## What I planned and why
+
+**task_01 — the first mutation reading of my life.** My dream's next milestone has been blocked for 168 days, and the assessment said the blocker was "a multi-minute compile inside a budgeted session." I checked instead of accepting that: there's a prebuilt Linux binary for cargo-mutants v27.1.0 that installs in under a second. I verified it end to end during planning — `cargo mutants --version → 27.1.0, and cargo mutants -f src/git_commit_msg.rs --list` → exactly 52 mutants.
+
+The other measurement mattered more: a full cargo test is ~59 seconds, so 52 mutants against the whole suite is ~51 minutes and would have eaten the task whole. The task file hands the impl agent the scoped invocation and a named fallback module, because three of my last receipts died as "no progress — likely blocked" and the cure for that class is naming the blocker in advance, not shrinking the task.
+
+Target is src/git_commit_msg.rs — chosen because CLAUDE.md already records that one of its tests "pinned the degradation rather than questioning it." I have a dated, documented reason to suspect that suite, which beats a module I have no prior about.
+
+**task_02 — #821**, the newest creator-filed issue, visible to me for the first time thanks to `8b6673ef`. One planning decision is in the task file that isn't in the issue: my own assessment argued for coarsening the version pin to major.minor to cut alarm fatigue. That argument doesn't survive its own evidence — the gasp claim rotted on 0.16.3 → 0.16.4, a patch bump, so a major.minor marker would have stayed silent through the exact eight sessions the guard exists to prevent. The task says keep the full pin and make the remedy cheap instead.
+
+## What I deliberately didn't do
+
+I did not plan the mutation reading as "install + read + fix the survivors." The dream text is explicit that the deliverable is **a reading, not a nicer harness** — I've built that instrument twice already, and chasing a survivor is how this becomes a third instrument-polishing session.
+
+I also refused to close the eight unverified receipts. This phase doesn't read source, I had no slot left to re-check them, and closing on age or on a guess is precisely how a real objection gets laundered into a green tick. They stay open with #812 named as the first to take.
+
+One thing I'm carrying forward honestly: the assessment's research found that cargo-mutants' own docs call results meaningless on a flaky suite, and my suite went red twice this week from shared mutable process state. Both breaks are cured — by @yuanhao, not me — but I haven't proven the class is gone. So task_01 requires the number to ship **with that caveat attached**, rather than a figure I'd have to disown later.
+
