@@ -1,0 +1,302 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_neverfor… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,290p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never forecast\|never_f… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,770p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "never_forecast_files\|… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never_forecast_files\|N… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|fn snap\|mod … ✓ (3ms)
+  7 tools completed in 30.3s (7 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — nothing landed yet. Implementing now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,720p' src/commands_r… ✓ (4ms)
+
+Now the struct field and the counting site:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (4 → 23 lines)
+        /// Never forecast but younger than the prediction history — absence here
+        /// says nothing about the model.
+        pub(crate) too_new: Vec<TooNewNeverForecast>,
+  +     /// How many of the files in [`dark`](Self::dark) got there with an age
+  +     /// that **could not be observed at all** — the resolver answered `None`,
+  +     /// or answered something unparseable (#819).
+  +     ///
+  +     /// This is a *count*, not a fourth group: every one of these files is
+  +     /// still in `dark`, because an unknown must never be promoted into the
+  +     /// comfortable bucket (Day 144). What it fixes is the reading: `dark`
+  +     /// mixes files verified old enough that the columns had real chances
+  +     /// with files whose age nothing could measure, and printing them under
+  +     /// one header renders "could not check" as "checked; clean".
+  +     ///
+  +     /// The shallow-clone case is the *common* one here — the harness
+  +     /// checkout is shallow, so `git_added_ts` declines for every file older
+  +     /// than the clone window (see [`shallow_boundary_hides_age`]).
+  +     ///
+  +     /// Only files that actually land in `dark` are counted. A studied file
+  +     /// is classified before the age question is ever asked, so counting one
+  ... (3 more lines)
+ ✓ (12.0s)
+        /// Never forecast but younger than the prediction history — absence here
+        /// says nothing about the model.
+        pub(crate) too_new: Vec<TooNewNeverForecast>,
+  +     /// How many of the files in [`dark`](Self::dark) got there with an age
+  +     /// that **could not be observed at all** — the resolver answered `None`,
+  +     /// or answered something unparseable (#819).
+  +     ///
+  +     /// This is a *count*, not a fourth group: every one of these files is
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (3 → 4 lines)
+        let mut dark: Vec<NeverForecast> = Vec::new();
+        let mut studied: Vec<StudiedNeverForecast> = Vec::new();
+        let mut too_new: Vec<TooNewNeverForecast> = Vec::new();
+  +     let mut age_unobservable = 0usize;
+ ✓ (12.2s)
+        let mut dark: Vec<NeverForecast> = Vec::new();
+        let mut studied: Vec<StudiedNeverForecast> = Vec::new();
+        let mut too_new: Vec<TooNewNeverForecast> = Vec::new();
+  +     let mut age_unobservable = 0usize;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (28 → 35 lines)
+            // 2. too new to have been forecast.
+            let added = added_ts(path);
+  -         if let Some(n) = forecast_opportunities(added.as_deref(), &snapshot_ts) {
+  -             if n < MIN_FORECAST_OPPORTUNITIES {
+  +         match forecast_opportunities(added.as_deref(), &snapshot_ts) {
+  +             Some(n) if n < MIN_FORECAST_OPPORTUNITIES => {
+                    too_new.push(TooNewNeverForecast {
+                        path: path.clone(),
+                        risk_score: *score,
+  ···
+                    });
+                    continue;
+                }
+  +             Some(_) => {}
+  +             // The age could not be observed: no resolver answer, or one that
+  +             // did not parse. The file still goes to `dark` (#819 adds a
+  +             // report, never a reclassification) — but it is counted, so the
+  +             // dark list stops reading as a measurement it never made.
+  +             None => age_unobservable += 1,
+            }
+  ... (9 more lines)
+ ✓ (13.8s)
+            // 2. too new to have been forecast.
+            let added = added_ts(path);
+  -         if let Some(n) = forecast_opportunities(added.as_deref(), &snapshot_ts) {
+  -             if n < MIN_FORECAST_OPPORTUNITIES {
+  +         match forecast_opportunities(added.as_deref(), &snapshot_ts) {
+  +             Some(n) if n < MIN_FORECAST_OPPORTUNITIES => {
+                    too_new.push(TooNewNeverForecast {
+                        path: path.clone(),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_ENTRY_RE\|EPI… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (3 → 18 lines)
+  +         // Fourth reported state (#819): not a group — a count. Every one of
+  +         // these files is *in* the list above; what could not be observed is
+  +         // its age. Emitted only when > 0, so a fully observable run is
+  +         // byte-identical to before. Deliberately avoids the literal substring
+  +         // the trajectory extractor hard-stops on, and matches neither its row
+  +         // regex (no leading `◦`) nor its numbered-entry regex.
+  +         if never.age_unobservable > 0 {
+  +             out.push_str(&format!(
+  +                 "    {DIM}age unobservable for {} of these — a shallow clone or a path git does not know hides the add date.{RESET}\n",
+  +                 never.age_unobservable
+  +             ));
+  +             out.push_str(&format!(
+  +                 "    {DIM}For those, absence from every column is not evidence the columns ever had a chance.{RESET}\n"
+  +             ));
+  +         }
+            // Keep each sentence on one line: the caveat is the honest part of this
+            // section, and a mid-sentence wrap makes it unmatchable for any reader
+            // (test or human) scanning line by line.
+ ✓ (1m 47s)
+  +         // Fourth reported state (#819): not a group — a count. Every one of
+  +         // these files is *in* the list above; what could not be observed is
+  +         // its age. Emitted only when > 0, so a fully observable run is
+  +         // byte-identical to before. Deliberately avoids the literal substring
+  +         // the trajectory extractor hard-stops on, and matches neither its row
+  +         // regex (no leading `◦`) nor its numbered-entry regex.
+  +         if never.age_unobservable > 0 {
+  +             out.push_str(&format!(
+  ... (10 more lines)
+  5 tools completed in 3m 5s (5 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo buil… ✓ (167ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo neverforec… ✓ (293ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+Now the tests — both directions, plus the emission point.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '718,760p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (3 → 67 lines)
+            assert_eq!(never.dark.len(), 1, "unknown age stays dark");
+            assert!(never.too_new.is_empty(), "unknown age is not too-new");
+  +         assert_eq!(
+  +             never.age_unobservable, 1,
+  +             "#819: still dark, but the unknown is now counted rather than absorbed"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_age_unobservable_counts_only_the_unmeasurable_dark_files() {
+  +         // Both directions in one fixture (a discriminator tested only on the
+  +         // side that fires is vacuous green): one file whose age nothing can
+  +         // observe, one whose age is observed and genuinely old. Both land in
+  +         // `dark`; only the first is counted.
+  +         let snapshots: Vec<ParsedSnapshot> =
+  +             (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+  +         let never = never_forecast_files(
+  +             &snapshots,
+  +             &scores(&[("src/unknown.rs", 5.0), ("src/old.rs", 4.0)]),
+  +             &[],
+  ... (47 more lines)
+ ✓ (1m 47s)
+            assert_eq!(never.dark.len(), 1, "unknown age stays dark");
+            assert!(never.too_new.is_empty(), "unknown age is not too-new");
+  +         assert_eq!(
+  +             never.age_unobservable, 1,
+  +             "#819: still dark, but the unknown is now counted rather than absorbed"
+  +         );
+  +     }
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,555p' src/commands_r… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 10s (4 ✓)
+
+Now the emission-point test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (2 → 77 lines)
+  +     #[test]
+  +     fn test_report_age_unobservable_clause_present_and_absent() {
+  +         // Emission point: the string a caller receives. Both directions —
+  +         // the clause with its real count when > 0, and *nothing* when the
+  +         // whole set's age was observable (the byte-identical common path).
+  +         let snapshots: Vec<ParsedSnapshot> =
+  +             (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+  +         let pairs = scores(&[("src/a.rs", 5.0), ("src/b.rs", 4.0)]);
+  +         let ranking = compute_epistemic_ranking(&snapshots, &[], &pairs, &[]);
+  + 
+  +         // (a) one of the two cannot be dated.
+  +         let mixed = never_forecast_files(&snapshots, &pairs, &[], &|p| {
+  +             if p == "src/b.rs" {
+  +                 Some("2020-01-01T00:00:00Z".to_string())
+  +             } else {
+  +                 None
+  +             }
+  +         });
+  +         assert_eq!(mixed.age_unobservable, 1);
+  +         let with = format_epistemic_report(
+  ... (57 more lines)
+ ✓ (12.7s)
+  +     #[test]
+  +     fn test_report_age_unobservable_clause_present_and_absent() {
+  +         // Emission point: the string a caller receives. Both directions —
+  +         // the clause with its real count when > 0, and *nothing* when the
+  +         // whole set's age was observable (the byte-identical common path).
+  +         let snapshots: Vec<ParsedSnapshot> =
+  +             (1..=6).map(|d| snap(d, &["src/seen.rs"], &[])).collect();
+  +         let pairs = scores(&[("src/a.rs", 5.0), ("src/b.rs", 4.0)]);
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn test_too_new_block_d… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (2 → 5 lines)
+            for line in report.lines().filter(|l| l.contains("age unobservable")) {
+  -             let plain = strip_ansi(line);
+  +             let plain = line
+  +                 .replace(RESET.0, "")
+  +                 .replace(DIM.0, "")
+  +                 .replace(YELLOW.0, "");
+ ✓ (1m 49s)
+            for line in report.lines().filter(|l| l.contains("age unobservable")) {
+  -             let plain = strip_ansi(line);
+  +             let plain = line
+  +                 .replace(RESET.0, "")
+  +                 .replace(DIM.0, "")
+  +                 .replace(YELLOW.0, "");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (24.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && NO… ✓ (10.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 10s)
+  6 tools completed in 4m 17s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5079 tests green. Quick sanity check that the real output still parses for the planner:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && NO_COLOR=1 .… (9 lines) ✓ (772ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Parser unaffected — all 4 dark rows still collected. Now CLAUDE.md:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "four states in two incr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 24s)
+  3 tools completed in 1m 49s (3 ✓)
+
+All four checks green. Committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m '… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (34 lines) ✓ (2.2s)
+  2 tools completed in 19.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (263ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task complete. Clean tree, commit landed, #819 closed.
+
+## What shipped
+
+The defect: NeverForecastGroups had three fields — dark, studied, too_new — and no counter for candidates whose add-date the resolver couldn't observe. Every failure mode (no ledger entry + git_added_ts declined, git missing, path unknown to git, shallow_boundary_hides_age firing on a graft boundary) collapsed into the same silent outcome: the file lands in dark, indistinguishable from one whose age was genuinely observed and is genuinely old.
+
+The measured finding: 4 of 4. Not "some of the dark list is unmeasured" — the whole of it:
+
+```
+  ⚠ never forecast — 4 scored files have never appeared in any prediction
+  ◦ src/format/highlight_lang.rs (risk 0.3)   ◦ src/main_tests.rs (risk 0.2)
+  ◦ src/commands_tree.rs (risk 0.1)           ◦ src/sync_util.rs (risk 0.1)
+    age unobservable for 4 of these — a shallow clone or a path git does not know hides the add date.
+    For those, absence from every column is not evidence the columns ever had a chance.
+```
+
+The change:
+• `NeverForecastGroups.age_unobservable: usize, bumped at the single point in never_forecast_files where a candidate reaches the too-new check and forecast_opportunities` returned `None` — and only for candidates that actually land in dark. Classification order (studied → too_new → dark) is unchanged, so a studied file never reaches the age question.
+• No file moves. A report, not a reclassification — promoting unknown-age files out of dark would be the opposite of the fix.
+• Rendered as its own two-line clause, emitted only when > 0, never summed into another count. A fully observable run is byte-identical to before.
+
+Verification: consumer guard checked rather than assumed — the clause carries no never forecast substring and matches neither EPISTEMIC_NEVER_FORECAST_ROW_RE nor EPISTEMIC_ENTRY_RE (asserted after stripping ANSI); extract_trajectory.py --test passes; running the real parser over the real output still collects all 4 dark rows and the same 3 ranked entries. Tests pin both directions (undatable and dated-old in one fixture, unparseable date, studied-file near-miss, clause present at count and absent at 0). 5079 tests, clippy -D warnings, fmt — all green. CLAUDE.md documents the set as three classified states plus one counted one.
+
+The thing worth keeping: my instruments will render could not check as checked; clean, and they do it most convincingly in the output that decides what I work on next.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
