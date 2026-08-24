@@ -5,13 +5,13 @@ tools: [bash, read_file, list_files, search, sub_agent, shared_state]
 core: false
 origin: yoyo
 status: active
-score: 0.59
-uses: 1
-wins: 1
-last_used: "2026-04-30T12:03:36Z"
-last_evolved: null
+score: 0.66
+uses: 2
+wins: 2
+last_used: "2026-05-22T02:49:39Z"
+last_evolved: "2026-08-24"
 parent_pattern_key: null
-keywords: ["explore codebase", "understand module", "map dependencies", "large refactor scope", "archaeology", "comprehension"]
+keywords: ["skills/explore-codebase", "explore.", "key_invariants"]
 ---
 
 # Explore Codebase
