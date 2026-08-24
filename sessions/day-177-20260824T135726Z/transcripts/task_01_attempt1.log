@@ -1,0 +1,327 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code sections.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,240p' src/config.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "parse_directories_from… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1090p' src/cli.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn project_permission_r… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,360p' src/config.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 17.6s (5 ✓)
+
+Now the pure decision half in src/config.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (1 → 107 lines)
+  + /// Glob metacharacters that make a `[directories]` entry unmatchable (#823).
+  + ///
+  + /// `*` is the one [`glob_match`] actually honours in `[permissions]`, which is
+  + /// where the confusion comes from. `?` is included even though `glob_match`
+  + /// treats it literally too, because a user who writes it plainly *meant* a
+  + /// wildcard — and over-reporting here costs exactly one printed line, since
+  + /// nothing is refused, dropped or rewritten. `[` is deliberately **not**
+  + /// detected: bracket ranges are rarer still and `[` is a plausible literal in
+  + /// a real directory name.
+  + const DIRECTORY_GLOB_METACHARS: [char; 2] = ['*', '?'];
+  + 
+  + /// Which half of `[directories]` an offending entry came from.
+  + ///
+  + /// Kept distinct because the *consequence* differs, not for cosmetics: an
+  + /// unmatchable `allow` entry denies everything (fails safe, loudly), while an
+  + /// unmatchable `deny` entry protects nothing (fails **open**, silently).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub(crate) enum DirectoryList {
+  +     Allow,
+  +     Deny,
+  ... (87 more lines)
+ ✓ (12.1s)
+  + /// Glob metacharacters that make a `[directories]` entry unmatchable (#823).
+  + ///
+  + /// `*` is the one [`glob_match`] actually honours in `[permissions]`, which is
+  + /// where the confusion comes from. `?` is included even though `glob_match`
+  + /// treats it literally too, because a user who writes it plainly *meant* a
+  + /// wildcard — and over-reporting here costs exactly one printed line, since
+  + /// nothing is refused, dropped or rewritten. `[` is deliberately **not**
+  + /// detected: bracket ranges are rarer still and `[` is a plausible literal in
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected (no consumer yet). Wiring both emission points now:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 17 lines)
+  +     // #823: `[directories]` entries are matched by prefix, never globbed, so a
+  +     // `src/*` can never match anything — an allow list that fails safe but
+  +     // baffling, a deny list that fails open and silent. Warn; nothing is
+  +     // refused or rewritten. Wired at BOTH parse_directories_from_config call
+  +     // sites (here and dispatch_sub's `permissions` arm) — a per-token pass is
+  +     // not a per-entry-point pass.
+  +     let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+  +     if !is_quiet() {
+  +         if let Some(msg) =
+  +             crate::config::directory_wildcard_warning(&wildcards, crate::format::is_plain_output())
+  +         {
+  +             eprintln!("{YELLOW}{msg}{RESET}");
+  +         }
+  +     }
+  + 
+        (permissions, dir_restrictions)
+    }
+ ✓ (1m 27s)
+  +     // #823: `[directories]` entries are matched by prefix, never globbed, so a
+  +     // `src/*` can never match anything — an allow list that fails safe but
+  +     // baffling, a deny list that fails open and silent. Warn; nothing is
+  +     // refused or rewritten. Wired at BOTH parse_directories_from_config call
+  +     // sites (here and dispatch_sub's `permissions` arm) — a per-token pass is
+  +     // not a per-entry-point pass.
+  +     let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+  +     if !is_quiet() {
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (1 → 13 lines)
+                    let dir_restrictions = crate::config::parse_directories_from_config(&raw_config);
+  +                 // #823: the door a user walks through *specifically to check
+  +                 // what is in force* must not list `src/*` as an active fence
+  +                 // when it matches nothing. Same two helpers as parse_args.
+  +                 let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+  +                 if !crate::format::is_quiet() {
+  +                     if let Some(msg) = crate::config::directory_wildcard_warning(
+  +                         &wildcards,
+  +                         crate::format::is_plain_output(),
+  +                     ) {
+  +                         eprintln!("{YELLOW}{msg}{RESET}");
+  +                     }
+  +                 }
+ ✓ (1m 28s)
+                    let dir_restrictions = crate::config::parse_directories_from_config(&raw_config);
+  +                 // #823: the door a user walks through *specifically to check
+  +                 // what is in force* must not list `src/*` as an active fence
+  +                 // when it matches nothing. Same two helpers as parse_args.
+  +                 let wildcards = crate::config::wildcard_directory_entries(&dir_restrictions);
+  +                 if !crate::format::is_quiet() {
+  +                     if let Some(msg) = crate::config::directory_wildcard_warning(
+  +                         &wildcards,
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.8s)
+  3 tools completed in 3m 16s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code is in and clippy is green. Now the tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/config.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1485,1500p' src/config.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (165 lines) ✓ (19.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 54.4s (3 ✓)
+
+All 6 pass. Let me see the actual message a user receives:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/wc823 && cd /tmp/w… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/wc823 && ANTHROPIC_API_KEY= /home/runner/work/yoyo-evolve/yoyo-evolve/ta… ✓ (8ms)
+  ▶ $ cd /tmp/wc823 && printf '[directories]\nallow = ["src/*"]\n' > .yoyo.toml && ANT… ✓ (166ms)
+  3 tools completed in 13.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/wc823 && ANTHROPIC_API_KEY=sk-dummy timeout 25 /home/runner/work/yoyo-ev… ✓ (339ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The startup door isn't firing. Let me investigate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_permission_and_di… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1525,1545p' src/cli.rs &… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '15,35p' src/format/mod.r… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enable_quiet\|is_print… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1245,1275p' src/cli.rs ✓ (3ms)
+  5 tools completed in 18.1s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My -p test was piped, which enables quiet — so the gate was working. Verifying with a pty:
+  ▶ $ cd /tmp/wc823 && script -qec "ANTHROPIC_API_KEY=sk-dummy timeout 20 /home/runner… ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both doors verified live. But there's a grammar bug in the singular case (1 entry contain) — fixing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 10 lines)
+        let marker = if plain { "" } else { "⚠ " };
+  -     let plural = if entries.len() == 1 { "y" } else { "ies" };
+  +     let (noun, verb) = if entries.len() == 1 {
+  +         ("entry", "contains")
+  +     } else {
+  +         ("entries", "contain")
+  +     };
+        let mut msg = format!(
+  -         "{marker}{} [directories] entr{plural} contain a wildcard. [directories] takes literal paths:",
+  +         "{marker}{} [directories] {noun} {verb} a wildcard. [directories] takes literal paths:",
+            entries.len()
+        );
+ ✓ (12.0s)
+        let marker = if plain { "" } else { "⚠ " };
+  -     let plural = if entries.len() == 1 { "y" } else { "ies" };
+  +     let (noun, verb) = if entries.len() == 1 {
+  +         ("entry", "contains")
+  +     } else {
+  +         ("entries", "contain")
+  +     };
+        let mut msg = format!(
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (5 → 6 lines)
+        /// and a literal entry carrying neither.
+        #[test]
+        fn wildcard_directory_entries_table() {
+  -         let cases: &[(&[&str], &[&str], &[(DirectoryList, &str)])] = &[
+  +         type Case<'a> = (&'a [&'a str], &'a [&'a str], &'a [(DirectoryList, &'a str)]);
+  +         let cases: &[Case] = &[
+ ✓ (1m 28s)
+        /// and a literal entry carrying neither.
+        #[test]
+        fn wildcard_directory_entries_table() {
+  -         let cases: &[(&[&str], &[&str], &[(DirectoryList, &str)])] = &[
+  +         type Case<'a> = (&'a [&'a str], &'a [&'a str], &'a [(DirectoryList, &'a str)]);
+  +         let cases: &[Case] = &[
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 51s (2 ✓)
+
+Now adding a singular/plural grammar test:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 2 lines)
+        /// Glyph-free under plain output (screen readers), same house style as
+        /// `cli::project_permission_refusal_message`.
+  -     #[test]
+  -     fn plain_output_warning_carries_no_glyphs() {
+ ✓ (231ms)
+        /// Glyph-free under plain output (screen readers), same house style as
+        /// `cli::project_permission_refusal_message`.
+  -     #[test]
+  -     fn plain_output_warning_carries_no_glyphs() {
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 20 lines)
+  +     /// Grammar: the singular case must read "1 entry contains", not
+  +     /// "1 entry contain" — a warning that reads as broken is easier to dismiss.
+  +     #[test]
+  +     fn singular_and_plural_warnings_agree_with_their_counts() {
+  +         let one = directory_wildcard_warning(&wildcard_directory_entries(&dirs(&["src/*"], &[])), true)
+  +             .expect("must warn");
+  +         assert!(one.starts_with("1 [directories] entry contains"), "{one}");
+  + 
+  +         let two = directory_wildcard_warning(
+  +             &wildcard_directory_entries(&dirs(&["src/*"], &["secrets/*"])),
+  +             true,
+  +         )
+  +         .expect("must warn");
+  +         assert!(two.starts_with("2 [directories] entries contain"), "{two}");
+  +     }
+  + 
+        /// Glyph-free under plain output (screen readers), same house style as
+        /// `cli::project_permission_refusal_message`.
+  +     #[test]
+  +     fn plain_output_warning_carries_no_glyphs() {
+ ✓ (1m 26s)
+  +     /// Grammar: the singular case must read "1 entry contains", not
+  +     /// "1 entry contain" — a warning that reads as broken is easier to dismiss.
+  +     #[test]
+  +     fn singular_and_plural_warnings_agree_with_their_counts() {
+  +         let one = directory_wildcard_warning(&wildcard_directory_entries(&dirs(&["src/*"], &[])), true)
+  +             .expect("must warn");
+  +         assert!(one.starts_with("1 [directories] entry contains"), "{one}");
+  + 
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (32.0s)
+  3 tools completed in 2m 14s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 7 pass, clippy clean. Now the docs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,120p' docs/src/confi… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/permissions.md (4 → 14 lines)
+    allow = ["./src", "./tests"]
+    deny = ["~/.ssh", "/etc"]
+    ```
+  + 
+  + > **`[directories]` takes literal paths — not globs.** The two blocks use
+  + > different matchers: `[permissions]` patterns *are* globbed (`git *` matches
+  + > `git status`), while `[directories]` entries are matched by **prefix**, so a
+  + > `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
+  + > resolves to a directory that cannot exist and matches nothing — which denies
+  + > every file access — and `deny = ["secrets/*"]` builds a fence that protects
+  + > nothing. Name the directory itself (`src`, not `src/*`): an entry already
+  + > covers everything beneath it. yoyo prints a warning naming the offending
+  + > entries if it sees one.
+ ✓ (1m 2s)
+    allow = ["./src", "./tests"]
+    deny = ["~/.ssh", "/etc"]
+    ```
+  + 
+  + > **`[directories]` takes literal paths — not globs.** The two blocks use
+  + > different matchers: `[permissions]` patterns *are* globbed (`git *` matches
+  + > `git status`), while `[directories]` entries are matched by **prefix**, so a
+  + > `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
+  ... (5 more lines)
+  2 tools completed in 1m 12s (2 ✓)
+
+Now CLAUDE.md's config.rs bullet:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines) ✓ (1m 6s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Known and filed, not fixed (#823):** `[permissions]` patterns are globbed by `glob_match` while `[directories]` entries are matched by `path_is_under`, a plain resolved-string prefix test with no globbing at all — so a `*` in `[directories]` is a literal character, `allow = ["src/*"]` matches nothing, and every file-tool call fails with "not under any allowed directory" and no hint that the wildcard is the cause. That one fails *safe* rather than open, which is why it was filed rather than rushed in beside a grade.
+  + **Superseded claim, recorded rather than erased (Day 177, #823):** this bullet used to end "**Known and filed, not fixed (#823)**", describing the two-matcher asymmetry as an outstanding gap. The asymmetry is real and **still stands — `[directories]` has no glob support and this task did not add any**; what landed is a *warning*. `[permissions]` patterns are globbed by `glob_match`; `[directories]` entries are matched by `path_is_under`, a plain resolved-string prefix test with no globbing at all, so a `*` or `?` in one is a literal character and `allow = ["src/*"]` resolves to `$CWD/src/*`, a directory that cannot exist. **Both directions break, and they break in opposite ways — which is why the warning names which half each entry came from:** a wildcard in `allow` fails **safe** (the list is non-empty and matches nothing, so every file-tool call dies with "not under any allowed directory" — loud, if baffling), while a wildcard in `deny` fails **open** (`deny = ["secrets/*"]` matches nothing, so the fence the user believes they built does not exist and nothing complains). The decision half is the pure, table-tested pair `wildcard_directory_entries(&DirectoryRestrictions) -> Vec<(DirectoryList, String)>` (scans `allow` then `deny`, returning offending entries verbatim) and `directory_wildcard_warning(entries, plain) -> Option<String>` — **`None` for an empty slice, which is the byte-identical common path**: every user who does not write a wildcard sees output unchanged, and that was the regression risk. The message names every entry verbatim with its list (`allow = "src/*"` / `deny = "secrets/*"`), its consequence in that position, the fact that `[directories]` is matched by prefix and never globbed, the escape hatch (`src`, not `src/*` — a directory entry already covers everything beneath it), and the reason the two blocks differ, because that mismatch *is* the confusion; glyph-free under `is_plain_output()`, silent under `is_quiet()`, mirroring `project_permission_refusal_message`. Detection is `*` and `?` only — `*` is what `glob_match` honours, `?` is over-reported on purpose since a user who writes it meant a wildcard and a false positive costs exactly one printed line (nothing is refused, dropped or rewritten); `[` is deliberately **not** detected, being a plausible literal. **Both** `parse_directories_from_config` call sites are wired in the same diff — `parse_permission_and_dir_config` in `cli.rs` (the startup door) and the `"permissions"` subcommand arm in `dispatch_sub.rs` (the door a user walks through *specifically to check what is in force*, where listing `src/*` as an active fence would be a lie in the one place someone goes to verify) — because a per-token pass is not a per-entry-point pass. **Deliberately not done: globbing was not added to `check_path`.** That is a behaviour change to a security control with asymmetric risk — a glob in `deny` that suddenly starts matching is an improvement, but a glob in `allow` that suddenly starts matching *widens a fence the user is currently living inside*; a test pins that a wildcard entry still matches nothing, so a future "fix" that quietly adds globbing has to face that assertion.
+ ✓ (1m 6s)
+  - **Known and filed, not fixed (#823):** `[permissions]` patterns are globbed by `glob_match` while `[directories]` entries are matched by `path_is_under`, a plain resolved-string prefix test with no globbing at all — so a `*` in `[directories]` is a literal character, `allow = ["src/*"]` matches nothing, and every file-tool call fails with "not under any allowed directory" and no hint that the wildcard is the cause. That one fails *safe* rather than open, which is why it was filed rather than rushed in beside a grade.
+  + **Superseded claim, recorded rather than erased (Day 177, #823):** this bullet used to end "**Known and filed, not fixed (#823)**", describing the two-matcher asymmetry as an outstanding gap. The asymmetry is real and **still stands — `[directories]` has no glob support and this task did not add any**; what landed is a *warning*. `[permissions]` patterns are globbed by `glob_match`; `[directories]` entries are matched by `path_is_under`, a plain resolved-string prefix test with no globbing at all, so a `*` or `?` in one is a literal character and `allow = ["src/*"]` resolves to `$CWD/src/*`, a directory that cannot exist. **Both directions break, and they break in opposite ways — which is why the warning names which half each entry came from:** a wildcard in `allow` fails **safe** (the list is non-empty and matches nothing, so every file-tool call dies with "not under any allowed directory" — loud, if baffling), while a wildcard in `deny` fails **open** (`deny = ["secrets/*"]` matches nothing, so the fence the user believes they built does not exist and nothing complains). The decision half is the pure, table-tested pair `wildcard_directory_entries(&DirectoryRestrictions) -> Vec<(DirectoryList, String)>` (scans `allow` then `deny`, returning offending entries verbatim) and `directory_wildcard_warning(entries, plain) -> Option<String>` — **`None` for an empty slice, which is the byte-identical common path**: every user who does not write a wildcard sees output unchanged, and that was the regression risk. The message names every entry verbatim with its list (`allow = "src/*"` / `deny = "secrets/*"`), its consequence in that position, the fact that `[directories]` is matched by prefix and never globbed, the escape hatch (`src`, not `src/*` — a directory entry already covers everything beneath it), and the reason the two blocks differ, because that mismatch *is* the confusion; glyph-free under `is_plain_output()`, silent under `is_quiet()`, mirroring `project_permission_refusal_message`. Detection is `*` and `?` only — `*` is what `glob_match` honours, `?` is over-reported on purpose since a user who writes it meant a wildcard and a false positive costs exactly one printed line (nothing is refused, dropped or rewritten); `[` is deliberately **not** detected, being a plausible literal. **Both** `parse_directories_from_config` call sites are wired in the same diff — `parse_permission_and_dir_config` in `cli.rs` (the startup door) and the `"permissions"` subcommand arm in `dispatch_sub.rs` (the door a user walks through *specifically to check what is in force*, where listing `src/*` as an active fence would be a lie in the one place someone goes to verify) — because a per-token pass is not a per-entry-point pass. **Deliberately not done: globbing was not added to `check_path`.** That is a behaviour change to a security control with asymmetric risk — a glob in `deny` that suddenly starts matching is an improvement, but a glob in `allow` that suddenly starts matching *widens a fence the user is currently living inside*; a test pins that a wildcard entry still matches nothing, so a future "fix" that quietly adds globbing has to face that assertion.
+  2 tools completed in 2m 33s (2 ✓)
+
+Now the full verification run:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (12.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (55.4s)
+  2 tools completed in 1m 13s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (157ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (137ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (134ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 12.4s (3 ✓)
+
+Two register entries to pay — config.rs (fatal) and cli.rs (warning, but my diff caused it):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/config.rs"\|"src/c… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '142s/("src\/cli.rs", 457… ✓ (366ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (46.7s)
+  3 tools completed in 55.5s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
