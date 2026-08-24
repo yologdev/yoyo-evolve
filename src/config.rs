@@ -108,6 +108,39 @@ impl DirectoryRestrictions {
     }
 }
 
+/// Expand a leading `~` / `~/…` against `home`.
+///
+/// Pure decision half — the `HOME` lookup lives in [`expand_tilde`], so this
+/// can be table-tested without touching the process environment.
+///
+/// Deliberately narrow: only a bare `~` and a `~/` prefix are expanded. A
+/// `~user/...` form is returned verbatim, because resolving another account's
+/// home needs a passwd lookup this crate does not do, and guessing
+/// `<home_parent>/user` would invent a fence the user never wrote. When `home`
+/// is `None` the input is returned unchanged — a path that cannot be resolved
+/// must not be silently rewritten into something that resolves elsewhere.
+fn expand_tilde_with(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home.map(|h| h.trim_end_matches('/')) else {
+        return path.to_string();
+    };
+    if home.is_empty() {
+        return path.to_string();
+    }
+    if path == "~" {
+        return home.to_string();
+    }
+    match path.strip_prefix("~/") {
+        Some(rest) => format!("{home}/{rest}"),
+        None => path.to_string(),
+    }
+}
+
+/// I/O wrapper over [`expand_tilde_with`], reading `HOME` from the environment.
+fn expand_tilde(path: &str) -> String {
+    let home = std::env::var("HOME").ok();
+    expand_tilde_with(path, home.as_deref())
+}
+
 /// Resolve a path to an absolute, normalized form.
 /// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
 /// For non-existent paths, canonicalizes the nearest existing ancestor
@@ -116,6 +149,16 @@ impl DirectoryRestrictions {
 /// canonical form (issue #600: `/etc/shadow` vs a deny on `/etc` that
 /// canonicalizes to `/private/etc` on macOS).
 fn resolve_path(path: &str) -> String {
+    // Expand a leading `~` FIRST: `fs::canonicalize` does not do it (the shell
+    // does, and a config file never went through a shell), and a `~/...` string
+    // is not absolute, so without this it would be joined onto the cwd and
+    // silently become `$CWD/~/.ssh`. That made `deny = ["~/.ssh"]` — the worked
+    // example in docs/src/configuration/permissions.md — a fence that could
+    // never match, in the dangerous direction: the user believes their keys are
+    // protected and the file tools reach them. Found by blind round 76.
+    let expanded = expand_tilde(path);
+    let path: &str = &expanded;
+
     // Try canonicalize first (works for existing paths)
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().to_string();
@@ -2665,5 +2708,96 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
             home,
             None
         ));
+    }
+}
+
+#[cfg(test)]
+mod tilde_restriction_tests {
+    use super::*;
+
+    /// Round 76 unpredicted find: `resolve_path` did no tilde expansion, so the
+    /// worked example shipped in `docs/src/configuration/permissions.md`
+    /// (`deny = ["~/.ssh", "/etc"]`) resolved to `$CWD/~/.ssh` and could never
+    /// match — a user who copied the documented line believed their SSH keys
+    /// were fenced off while the file tools reached them unimpeded.
+    ///
+    /// Asserted at the **emission point**: the `Result` a caller of
+    /// `check_path` actually receives, never `resolve_path` one layer below.
+    /// Reads the real `HOME` rather than setting it, so no process-global env
+    /// var is mutated and the test needs no `#[serial]`.
+    #[test]
+    fn tilde_deny_entry_actually_denies_the_home_relative_path() {
+        let Ok(home) = std::env::var("HOME") else {
+            return; // no HOME on this platform; nothing to assert
+        };
+
+        let restrictions = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["~/.ssh".to_string()],
+        };
+
+        let secret = format!("{home}/.ssh/id_rsa");
+        let err = restrictions
+            .check_path(&secret)
+            .expect_err("a ~/.ssh deny entry must block $HOME/.ssh/id_rsa");
+        assert!(
+            err.contains("Access denied"),
+            "emission point must say the access was denied, got: {err}"
+        );
+
+        // Near-miss guard: a discriminator tested only on the side that blocks
+        // is vacuous green. An unrelated path under HOME must still pass.
+        let ordinary = format!("{home}/projects/main.rs");
+        assert!(
+            restrictions.check_path(&ordinary).is_ok(),
+            "~/.ssh must not fence off the whole home directory"
+        );
+    }
+
+    /// A bare `~` entry names the home directory itself.
+    #[test]
+    fn bare_tilde_entry_resolves_to_the_home_directory() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let restrictions = DirectoryRestrictions {
+            allow: vec!["~".to_string()],
+            deny: vec![],
+        };
+        let inside = format!("{home}/anywhere.txt");
+        assert!(
+            restrictions.check_path(&inside).is_ok(),
+            "an allow entry of `~` must admit paths under HOME"
+        );
+    }
+
+    /// Table test for the pure half. The two emission-point tests above drive
+    /// only the happy branches; these are the ones that must NOT expand.
+    #[test]
+    fn expand_tilde_with_table() {
+        let h = Some("/home/ada");
+        for (input, home, expected) in [
+            ("~", h, "/home/ada"),
+            ("~/.ssh", h, "/home/ada/.ssh"),
+            ("~/a/b.rs", h, "/home/ada/a/b.rs"),
+            // trailing slash on HOME must not double up
+            ("~/.ssh", Some("/home/ada/"), "/home/ada/.ssh"),
+            // another account's home needs a passwd lookup we do not do
+            ("~bob/.ssh", h, "~bob/.ssh"),
+            // not a tilde path at all
+            ("./src", h, "./src"),
+            ("/etc", h, "/etc"),
+            ("a~b", h, "a~b"),
+            // unresolvable HOME must leave the path alone rather than invent one
+            ("~/.ssh", None, "~/.ssh"),
+            ("~", None, "~"),
+            ("~/.ssh", Some(""), "~/.ssh"),
+        ] {
+            assert_eq!(
+                expand_tilde_with(input, home),
+                expected,
+                "expand_tilde_with({input:?}, {home:?})"
+            );
+        }
     }
 }
