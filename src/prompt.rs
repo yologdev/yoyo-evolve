@@ -18,7 +18,19 @@ use crate::session::{ChangeKind, SessionChanges};
 /// Low and High prepend a bracketed instruction that guides the agent's response style.
 /// This is applied per-turn so `/effort` changes take effect immediately.
 pub(crate) fn apply_effort_hint(input: &str) -> String {
-    let hint = crate::cli_config::effort_level().system_hint();
+    apply_effort_hint_with(crate::cli_config::effort_level(), input)
+}
+
+/// Decision half of [`apply_effort_hint`], with the effort level injected.
+///
+/// The level lives in a process-global `AtomicU8` (`cli_config::EFFORT_LEVEL`), so a
+/// test that exercised the wrapper had to *write* that global — and three such tests
+/// raced each other on libtest's parallel threads, turning a green suite red at random
+/// (`cargo test --bin yoyo apply_effort_hint` failed 6 of 12 runs; CI run 32748888895).
+/// The global read now lives at the wrapper and the decision is pure, so the tests need
+/// no process-global write at all. Same shape as `context_budget_warning_with`.
+pub(crate) fn apply_effort_hint_with(level: crate::cli_config::EffortLevel, input: &str) -> String {
+    let hint = level.system_hint();
     if hint.is_empty() {
         input.to_string()
     } else {
@@ -2859,11 +2871,10 @@ mod tests {
 
     #[test]
     fn test_apply_effort_hint_low_prepends() {
-        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
-        let original = effort_level();
-        set_effort_level(EffortLevel::Low);
-        let result = apply_effort_hint("Hello agent");
-        set_effort_level(original);
+        use crate::cli_config::EffortLevel;
+        // Level injected, not stored: these three tests used to write the process-global
+        // EFFORT_LEVEL and raced each other on libtest's threads (6 of 12 runs red).
+        let result = apply_effort_hint_with(EffortLevel::Low, "Hello agent");
         assert!(result.starts_with("[Effort: "));
         assert!(result.contains("concise"));
         assert!(result.ends_with("Hello agent"));
@@ -2871,23 +2882,43 @@ mod tests {
 
     #[test]
     fn test_apply_effort_hint_medium_noop() {
-        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
-        let original = effort_level();
-        set_effort_level(EffortLevel::Medium);
-        let result = apply_effort_hint("Hello agent");
-        set_effort_level(original);
+        use crate::cli_config::EffortLevel;
+        let result = apply_effort_hint_with(EffortLevel::Medium, "Hello agent");
         assert_eq!(result, "Hello agent");
     }
 
     #[test]
     fn test_apply_effort_hint_high_prepends() {
-        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
-        let original = effort_level();
-        set_effort_level(EffortLevel::High);
-        let result = apply_effort_hint("Hello agent");
-        set_effort_level(original);
+        use crate::cli_config::EffortLevel;
+        let result = apply_effort_hint_with(EffortLevel::High, "Hello agent");
         assert!(result.starts_with("[Effort: "));
         assert!(result.contains("thorough"));
         assert!(result.ends_with("Hello agent"));
+    }
+
+    /// The wrapper must still read the process-global level, or the split would have
+    /// silently disconnected `/effort` from every prompt. Pinned at the **source** level
+    /// rather than by driving the global: writing `EFFORT_LEVEL` from a test is the exact
+    /// hazard this split removed (three tests raced on it, 6 of 12 runs red), and one
+    /// test doing it would leave the class alive for the next one. Needle built at
+    /// runtime so it cannot match itself. **This is a weak check** — it proves the call
+    /// is present, not that its result is used; the pure half above carries the real
+    /// assertions.
+    #[test]
+    fn test_apply_effort_hint_wrapper_reads_the_global_level() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/prompt.rs"))
+            .expect("read src/prompt.rs");
+        let body = src
+            .split("pub(crate) fn apply_effort_hint(input: &str) -> String {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("locate apply_effort_hint body");
+        let needle = format!("{}{}", "effort_level", "()");
+        assert!(
+            body.contains(&needle),
+            "apply_effort_hint no longer calls `{needle}`. The wrapper is the one place \
+             the process-global effort level is read; without it `/effort` reaches no \
+             prompt. Body was:\n{body}"
+        );
     }
 }
