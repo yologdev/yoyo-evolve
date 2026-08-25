@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "glob\|wildcard\|\*" doc… ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "no glob support and thi… ✓ (7ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 52s (4 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+The implementation half is genuinely good: directory_entry_matches is pure and table-tested, both check_path loops are wired (not just one), `entry_has_glob_meta` deduplicates the wildcard predicate as asked, the Day-177 refusal test was replaced deliberately with the reasoning recorded in a doc comment rather than deleted quietly, and the byte-identity guard for non-wildcard entries is pinned in both lists.
+
+But the commit contains only src/config.rs and tests/module_size.rs. The task named `docs/src/configuration/permissions.md and CLAUDE.md` explicitly, and both now carry statements that the diff made false:
+
+• `docs/src/configuration/permissions.md:114 — "**[directories] takes literal paths — not globs.**… deny = ["secrets/*"]` builds a fence that protects nothing. Name the directory itself."
+• CLAUDE.md:188 — "still stands — [directories] has no glob support and this task did not add any" and "Deliberately not done: globbing was not added to `check_path`".
+
+That second one is the expensive kind: CLAUDE.md is re-injected as authoritative context every session, so it will tell the next agent the fix it just shipped does not exist — the same wrong-mechanism-in-a-comment class this repo already paid eight sessions for on src/gasp.rs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,149 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc gap. Let me first read the current state of both doc files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "directories" docs/src/c… ✓ (3ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 70,140p docs/src/configur…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "823" CLAUDE.md | head ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,130p docs/src/configu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "entry_has_glob_meta\|fn… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=113 && NR<=125 {printf … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 13.3s (7 ✓)
+
+Now I'll replace the false doc block with one that matches the shipped behaviour.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/permissions.md (9 → 36 lines)
+  - > **`[directories]` takes literal paths — not globs.** The two blocks use
+  - > different matchers: `[permissions]` patterns *are* globbed (`git *` matches
+  - > `git status`), while `[directories]` entries are matched by **prefix**, so a
+  - > `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
+  - > resolves to a directory that cannot exist and matches nothing — which denies
+  - > every file access — and `deny = ["secrets/*"]` builds a fence that protects
+  - > nothing. Name the directory itself (`src`, not `src/*`): an entry already
+  - > covers everything beneath it. yoyo prints a warning naming the offending
+  - > entries if it sees one.
+  + ### Wildcards in `[directories]`
+  + 
+  + `[directories]` entries support `*` wildcards. An entry with **no** wildcard is
+  + matched by prefix exactly as it always has been — the path itself, plus
+  + everything beneath it. An entry that **contains** a `*` is matched as a path
+  + pattern against each candidate path and its parent directories.
+  + 
+  + `*` matches any run of characters, **including `/`**, so a pattern covers
+  + everything beneath whatever it matches:
+  + 
+  + ```toml
+  ... (25 more lines)
+ ✓ (1m 19s)
+  - > **`[directories]` takes literal paths — not globs.** The two blocks use
+  - > different matchers: `[permissions]` patterns *are* globbed (`git *` matches
+  - > `git status`), while `[directories]` entries are matched by **prefix**, so a
+  - > `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
+  - > resolves to a directory that cannot exist and matches nothing — which denies
+  - > every file access — and `deny = ["secrets/*"]` builds a fence that protects
+  - > nothing. Name the directory itself (`src`, not `src/*`): an entry already
+  - > covers everything beneath it. yoyo prints a warning naming the offending
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "823\|wildcard" src/conf… ✓ (4ms)
+  2 tools completed in 1m 26s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the doc examples I wrote are actually true before trusting them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3289,3400p' src/config.r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3244,3290p' src/config.r… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.8s (2 ✓)
+
+Every doc claim should be backed by a test that exists. Let me align the examples to the shapes already pinned.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/permissions.md (15 → 20 lines)
+    
+    ```toml
+    [directories]
+  - # Allow: only crate sources, wherever they live in the workspace.
+  - allow = ["*/src"]
+  - # Deny: every directory named `secrets`, and every file inside one.
+  - deny = ["*/secrets"]
+  + allow = ["src/*"]
+  + deny = ["secrets/*"]
+    ```
+    
+  - - `allow = ["*/src"]` permits `crates/core/src/lib.rs` and refuses
+  -   `crates/core/README.md`.
+  - - `deny = ["*/secrets"]` blocks `app/secrets/prod.env` while leaving
+  -   `app/config.toml` alone.
+  + One worked example per direction:
+  + 
+  + - `allow = ["src/*"]` permits `src/main.rs` and `src/format/mod.rs`, and still
+  +   refuses `/etc/passwd`.
+  + - `deny = ["secrets/*"]` blocks `secrets/api/key.txt` and leaves `src/main.rs`
+  ... (6 more lines)
+ ✓ (1m 17s)
+    
+    ```toml
+    [directories]
+  - # Allow: only crate sources, wherever they live in the workspace.
+  - allow = ["*/src"]
+  - # Deny: every directory named `secrets`, and every file inside one.
+  - deny = ["*/secrets"]
+  + allow = ["src/*"]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=104 && NR<=152 {printf … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "glob\|literal\|prefix" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=84 && NR<=98 {printf "%… ✓ (8ms)
+  4 tools completed in 1m 31s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now CLAUDE.md. Let me extract the exact sentences to supersede.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (17 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "sti… (6 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 18s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 18s)
+  6 tools completed in 3m 34s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green, both doc files updated. Committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (16 lines) ✓ (19ms)
+
+Fixed. The evaluator's one FAIL check (doc_sync) is closed — the code half it already passed is untouched.
+
+What I changed (2 files, both named by the task):
+
+1. **`docs/src/configuration/permissions.md** — replaced the block at line 114 that said *"[directories] takes literal paths — not globs"*, *"allow = ["src/"]` … matches nothing", and "`deny = ["secrets/"] builds a fence that protects nothing"* with a Wildcards in [directories]` section that states support, explains the two branches (no wildcard → prefix as before; wildcard → path pattern over the candidate and its ancestors), and gives one worked example per direction. Every example uses a shape already pinned by an existing test — I first wrote */src / crates/core/src/lib.rs from reasoning, then replaced them with allow = ["src/*"] → src/main.rs / refuses /etc/passwd and deny = ["secrets/*"] → blocks secrets/api/key.txt / leaves src/main.rs, which are verbatim the assertions in allow_wildcard_permits_matches_and_still_refuses_outsiders, deny_wildcard_blocks_files_inside_matching_directories and its near-miss guard; the */secrets paragraph matches rows in directory_entry_matches_table. The surviving ? trap is kept (`glob_match implements *` only), the tilde prose was left alone, and I grepped the rest of the file for `glob`/`literal`/`prefix` — the remaining hits are all in the `[permissions]` section or the two new notes.
+
+2. `CLAUDE.md` — the config.rs bullet's *"still stands — [directories] has no glob support and this task did not add any" and "Deliberately not done: globbing was not added to check_path"* are now **quoted inside a superseded-claim record**, not erased (both strings still appear exactly once, inside the quotation). Beside them: what directory_entry_matches does, that only entries which previously matched nothing change meaning, the byte-identity guard, that glob_match and [permissions] were untouched, why widening allow was safe here, the emission-point tests, and the deliberate "reduced note" choice for the warning. The still-true Day-177 machinery (None for empty slice, */? detection, both call sites wired) is carried forward rather than dropped.
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test — all clean; 0 test suites with failures. git diff --name-only HEAD~1 HEAD now returns both doc files.
+
+One thing I did not do, stated rather than implied: I did not re-run the positive control for the wildcard branch myself (removing the branch and watching the two glob tests fail) — that claim in the CLAUDE.md text is carried over from the previous commit's record, not a measurement this session took.
+

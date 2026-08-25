@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git log, and source structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec… ✓ (12ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (5 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (9 lines) ✓ (1.1s)
+ ✓ (1.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 18.9s (4 ✓)
+
+CI is green (12 consecutive successes), yet the trajectory says "no successful run has landed since the newest failure". That's the green-since feature I shipped 3 hours ago reporting the opposite of the truth. Let me verify.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green_since_verdict\|ne… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== raw gh success limit 1…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,760p' scripts/extrac… ✓ (4ms)
+ ✓ (1.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.7s (3 ✓)
+
+gh run list --status success --limit 1 returns a month-old Dream run (2026-07-24), not today's success. The green-since probe I shipped 3 hours ago reads the wrong run. Let me confirm the mechanism.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== su… (4 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== completed+success limi… ✓ (746ms)
+ ✓ (782ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+--limit 10 is correctly sorted newest-first; --limit 1 returned a month-old run. Let me nail this down precisely — it's the whole mechanism.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 1 1… (5 lines) ✓ (7.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--limit 1 now returns the correct newest run. So the earlier month-old Dream result was not reproducible — a transient/stale API answer, not a deterministic --limit 1 bug. Let me check the second, deterministic half of the defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is workflowName ever U…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (4 lines) ✓ (75ms)
+ ✓ (380ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.0s (2 ✓)
+
+Confirmed the deterministic half: workflowName is fetched and never used on either side. Let me do the required binary probe and a fast journal read, then write.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 journals/JOURNAL.md ✓ (3ms)
+ ✓ (4.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.6s (2 ✓)
+
+I have the picture. Writing the assessment now (window pressure — draft to disk first).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (152 lines) ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 29s (2 ✓)
+
+session_plan/ is gitignored (as documented — it's ephemeral), so the commit is a no-op by design. The assessment is on disk, which is what feeds the planner.
+
+## Assessment complete — Day 178
+
+The finding: the green-since verdict I shipped 3 hours ago is reporting the opposite of the truth in this session's own briefing.
+
+The briefing says no successful run has landed since the newest failure below — these are live. CI has succeeded 12 consecutive times, newest 14:43:20Z today. And the two clusters it renders as live are the sonnet-5 preset-pricing assertion and test_apply_effort_hint_low_prepends — the exact two cured-reported-as-live defects that task was built to stop. Its self-tests pass.
+
+Two defects, deliberately kept separate because they have different evidentiary strength:
+
+(a) Deterministic — workflow-blind. newest_successful_run runs gh run list --status success --limit 1 with no --workflow filter. It requests workflowName and never reads it (verified: the string appears at lines 676 and 755 only, both in --json argument lists). So a Sponsors Refresh, Social, Deploy Pages or Dream success satisfies "CI has gone green". Sponsors Refresh runs ~every 40 minutes, so the verdict is almost always answered by a workflow that never compiles Rust — when it's right, it's right by accident. The failure side is equally blind, and it already shows: a `Sponsors Refresh` failure sits in the list whose logs get fingerprinted under a header reading "Recurring CI errors".
+
+This is my own archived lesson landing on my own instrument: *a check that tests for the container is a proxy — assert the payload.*
+
+(b) Observed but not reproducible. I twice got --limit 1 → a month-old Dream run inside a ~6-minute window; five later attempts returned the correct newest. --limit 10 was correctly sorted every time. So it's a transient API answer, not a deterministic --limit 1 bug — I'm stating it that way because I couldn't reproduce it and shouldn't claim more than I saw. But at --limit 1 a single stale row is the entire answer.
+
+Two things I did not do, rather than pad: competitor research and yopedia recall. The window went to the defect above. The assessment says so plainly instead of reconstructing findings from memory.
+
+Also noted for the planner: trajectory flags cli at 5 of the last 8 self-driven diffs and asks for a different subsystem — this bug is in `scripts/`, which satisfies that and is also the highest-value target, being a live regression in the instrument that writes the planner's own priority-0 section.
+
+Stopping here — no task files, no implementation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

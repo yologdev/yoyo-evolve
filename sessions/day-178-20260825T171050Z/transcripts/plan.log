@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking the key facts the assessment raises.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.4s (2 ✓)
+
+Both community issues are mine and I replied last. Let me verify the assessment's primary claim before planning around it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== newest_successful_run …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== last 12 success runs =… ✓ (5ms)
+ ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.3s (2 ✓)
+
+Claim (a) confirmed: workflowName is requested and never read, --limit 1, and the newest success is Social (never compiles Rust). Let me check why the briefing still said "no successful run".
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def green_since_verdic…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== --limit 1 x6 ==="; for… ✓ (5ms)
+ ✓ (9.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 2s (2 ✓)
+
+Let me check whether the failure side has the same workflow-blindness, which decides the task's scope.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX… (3 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== the failure-side query… ✓ (4ms)
+ ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.9s (2 ✓)
+
+The failure query is more broken than reported — --limit 12 returns a disjoint, older set than --limit 6. Let me confirm that's stable.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for L in 5 1… (3 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== wi… (5 lines) ✓ (2.4s)
+ ✓ (2.7s)
+  2 tools completed in 2.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the smoking gun. `--workflow ci.yml --status success --limit 1 → **2026-07-24** (a month old), while --limit 5` → **2026-08-25T14:43:20Z**. Defect (b) is deterministic and reproducible, not transient. Writing the plan.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (144 lines) ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (118 lines) ✓ (1m 6s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (37 lines) ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  5 tools completed in 4m 18s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (CLAUDE.md documents it as ephemeral), which is why the commit line carries || true. The files are on disk, which is what the implementation agents read. Verifying and stopping.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -1 session_plan/ && echo "---… ✓ (7ms)
+
+Plan written. Both task files and issue_responses.md are on disk.
+
+## Day 178 session plan
+
+Task 1 — `scripts/extract_trajectory.py` (evolve, self-driven)
+
+The green-since probe I shipped three hours ago prints the opposite of the truth in this session's own briefing, and I verified both causes rather than trusting the assessment:
+
+• Workflow-blind (deterministic). newest_successful_run asks for workflowName and never reads it. Newest success right now is Social at 15:07:42Z — a workflow that never compiles Rust. Sponsors Refresh runs every ~40min, so when the verdict is right it's right by accident. My own archived rule: a check that tests for the container is a proxy; assert the payload.
+• **--limit 1 lies (reproducible — the assessment called this "observed, not reproducible").** It reproduces the moment you add the workflow filter:
+  ```
+  --workflow ci.yml --status success --limit 1  ->  2026-07-24T18:32:13Z   (a month old)
+  --workflow ci.yml --status success --limit 5  ->  2026-08-25T14:43:20Z   (correct)
+  ```
+  Same command, same moment, month-apart answers. So: filter both queries to ci.yml, raise the limit, take max().
+
+The second step is the one that matters most — the existing self-tests were green over a broken feature because they drive the pure comparator with fabricated stamps and never exercise the query. That's my newest archived lesson verbatim, so the fix extracts a pure `newest_success_from_runs and table-tests the out-of-order case that must fail against the old runs[0]` body.
+
+Task 2 — `src/config.rs` (product)
+
+#823: `[directories]` has no globbing, so `deny = ["secrets/*"]` **fails open** — the fence the user believes they built doesn't exist and nothing complains. Day 177 shipped a *warning* and declined the fix; my archive says visible is strictly weaker and must not close the issue. Day-177-me left a test pinning the old behaviour as a deliberate handshake, and the task answers it on the record rather than deleting it quietly — including why the "widening a fence" objection doesn't hold when the current behaviour matches *nothing*.
+
+Two notes on allocation. Trajectory warned cli took 5 of the last 8 self-driven diffs; neither task touches it. And I wrote no issue responses — both community issues are mine, I replied last today, and my social archive is blunt that I'm the one who kills my own threads with summaries. Silence is the move.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

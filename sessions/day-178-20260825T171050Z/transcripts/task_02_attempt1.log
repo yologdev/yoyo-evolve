@@ -1,0 +1,269 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current implementation before making changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "path_is_under\|fn check…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:40..330 ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:385..505 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,395p' src/config.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3178,3220p' src/config.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config.rs" tests/module… ✓ (3ms)
+  7 tools completed in 1m 25s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — time to act. Starting with the matcher itself.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (3 → 50 lines)
+  + /// Does a `[directories]` entry carry a glob metacharacter (#823)?
+  + ///
+  + /// The single statement of "what counts as a wildcard here", shared by the
+  + /// matcher ([`directory_entry_matches`]) and the startup note
+  + /// ([`wildcard_directory_entries`]) so the two cannot disagree about which
+  + /// entries are patterns.
+  + fn entry_has_glob_meta(entry: &str) -> bool {
+  +     entry
+  +         .chars()
+  +         .any(|c| DIRECTORY_GLOB_METACHARS.contains(&c))
+  + }
+  + 
+  + /// Decide whether one `[directories]` entry matches a candidate path (#823).
+  + ///
+  + /// Pure: every argument is already resolved by the caller, so this does no I/O
+  + /// and can be table-tested. `entry` is the string **the user wrote** (that is
+  + /// what decides pattern-ness, so the matcher and the startup note agree);
+  + /// `entry_resolved` and `candidate_resolved` are absolute normalized paths.
+  + ///
+  + /// Two branches:
+  ... (30 more lines)
+ ✓ (15.6s)
+  + /// Does a `[directories]` entry carry a glob metacharacter (#823)?
+  + ///
+  + /// The single statement of "what counts as a wildcard here", shared by the
+  + /// matcher ([`directory_entry_matches`]) and the startup note
+  + /// ([`wildcard_directory_entries`]) so the two cannot disagree about which
+  + /// entries are patterns.
+  + fn entry_has_glob_meta(entry: &str) -> bool {
+  +     entry
+  ... (13 more lines)
+
+Expected — now the consumers, in the same edit pass.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (17 → 17 lines)
+            // Deny always takes priority
+            for denied in &self.deny {
+                let denied_resolved = resolve_path(denied);
+  -             if path_is_under(&resolved, &denied_resolved) {
+  +             if directory_entry_matches(denied, &denied_resolved, &resolved) {
+                    return Err(format!(
+                        "Access denied: '{}' is under restricted directory '{}'",
+                        path, denied
+  ···
+            if !self.allow.is_empty() {
+                let allowed = self.allow.iter().any(|a| {
+                    let a_resolved = resolve_path(a);
+  -                 path_is_under(&resolved, &a_resolved)
+  +                 directory_entry_matches(a, &a_resolved, &resolved)
+                });
+ ✓ (1m 42s)
+            // Deny always takes priority
+            for denied in &self.deny {
+                let denied_resolved = resolve_path(denied);
+  -             if path_is_under(&resolved, &denied_resolved) {
+  +             if directory_entry_matches(denied, &denied_resolved, &resolved) {
+                    return Err(format!(
+                        "Access denied: '{}' is under restricted directory '{}'",
+                        path, denied
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (59.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | tai… ✓ (59.4s)
+  3 tools completed in 3m 46s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The one failure is exactly the Day-177 handshake test — my positive control passed. Now replacing it deliberately, and correcting the warning.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (9 → 6 lines)
+        fn consequence(self) -> &'static str {
+            match self {
+  -             // An allow list that is non-empty but matches nothing denies every
+  -             // path: "not under any allowed directory" for every file tool call.
+  -             DirectoryList::Allow => "matches nothing, so every file access is denied",
+  -             // A deny entry that matches nothing is a fence that does not exist.
+  -             DirectoryList::Deny => "matches nothing, so it protects nothing",
+  +             DirectoryList::Allow => "permits every matching path and what is beneath it",
+  +             DirectoryList::Deny => "blocks every matching path and what is beneath it",
+            }
+        }
+ ✓ (1m 42s)
+        fn consequence(self) -> &'static str {
+            match self {
+  -             // An allow list that is non-empty but matches nothing denies every
+  -             // path: "not under any allowed directory" for every file tool call.
+  -             DirectoryList::Allow => "matches nothing, so every file access is denied",
+  -             // A deny entry that matches nothing is a fence that does not exist.
+  -             DirectoryList::Deny => "matches nothing, so it protects nothing",
+  +             DirectoryList::Allow => "permits every matching path and what is beneath it",
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (68 → 75 lines)
+    /// Entries in `[directories]` that carry a glob metacharacter (#823).
+    ///
+  - /// `[permissions]` patterns are globbed by [`glob_match`]; `[directories]`
+  - /// entries are matched by `path_is_under`, a plain resolved-string prefix test
+  - /// with **no globbing at all**. So a `*` in a `[directories]` entry is a literal
+  - /// `*` character: `src/*` resolves to `$CWD/src/*`, a directory that cannot
+  - /// exist, and the entry can never match anything.
+  + /// **Superseded claim, recorded rather than erased:** this doc used to say
+  + /// `[directories]` entries are matched by `path_is_under` "with **no globbing
+  + /// at all**", so a `*` was a literal character and `src/*` could never match.
+  + /// That was true when written and is false as of the #823 fix — wildcard
+  + /// entries are now globbed by [`directory_entry_matches`].
+  + ///
+  + /// What survives is that the two blocks still glob *different things*, and one
+  + /// genuine trap remains: [`glob_match`] implements `*` and **not** `?`, so a
+  + /// `?` in either block is a literal question mark. That is what the note built
+  + /// on this scan now says.
+    ///
+    /// Scans **both** lists, `allow` first then `deny`, returning the offending
+    /// entries verbatim. Detection only — nothing here refuses, drops or rewrites
+  ... (56 more lines)
+ ✓ (1m 39s)
+    /// Entries in `[directories]` that carry a glob metacharacter (#823).
+    ///
+  - /// `[permissions]` patterns are globbed by [`glob_match`]; `[directories]`
+  - /// entries are matched by `path_is_under`, a plain resolved-string prefix test
+  - /// with **no globbing at all**. So a `*` in a `[directories]` entry is a literal
+  - /// `*` character: `src/*` resolves to `$CWD/src/*`, a directory that cannot
+  - /// exist, and the entry can never match anything.
+  + /// **Superseded claim, recorded rather than erased:** this doc used to say
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 48s (2 ✓)
+
+Now the tests — updating the assertions that pinned the old (now false) wording.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3078,3110p' src/config.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.3s (2 ✓)
+
+Now replacing the Day-177 handshake test deliberately, and adding the emission-point suite.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (13 → 159 lines)
+  -     /// The warning is a warning: the matcher is unchanged and the restrictions
+  -     /// pass through byte-identically. Pinned so a future "fix" that quietly
+  -     /// adds globbing has to face this assertion.
+  +     /// **Superseded test, replaced deliberately rather than deleted quietly.**
+  +     ///
+  +     /// Day 177 shipped the detection half only, and pinned the refusal with a
+  +     /// test named `wildcard_entry_still_matches_nothing`:
+  +     ///
+  +     /// ```ignore
+  +     /// let parsed = parse_directories_from_config("[directories]\nallow = [\"src/*\"]\n");
+  +     /// assert!(parsed.check_path("src/main.rs").is_err(),
+  +     ///         "detection must not have changed the matcher");
+  +     /// ```
+  +     ///
+  +     /// Its stated purpose was that "a future 'fix' that quietly adds globbing
+  +     /// has to face this assertion". #823 is that fix, and this is the answer,
+  +     /// made on purpose and in the open: the same input must now be `Ok`.
+  +     ///
+  +     /// The Day-177 argument for refusing was that a glob in `allow` which
+  +     /// starts matching *widens a fence the user is currently living inside*.
+  ... (145 more lines)
+ ✓ (1m 47s)
+  -     /// The warning is a warning: the matcher is unchanged and the restrictions
+  -     /// pass through byte-identically. Pinned so a future "fix" that quietly
+  -     /// adds globbing has to face this assertion.
+  +     /// **Superseded test, replaced deliberately rather than deleted quietly.**
+  +     ///
+  +     /// Day 177 shipped the detection half only, and pinned the refusal with a
+  +     /// test named `wildcard_entry_still_matches_nothing`:
+  +     ///
+  ... (13 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config:: 2… ✓ (176ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 196 config tests pass. Now the full suite and the size gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 25s (2 ✓)
+
+The gate names its own remedy. Pasting it — this also pays off 91 lines of pre-existing drift (3101 → 3192 was already absorbed before my change).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/config.rs", 3101),
+  +     ("src/config.rs", 3390),
+ ✓ (1m 20s)
+  -     ("src/config.rs", 3101),
+  +     ("src/config.rs", 3390),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 59s)
+  2 tools completed in 3m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt changed the line count. Re-reading the gate's remedy.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (186ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/config.rs", 3390),
+  +     ("src/config.rs", 3388),
+ ✓ (1m 20s)
+  -     ("src/config.rs", 3390),
+  +     ("src/config.rs", 3388),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 19s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 50s (3 ✓)
+
+All green. Now the positive control the task requires — removing the wildcard branch must kill the glob tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (13 lines) ✓ (25.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo directory … ✓ (1.6s)
+  2 tools completed in 29.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passed: 5 glob tests die, the byte-identity literal test survives — exactly the right split. Verifying the restore, then docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config:: 2… ✓ (23.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,130p' docs/src/confi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '114,122p' docs/src/confi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=114 && NR<=122' docs/sr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (18ms)
+  5 tools completed in 34.9s (5 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

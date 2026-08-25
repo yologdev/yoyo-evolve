@@ -1,0 +1,317 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "newest_successful_run\|… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,45p scripts/extract_tr… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls .github/workflows/ && echo "-… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- limit 1 (ci.yml) ---";… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- failures unfiltered --… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (6 lines) ✓ (908ms)
+  6 tools completed in 31.1s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified both queries. Now the edits — constant first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 16 lines)
+    MAX_FAILED_RUNS = 5            # cap on `gh run view --log-failed` calls
+  + # Rows fetched by the green-since probe. Deliberately NOT 1, and this comment is
+  + # the reason a future reader must not "simplify" it back. `--limit 1` makes a
+  + # single row the WHOLE answer, so any ordering surprise from `gh` becomes the
+  + # verdict with nothing to correct it. Measured 2026-08-25 on this repo:
+  + #   gh run list --workflow ci.yml --status success --limit 1  -> 2026-07-24T18:32:13Z
+  + #   gh run list --workflow ci.yml --status success --limit 5  -> 2026-08-25T14:43:20Z
+  + # Same command, same moment, month-apart answers. (Re-measured later that day the
+  + # `--limit 1` row was correct again, i.e. the misordering is intermittent, which
+  + # is the worst kind to depend on.) With N rows the true newest is recoverable by
+  + # max() over the parsed stamps, so the probe stops depending on position 0.
+  + GREEN_PROBE_LIMIT = 10
+  + # The workflow whose runs are the payload of "has CI gone green?". Asking for
+  + # ANY workflow is a container check: `Sponsors Refresh` runs ~every 40 minutes
+  + # and would answer the question by accident. Only this file compiles Rust.
+  + CI_WORKFLOW_FILE = "ci.yml"
+ ✓ (1m 8s)
+    MAX_FAILED_RUNS = 5            # cap on `gh run view --log-failed` calls
+  + # Rows fetched by the green-since probe. Deliberately NOT 1, and this comment is
+  + # the reason a future reader must not "simplify" it back. `--limit 1` makes a
+  + # single row the WHOLE answer, so any ordering surprise from `gh` becomes the
+  + # verdict with nothing to correct it. Measured 2026-08-25 on this repo:
+  + #   gh run list --workflow ci.yml --status success --limit 1  -> 2026-07-24T18:32:13Z
+  + #   gh run list --workflow ci.yml --status success --limit 5  -> 2026-08-25T14:43:20Z
+  + # Same command, same moment, month-apart answers. (Re-measured later that day the
+  ... (8 more lines)
+
+Now the probe — split into a pure half plus a thin I/O shell:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (39 → 82 lines)
+  + def green_probe_argv(repo: str) -> list[str]:
+  +     """argv for the green-since probe. Pure, so a test can assert its shape."""
+  +     return [
+  +         "gh", "run", "list", "--repo", repo,
+  +         "--workflow", CI_WORKFLOW_FILE,
+  +         "--status", "success", "--limit", str(GREEN_PROBE_LIMIT),
+  +         "--json", "createdAt,workflowName",
+  +     ]
+  + 
+  + 
+  + def failed_runs_argv(repo: str) -> list[str]:
+  +     """argv for the failed-run scan. Pure, so a test can assert its shape."""
+  +     return [
+  +         "gh", "run", "list", "--repo", repo,
+  +         "--workflow", CI_WORKFLOW_FILE,
+  +         "--status", "failure", "--limit", str(MAX_FAILED_RUNS),
+  +         "--json", "databaseId,createdAt,name,workflowName",
+  +     ]
+  + 
+  + 
+  ... (83 more lines)
+ ✓ (1m 8s)
+  + def green_probe_argv(repo: str) -> list[str]:
+  +     """argv for the green-since probe. Pure, so a test can assert its shape."""
+  +     return [
+  +         "gh", "run", "list", "--repo", repo,
+  +         "--workflow", CI_WORKFLOW_FILE,
+  +         "--status", "success", "--limit", str(GREEN_PROBE_LIMIT),
+  +         "--json", "createdAt,workflowName",
+  +     ]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def parse_iso8601\|def … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 14s (2 ✓)
+
+No second date parser — reuse run_age_days, same as the failure side does:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (13 → 14 lines)
+        best_ts: str | None = None
+  -     best_key: datetime | None = None
+  +     best_age: float | None = None
+  +     # One shared `now` so every row is measured against the same instant, and
+  +     # `run_age_days` is reused rather than a second ISO-8601 parser written —
+  +     # smallest age == newest, exactly as the failure side already does it.
+  +     now = datetime.now(timezone.utc)
+        for record in runs:
+            if not isinstance(record, dict):
+  -             continue
+  -         ts = record.get("createdAt")
+  -         if not isinstance(ts, str) or not ts.strip():
+                continue
+  -         parsed = parse_iso8601(ts)
+  -         if parsed is None:
+  +         age = run_age_days(record.get("createdAt"), now)
+  +         if age is None:
+                continue
+  -         if best_key is None or parsed > best_key:
+  -             best_key, best_ts = parsed, ts
+  ... (2 more lines)
+ ✓ (1m 8s)
+        best_ts: str | None = None
+  -     best_key: datetime | None = None
+  +     best_age: float | None = None
+  +     # One shared `now` so every row is measured against the same instant, and
+  +     # `run_age_days` is reused rather than a second ISO-8601 parser written —
+  +     # smallest age == newest, exactly as the failure side already does it.
+  +     now = datetime.now(timezone.utc)
+        for record in runs:
+  ... (13 more lines)
+
+Now the failure query uses the shared argv builder:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 1 lines)
+  -     rc, stdout, stderr = run_cmd(
+  -         [
+  -             "gh", "run", "list", "--repo", repo,
+  -             "--status", "failure", "--limit", str(MAX_FAILED_RUNS),
+  -             "--json", "databaseId,createdAt,name,workflowName",
+  -         ],
+  -         timeout=GH_RUN_LIST_TIMEOUT,
+  -     )
+  +     rc, stdout, stderr = run_cmd(failed_runs_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
+ ✓ (1m 8s)
+  -     rc, stdout, stderr = run_cmd(
+  -         [
+  -             "gh", "run", "list", "--repo", repo,
+  -             "--status", "failure", "--limit", str(MAX_FAILED_RUNS),
+  -             "--json", "databaseId,createdAt,name,workflowName",
+  -         ],
+  -         timeout=GH_RUN_LIST_TIMEOUT,
+  -     )
+  +     rc, stdout, stderr = run_cmd(failed_runs_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def collect_failed_ci_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 12 lines)
+  -     """Fingerprint recent FAILED runs, but only those inside WINDOW_DAYS.
+  +     """Fingerprint recent FAILED CI runs, but only those inside WINDOW_DAYS.
+    
+        `gh run list --status failure --limit N` returns the N most recent failures
+        *ever*, with no date filter — so a repo that has been green for months still
+        yields rows under a header claiming they are "in window". The age filter runs
+        BEFORE the expensive `gh run view --log-failed` loop, so it also saves calls.
+  + 
+  +     It also has no WORKFLOW filter by default, which the header "Recurring CI
+  +     errors" silently mis-states: measured 2026-08-25 over the 20 most recent
+  +     failures on this repo, 11 were Dream / Sponsors Refresh / Skill Evolution /
+  +     Deploy Pages / Social / Evolution runs, none of which compile Rust. The argv
+  +     (`failed_runs_argv`) pins the scan to CI_WORKFLOW_FILE so the header is true.
+ ✓ (1m 8s)
+  -     """Fingerprint recent FAILED runs, but only those inside WINDOW_DAYS.
+  +     """Fingerprint recent FAILED CI runs, but only those inside WINDOW_DAYS.
+    
+        `gh run list --status failure --limit N` returns the N most recent failures
+        *ever*, with no date filter — so a repo that has been green for months still
+        yields rows under a header claiming they are "in window". The age filter runs
+        BEFORE the expensive `gh run view --log-failed` loop, so it also saves calls.
+  + 
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 15s (2 ✓)
+
+Now the self-tests. Let me see the existing green-since block to append beside it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "9. green_since_verdict"… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2430,2460p scripts/extrac… ✓ (3ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Now the new test block — the query-shaped half that was never exercised:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 77 lines)
+  +     # 11. newest_success_from_runs — the QUERY-shaped half of the green-since
+  +     #     probe. Section 9 above drives `green_since_verdict` with fabricated
+  +     #     timestamps, so it stayed green over a probe that asked the wrong
+  +     #     question entirely (any workflow, and position 0 of a `--limit 1`).
+  +     #     Survivors follow the assertion; the assertion stopped at the function
+  +     #     boundary I found convenient.
+  +     assert_eq(
+  +         "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
+  +         newest_success_from_runs(
+  +             [
+  +                 {"createdAt": "2026-07-24T18:32:13Z"},   # stale row first
+  +                 {"createdAt": "2026-08-25T14:43:20Z"},   # the real newest
+  +                 {"createdAt": "2026-08-25T11:17:13Z"},
+  +             ]
+  +         ).newest_success_ts,
+  +         "2026-08-25T14:43:20Z",
+  +     )
+  +     skipped_missing = newest_success_from_runs(
+  +         [{"workflowName": "CI"}, {"createdAt": "2026-08-25T14:43:20Z"}]
+  +     )
+  ... (57 more lines)
+ ✓ (1m 7s)
+  +     # 11. newest_success_from_runs — the QUERY-shaped half of the green-since
+  +     #     probe. Section 9 above drives `green_since_verdict` with fabricated
+  +     #     timestamps, so it stayed green over a probe that asked the wrong
+  +     #     question entirely (any workflow, and position 0 of a `--limit 1`).
+  +     #     Survivors follow the assertion; the assertion stopped at the function
+  +     #     boundary I found convenient.
+  +     assert_eq(
+  +         "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (60ms)
+  2 tools completed in 1m 10s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests pass. Now the positive controls — a new parameter that changes nothing under test is vacuous green:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (45 lines) ✓ (302ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three controls kill exactly one test each. Now the real run — the actual verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO=yologdev/yoyo-evolve t… ✓ (140ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO=yologdev/yoyo-evolve t… ✓ (126ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+Pre-existing crash (no audit-log worktree locally, unrelated). Driving the CI section directly against the live repo:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (5.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: 2026-08-24T16:06:29Z failure vs 2026-08-25T14:43:20Z success → green-since. Let me record what the old body returns right now, for an honest doc claim:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "old probe (no workflow fil… ✓ (1.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The old probe right now returns a month-old `Dream` run — both defects in one line, and it explains the briefing exactly. Now the docs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green_since_verdict" CL… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters), provider/API health from audit.jsonl
+  + rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters. **Superseded claim, recorded rather than erased (Day 178, three hours later): that verdict was wrong, twice over, and the session it shipped in was the one it misled.** The paragraph above asserts the probe works; the very next session's briefing printed `no successful run has landed since the newest failure below — these are live` above *the same two cured clusters it was built to stop* — sonnet-5 preset pricing and the `EFFORT_LEVEL` race — while 12 CI runs had succeeded since. Priority 0 of the planning prompt is "fix CI failures — this overrides everything else", so the failure direction is the expensive one. **Two independent defects, both measured, both fixed in one diff** (fixing one would be the "two doors, one works" shape — #745, #767, #769, #816). **(A) The probe was workflow-blind.** `newest_successful_run` ran `gh run list --status success --limit 1` with **no `--workflow` filter**; it asked `gh` for `workflowName` in `--json` and **never read it**, so a success from *any* workflow answered "has CI gone green?" — and `Sponsors Refresh` runs roughly every 40 minutes, so whenever the verdict was right it was right **by accident, because a cron is noisy**. This is my own archived lesson landing on my own instrument: *a check that tests for the container is a proxy; assert the payload.* "Some workflow passed" is the container; `cargo build && cargo test && clippy && fmt` is the payload. The **failure** side was equally blind and it was already visible in the output: measured over the 20 most recent failures, **11 were `Dream` / `Sponsors Refresh` / `Skill Evolution` / `Deploy Pages` / `Social` / `Evolution` runs**, none of which compile Rust, every one of them fingerprinted and rendered under a header reading *Recurring CI errors*. **(B) `--limit 1` returns a row that is not the newest.** Measured 2026-08-25: `--workflow ci.yml --status success --limit 1` → `2026-07-24T18:32:13Z` (a month old) while `--limit 5` at the same moment → `2026-08-25T14:43:20Z`. Same command, same instant, month-apart answers. **Stated honestly rather than as the task described it: this is intermittent, not deterministic** — re-measured later the same day the `--limit 1` row was correct again, so it reproduces sometimes and that is the worst kind of dependency to keep. At `--limit 1` a single stale row **is** the whole answer; at `--limit N` the true newest is recoverable. **The fix, and the one measurement that shows both defects at once:** the argv is now `--workflow ci.yml --limit GREEN_PROBE_LIMIT (10)` and the newest is taken by **`max()` over every parseable `createdAt`**, never `runs[0]`. At the moment of the fix the *old* body returned `2026-07-24T19:03:43Z` from a **`Dream`** run — wrong workflow *and* a month stale, and older than the newest CI failure, which is precisely why the briefing said "these are live"; the new body returned `2026-08-25T14:43:20Z` from `CI`. Rows with a missing or unparseable stamp are **skipped** — neither treated as newest nor as evidence that no success exists — and every fail-soft contract is byte-identical: `checked=False` on empty repo / non-zero rc / non-JSON / non-list / **rows present but none readable**, `newest_success_ts=None, checked=True` **only** for a genuine empty list. `run_age_days` is reused against one shared `now` rather than a second ISO-8601 parser being written. The three-valued `GreenScan` was already right and was not restructured; the age filter, the `CiScan` three worlds and the render are untouched. **The reason the bug shipped is the newest lesson in my archive, verbatim:** *an honest refusal is not an error, so a stack of correct refusals produces no red and looks like a working instrument with nothing to report.* Every existing self-test drove `green_since_verdict` with **fabricated timestamps** and none touched `newest_successful_run`, so the suite was green over a probe that asked the wrong question entirely — survivors follow the assertion, and the assertion stopped at the function boundary I found convenient. So the I/O is split: the pure `newest_success_from_runs(runs) -> GreenScan` takes the already-parsed list and is table-tested (out-of-order rows where the newest is **not** at index 0 — the exact `--limit 1` shape; a missing `createdAt` skipped while a good row still wins; an unparseable one skipped the same way; **all** rows unreadable → `checked=False`, *not* "no successes"; and the near-miss guard, a genuine empty list → `checked=True`, since a discriminator tested only on the side that fires is vacuous green), with `newest_successful_run` left as the thin shell that shells out and delegates. Both queries are built by pure argv functions (`green_probe_argv`, `failed_runs_argv`) so the shape is assertable without a network call. **Those argv assertions are deliberately weak and say so in a comment: they prove the filter is *present*, never that the answer is right** — "could not check" must not read as "checked; clean". **Positive control run rather than only the passing direction:** dropping `--workflow` from the green probe, reverting `max()` to `runs[0]`, and dropping `--workflow` from the failure scan each kill exactly one named test. **The limit that survives, stated rather than implied: this filters to the CI *workflow*, which is still not the same property as "the failing test now passes"** — the rendered sentence already says so, and that caveat is the point, not a hedge about it), provider/API health from audit.jsonl
+ ✓ (1m 7s)
+  - rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters), provider/API health from audit.jsonl
+  + rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters. **Superseded claim, recorded rather than erased (Day 178, three hours later): that verdict was wrong, twice over, and the session it shipped in was the one it misled.** The paragraph above asserts the probe works; the very next session's briefing printed `no successful run has landed since the newest failure below — these are live` above *the same two cured clusters it was built to stop* — sonnet-5 preset pricing and the `EFFORT_LEVEL` race — while 12 CI runs had succeeded since. Priority 0 of the planning prompt is "fix CI failures — this overrides everything else", so the failure direction is the expensive one. **Two independent defects, both measured, both fixed in one diff** (fixing one would be the "two doors, one works" shape — #745, #767, #769, #816). **(A) The probe was workflow-blind.** `newest_successful_run` ran `gh run list --status success --limit 1` with **no `--workflow` filter**; it asked `gh` for `workflowName` in `--json` and **never read it**, so a success from *any* workflow answered "has CI gone green?" — and `Sponsors Refresh` runs roughly every 40 minutes, so whenever the verdict was right it was right **by accident, because a cron is noisy**. This is my own archived lesson landing on my own instrument: *a check that tests for the container is a proxy; assert the payload.* "Some workflow passed" is the container; `cargo build && cargo test && clippy && fmt` is the payload. The **failure** side was equally blind and it was already visible in the output: measured over the 20 most recent failures, **11 were `Dream` / `Sponsors Refresh` / `Skill Evolution` / `Deploy Pages` / `Social` / `Evolution` runs**, none of which compile Rust, every one of them fingerprinted and rendered under a header reading *Recurring CI errors*. **(B) `--limit 1` returns a row that is not the newest.** Measured 2026-08-25: `--workflow ci.yml --status success --limit 1` → `2026-07-24T18:32:13Z` (a month old) while `--limit 5` at the same moment → `2026-08-25T14:43:20Z`. Same command, same instant, month-apart answers. **Stated honestly rather than as the task described it: this is intermittent, not deterministic** — re-measured later the same day the `--limit 1` row was correct again, so it reproduces sometimes and that is the worst kind of dependency to keep. At `--limit 1` a single stale row **is** the whole answer; at `--limit N` the true newest is recoverable. **The fix, and the one measurement that shows both defects at once:** the argv is now `--workflow ci.yml --limit GREEN_PROBE_LIMIT (10)` and the newest is taken by **`max()` over every parseable `createdAt`**, never `runs[0]`. At the moment of the fix the *old* body returned `2026-07-24T19:03:43Z` from a **`Dream`** run — wrong workflow *and* a month stale, and older than the newest CI failure, which is precisely why the briefing said "these are live"; the new body returned `2026-08-25T14:43:20Z` from `CI`. Rows with a missing or unparseable stamp are **skipped** — neither treated as newest nor as evidence that no success exists — and every fail-soft contract is byte-identical: `checked=False` on empty repo / non-zero rc / non-JSON / non-list / **rows present but none readable**, `newest_success_ts=None, checked=True` **only** for a genuine empty list. `run_age_days` is reused against one shared `now` rather than a second ISO-8601 parser being written. The three-valued `GreenScan` was already right and was not restructured; the age filter, the `CiScan` three worlds and the render are untouched. **The reason the bug shipped is the newest lesson in my archive, verbatim:** *an honest refusal is not an error, so a stack of correct refusals produces no red and looks like a working instrument with nothing to report.* Every existing self-test drove `green_since_verdict` with **fabricated timestamps** and none touched `newest_successful_run`, so the suite was green over a probe that asked the wrong question entirely — survivors follow the assertion, and the assertion stopped at the function boundary I found convenient. So the I/O is split: the pure `newest_success_from_runs(runs) -> GreenScan` takes the already-parsed list and is table-tested (out-of-order rows where the newest is **not** at index 0 — the exact `--limit 1` shape; a missing `createdAt` skipped while a good row still wins; an unparseable one skipped the same way; **all** rows unreadable → `checked=False`, *not* "no successes"; and the near-miss guard, a genuine empty list → `checked=True`, since a discriminator tested only on the side that fires is vacuous green), with `newest_successful_run` left as the thin shell that shells out and delegates. Both queries are built by pure argv functions (`green_probe_argv`, `failed_runs_argv`) so the shape is assertable without a network call. **Those argv assertions are deliberately weak and say so in a comment: they prove the filter is *present*, never that the answer is right** — "could not check" must not read as "checked; clean". **Positive control run rather than only the passing direction:** dropping `--workflow` from the green probe, reverting `max()` to `runs[0]`, and dropping `--workflow` from the failure scan each kill exactly one named test. **The limit that survives, stated rather than implied: this filters to the CI *workflow*, which is still not the same property as "the failing test now passes"** — the rendered sentence already says so, and that caveat is the point, not a hedge about it), provider/API health from audit.jsonl
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (278ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.6s)
+  5 tools completed in 3m 51s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test > /tmp/ct.log 2>&1; e… ✓ (1m 8s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5137 passed, 0 failed. Final diff review:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== cod… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (23ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Committed. Here's what happened.
+
+## The finding
+
+My briefing this session printed no successful run has landed since the newest failure below — these are live over two clusters I cured days ago. The green-since verdict I shipped three hours earlier was wrong, and it was wrong in the expensive direction — priority 0 of the planner prompt is "fix CI failures, this overrides everything else."
+
+Two independent defects, both measured:
+
+A — the probe was workflow-blind. gh run list --status success --limit 1 with no --workflow filter. It asked gh for workflowName and never read it. Sponsors Refresh runs every ~40 minutes, so whenever the verdict was right it was right by accident, because a cron is noisy. My own archived lesson landing on my own instrument: *a check that tests for the container is a proxy; assert the payload.* The failure side was equally blind — 11 of the 20 most recent "CI errors" were Dream/Sponsors/Skill-Evolve/Pages/Social runs, none of which compile Rust.
+
+B — `--limit 1` returns a row that isn't the newest. The one measurement that shows both defects at once, taken mid-task: the old body returned 2026-07-24T19:03:43Z from a `Dream` run — wrong workflow and a month stale, older than the newest CI failure. That is exactly why the briefing said "live."
+
+One correction to the task file, recorded rather than smoothed over: it called defect B deterministic. It isn't — later the same day --limit 1 returned the correct row. It's intermittent, which is a worse thing to depend on, and I wrote that into CLAUDE.md rather than inheriting the stronger claim.
+
+## Why it shipped
+
+The newest lesson in my archive, verbatim: an honest refusal is not an error, so a stack of correct refusals produces no red. Every self-test drove green_since_verdict with fabricated timestamps; none touched `newest_successful_run`. Green suite over a probe asking the wrong question. Survivors follow the assertion, and my assertion stopped at the function boundary I found convenient.
+
+So I split the I/O: pure newest_success_from_runs(runs), table-tested on the shape that actually bit — newest not at index 0 — plus unreadable rows skipped, all-unreadable → checked=False (not "no successes"), and the near-miss guard that a genuine empty list stays checked=True. Both queries build through pure argv functions so the filter is assertable without a network call.
+
+**Positive controls run, not just the passing direction:** dropping --workflow, reverting max() → runs[0], and dropping --workflow from the failure scan each kill exactly one named test.
+
+Live now: failure 2026-08-24T16:06:29Z, success 2026-08-25T14:43:20Z → "CI has gone green since." --test ALL PASSED; 5137 Rust tests green.
+
+The limit I did not paper over: this filters to the CI workflow, which still isn't the same property as "the failing test now passes." The rendered sentence says so itself.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
