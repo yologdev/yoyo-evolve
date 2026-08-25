@@ -30,6 +30,21 @@ from pathlib import Path
 WINDOW_SESSIONS = 10           # last N sessions in the outcomes section
 WINDOW_DAYS = 14               # git log window
 MAX_FAILED_RUNS = 5            # cap on `gh run view --log-failed` calls
+# Rows fetched by the green-since probe. Deliberately NOT 1, and this comment is
+# the reason a future reader must not "simplify" it back. `--limit 1` makes a
+# single row the WHOLE answer, so any ordering surprise from `gh` becomes the
+# verdict with nothing to correct it. Measured 2026-08-25 on this repo:
+#   gh run list --workflow ci.yml --status success --limit 1  -> 2026-07-24T18:32:13Z
+#   gh run list --workflow ci.yml --status success --limit 5  -> 2026-08-25T14:43:20Z
+# Same command, same moment, month-apart answers. (Re-measured later that day the
+# `--limit 1` row was correct again, i.e. the misordering is intermittent, which
+# is the worst kind to depend on.) With N rows the true newest is recoverable by
+# max() over the parsed stamps, so the probe stops depending on position 0.
+GREEN_PROBE_LIMIT = 10
+# The workflow whose runs are the payload of "has CI gone green?". Asking for
+# ANY workflow is a container check: `Sponsors Refresh` runs ~every 40 minutes
+# and would answer the question by accident. Only this file compiles Rust.
+CI_WORKFLOW_FILE = "ci.yml"
 GH_RUN_VIEW_TIMEOUT = 10       # seconds per gh run view
 GH_RUN_LIST_TIMEOUT = 10       # seconds for gh run list
 STUCK_ON_THRESHOLD = 3         # ≥N attempts AND 0 successes → flag
@@ -657,11 +672,72 @@ class GreenScan:
     checked: bool = False
 
 
+def green_probe_argv(repo: str) -> list[str]:
+    """argv for the green-since probe. Pure, so a test can assert its shape."""
+    return [
+        "gh", "run", "list", "--repo", repo,
+        "--workflow", CI_WORKFLOW_FILE,
+        "--status", "success", "--limit", str(GREEN_PROBE_LIMIT),
+        "--json", "createdAt,workflowName",
+    ]
+
+
+def failed_runs_argv(repo: str) -> list[str]:
+    """argv for the failed-run scan. Pure, so a test can assert its shape."""
+    return [
+        "gh", "run", "list", "--repo", repo,
+        "--workflow", CI_WORKFLOW_FILE,
+        "--status", "failure", "--limit", str(MAX_FAILED_RUNS),
+        "--json", "databaseId,createdAt,name,workflowName",
+    ]
+
+
+def newest_success_from_runs(runs) -> GreenScan:
+    """Newest successful run from an already-parsed `gh run list` payload. Pure.
+
+    Takes the MAX over every parseable `createdAt` rather than trusting index 0
+    — see GREEN_PROBE_LIMIT for the measured reason. Rows with a missing or
+    unparseable stamp are SKIPPED: an unreadable row is neither the newest nor
+    evidence that no success exists.
+
+    Three states, none folded into another:
+      * not a list                         -> checked=False  (cannot ask)
+      * empty list                         -> ts=None, checked=True (real answer)
+      * rows present, none parseable       -> checked=False  (NOT "no successes")
+      * ≥1 parseable row                   -> ts=max, checked=True
+    """
+    if not isinstance(runs, list):
+        return GreenScan(checked=False)
+    if not runs:
+        # The query ran and honestly answered "no successful runs". That is a
+        # real observation, NOT a failure to check.
+        return GreenScan(newest_success_ts=None, checked=True)
+    best_ts: str | None = None
+    best_age: float | None = None
+    # One shared `now` so every row is measured against the same instant, and
+    # `run_age_days` is reused rather than a second ISO-8601 parser written —
+    # smallest age == newest, exactly as the failure side already does it.
+    now = datetime.now(timezone.utc)
+    for record in runs:
+        if not isinstance(record, dict):
+            continue
+        age = run_age_days(record.get("createdAt"), now)
+        if age is None:
+            continue
+        if best_age is None or age < best_age:
+            best_age, best_ts = age, record["createdAt"]
+    if best_ts is None:
+        # Rows came back but not one carried a readable stamp. "Could not check"
+        # must not read as "checked; no successes".
+        return GreenScan(checked=False)
+    return GreenScan(newest_success_ts=best_ts, checked=True)
+
+
 def newest_successful_run(repo: str) -> GreenScan:
-    """The most recent SUCCESSFUL run, via one `gh run list` call. I/O half.
+    """The most recent SUCCESSFUL CI run, via one `gh run list` call. I/O half.
 
     Fail-soft by contract: any missing repo, non-zero exit, unparseable JSON,
-    empty result or missing `createdAt` yields `checked=False` — never an
+    or rows with no readable `createdAt` yields `checked=False` — never an
     exception, never a fabricated timestamp. The extractor must never block a
     session.
 
@@ -669,14 +745,7 @@ def newest_successful_run(repo: str) -> GreenScan:
     qualify, so a healthy session makes zero extra `gh` calls."""
     if not repo:
         return GreenScan(checked=False)
-    rc, stdout, _stderr = run_cmd(
-        [
-            "gh", "run", "list", "--repo", repo,
-            "--status", "success", "--limit", "1",
-            "--json", "createdAt,workflowName",
-        ],
-        timeout=GH_RUN_LIST_TIMEOUT,
-    )
+    rc, stdout, _stderr = run_cmd(green_probe_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
     if rc != 0:
         warn(f"gh run list --status success rc={rc} — green-since check unavailable")
         return GreenScan(checked=False)
@@ -685,17 +754,7 @@ def newest_successful_run(repo: str) -> GreenScan:
     except json.JSONDecodeError as e:
         warn(f"gh run list --status success returned non-JSON: {e}")
         return GreenScan(checked=False)
-    if not isinstance(runs, list):
-        return GreenScan(checked=False)
-    if not runs:
-        # The query ran and honestly answered "no successful runs". That is a
-        # real observation, NOT a failure to check.
-        return GreenScan(newest_success_ts=None, checked=True)
-    record = runs[0] if isinstance(runs[0], dict) else {}
-    ts = record.get("createdAt")
-    if not isinstance(ts, str) or not ts.strip():
-        return GreenScan(checked=False)
-    return GreenScan(newest_success_ts=ts, checked=True)
+    return newest_success_from_runs(runs)
 
 
 def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
@@ -736,26 +795,25 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
 
 
 def collect_failed_ci_fingerprints(repo: str, now: datetime | None = None) -> CiScan:
-    """Fingerprint recent FAILED runs, but only those inside WINDOW_DAYS.
+    """Fingerprint recent FAILED CI runs, but only those inside WINDOW_DAYS.
 
     `gh run list --status failure --limit N` returns the N most recent failures
     *ever*, with no date filter — so a repo that has been green for months still
     yields rows under a header claiming they are "in window". The age filter runs
     BEFORE the expensive `gh run view --log-failed` loop, so it also saves calls.
 
+    It also has no WORKFLOW filter by default, which the header "Recurring CI
+    errors" silently mis-states: measured 2026-08-25 over the 20 most recent
+    failures on this repo, 11 were Dream / Sponsors Refresh / Skill Evolution /
+    Deploy Pages / Social / Evolution runs, none of which compile Rust. The argv
+    (`failed_runs_argv`) pins the scan to CI_WORKFLOW_FILE so the header is true.
+
     `now` is injectable so the self-tests are deterministic."""
     now = now or datetime.now(timezone.utc)
     if not repo:
         warn("YOYO_REPO empty — cannot check recent CI failures")
         return CiScan(ok=False, reason="YOYO_REPO unset")
-    rc, stdout, stderr = run_cmd(
-        [
-            "gh", "run", "list", "--repo", repo,
-            "--status", "failure", "--limit", str(MAX_FAILED_RUNS),
-            "--json", "databaseId,createdAt,name,workflowName",
-        ],
-        timeout=GH_RUN_LIST_TIMEOUT,
-    )
+    rc, stdout, stderr = run_cmd(failed_runs_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
     if rc != 0:
         warn(f"gh run list rc={rc}: {(stderr or '').strip()[:200]}")
         return CiScan(ok=False, reason=f"gh run list failed (rc={rc})")
@@ -2391,6 +2449,82 @@ src/commands_config.rs
         ),
         f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days)\n"
         "[2×, last <1d ago] boom",
+    )
+
+    # 11. newest_success_from_runs — the QUERY-shaped half of the green-since
+    #     probe. Section 9 above drives `green_since_verdict` with fabricated
+    #     timestamps, so it stayed green over a probe that asked the wrong
+    #     question entirely (any workflow, and position 0 of a `--limit 1`).
+    #     Survivors follow the assertion; the assertion stopped at the function
+    #     boundary I found convenient.
+    assert_eq(
+        "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
+        newest_success_from_runs(
+            [
+                {"createdAt": "2026-07-24T18:32:13Z"},   # stale row first
+                {"createdAt": "2026-08-25T14:43:20Z"},   # the real newest
+                {"createdAt": "2026-08-25T11:17:13Z"},
+            ]
+        ).newest_success_ts,
+        "2026-08-25T14:43:20Z",
+    )
+    skipped_missing = newest_success_from_runs(
+        [{"workflowName": "CI"}, {"createdAt": "2026-08-25T14:43:20Z"}]
+    )
+    assert_true(
+        "a row with no createdAt is skipped while a good row still wins",
+        skipped_missing.checked
+        and skipped_missing.newest_success_ts == "2026-08-25T14:43:20Z",
+    )
+    skipped_bad = newest_success_from_runs(
+        [{"createdAt": "not-a-date"}, {"createdAt": "2026-08-25T14:43:20Z"}]
+    )
+    assert_true(
+        "an unparseable createdAt is skipped the same way",
+        skipped_bad.checked
+        and skipped_bad.newest_success_ts == "2026-08-25T14:43:20Z",
+    )
+    all_bad = newest_success_from_runs([{"createdAt": "nope"}, {"x": 1}])
+    assert_true(
+        "rows present but NONE readable -> checked=False, not 'no successes'",
+        all_bad.checked is False and all_bad.newest_success_ts is None,
+    )
+    # The near-miss guard: a discriminator tested only on the side that fires is
+    # vacuous green. An empty list is a real answer, not a failure to check.
+    empty = newest_success_from_runs([])
+    assert_true(
+        "genuine empty list -> ts=None, checked=True (real observation)",
+        empty.checked is True and empty.newest_success_ts is None,
+    )
+    assert_true(
+        "a non-list payload cannot be asked -> checked=False",
+        newest_success_from_runs({"createdAt": "2026-08-25T14:43:20Z"}).checked is False,
+    )
+
+    # 12. argv shape. DELIBERATELY WEAK: this proves the workflow filter is
+    #     PRESENT in the command, never that the answer it returns is right —
+    #     "could not check" must not read as "checked; clean". It exists because
+    #     the shipped bug was invisible at every other layer: the probe asked
+    #     `gh` for `workflowName` and never read it, so a `Sponsors Refresh` run
+    #     (~every 40 min) answered "has CI gone green?" by accident.
+    probe_argv = green_probe_argv("owner/repo")
+    assert_true(
+        "green probe asks the CI workflow specifically",
+        "--workflow" in probe_argv and CI_WORKFLOW_FILE in probe_argv,
+    )
+    assert_true(
+        "green probe does not depend on a single row (--limit is not 1)",
+        probe_argv[probe_argv.index("--limit") + 1] != "1"
+        and int(probe_argv[probe_argv.index("--limit") + 1]) == GREEN_PROBE_LIMIT,
+    )
+    fail_argv = failed_runs_argv("owner/repo")
+    assert_true(
+        "failure scan is filtered to CI too — the header says 'Recurring CI errors'",
+        "--workflow" in fail_argv and CI_WORKFLOW_FILE in fail_argv,
+    )
+    assert_true(
+        "both queries still name the repo they were handed",
+        "owner/repo" in probe_argv and "owner/repo" in fail_argv,
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
