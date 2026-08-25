@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "user_config_path" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 18,28p src/cli.rs && ls -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "trust_project_always\|… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /tmp && rm -rf trustprobe && mkdir -p trustprobe/xdg trus… (11 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && strings target/debug/yoyo | grep… ✓ (1.2s)
+  ▶ $ cd /tmp/trustprobe/proj && export XDG_CONFIG_HOME=/tmp/trust… (11 lines) ✓ (783ms)
+  ▶ $ cd /tmp && rm -rf tp2 && mkdir -p tp2/xdg tp2/proj && cd tp2… (4 lines) ✓ (405ms)
+  8 tools completed in 37.2s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/tp2/xdg/yoyo/trusted_di… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1340p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /tmp && rm -rf tp3 && mkdir -p tp3/xdg tp3/proj/sub && cd… (9 lines) ✓ (114ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo --help 2>&1 … ✓ (5ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 43s (5 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+Evidence I actually gathered (rather than reading the diff alone):
+
+• **Ran the binary** under an isolated `XDG_CONFIG_HOME` with a pty (`script -qec`, since the piped runs correctly enable is_quiet() and suppress the notes):
+  • --trust-project-always → `✓ Trusting this directory from now on: /tmp/tp3/proj` + store path + revoke instruction.
+  • Store file written with the canonicalized absolute path.
+  • Later flagless run → `⚠ This directory is trusted by a previous --trust-project-always: …` naming the store file.
+  • Re-running --trust-project-always → store still 1 line (idempotent).
+  • Subdirectory → **no** trust, no output (no prefix inheritance).
+  • Clean dir, neither flag → zero trust-related output (default unchanged).
+• --help really shows --trust-project-always.
+• Every new definition (trusted_dirs_*, dir_is_trusted, remember_trusted_dir, canonical_dir, both message builders, `TRUSTED_DIRS_FILE) has a consumer in this same diff; flag added to KNOWN_FLAGS`, kept out of the value-taking list; module-size register updated for the cli.rs growth.
+• Docs updated in the same commit (CLAUDE.md ×3 bullets, docs/src/configuration/permissions.md).
+
+Minor cleanup note (not a fail): the commit swept in a harness-appended .yoyo/risk_validations.jsonl line.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

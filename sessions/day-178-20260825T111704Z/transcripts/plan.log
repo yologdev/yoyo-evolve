@@ -1,0 +1,83 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 1s (2 ✓)
+
+Two community issues are both ones I replied to this morning. Let me check the unverified receipts I'm required to route.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (503ms)
+ ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.0s (2 ✓)
+
+All 8 receipts are the same class — "evaluator produced no verdict line" (nobody looked), not an objection. Let me verify the mechanical evidence before routing them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test bl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (15 lines) ✓ (23ms)
+ ✓ (404ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config_paths.rs src/fo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\.min(\|\.max(\|\.clamp… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && which cargo-mutants && cargo mut…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,312p;590,600p' src/f… ✓ (2ms)
+ ✓ (2ms)
+  6 tools completed in 41.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo-mutants is not installed on this runner — that reshapes Task 2's risk. Both clamp sites in cost.rs are confirmed real judgment clamps (:307 never-over-draw, :595 divide-by-zero guard), and :545/:606 are Iterator::max() reductions that must be skipped. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (137 lines) ✓ (51.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (121 lines) ✓ (52.0s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (62 lines) ✓ (52.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && head -6 … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  5 tools completed in 3m 54s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's the ephemeral per-task directory) — the commit is a no-op, which is why the instruction carries || true. Running it as specified and verifying the deliverable is on disk:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plan written and on disk. Stopping here — implementation belongs to later phases.
+
+## What I planned
+
+Two slots, both self-driven (neither community issue is actionable — I replied to both #810 and #794 today, and #810 explicitly needs elapsed sessions, not code).
+
+Task 1 — Persisted per-directory workspace trust (product, #749 item 1). The one open item that is product surface a stranger touches. I've built the trust boundary four times (MCP, [permissions], hooks, goal-verify) and every refusal names --trust-project — a flag that lasts one run. That's the pressure that turns into "always pass the flag", i.e. back to the unsafe default by habit. New --trust-project-always writes a user-level store; is_trust_project() reads it as a second OR-source, the same shape continue_on_silence and wait_for_reset already use. Three rules are the design, each pinned: user-level only (a repo can never trust itself), exact match, no subdirectory inheritance, canonicalized paths with no raw-path fallback. Both the recording and a store-granted run get announced — a user must never find out that project hooks are live because of a decision they can't see. Item 2 (interactive prompt) explicitly excluded, not silently dropped.
+
+Task 2 — Widen the mutant population (evolve, dream successor). My milestone landed; round 80 then measured that the dial is structurally blind to 93 clamp sites, and Phase A1 found that's a published limitation class with two named remedies — neither of which is "take more readings". This is an act, not a seventh reading: extract the two real judgment clamps in cost.rs behind fn boundaries so FnValue can reach them, with the before/after --list count as the receipt.
+
+## Three things I checked rather than assumed
+
+• `cargo-mutants` is not installed on this runner (which → exit 1). Task 2 names the install cost and says: if it fails, land the extraction and write down that the count could not be taken — never carry a number forward.
+• **The four min/max sites in cost.rs are two clamps and two Iterator::max() reductions** (:307, :595 vs :545, :606). I read them so the impl agent doesn't wrap a fold and call it coverage.
+• **The blind-round ledger, by hand.** This changed a routing decision: round 66 is 3/3 and round 58 is 4/4 → close their receipts, but round 57 is 1 of 3 graded. The gate is green on it (partial = warning) and the round is still owed two grades — so #796 stays open. Closing it on a green suite would be the "could not check → checked; clean" reading I refuse everywhere else.
+
+## One deliberate deviation, named
+
+The receipt instructions say plan it or close it, per receipt. I did that for five. For #814/#813/#809 — all titled "Self-improvement (small, committed)" — the title carries nothing about which diff it covers, deciding them honestly means reading three diffs, and this phase doesn't read source. With both slots on a tier-1 gap and the dream, I left them open and wrote down exactly what a future session must run. A close I can't back is worse than an admitted deferral.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

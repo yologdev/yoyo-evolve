@@ -1,0 +1,294 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target sites in src/format/cost.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '295,320p' src/format/cos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && grep… ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+Confirmed all four sites. Starting the cargo-mutants install in the background while I make the edits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup cargo … (2 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn context_bar' -A 40 s… ✓ (3ms)
+ ✓ (2.0s)
+  2 tools completed in 3.5s (2 ✓)
+
+Now the first extraction — context_fill_fraction.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (8 → 24 lines)
+  - pub fn context_bar(used: u64, max: u64) -> String {
+  -     // Clamped fraction drives the bar fill (never over-draws past full).
+  -     let pct = if max == 0 {
+  + /// The fraction of the context window the bar should draw as filled.
+  + ///
+  + /// Two judgments live here, and both are the reason this is a `fn` rather than
+  + /// an inline expression (blind round 80): the bar **never over-draws past
+  + /// full**, so an over-budget context clamps to `1.0` rather than painting more
+  + /// blocks than the bar has; and an **unknown window (`max == 0`) is empty, not
+  + /// full** — absence reads as "nothing measured", never as "you're out of room".
+  + ///
+  + /// It has its own function boundary on purpose. `cargo-mutants` has exactly two
+  + /// genres — `FnValue` body replacement and binary/unary operator replacement —
+  + /// so it can never substitute `.max()` for `.min()`; a clamp only enters the
+  + /// mutant population at all when it owns a `fn` that `FnValue` can name.
+  + fn context_fill_fraction(used: u64, max: u64) -> f64 {
+  +     if max == 0 {
+            0.0
+        } else {
+            (used as f64 / max as f64).min(1.0)
+  ... (8 more lines)
+ ✓ (2m 4s)
+  - pub fn context_bar(used: u64, max: u64) -> String {
+  -     // Clamped fraction drives the bar fill (never over-draws past full).
+  -     let pct = if max == 0 {
+  + /// The fraction of the context window the bar should draw as filled.
+  + ///
+  + /// Two judgments live here, and both are the reason this is a `fn` rather than
+  + /// an inline expression (blind round 80): the bar **never over-draws past
+  + /// full**, so an over-budget context clamps to `1.0` rather than painting more
+  ... (13 more lines)
+
+Now the second — breakdown_divisor.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (1 → 13 lines)
+  + /// The denominator to use when turning a breakdown category into a percentage.
+  + ///
+  + /// The judgment: a zero total must not divide by zero, and the floor is **1**
+  + /// rather than a special-cased branch — every category is 0 when the total is
+  + /// 0, so `0/1` yields the honest `0%` for each row and no caller needs an
+  + /// is-empty arm. Extracted for the same reason as `context_fill_fraction`:
+  + /// `cargo-mutants` cannot swap `.max()` for `.min()`, so this decision was
+  + /// invisible to the dial until it owned a `fn`.
+  + fn breakdown_divisor(total: usize) -> usize {
+  +     total.max(1)
+  + }
+  + 
+    /// Format a context breakdown table with colors and percentages.
+ ✓ (11.5s)
+  + /// The denominator to use when turning a breakdown category into a percentage.
+  + ///
+  + /// The judgment: a zero total must not divide by zero, and the floor is **1**
+  + /// rather than a special-cased branch — every category is 0 when the total is
+  + /// 0, so `0/1` yields the honest `0%` for each row and no caller needs an
+  + /// is-empty arm. Extracted for the same reason as `context_fill_fraction`:
+  + /// `cargo-mutants` cannot swap `.max()` for `.min()`, so this decision was
+  + /// invisible to the dial until it owned a `fn`.
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definition without its consumer. Wiring the call site now, plus the comment naming the two skipped reductions.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 2 lines)
+  -     let total = breakdown.total.max(1); // avoid division by zero
+  +     let total = breakdown_divisor(breakdown.total);
+        let categories: &[(&str, usize)] = &[
+ ✓ (1m 35s)
+  -     let total = breakdown.total.max(1); // avoid division by zero
+  +     let total = breakdown_divisor(breakdown.total);
+        let categories: &[(&str, usize)] = &[
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'max().unwrap_or(0)' src… ✓ (2ms)
+  2 tools completed in 1m 37s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && wc -l src/… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo-mutants 27.1.0 installed. Now the comments naming the two skipped sites, so the census can't quietly count reductions as clamps.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (1 → 6 lines)
+  +     // Deliberately NOT extracted like `context_fill_fraction` / `breakdown_divisor`:
+  +     // this is an `Iterator::max` *reduction*, not a clamp. There is no second
+  +     // operand that could have been written backwards, so wrapping it in a `fn`
+  +     // would buy a mutant that asks nothing — cargo-culting the shape into a
+  +     // place where it encodes no judgment.
+        let max_name_len = summary.iter().map(|s| s.name.len()).max().unwrap_or(0);
+ ✓ (1m 36s)
+  +     // Deliberately NOT extracted like `context_fill_fraction` / `breakdown_divisor`:
+  +     // this is an `Iterator::max` *reduction*, not a clamp. There is no second
+  +     // operand that could have been written backwards, so wrapping it in a `fn`
+  +     // would buy a mutant that asks nothing — cargo-culting the shape into a
+  +     // place where it encodes no judgment.
+        let max_name_len = summary.iter().map(|s| s.name.len()).max().unwrap_or(0);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (1 → 3 lines)
+  +     // An `Iterator::max` reduction, not a clamp — skipped for the same reason
+  +     // as `max_name_len` above (see that comment).
+        let max_val = categories.iter().map(|(_, v)| *v).max().unwrap_or(0);
+ ✓ (1m 36s)
+  +     // An `Iterator::max` reduction, not a clamp — skipped for the same reason
+  +     // as `max_name_len` above (see that comment).
+        let max_val = categories.iter().map(|(_, v)| *v).max().unwrap_or(0);
+  2 tools completed in 3m 16s (2 ✓)
+
+Now the two table tests — each covering the case the clamp exists for, since a clamp tested only where it does not fire is vacuous green.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn context_bar_zero_usa… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 45 lines)
+            assert!(!bar.contains("<1%"));
+  +     }
+  + 
+  +     #[test]
+  +     fn context_fill_fraction_table() {
+  +         // (used, max, expected fill fraction, what the row is for)
+  +         let cases: &[(u64, u64, f64, &str)] = &[
+  +             (0, 200_000, 0.0, "empty context draws nothing"),
+  +             (100_000, 200_000, 0.5, "ordinary half-full case"),
+  +             (200_000, 200_000, 1.0, "exactly full draws exactly full"),
+  +             // The case the clamp exists for: over budget must not over-draw.
+  +             (400_000, 200_000, 1.0, "over budget clamps to full, never past it"),
+  +             (u64::MAX, 1, 1.0, "extreme over-budget still clamps to full"),
+  +             // The case the `max == 0` branch exists for: an unknown window is
+  +             // empty, not full — absence must not read as "you're out of room".
+  +             (0, 0, 0.0, "unknown window with no usage is empty"),
+  +             (50_000, 0, 0.0, "unknown window with usage is still empty"),
+  +         ];
+  +         for &(used, max, expected, why) in cases {
+  +             let got = context_fill_fraction(used, max);
+  ... (25 more lines)
+ ✓ (1m 36s)
+            assert!(!bar.contains("<1%"));
+  +     }
+  + 
+  +     #[test]
+  +     fn context_fill_fraction_table() {
+  +         // (used, max, expected fill fraction, what the row is for)
+  +         let cases: &[(u64, u64, f64, &str)] = &[
+  +             (0, 200_000, 0.0, "empty context draws nothing"),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/format/co… ✓ (12.9s)
+  3 tools completed in 2m 0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy green. File went 2124 → 2211 (+87, inside the grace band but the register still gets the updated line — absorbing drift silently is the exact defect Day 174 paid off).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/format/cost.rs", 2124),
+  +     ("src/format/cost.rs", 2211),
+ ✓ (1m 24s)
+  -     ("src/format/cost.rs", 2124),
+  +     ("src/format/cost.rs", 2211),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '^(tes… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 33s (2 ✓)
+
+All 5129 green. Now the positive control — a clamp test that passes against a broken clamp is vacuous green, so let me prove these bite.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (13 lines) ✓ (19.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both die when the clamp is reversed — that's precisely the mutation cargo-mutants cannot generate, caught by the table instead. Now the measurement.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --list -f src/form… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash push src/format/cost.r… ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.3s (2 ✓)
+
+Prediction falsified: 350 → 355, delta +5, not the predicted +2. Let me find out what the other three are.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed 's/^[^ ]*:[0-9]*:[0-9]*: //'… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && comm -13 /tmp/b.s /tmp/a.s | cat… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Net +5, and the shape is the finding. Let me verify the pre-flight (round 75's trap) then actually run those five.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::co… ✓ (19.0s)
+
+95 tests selected (non-zero — the round-75 trap is pre-flighted, not assumed). Running the five new mutants for real.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo mutants -f src… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup timeou… (2 lines) ✓ (2.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 6s (1 ✓, 1 ✗)
+
+While that runs, let me update CLAUDE.md with the falsified prediction recorded honestly.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'preset is the source of… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 /tmp/mrun.log ✓ (2ms)
+  2 tools completed in 2.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pgrep -af 'cargo-mutants|cargo m… ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Stale lock from the timed-out run — no process alive. Cleaning and restarting properly in the background.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf mutan… (2 lines) ✓ (27.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+8 mutants queued (5 new FnValue + 3 operator mutants relocated into the new function). Writing the docs while it runs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'h3.s generality check' … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 /tmp/mrun.log ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> /tmp/… (27 lines) ✓ (44ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 35.6s (3 ✓)
+
+Baseline passed. Now the format/cost.rs bullet itself.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (20ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sleep 90; ta… (5 lines) ✓ (1m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Run complete (end_time set — round 75's discipline). Deriving from the raw outcomes array, not the summary header.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+8 mutants, 8 caught, 0 missed, 0 unviable, 0 timeout — 0.0% survival. Recording the real result in CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (12.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && grep… ✓ (1m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 30s (2 ✓)
+
+All four checks green, register line matches actual. Confirming mutants.out/ won't be committed, then committing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git check-ignore -v mutants.out … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (22ms)
+  2 tools completed in 5.0s (2 ✓)
+

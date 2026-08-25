@@ -1,0 +1,392 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the files I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config_paths.rs src/cl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "trust_project\|trust-pr… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/config_paths.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,400p' src/cli.rs && … ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1180,1215p' src/cli.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/config_paths.… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,175p' tests/module_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,200p' src/config_pat… ✓ (5ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 40.3s (8 ✓)
+
+Now I'll write the store in src/config_paths.rs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '165,172p' src/config_pat… ✓ (2ms)
+  ▶ edit src/config_paths.rs (8 → 132 lines)
+            demoted.display(),
+            demoted.display()
+        )
+  + }
+  + 
+  + // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  + //
+  + // The four project-config trust gates (`gate_mcp_sources`, `gate_project_permissions`,
+  + // `gate_project_hooks`, `gate_goal_verify`) all refuse by default and name
+  + // `--trust-project` as the escape hatch — which applies to **one run**. A user who
+  + // genuinely trusts a checkout has to retype it on every invocation, and that is exactly
+  + // the pressure that turns into "always pass the flag", i.e. back to the unsafe default by
+  + // habit. This is the remembered half: `--trust-project-always` records the directory in a
+  + // user-level store, and later runs in that same directory are trusted without a flag.
+  + //
+  + // It lives in this module because "which persisted **user-level** file governs this
+  + // directory?" is the question this file already answers for the config ladder — the trust
+  + // store is that same question one surface over.
+  + 
+  + /// The name of the trust store inside the user's XDG config directory.
+  ... (110 more lines)
+ ✓ (11.9s)
+            demoted.display(),
+            demoted.display()
+        )
+  + }
+  + 
+  + // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  + //
+  + // The four project-config trust gates (`gate_mcp_sources`, `gate_project_permissions`,
+  ... (13 more lines)
+  2 tools completed in 37.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead-code errors are expected — the consumers aren't wired yet. Let me wire cli.rs now (same edit, per my own rule).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1355,1368p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=135… (5 lines) ✓ (19ms)
+  ▶ edit src/cli.rs (4 → 57 lines)
+        // user never approved.
+  -     if args.iter().any(|a| a == "--trust-project") {
+  +     //
+  +     // Day 178 (#749 item 1): the same OR shape `continue_on_silence` (#794) and
+  +     // `wait_for_reset` (Day 178) use — one setter site, several sources.
+  +     //   1. `--trust-project`         — this run only, byte-identical to before.
+  +     //   2. `--trust-project-always`  — this run **and** remembered for this directory.
+  +     //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+  +     // A user who genuinely trusts a checkout should be able to say so once instead of
+  +     // retyping a flag forever; that pressure is what turns into "always pass the flag",
+  +     // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
+  +     // flag** — the store is a plain text file and deleting a line is the revocation,
+  +     // which is why every message below names the file's full path.
+  +     let trust_always = args.iter().any(|a| a == "--trust-project-always");
+  +     let trust_once = args.iter().any(|a| a == "--trust-project");
+  +     let cwd = std::env::current_dir().ok();
+  +     if trust_once || trust_always {
+            set_trust_project();
+  +     } else if let Some(dir) = cwd.as_deref() {
+  +         // A trust grant made weeks ago and invisible today is exactly the state a user
+  ... (38 more lines)
+ ✓ (11.0s)
+        // user never approved.
+  -     if args.iter().any(|a| a == "--trust-project") {
+  +     //
+  +     // Day 178 (#749 item 1): the same OR shape `continue_on_silence` (#794) and
+  +     // `wait_for_reset` (Day 178) use — one setter site, several sources.
+  +     //   1. `--trust-project`         — this run only, byte-identical to before.
+  +     //   2. `--trust-project-always`  — this run **and** remembered for this directory.
+  +     //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+  ... (13 more lines)
+  3 tools completed in 29.3s (3 ✓)
+
+Now the message builders and the flag registration:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 2 lines)
+        "--trust-project",
+  +     "--trust-project-always",
+ ✓ (11.1s)
+        "--trust-project",
+  +     "--trust-project-always",
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn project_hook_refusal… ✓ (3ms)
+  ▶ edit src/cli.rs (4 → 49 lines)
+        msg
+  + }
+  + 
+  + /// The note printed when `--trust-project-always` records this directory.
+  + ///
+  + /// Names the directory recorded **and the full path of the store file**, because that
+  + /// file is the revocation mechanism: there is deliberately no un-trust flag, so a user
+  + /// who cannot find the file cannot take the decision back. `plain` drops the glyph for
+  + /// screen-reader output; the caller drops the whole message under `--quiet`.
+  + pub(crate) fn trust_remembered_message(
+  +     dir: &std::path::Path,
+  +     store: &std::path::Path,
+  +     plain: bool,
+  + ) -> String {
+  +     let marker = if plain { "" } else { "✓ " };
+  +     format!(
+  +         "{marker}Trusting this directory from now on: {}\n  Recorded in {}. Remove that line to \
+  + revoke.\n  Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks will run here \
+  + without a flag.",
+  +         dir.display(),
+  ... (29 more lines)
+ ✓ (1m 20s)
+        msg
+  + }
+  + 
+  + /// The note printed when `--trust-project-always` records this directory.
+  + ///
+  + /// Names the directory recorded **and the full path of the store file**, because that
+  + /// file is the revocation mechanism: there is deliberately no un-trust flag, so a user
+  + /// who cannot find the file cannot take the decision back. `plain` drops the glyph for
+  ... (13 more lines)
+  3 tools completed in 1m 47s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+It compiles now. Let me check the full test state:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (44.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A drift guard already caught the undocumented flag — exactly what it's for. Adding to help.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (4 → 16 lines)
+        let _ = writeln!(
+            s,
+            "                    (off by default — that file ships with the repo, not you)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --trust-project-always  Same, and remember this directory so later runs here are"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    trusted without the flag (recorded in your user config dir;"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    remove the line from trusted_dirs to revoke)"
+        );
+ ✓ (1m 25s)
+        let _ = writeln!(
+            s,
+            "                    (off by default — that file ships with the repo, not you)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --trust-project-always  Same, and remember this directory so later runs here are"
+  +     );
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (51.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 30s (2 ✓)
+
+My own module-size gate firing with the pasteable remedy. Let me write the tests first, then update the register once.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config_paths.rs (3 → 2 lines)
+        #[test]
+        fn test_demoted_write_warning_names_both_files_and_the_consequence() {
+  -         let msg = demoted_write_warning(
+ ✓ (727ms)
+        #[test]
+        fn test_demoted_write_warning_names_both_files_and_the_consequence() {
+  -         let msg = demoted_write_warning(
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I made an accidental deletion. Reverting:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config_paths.rs (2 → 3 lines)
+        #[test]
+        fn test_demoted_write_warning_names_both_files_and_the_consequence() {
+  +         let msg = demoted_write_warning(
+ ✓ (1m 25s)
+        #[test]
+        fn test_demoted_write_warning_names_both_files_and_the_consequence() {
+  +         let msg = demoted_write_warning(
+
+Good, restored. Now appending the trust-store tests at the end of the config_paths.rs test module:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/config_paths.rs ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/config_paths.rs (5 → 121 lines)
+                lower.contains("stopped being read") || lower.contains("no longer"),
+                "warning must state the consequence, not just the precedence: {msg}"
+  +         );
+  +     }
+  + 
+  +     // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  +     //
+  +     // Driven through the two pure functions with fabricated content: no HOME /
+  +     // XDG_CONFIG_HOME mutation (those are process-globals — see
+  +     // tests/global_state_races.rs) and no set_current_dir (#780 spent two tasks
+  +     // removing those).
+  + 
+  +     fn p(s: &str) -> std::path::PathBuf {
+  +         std::path::PathBuf::from(s)
+  +     }
+  + 
+  +     #[test]
+  +     fn test_trusted_dirs_contains_exact_match_only() {
+  +         // The table is the security design. Each row is (store body, queried dir,
+  +         // expected), and the rows that must be *false* are the point: a prefix or
+  ... (101 more lines)
+ ✓ (1m 25s)
+                lower.contains("stopped being read") || lower.contains("no longer"),
+                "warning must state the consequence, not just the precedence: {msg}"
+  +         );
+  +     }
+  + 
+  +     // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  +     //
+  +     // Driven through the two pure functions with fabricated content: no HOME /
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config_pat… ✓ (141ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 31s (2 ✓)
+
+All 16 pass. Now the cli.rs announcement tests, beside the existing trust-flag test:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_trust_project_i… ✓ (3ms)
+  ▶ edit src/cli.rs (2 → 131 lines)
+  +         assert!(check_flag_values(&args, &value_taking).is_empty());
+  +     }
+  + 
+  +     // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  + 
+  +     #[test]
+  +     fn test_trust_project_always_in_known_flags_and_takes_no_value() {
+  +         assert!(
+  +             KNOWN_FLAGS.contains(&"--trust-project-always"),
+  +             "an unknown flag is warned about and silently ignored"
+  +         );
+  +         // It takes no value, so it is deliberately NOT in the value-taking list
+  +         // check_flag_values scans, and a bare occurrence must not be reported as a
+  +         // flag missing its value.
+  +         let args = vec!["yoyo".to_string(), "--trust-project-always".to_string()];
+  +         let value_taking = ["--model", "--mcp", "--provider"];
+            assert!(check_flag_values(&args, &value_taking).is_empty());
+  +     }
+  + 
+  +     #[test]
+  ... (111 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/cli.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/cli.rs (4 → 126 lines)
+            let args = vec!["yoyo".to_string(), "--trust-project".to_string()];
+  +         let value_taking = ["--model", "--mcp", "--provider"];
+  +         assert!(check_flag_values(&args, &value_taking).is_empty());
+  +     }
+  + 
+  +     // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  + 
+  +     #[test]
+  +     fn test_trust_project_always_in_known_flags_and_takes_no_value() {
+  +         assert!(
+  +             KNOWN_FLAGS.contains(&"--trust-project-always"),
+  +             "an unknown flag is warned about and silently ignored"
+  +         );
+  +         // It takes no value, so it is deliberately NOT in the value-taking list
+  +         // check_flag_values scans, and a bare occurrence must not be reported as a
+  +         // flag missing its value.
+  +         let args = vec!["yoyo".to_string(), "--trust-project-always".to_string()];
+            let value_taking = ["--model", "--mcp", "--provider"];
+            assert!(check_flag_values(&args, &value_taking).is_empty());
+  +     }
+  ... (106 more lines)
+ ✓ (1m 25s)
+            let args = vec!["yoyo".to_string(), "--trust-project".to_string()];
+  +         let value_taking = ["--model", "--mcp", "--provider"];
+  +         assert!(check_flag_values(&args, &value_taking).is_empty());
+  +     }
+  + 
+  +     // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+  + 
+  +     #[test]
+  ... (13 more lines)
+  3 tools completed in 2m 9s (2 ✓, 1 ✗)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo trust 2>&1… ✓ (139ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 16 pass. Now the positive controls — a new source that changes nothing under test is the vacuous-green shape.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (10 lines) ✓ (18.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 passes — loosening to a prefix kills the subdirectory near-miss. Now control 2:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cp.b… (17 lines) ✓ (18.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both positive controls pass. Now the module-size register (my own gate's pasteable remedy):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/config_path… ✓ (3ms)
+  ▶ edit tests/module_size.rs (1 → 5 lines)
+  -     ("src/cli.rs", 4660),
+  +     // Day 178 (#749 item 1): +231 lines — persisted per-directory workspace trust
+  +     // (`--trust-project-always`), its two announcement builders, and their tests.
+  +     // Acknowledged, not absorbed: this crossed the 100-line drift grace band, which
+  +     // is the gate working as designed.
+  +     ("src/cli.rs", 4891),
+ ✓ (1m 24s)
+  -     ("src/cli.rs", 4660),
+  +     // Day 178 (#749 item 1): +231 lines — persisted per-directory workspace trust
+  +     // (`--trust-project-always`), its two announcement builders, and their tests.
+  +     // Acknowledged, not absorbed: this crossed the 100-line drift grace band, which
+  +     // is the gate working as designed.
+  +     ("src/cli.rs", 4891),
+  2 tools completed in 1m 29s (2 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cargo fmt shifted the line count — re-reading the gate's own remedy line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (153ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.4s (3 ✓)
+
+The ratchet caught cargo fmt's 3-line shrink — exactly branch 3 working:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 4891),
+  +     ("src/cli.rs", 4888),
+ ✓ (52.2s)
+  -     ("src/cli.rs", 4891),
+  +     ("src/cli.rs", 4888),
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/3 changed files were in top-10 predictions (66.7% accuracy)
+     Predicted correctly: src/cli.rs, src/help.rs
+     Surprises (not predicted): src/config_paths.rs
+
