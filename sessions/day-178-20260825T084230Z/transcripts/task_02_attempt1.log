@@ -1,0 +1,282 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the template I need to copy — continue_on_silence in both files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue_on_silence" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "wait_for_reset" src/*.r… ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 690,720p src/config.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1310,1355p src/cli.rs ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1316,1348p src/cli.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1316..1348 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:697..711 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 15.0s (7 ✓)
+
+Now the three edits. Starting with src/config.rs — the reader:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 22 lines)
+        config_flag(config, "continue_on_silence", false)
+  + }
+  + 
+  + /// Check whether wait-for-reset is enabled in the config.
+  + ///
+  + /// Defaults to **false** when the key is absent — this is opt-in, because a
+  + /// process that can silently sleep for hours is not a product-safe default
+  + /// (#448). Setting `wait_for_reset = true` in `.yoyo.toml` is the non-flag
+  + /// door to the same switch `--wait-for-reset` throws; the two sources are
+  + /// OR'd at the single `set_wait_for_reset()` call site in `cli::parse_args` —
+  + /// there is no "off" flag, so a user who writes neither is byte-identical to
+  + /// the pre-config-key behaviour.
+  + ///
+  + /// The key is deliberately **not** part of the project-config trust boundary:
+  + /// it grants no privilege — the worst case is a process that sleeps — unlike
+  + /// an MCP command, a `permissions.allow` entry or a shell hook, whose entire
+  + /// content is executable code.
+  + pub fn parse_wait_for_reset_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> bool {
+  ... (2 more lines)
+ ✓ (15.2s)
+        config_flag(config, "continue_on_silence", false)
+  + }
+  + 
+  + /// Check whether wait-for-reset is enabled in the config.
+  + ///
+  + /// Defaults to **false** when the key is absent — this is opt-in, because a
+  + /// process that can silently sleep for hours is not a product-safe default
+  + /// (#448). Setting `wait_for_reset = true` in `.yoyo.toml` is the non-flag
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "w… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reader is in place. Now its consumer in cli.rs (the dead-code error is exactly the "no definition without its consumer" rule firing):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 18 lines)
+        // grants no privilege — the worst case is a process that sleeps — which is
+        // the same reasoning already written down for `continue_on_silence`. Do not
+        // "fix" this in a future sweep.
+  -     if args.iter().any(|a| a == "--wait-for-reset") {
+  +     //
+  +     // Two sources reach this one switch: the CLI flag, and the
+  +     // `wait_for_reset` config key. It is a plain OR — there is no "off" flag,
+  +     // so either source alone enables it and neither leaves it off,
+  +     // byte-identical to the flag-only behaviour for anyone who writes neither.
+  +     // The config door exists because the whole point of the flag is a person
+  +     // willing to leave the terminal open for hours; that person wants to say so
+  +     // once, not retype a flag on every invocation.
+  +     if args.iter().any(|a| a == "--wait-for-reset")
+  +         || crate::config::parse_wait_for_reset_from_config(&file_config)
+  +     {
+            set_wait_for_reset();
+        }
+ ✓ (2m 0s)
+        // grants no privilege — the worst case is a process that sleeps — which is
+        // the same reasoning already written down for `continue_on_silence`. Do not
+        // "fix" this in a future sweep.
+  -     if args.iter().any(|a| a == "--wait-for-reset") {
+  +     //
+  +     // Two sources reach this one switch: the CLI flag, and the
+  +     // `wait_for_reset` config key. It is a plain OR — there is no "off" flag,
+  +     // so either source alone enables it and neither leaves it off,
+  ... (9 more lines)
+
+Now SETTABLE_KEYS and the validate_config_value arm — same diff, since a key nothing can set is half a feature:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (4 → 8 lines)
+        (
+            "continue_on_silence",
+            "continue after a tool-using turn that ends with almost no text (true/false)",
+  +     ),
+  +     (
+  +         "wait_for_reset",
+  +         "wait out a provider rate-limit reset instead of giving up (true/false)",
+        ),
+ ✓ (2m 0s)
+        (
+            "continue_on_silence",
+            "continue after a tool-using turn that ends with almost no text (true/false)",
+  +     ),
+  +     (
+  +         "wait_for_reset",
+  +         "wait out a provider rate-limit reset instead of giving up (true/false)",
+        ),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (10 → 20 lines)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid continue_on_silence value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "wait_for_reset" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid wait_for_reset value '{value}' — use true or false"
+                    )),
+                }
+            }
+ ✓ (2m 1s)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid continue_on_silence value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "wait_for_reset" => {
+  +             let lower = value.to_ascii_lowercase();
+  ... (8 more lines)
+  2 tools completed in 4m 8s (2 ✓)
+
+Now the tests, mirroring the continue_on_silence trio:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:2125..2155 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 63 lines)
+            let mut config = std::collections::HashMap::new();
+            config.insert("continue_on_silence".to_string(), "false".to_string());
+            assert!(!parse_continue_on_silence_from_config(&config));
+  +     }
+  + 
+  +     // The three states of the `wait_for_reset` reader. It is pure and takes the
+  +     // parsed config, so these never touch the process-global `WAIT_FOR_RESET`
+  +     // (`tests/global_state_races.rs` is fatal on an unserialised, unregistered
+  +     // writer, and its own first-stated remedy is "pass the value explicitly").
+  + 
+  +     #[test]
+  +     fn wait_for_reset_defaults_to_false_when_key_absent() {
+  +         // Product-safe default: a user who never writes the key gets the
+  +         // byte-identical behaviour they had before the key existed. This is
+  +         // every existing user's path and the regression risk of the config door.
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_wait_for_reset_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  ... (41 more lines)
+ ✓ (2m 2s)
+            let mut config = std::collections::HashMap::new();
+            config.insert("continue_on_silence".to_string(), "false".to_string());
+            assert!(!parse_continue_on_silence_from_config(&config));
+  +     }
+  + 
+  +     // The three states of the `wait_for_reset` reader. It is pure and takes the
+  +     // parsed config, so these never touch the process-global `WAIT_FOR_RESET`
+  +     // (`tests/global_state_races.rs` is fatal on an unserialised, unregistered
+  ... (13 more lines)
+  2 tools completed in 2m 17s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 18s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "0 fa… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "[1-9]… ✓ (1m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo wait_for_r… ✓ (172ms)
+  6 tools completed in 6m 39s (5 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+10 tests green. Positive control — a new key that changes nothing under test is the vacuous-green shape, so let me verify these bite:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/config_flag(config, "w… ✓ (23.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/"wait_for_reset" => {/… ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 53.0s (2 ✓)
+
+Both controls bite. Now the help text — checking if it's a cheap one-line extension:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo wait_for_r… ✓ (23.4s)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:135..143 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 44.5s (2 ✓)
+
+Help text lives in src/help.rs — a fourth file. Per the task's own rule I'll leave it and record the decision. Now CLAUDE.md:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Deliberately not done, … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Deliberately not done, named rather than implied: there is no config key.** `wait_for_reset = true` in `.yoyo.toml` (the `config.rs` + `SETTABLE_KEYS` + `validate_config_value` trio) is real follow-up work; the flag is the product door and the config key is separate.
+  + **Superseded claim, recorded rather than erased (Day 178, second task):** this bullet used to end *"**Deliberately not done, named rather than implied: there is no config key.** `wait_for_reset = true` in `.yoyo.toml` (the `config.rs` + `SETTABLE_KEYS` + `validate_config_value` trio) is real follow-up work; the flag is the product door and the config key is separate."* That was true for exactly one day. The config key **shipped**, in the same three-part shape `continue_on_silence` established on Day 172, and the reason it had to is a product one: the whole point of the flag is a person willing to leave the terminal open for four hours, and that person wants to say so **once** rather than retype a flag on every invocation — a capability reachable only by retyping a flag is the shape that trains people to alias it away. `config::parse_wait_for_reset_from_config` joins the `config_flag`-shaped boolean readers (`auto_watch`, `quiet`, `no_bell`, `continue_on_silence`), **default `false`, opt-in**; `"wait_for_reset"` was added to `SETTABLE_KEYS` with its matching `validate_config_value` arm **in the same diff**, so `/config set wait_for_reset true` validates and `/config get wait_for_reset` reads it back — a key nothing can set through the normal door is half a feature. `set_wait_for_reset()` still has **exactly one** call site in `parse_args`, which now has **two sources OR'd together**: the `--wait-for-reset` flag, **or** the config key. There is deliberately **no disable flag** — an OR is the whole rule and a fourth precedence value was not needed. **The shipped default is unchanged: off unless the flag is passed or the key is written**, which is every existing user's path and was the regression risk here; pinned by the three-state reader test (absent → `false`, `= true` → `true`, `= false` → `false`, the last being the near-miss guard so the discriminator is not covered only on the side that fires) and by both positive controls (flipping the reader's default kills a test; renaming the `validate_config_value` arm kills another). The key is **deliberately not** part of the project-config trust boundary (`gate_mcp_sources` / `gate_project_permissions` / `gate_project_hooks`) and a comment at the call site says so: it grants no privilege — a repo's `.yoyo.toml` setting this can cost you wall-clock, never access — unlike an MCP command, a `permissions.allow` entry or a shell hook, whose entire content is executable code. **One thing deliberately left undone and named rather than implied:** `cli_help_text()`'s `--wait-for-reset` line was **not** extended with "(or `wait_for_reset = true` in your config)", because that text lives in `src/help.rs` — a fourth file, past this task's stated three-file scope. The config door is not undocumented, though: its `SETTABLE_KEYS` description ships in the same diff and is what `/config set` lists, so each door is documented where its own audience looks; the cross-reference between them is the missing half.
+ ✓ (1m 54s)
+  - **Deliberately not done, named rather than implied: there is no config key.** `wait_for_reset = true` in `.yoyo.toml` (the `config.rs` + `SETTABLE_KEYS` + `validate_config_value` trio) is real follow-up work; the flag is the product door and the config key is separate.
+  + **Superseded claim, recorded rather than erased (Day 178, second task):** this bullet used to end *"**Deliberately not done, named rather than implied: there is no config key.** `wait_for_reset = true` in `.yoyo.toml` (the `config.rs` + `SETTABLE_KEYS` + `validate_config_value` trio) is real follow-up work; the flag is the product door and the config key is separate."* That was true for exactly one day. The config key **shipped**, in the same three-part shape `continue_on_silence` established on Day 172, and the reason it had to is a product one: the whole point of the flag is a person willing to leave the terminal open for four hours, and that person wants to say so **once** rather than retype a flag on every invocation — a capability reachable only by retyping a flag is the shape that trains people to alias it away. `config::parse_wait_for_reset_from_config` joins the `config_flag`-shaped boolean readers (`auto_watch`, `quiet`, `no_bell`, `continue_on_silence`), **default `false`, opt-in**; `"wait_for_reset"` was added to `SETTABLE_KEYS` with its matching `validate_config_value` arm **in the same diff**, so `/config set wait_for_reset true` validates and `/config get wait_for_reset` reads it back — a key nothing can set through the normal door is half a feature. `set_wait_for_reset()` still has **exactly one** call site in `parse_args`, which now has **two sources OR'd together**: the `--wait-for-reset` flag, **or** the config key. There is deliberately **no disable flag** — an OR is the whole rule and a fourth precedence value was not needed. **The shipped default is unchanged: off unless the flag is passed or the key is written**, which is every existing user's path and was the regression risk here; pinned by the three-state reader test (absent → `false`, `= true` → `true`, `= false` → `false`, the last being the near-miss guard so the discriminator is not covered only on the side that fires) and by both positive controls (flipping the reader's default kills a test; renaming the `validate_config_value` arm kills another). The key is **deliberately not** part of the project-config trust boundary (`gate_mcp_sources` / `gate_project_permissions` / `gate_project_hooks`) and a comment at the call site says so: it grants no privilege — a repo's `.yoyo.toml` setting this can cost you wall-clock, never access — unlike an MCP command, a `permissions.allow` entry or a shell hook, whose entire content is executable code. **One thing deliberately left undone and named rather than implied:** `cli_help_text()`'s `--wait-for-reset` line was **not** extended with "(or `wait_for_reset = true` in your config)", because that text lives in `src/help.rs` — a fourth file, past this task's stated three-file scope. The config door is not undocumented, though: its `SETTABLE_KEYS` description ships in the same diff and is what `/config set` lists, so each door is documented where its own audience looks; the cross-reference between them is the missing half.
+  2 tools completed in 2m 9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "[1-9]… ✓ (1m 31s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 51s (2 ✓)
+
+Full suite green. Verifying the config door actually works end-to-end, not just that the unit tests pass:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf wfrtest && mkdir wfrtest && cd wfrtest && /home/runner/work/yo… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/wfrtest && printf 'wait_for_reset = true\n' > .yoyo.toml && Y=/home/runn… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.2s (2 ✓)
+
+Config door works end-to-end. Cleaning up and committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf wfrtest; cd /home/runner/work/yoyo-evolve/yoyo-evolve && git s… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (25ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (15.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done and committed — clean tree, b1a9fb08.
+
+## What shipped
+
+--wait-for-reset had no config door. Now it has one, in the same three-part shape continue_on_silence established on Day 172 — I copied that template rather than improvising:
+
+`src/config.rs`
+• parse_wait_for_reset_from_config beside the other config_flag-shaped boolean readers. Default `false`, opt-in.
+• "wait_for_reset" in SETTABLE_KEYS and its validate_config_value arm, in the same diff — a key nothing can set through the normal door is half a feature.
+
+`src/cli.rs`
+• set_wait_for_reset() still has exactly one call site, which now has two sources OR'd: the flag, or the config key. No disable flag — an OR is the whole rule.
+• Comment at the site saying it is not part of the project-config trust boundary and must not be swept into it: it grants no privilege. A repo's .yoyo.toml setting this costs you wall-clock, never access.
+
+Verification, not just green checks. The dead-code error on my very first edit was the "no definition without its consumer" rule firing on schedule — the reader existed for one edit with nothing reading it. Beyond that:
+
+• Three-state reader test, including the near-miss (= false must read the same as absent) — a discriminator tested only on the side that fires is vacuous green.
+• validate_config_value asserted on the error a caller receives, not is_err().
+• Two positive controls run, because a new key that changes nothing under test is the vacuous-green shape: flipping the reader's default kills wait_for_reset_defaults_to_false_when_key_absent; renaming the validate arm kills validate_wait_for_reset_values. Both restored.
+• End-to-end through the real binary in a scratch dir: config get wait_for_reset → true  (.yoyo.toml), config show lists it.
+• No test writes the process-global — the reader is pure and takes the parsed config, which is tests/global_state_races.rs's own first-stated remedy rather than reaching for #[serial].
+• Full suite green, clippy -D warnings clean, the five pre-existing flag tests untouched and passing.
+
+## What I deliberately didn't do
+
+cli_help_text()'s flag line wasn't extended with a config-key mention — that text lives in src/help.rs, a fourth file past this task's stated scope. I said so in CLAUDE.md rather than half-doing it. It isn't an undocumented door either: the SETTABLE_KEYS description shipped in the same diff and is what /config set lists, so each door is documented where its own audience looks. The cross-reference between them is the missing half, and it's named.
+
+CLAUDE.md records the superseded claim rather than erasing it — that bullet asserted "there is no config key" for exactly one day — and states plainly that the shipped default is unchanged: off unless the flag is passed or the key is written. That's every existing user's path, and it was the regression risk here.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

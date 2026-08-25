@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the target file to see exactly what the renderers emit and what the existing tests assert.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_families… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,300p' src/commands_r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '294,413p' src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const DIM\|pub cons… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DIM\|RESET\|YELLOW" src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,290p' src/format/mod… ✓ (3ms)
+  6 tools completed in 26.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'm resuming — I have the full picture of the file. Now writing the emission-point assertions (step 1, the deliverable).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub" src/commands_risk_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_risk_families.rs (5 → 298 lines)
+            // The `"oops"` line has no usable per-hypothesis records but IS graded,
+            // so it counts as predating — absence is not absorbed into a family.
+            assert_eq!(fam.experiments_without_hypotheses, 1);
+  +     }
+  + 
+  +     // ------------------------------------------------------------------
+  +     // Day 178 — acting on a measured survivor.
+  +     //
+  +     // Mutation reading #2 (Day 177, blind round 74) over this module: 54
+  +     // mutants, 22 survivors, and **15 of 22 (68%) sat in the two renderers**.
+  +     // `format_family_line` scored 6 generated / 0 caught — **100% survival**:
+  +     // its whole body could be replaced with `String::new()` or the literal
+  +     // `"xyzzy"` and every test above stayed green, because they all feed
+  +     // ledger text and assert on the resulting *tally*, inspecting the rendered
+  +     // string only loosely. Survivors follow the assertion, not the function.
+  +     //
+  +     // The tests below assert at the **emission point** — the string a caller
+  +     // actually receives — and they are deliberately shaped against the exact
+  +     // mutants that lived:
+  +     //   * whole-line verbatim equality, which is what makes a body
+  ... (278 more lines)
+ ✓ (1m 58s)
+            // The `"oops"` line has no usable per-hypothesis records but IS graded,
+            // so it counts as predating — absence is not absorbed into a family.
+            assert_eq!(fam.experiments_without_hypotheses, 1);
+  +     }
+  + 
+  +     // ------------------------------------------------------------------
+  +     // Day 178 — acting on a measured survivor.
+  +     //
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (171ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 0s (3 ✓)
+
+All 10 pass first try — for verbatim padding assertions that's suspicious, so let me run the positive control: a new assertion that nothing can break is the vacuous-green shape.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (15 lines) ✓ (23.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The "xyzzy" mutant now dies — and note the 5 pre-existing tests all still passed under it, reproducing the measured 100% survival exactly. Now the comparison guards:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (25 lines) ✓ (2m 52s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Every injected mutant dies. Pre-flight confirmed (10 tests selected, non-zero — round 75's trap avoided). Now the full check, then the real re-measure:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (29.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming — clippy and build passed; the exit-1 was which cargo-mutants. Let me check availability:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (cargo mutants --version 2>&1 | … ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Not installed. Let me install it in the background while I prepare the CLAUDE.md note:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup cargo … (2 lines) ✓ (47.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (37.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sleep 90; tail -3 /tmp/mutants_install.log; cargo mutants --version 2>&1 | head … ✓ (1m 30s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 5s (3 ✓)
+
+cargo-mutants 27.1.0 — same version as readings #1–#4, so the numbers are comparable. Let me scope the run:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants -f src/commands_ri… ✓ (3.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+31 mutants — and that scope is exact: reading #2's per-function numbers for these four functions were 11+6+8+6 = 31 generated, 9 caught, 22 missed, i.e. this slice contains 100% of the module's 22 survivors. Perfect before/after control. Running it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup cargo … (2 lines) ✓ (2m 2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The run is going and the baseline passed cleanly. Let me poll while it works:
+  ▶ $ sleep 300; tail -6 /tmp/mutants_run.log; echo "=== done? ==="; ls /home/runner/w…
