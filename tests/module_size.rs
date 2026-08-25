@@ -213,7 +213,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 3388),
+    ("src/config.rs", 3486), // Day 178: +98 for the allow-wildcard option-token guard (#823 sibling).
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),

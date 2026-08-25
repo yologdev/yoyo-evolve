@@ -16,15 +16,21 @@ impl PermissionConfig {
     /// Check a command against deny patterns first, then allow patterns.
     /// Returns `Some(true)` if allowed, `Some(false)` if denied, `None` if no match (prompt user).
     pub fn check(&self, command: &str) -> Option<bool> {
-        // Deny takes priority — check deny patterns first
+        // Deny takes priority — check deny patterns first.
+        //
+        // `deny` deliberately keeps plain `glob_match`, and this asymmetry is the point:
+        // narrowing an `allow` removes privilege (safe), while narrowing a `deny` makes a
+        // fence stop matching — i.e. it fails open. Mirroring the allow-branch guard onto
+        // this loop would be a regression dressed as a security fix. Same asymmetry
+        // `cli::gate_project_permissions` already encodes (#749 item 3).
         for pattern in &self.deny {
             if glob_match(pattern, command) {
                 return Some(false);
             }
         }
-        // Then check allow patterns
+        // Then check allow patterns.
         for pattern in &self.allow {
-            if glob_match(pattern, command) {
+            if glob_match(pattern, command) && !allow_wildcard_swallows_options(pattern, command) {
                 return Some(true);
             }
         }
@@ -36,6 +42,48 @@ impl PermissionConfig {
     pub fn is_empty(&self) -> bool {
         self.allow.is_empty() && self.deny.is_empty()
     }
+}
+
+/// True when `pattern` matched `command` **only** because a wildcard swallowed an option
+/// token the user never wrote.
+///
+/// The motivating shape: a user writes `allow = ["git * main"]` meaning "the `*` is the
+/// subcommand slot", and `glob_match` — which only requires prefix / suffix / in-order
+/// middle matching — also accepts `git -c core.sshCommand=<arbitrary command> push main`.
+/// That auto-approves an arbitrary command for the whole session, i.e. it *widens* a fence
+/// the user is currently living inside. Verified before the fix by running it (see the
+/// `config.rs` bullet in CLAUDE.md).
+///
+/// Two rules, and the precision is the whole point — a broader rule breaks legitimate
+/// configs:
+///
+/// 1. It applies **only** to a **non-trailing** `*`, i.e. a non-empty literal segment
+///    exists after some `*`. `cargo *` and `npm run *` are honest "anything goes"
+///    patterns and are untouched, byte-identical to before.
+/// 2. When it applies, the match is rejected if the command carries any whitespace-
+///    separated token starting with `-` that does not appear verbatim as a token in the
+///    pattern. So `git * --force` still auto-approves `git push --force`.
+///
+/// **This narrows the allow branch only, and rejection means "not auto-approved", not
+/// "refused"** — the command falls through to the normal confirmation prompt. That is
+/// graceful degradation by design, which is why there is no warning or refusal message
+/// here; please do not helpfully add one.
+///
+/// It is not a claim that `permissions.allow` is now safe against every option-injection
+/// shape: it closes the wildcard-swallows-options class, nothing wider.
+fn allow_wildcard_swallows_options(pattern: &str, command: &str) -> bool {
+    // Rule 1 — a trailing wildcard is an honest "anything goes" pattern.
+    let Some(last_star) = pattern.rfind('*') else {
+        return false;
+    };
+    if pattern[last_star + 1..].trim().is_empty() {
+        return false;
+    }
+    // Rule 2 — any option token the user did not write verbatim.
+    let pattern_tokens: Vec<&str> = pattern.split_whitespace().collect();
+    command
+        .split_whitespace()
+        .any(|tok| tok.starts_with('-') && !pattern_tokens.contains(&tok))
 }
 
 /// Directory restriction configuration for file access security.
@@ -1592,6 +1640,56 @@ mod tests {
         assert_eq!(perms.check("cargo test"), Some(true));
         assert_eq!(perms.check("rm -rf /"), Some(false));
         assert_eq!(perms.check("python script.py"), None);
+    }
+
+    /// A wildcard *before* a literal must not swallow option tokens the user never
+    /// wrote. Asserted at the emission point — the `Option<bool>` a caller of
+    /// `PermissionConfig::check` receives — never on the helper one layer below.
+    ///
+    /// The rows that do NOT fire are the near-miss guards: a discriminator tested only
+    /// on the side that blocks is vacuous green.
+    #[test]
+    fn allow_wildcard_before_literal_does_not_swallow_option_tokens() {
+        let perms = PermissionConfig {
+            allow: vec!["git * main".to_string()],
+            deny: vec![],
+        };
+        // The case the user meant: no option tokens at all.
+        assert_eq!(perms.check("git push main"), Some(true));
+        // The hole, closed: `-c core.sshCommand=…` runs an arbitrary command, and the
+        // user never wrote that token. Falls through to the confirmation prompt.
+        assert_eq!(perms.check("git -c core.sshCommand=x push main"), None);
+
+        // Near-miss 1 — trailing wildcard is an honest "anything goes" pattern and is
+        // byte-identical to before. This is the regression risk.
+        let trailing = PermissionConfig {
+            allow: vec!["cargo *".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(trailing.check("cargo test --lib"), Some(true));
+
+        // Near-miss 2 — an option token that appears verbatim in the pattern is what
+        // the user asked for.
+        let explicit = PermissionConfig {
+            allow: vec!["git * --force".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(explicit.check("git push --force"), Some(true));
+
+        // Near-miss 3 — no wildcard at all, untouched.
+        let literal = PermissionConfig {
+            allow: vec!["git push main".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(literal.check("git push main"), Some(true));
+
+        // Near-miss 4 — `deny` keeps plain `glob_match`. Narrowing a deny would make a
+        // fence stop matching, i.e. fail open: the opposite act from narrowing an allow.
+        let denied = PermissionConfig {
+            allow: vec![],
+            deny: vec!["git * main".to_string()],
+        };
+        assert_eq!(denied.check("git -c x=y push main"), Some(false));
     }
 
     #[test]

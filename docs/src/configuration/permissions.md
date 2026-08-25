@@ -60,6 +60,35 @@ Patterns use simple glob matching where `*` matches any sequence of characters (
 
 Both `--allow` and `--deny` are repeatable — pass them multiple times to build up your pattern lists.
 
+### A wildcard *before* a literal does not swallow option tokens
+
+A pattern like `git * main` reads as "the `*` is the subcommand slot". But `*` matches any
+characters, so on a plain glob it would also match `git -c core.sshCommand=<anything> push main`
+— auto-approving an arbitrary command for the whole session, from a pattern that looks narrow.
+
+So in an **allow** pattern, when a `*` is followed by a literal segment, the match is rejected
+if the command carries an option token (one starting with `-`) that you did not write verbatim
+in the pattern. The command then falls through to the normal `[y/N]` prompt — it is not
+refused, just not auto-approved.
+
+| Pattern | Command | Result |
+|---|---|---|
+| `git * main` | `git push main` | auto-approved — no option tokens |
+| `git * main` | `git -c core.sshCommand=x push main` | prompts — `-c` isn't in the pattern |
+| `git * --force` | `git push --force` | auto-approved — `--force` is in the pattern |
+
+**Trailing wildcards are unchanged.** `cargo *`, `npm run *` and `git commit -m *` are honest
+"anything goes" patterns: nothing follows the `*`, so this rule does not apply and
+`cargo test --lib` auto-approves exactly as before.
+
+**`deny` is unchanged too**, and deliberately so: narrowing an allow pattern removes
+privilege, but narrowing a deny pattern would make a fence stop matching. `deny = ["git * main"]`
+still blocks `git -c x=y push main`.
+
+This closes the wildcard-swallows-options case. It is not a guarantee that an allow pattern
+is safe against every possible command shape — prefer patterns that are as literal as you can
+stand.
+
 ### Deny overrides allow
 
 If both an allow and deny pattern match the same command, **deny wins**:
