@@ -107,6 +107,38 @@ fn file_stem_of(path: &str) -> String {
     name.split('.').next().unwrap_or(name).to_string()
 }
 
+/// The *new* path named by a `diff --git a/<old> b/<new>` header line, if it can be
+/// read unambiguously.
+///
+/// This exists because three real diff shapes — a content-identical rename, a binary
+/// file change, and a mode-only change — emit **no** `---`/`+++` lines at all, so this
+/// header is the only line in the whole hunk that names the file (round 81's census).
+/// Without it those files vanish from `files_changed` entirely and the scope renders as
+/// the literal empty parens `()`, the same visible symptom as commit `26defce9`.
+///
+/// Deliberately narrow, and both gaps are filed rather than implied. A path containing
+/// a literal `" b/"` is genuinely ambiguous, so this returns `None` whenever the
+/// separator does not occur exactly once — degrading to the pre-round-81 behaviour (the
+/// file is dropped) instead of inventing a path that is not in the diff (#830). And git
+/// *quotes* both paths when they contain special characters
+/// (`diff --git "a/n\303\244me\"q.txt" "b/..."`), which this prefix does not match, so
+/// such a file still vanishes (#829). A path with a plain space is unquoted by git and
+/// *is* handled, because the separator still occurs exactly once.
+fn diff_header_path(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("diff --git a/")?;
+    let mut parts = rest.match_indices(" b/");
+    let (at, _) = parts.next()?;
+    if parts.next().is_some() {
+        // More than one candidate separator: ambiguous, refuse to guess.
+        return None;
+    }
+    let new_path = &rest[at + " b/".len()..];
+    if new_path.is_empty() {
+        return None;
+    }
+    Some(new_path.to_string())
+}
+
 /// Generate a conventional commit message from a diff using simple heuristics.
 /// This is a local, token-free approach — no AI calls needed.
 pub fn generate_commit_message(diff: &str) -> String {
@@ -126,8 +158,26 @@ pub fn generate_commit_message(diff: &str) -> String {
     // never influence the category, the >3-file threshold, or the summary focus).
     let mut pending_old_path: Option<String> = None;
 
+    // The path from the most recent `diff --git a/<old> b/<new>` header, held until we
+    // learn whether the hunk names the file some other way. A pure rename, a binary
+    // change and a mode-only change emit no `---`/`+++` at all, so this is their only
+    // mention; it is flushed at the next header and at end of diff (round 81).
+    let mut pending_header_path: Option<String> = None;
+
     for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
+        if let Some(path) = diff_header_path(line) {
+            // The previous file was never named by a `---`/`+++` line, so this header
+            // was its only mention: record it with zero counted lines, taking the same
+            // weight-1 fallback a pure rename already took once recorded.
+            if let Some(prev) = pending_header_path.take() {
+                files_changed.push(prev);
+                per_file_lines.push(0);
+                current = None;
+            }
+            pending_header_path = Some(path);
+        } else if let Some(path) = line.strip_prefix("+++ b/") {
+            // The hunk names the file itself, so the header mention is redundant.
+            pending_header_path = None;
             pending_old_path = None;
             files_changed.push(path.to_string());
             per_file_lines.push(0);
@@ -136,6 +186,7 @@ pub fn generate_commit_message(diff: &str) -> String {
             // e.g. `+++ /dev/null` (whole-file delete): the `+++` side names no
             // file, so attribute this hunk to the path the `---` line carried.
             // Its `-` lines follow this line, so they land on the right index.
+            pending_header_path = None;
             match pending_old_path.take() {
                 Some(path) => {
                     files_changed.push(path);
@@ -161,6 +212,11 @@ pub fn generate_commit_message(diff: &str) -> String {
                 per_file_lines[i] += 1;
             }
         }
+    }
+    // Same flush for the last file in the diff, which has no following header.
+    if let Some(path) = pending_header_path.take() {
+        files_changed.push(path);
+        per_file_lines.push(0);
     }
 
     // Weight each changed file by the lines it actually changed; a file with no
@@ -782,5 +838,117 @@ deleted file mode 100644
             "both files must appear in the scope: {msg}"
         );
         assert_eq!(msg, "feat(added, removed): update code");
+    }
+
+    // ---- Round 81: the fixture-shape census ----
+    //
+    // These four shapes were constructed by NO fixture before this round. The string
+    // `dev/null` occurred exactly once in this whole file (a comment inside the branch
+    // that drops the path) and ZERO times in this test module, so the Day-178 scoped
+    // mutation read that reported 0 survivors was true and answered a narrower question
+    // than it looked like: a mutation score is bounded by what the fixtures can ASK.
+    // Each fixture below is verbatim `git show` output from a real repo, not hand-typed.
+
+    /// A content-identical rename. git emits NO `---`/`+++` lines at all — the
+    /// `diff --git` header is the only line naming the file.
+    #[test]
+    fn census_pure_rename_names_the_file() {
+        let diff = "\
+diff --git a/old.txt b/new.txt
+similarity index 100%
+rename from old.txt
+rename to new.txt
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(new): update code");
+    }
+
+    /// A binary file change. git emits NO `---`/`+++` lines either — only the
+    /// `Binary files ... differ` marker, which starts with neither `+` nor `-`,
+    /// so the file carries zero counted lines and falls to the weight-1 fallback.
+    #[test]
+    fn census_binary_change_names_the_file() {
+        let diff = "\
+diff --git a/img.png b/img.png
+index 93759e4..67ff4b0 100644
+Binary files a/img.png and b/img.png differ
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(img): update code");
+    }
+
+    /// A mode-only change (chmod +x). Again no `---`/`+++`, no hunks.
+    #[test]
+    fn census_mode_only_change_names_the_file() {
+        let diff = "\
+diff --git a/keep.rs b/keep.rs
+old mode 100644
+new mode 100755
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(keep): update code");
+    }
+
+    /// A rename WITH a content change. This one git does render with `---`/`+++`,
+    /// carrying the *new* path on the `+++` side — so it was already recorded
+    /// correctly before this round. The fixture is a regression guard, and the
+    /// near-miss that proves the header fallback does not double-count: exactly
+    /// one file in the scope, and the `+more` line is counted.
+    #[test]
+    fn census_rename_with_content_change_records_the_new_path_once() {
+        let diff = "\
+diff --git a/new.txt b/renamed2.txt
+similarity index 70%
+rename from new.txt
+rename to renamed2.txt
+index 94954ab..8b14c4f 100644
+--- a/new.txt
++++ b/renamed2.txt
+@@ -1,2 +1,3 @@
+ hello
+ world
++more
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(renamed2): add changes");
+    }
+
+    /// The header parse itself, including the case it deliberately refuses.
+    #[test]
+    fn diff_header_path_table() {
+        let cases: &[(&str, Option<&str>)] = &[
+            // The three shapes that have no other mention of the file.
+            ("diff --git a/old.txt b/new.txt", Some("new.txt")),
+            ("diff --git a/img.png b/img.png", Some("img.png")),
+            (
+                "diff --git a/src/keep.rs b/src/keep.rs",
+                Some("src/keep.rs"),
+            ),
+            // Not a header at all — every other line in a diff must fall through.
+            ("--- a/src/main.rs", None),
+            ("+++ b/src/main.rs", None),
+            ("+added line", None),
+            ("-removed line", None),
+            ("Binary files a/x and b/x differ", None),
+            ("@@ -1,2 +1,3 @@", None),
+            ("", None),
+            // Ambiguous: a path containing the separator. Refuse rather than guess a
+            // path that is not in the diff — this degrades to the pre-round-81
+            // behaviour (file dropped), which is wrong but honest (#830).
+            (
+                "diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\244me.txt\"",
+                None,
+            ), // quoted: #829
+            ("diff --git a/has b/dir/f b/has b/dir/f", None),
+            // Empty new path.
+            ("diff --git a/x b/", None),
+        ];
+        for (line, want) in cases {
+            assert_eq!(
+                diff_header_path(line).as_deref(),
+                *want,
+                "diff_header_path({line:?})"
+            );
+        }
     }
 }
