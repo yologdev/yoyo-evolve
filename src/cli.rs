@@ -1340,7 +1340,17 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // grants no privilege — the worst case is a process that sleeps — which is
     // the same reasoning already written down for `continue_on_silence`. Do not
     // "fix" this in a future sweep.
-    if args.iter().any(|a| a == "--wait-for-reset") {
+    //
+    // Two sources reach this one switch: the CLI flag, and the
+    // `wait_for_reset` config key. It is a plain OR — there is no "off" flag,
+    // so either source alone enables it and neither leaves it off,
+    // byte-identical to the flag-only behaviour for anyone who writes neither.
+    // The config door exists because the whole point of the flag is a person
+    // willing to leave the terminal open for hours; that person wants to say so
+    // once, not retype a flag on every invocation.
+    if args.iter().any(|a| a == "--wait-for-reset")
+        || crate::config::parse_wait_for_reset_from_config(&file_config)
+    {
         set_wait_for_reset();
     }
 

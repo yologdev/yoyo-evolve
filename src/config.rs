@@ -708,6 +708,26 @@ pub fn parse_continue_on_silence_from_config(
     config_flag(config, "continue_on_silence", false)
 }
 
+/// Check whether wait-for-reset is enabled in the config.
+///
+/// Defaults to **false** when the key is absent — this is opt-in, because a
+/// process that can silently sleep for hours is not a product-safe default
+/// (#448). Setting `wait_for_reset = true` in `.yoyo.toml` is the non-flag
+/// door to the same switch `--wait-for-reset` throws; the two sources are
+/// OR'd at the single `set_wait_for_reset()` call site in `cli::parse_args` —
+/// there is no "off" flag, so a user who writes neither is byte-identical to
+/// the pre-config-key behaviour.
+///
+/// The key is deliberately **not** part of the project-config trust boundary:
+/// it grants no privilege — the worst case is a process that sleeps — unlike
+/// an MCP command, a `permissions.allow` entry or a shell hook, whose entire
+/// content is executable code.
+pub fn parse_wait_for_reset_from_config(
+    config: &std::collections::HashMap<String, String>,
+) -> bool {
+    config_flag(config, "wait_for_reset", false)
+}
+
 /// Parse `max_auto_continues` from the config map.
 ///
 /// Returns the configured value (clamped to 0-20) or `None` if the key
@@ -791,6 +811,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     (
         "continue_on_silence",
         "continue after a tool-using turn that ends with almost no text (true/false)",
+    ),
+    (
+        "wait_for_reset",
+        "wait out a provider rate-limit reset instead of giving up (true/false)",
     ),
     ("lite", "enable lite mode for small/local LLMs (true/false)"),
     ("no_bell", "suppress terminal bell (true/false)"),
@@ -886,6 +910,16 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
                 _ => Err(format!(
                     "invalid continue_on_silence value '{value}' — use true or false"
+                )),
+            }
+        }
+        "wait_for_reset" => {
+            let lower = value.to_ascii_lowercase();
+            match lower.as_str() {
+                "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+                "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                _ => Err(format!(
+                    "invalid wait_for_reset value '{value}' — use true or false"
                 )),
             }
         }
@@ -2115,6 +2149,63 @@ env = { API_KEY = "secret" }
         let mut config = std::collections::HashMap::new();
         config.insert("continue_on_silence".to_string(), "false".to_string());
         assert!(!parse_continue_on_silence_from_config(&config));
+    }
+
+    // The three states of the `wait_for_reset` reader. It is pure and takes the
+    // parsed config, so these never touch the process-global `WAIT_FOR_RESET`
+    // (`tests/global_state_races.rs` is fatal on an unserialised, unregistered
+    // writer, and its own first-stated remedy is "pass the value explicitly").
+
+    #[test]
+    fn wait_for_reset_defaults_to_false_when_key_absent() {
+        // Product-safe default: a user who never writes the key gets the
+        // byte-identical behaviour they had before the key existed. This is
+        // every existing user's path and the regression risk of the config door.
+        let config = std::collections::HashMap::new();
+        assert!(!parse_wait_for_reset_from_config(&config));
+    }
+
+    #[test]
+    fn wait_for_reset_explicit_true() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("wait_for_reset".to_string(), "true".to_string());
+        assert!(parse_wait_for_reset_from_config(&config));
+    }
+
+    #[test]
+    fn wait_for_reset_explicit_false() {
+        // The near-miss guard: written-and-false must read the same as absent.
+        // A discriminator tested only on the side that fires is vacuous green.
+        let mut config = std::collections::HashMap::new();
+        config.insert("wait_for_reset".to_string(), "false".to_string());
+        assert!(!parse_wait_for_reset_from_config(&config));
+    }
+
+    #[test]
+    fn validate_wait_for_reset_values() {
+        assert_eq!(
+            validate_config_value("wait_for_reset", "true"),
+            Ok("true".to_string())
+        );
+        assert_eq!(
+            validate_config_value("wait_for_reset", "false"),
+            Ok("false".to_string())
+        );
+        // Asserted on the error a caller actually receives, not merely is_err().
+        let err = validate_config_value("wait_for_reset", "maybe").unwrap_err();
+        assert!(
+            err.contains("wait_for_reset") && err.contains("maybe"),
+            "error should name the key and the offending value, got: {err}"
+        );
+    }
+
+    #[test]
+    fn wait_for_reset_is_settable_through_the_normal_door() {
+        // A key nothing can set through `/config set` is half a feature.
+        assert!(
+            SETTABLE_KEYS.iter().any(|(k, _)| *k == "wait_for_reset"),
+            "wait_for_reset must be listed in SETTABLE_KEYS"
+        );
     }
 
     #[test]
