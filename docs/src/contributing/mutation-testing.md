@@ -81,13 +81,31 @@ Focus on `survived.txt` — each line is a mutation that no test catches. These 
 
 ## Configuration
 
-The `mutants.toml` file in the project root excludes known-acceptable mutants:
+The `.cargo/mutants.toml` file excludes known-acceptable mutants:
 
 - **Cosmetic functions** — ANSI color codes, banner printing, help text
 - **Interactive I/O** — functions that read stdin or require a terminal
 - **Async API calls** — prompt execution that needs a live Anthropic API
 
 These exclusions keep mutation testing focused on logic that *should* be tested. If you add a new feature with testable logic, make sure it's not excluded.
+
+**The path matters.** cargo-mutants reads `.cargo/mutants.toml`, not a file at the repo root. This config sat at the root from Day 9 to Day 178 and was never read once in that time. If you move it, or start a fresh copy, verify it is actually being loaded — see "Proving the config is read" below.
+
+Exclusions are written as `exclude_re`: a list of regexps matched against the whole line `--list` prints, i.e. `path:line:col: <mutant text>`. Two conventions in this file are load-bearing:
+
+- **Anchor each regex to its source file** with `^src/…\.rs:`. This is what stops an exclusion reaching a module it was never meant to touch — in particular the five modules with mutation readings recorded in `CLAUDE.md`, whose denominators must stay stable or every recorded number becomes incomparable with its own future re-measure.
+- **Keep the `\b` word boundaries.** Without them `run_prompt` also swallows `run_prompt_with_changes` and nine other live functions, and `compact_agent` swallows `compact_agent_with_keep`.
+
+## Proving the config is read
+
+Editing the file is the container; being loaded is the payload. `--list` runs no tests, so the check is fast and deterministic — compare a file holding an excluded function against the same file with `--no-config`:
+
+```bash
+cargo mutants --list -f src/commands_session.rs | wc -l              # 168
+cargo mutants --list --no-config -f src/commands_session.rs | wc -l  # 191
+```
+
+If the two counts are equal, the config is **not** being read, whatever the file says. Check the mutant *text* too, not just the count: diff the two lists and confirm the functions that disappeared are the ones you excluded, and that near-miss neighbours (`compact_agent_with_keep`, `usage_print_line`) survived.
 
 ## Writing targeted tests
 
@@ -133,8 +151,9 @@ Mutation testing is slow — it builds and tests your code once per mutant. Run 
 
 ## Notes for CI integration
 
-The `scripts/run_mutants.sh` script and `mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+The `scripts/run_mutants.sh` script and `.cargo/mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
 
 - **Git-dependent tests**: Some tests (e.g. `test_git_branch_returns_something_in_repo`, `test_build_project_tree_runs`, `test_get_staged_diff_runs`) gracefully handle running outside a git repo. cargo-mutants copies source to a temp directory without `.git/`, so these tests skip git-specific assertions when not in a repo.
-- **Exclusions are reasonable**: The `mutants.toml` excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key). These can't be meaningfully unit-tested.
+- **Exclusions were stale for ~169 days, and are now re-resolved**: the config excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key) — that policy is unchanged and still sound. What was wrong was everything else. Written on Day 9, the file sat at the repo root where cargo-mutants never looks, used a `[[exclude]] function = "…"` schema that current cargo-mutants rejects outright (`unknown field 'exclude'`), and named six functions that had since moved modules or never existed (`main::collect_multiline`, `main::run_shell_command`, `main::compact_agent`, `main::auto_compact_if_needed`, `cli::print_banner`, `format::Color::fmt`). On Day 178 it was moved to `.cargo/mutants.toml`, rewritten to the `exclude_re` schema, and every name re-resolved against the tree and verified to generate at least one real mutant. An exclusion that matches nothing is worse than no exclusion, because it reads as a considered policy.
+- **No previously recorded reading is invalidated by this.** All of them passed `-f` on the command line, which bypasses the config entirely.
 - **The script cannot be added to `.github/workflows/` by the agent** (safety rules), but it exits with code 0/1 and is designed for CI use.
