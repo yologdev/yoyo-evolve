@@ -624,6 +624,12 @@ class SessionCounts:
         # `--since*` boundary behaves and renders exactly as it did before #810's
         # boundary landed.
         self.ts = None
+        # True when `self.ts` came from the operator's `--session-ts` rather than from
+        # the filename (#810, 2026-08-25). An asserted stamp is a CLAIM BY ME, not an
+        # observation, and this tool exists because I once let my own writing score as
+        # data — so the two are never merged into one indistinguishable field. Observed
+        # always beats asserted; see `session_from_path`.
+        self.ts_asserted = False
         self.eligibility = ELIGIBLE
         # The second (structural) stream, or None when this input was not a session
         # directory. Never folded into the counts above.
@@ -692,6 +698,12 @@ class SessionCounts:
         # the provider-error suffix ONLY when such a line was seen, so a run with no
         # boundary and no provider errors prints byte-identically to before.
         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+        if self.ts_asserted:
+            # Emitted only when an asserted stamp was actually USED, so a run with no
+            # `--session-ts` (and any run whose inputs all carry their own stamp)
+            # prints byte-identically to before. The marker is what keeps an operator
+            # claim from reading as an observation on the row.
+            suffix += " [ts=asserted]"
         if self.no_harness_output:
             suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
             if self.harness_prose_excluded:
@@ -962,12 +974,25 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
     With no boundary the output is byte-identical to the pre-boundary tool.
     """
     header = ""
+    # #810 (2026-08-25): how many rows were aged by the operator's `--session-ts`
+    # rather than by their own filename. Emitted only when > 0, so every run without
+    # the flag is byte-identical. This count is what makes the operator's claim
+    # AUDITABLE after the fact — an asserted age is a claim by me, and a meter that
+    # reads a stream I also write must never let my claim pass as an observation.
+    asserted = sum(1 for s in sessions if s.ts_asserted)
+    if asserted:
+        header += (
+            f"asserted age: {asserted} row(s) used an operator-asserted timestamp "
+            f"(--session-ts) because their filename carried none. That is a CLAIM, "
+            f"not an observation: it says every such input is from at/after that "
+            f"instant, which is checkable only by whoever fetched them.\n"
+        )
     if boundary_label is not None:
         ineligible = [s for s in sessions if s.eligibility == INELIGIBLE]
         unknown = [s for s in sessions if s.eligibility == UNKNOWN_AGE]
         sessions = [s for s in sessions if s.eligibility == ELIGIBLE]
         stamp = boundary_ts.isoformat() if boundary_ts is not None else "unresolved"
-        header = (
+        header += (
             f"boundary: {boundary_label} ({stamp}) — sessions strictly before it are "
             f"ineligible\n"
             f"excluded: {len(ineligible)} session(s) predate the boundary — could not "
@@ -1105,8 +1130,19 @@ def read_outcome(path):
     return outcome if isinstance(outcome, dict) else None
 
 
-def session_from_path(path):
-    """A file is one session; a directory is one session made of all files under it."""
+def session_from_path(path, asserted_ts=None):
+    """A file is one session; a directory is one session made of all files under it.
+
+    `asserted_ts` (an aware datetime from `--session-ts`, or None) is the operator's
+    claim about inputs whose NAME cannot carry a stamp — the workflow log, which is the
+    only stream carrying harness markers and therefore the only gradeable one. It is
+    applied HERE, at the call site, and never inside `session_timestamp`, which stays
+    exactly what it was: a pure reader of what the harness already wrote.
+
+    Precedence is fixed and one-directional: **observed beats asserted, always.** A
+    filename-stamped input ignores `--session-ts` entirely, so the flag can never
+    overwrite a fact with a claim.
+    """
     if os.path.isdir(path):
         lines = []
         relpaths = []
@@ -1126,6 +1162,9 @@ def session_from_path(path):
         # A plain log file is not a session directory: there is no listing to take, so
         # the structural stream stays absent rather than reporting a listing of False.
     counts.ts = session_timestamp(name)
+    if counts.ts is None and asserted_ts is not None:
+        counts.ts = asserted_ts
+        counts.ts_asserted = True
     return counts
 
 
@@ -1167,6 +1206,19 @@ def build_parser():
         help="eligibility boundary as a timestamp, e.g. 2026-08-21T21:25:00Z "
         "(no git needed)",
     )
+    # Deliberately NOT in the `boundary` mutually-exclusive group: this is not a
+    # boundary, it is an INPUT AGE, and composing it with --since-sha/--since is the
+    # whole point (#810, 2026-08-25). The two correct guards — "only the workflow log
+    # carries harness markers" and "age comes from a day-N-<ts> filename" — used to
+    # compose into a capability that could not be exercised at all.
+    parser.add_argument(
+        "--session-ts",
+        metavar="ISO8601",
+        help="age for inputs whose FILENAME carries no day-N-<ts> stamp (e.g. a "
+        "`gh run view --log` capture). Observed beats asserted: a filename-stamped "
+        "input ignores this. Rows that used it are marked [ts=asserted] and counted "
+        "in the verdict. Composes with --since-sha/--since.",
+    )
     return parser
 
 
@@ -1182,6 +1234,20 @@ def main(argv):
 
     boundary_label = None
     boundary_ts = None
+    asserted_ts = None
+    if args.session_ts:
+        asserted_ts = parse_timestamp(args.session_ts)
+        if asserted_ts is None:
+            # Same refusal shape as an unresolvable --since-sha: an unparseable claim
+            # must not silently become "no claim", which would put every nameless log
+            # back into UNKNOWN_AGE while the operator believes it was aged.
+            print(
+                f"error: could not parse --session-ts {args.session_ts!r}. "
+                f"Refusing to grade rather than silently treating the inputs as "
+                f"unknown-age.",
+                file=sys.stderr,
+            )
+            return 2
     if args.since_sha:
         raw = resolve_sha_timestamp(args.since_sha)
         if raw is None:
@@ -1207,7 +1273,7 @@ def main(argv):
         )
         return 2
 
-    sessions = [session_from_path(p) for p in args.paths]
+    sessions = [session_from_path(p, asserted_ts) for p in args.paths]
     apply_boundary(sessions, boundary_ts)
     print(f"#810 abstention/firing measurement over {len(sessions)} session(s):")
     for s in sessions:
@@ -2071,6 +2137,103 @@ def run_self_tests():
         "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
         "(4 session(s) read, 0 excluded for zero abstentions).",
     )
+
+    # 11. `--session-ts`: an operator-asserted age for inputs whose FILENAME carries
+    # none (#810, 2026-08-25). Two individually-correct guards — "only the workflow log
+    # carries harness markers" and "age comes from a day-N-<ts> filename" — composed
+    # into a capability that could not be exercised: the only gradeable stream is the
+    # one that can never be aged. These drive the real `session_from_path`, because the
+    # precedence rule lives at that call site and nowhere else.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        nameless = os.path.join(tmp, "run-32777115768.log")
+        with open(nameless, "w", encoding="utf-8") as fh:
+            fh.write("Phase A1: Assessment (600s)...\n")
+        stamped_dir = os.path.join(tmp, "day-177-20260824T030000Z")
+        os.makedirs(stamped_dir)
+        with open(os.path.join(stamped_dir, "log"), "w", encoding="utf-8") as fh:
+            fh.write("Phase A1: Assessment (600s)...\n")
+
+        asserted = parse_timestamp("2026-08-24T12:00:00Z")
+
+        # (a) State 3 — no filename stamp and no assertion → UNKNOWN_AGE, exactly as
+        # before. This is the byte-identity direction.
+        s_none = session_from_path(nameless)
+        check("no stamp, no assertion → ts is None", s_none.ts, None)
+        check("no stamp, no assertion → not marked asserted", s_none.ts_asserted, False)
+        check(
+            "no stamp, no assertion → UNKNOWN_AGE",
+            classify_eligibility(s_none.ts, parse_timestamp("2026-08-21T00:00:00Z")),
+            UNKNOWN_AGE,
+        )
+
+        # (b) State 2 — no filename stamp, assertion given → the asserted stamp is
+        # used AND marked, so a claim can never read as an observation.
+        s_asserted = session_from_path(nameless, asserted)
+        check("asserted stamp used", s_asserted.ts, asserted)
+        check("asserted stamp marked", s_asserted.ts_asserted, True)
+        check("asserted row carries the marker", "[ts=asserted]" in s_asserted.row(), True)
+        check(
+            "asserted stamp reaches the boundary decision",
+            classify_eligibility(
+                s_asserted.ts, parse_timestamp("2026-08-21T00:00:00Z")
+            ),
+            ELIGIBLE,
+        )
+
+        # (c) State 1 / precedence — observed beats asserted, ALWAYS. A wildly wrong
+        # assertion must not overwrite a stamp the harness itself wrote.
+        s_stamped = session_from_path(stamped_dir, parse_timestamp("2020-01-01T00:00:00Z"))
+        check(
+            "filename stamp wins over assertion",
+            s_stamped.ts,
+            parse_timestamp("2026-08-24T03:00:00Z"),
+        )
+        check("filename-stamped row is not marked", s_stamped.ts_asserted, False)
+        check("filename-stamped row has no marker", "[ts=asserted]" in s_stamped.row(), False)
+
+    # (d) The verdict counts the assertion, and only when one was used — the near-miss
+    # side, since a clause that fires unconditionally is not a discriminator.
+    a1 = mk("asserted-1", 1, 0)
+    a1.ts = parse_timestamp("2026-08-24T12:00:00Z")
+    a1.ts_asserted = True
+    a2 = mk("observed-1", 1, 0)
+    a2.ts = parse_timestamp("2026-08-24T12:00:00Z")
+    v_asserted = grade([a1, a2], "abc1234", parse_timestamp("2026-08-21T00:00:00Z"))
+    check("verdict counts asserted rows", "asserted age: 1 row(s)" in v_asserted, True)
+    check(
+        "asserted clause does not swallow the boundary header",
+        "boundary: abc1234" in v_asserted,
+        True,
+    )
+    check(
+        "no assertion → no clause",
+        "asserted age:" in grade([a2], "abc1234", parse_timestamp("2026-08-21T00:00:00Z")),
+        False,
+    )
+
+    # (e) --session-ts is NOT mutually exclusive with the boundary flags: composing
+    # them IS the fix, so an accidental exclusive group would silently reinstate the
+    # dead end.
+    composed = build_parser().parse_args(
+        ["--since", "2026-08-21T00:00:00Z", "--session-ts", "2026-08-24T00:00:00Z", "x.log"]
+    )
+    check("composes with --since", composed.since, "2026-08-21T00:00:00Z")
+    check("composes with --since (ts)", composed.session_ts, "2026-08-24T00:00:00Z")
+    composed_sha = build_parser().parse_args(
+        ["--since-sha", "c46d8453", "--session-ts", "2026-08-24T00:00:00Z", "x.log"]
+    )
+    check("composes with --since-sha", composed_sha.since_sha, "c46d8453")
+
+    # (f) An unparseable assertion refuses to grade, exactly as an unresolvable
+    # --since-sha does: a claim that could not be read must not become "no claim".
+    check(
+        "unparseable --session-ts refuses",
+        main(["--session-ts", "not-a-date", "x.log"]),
+        2,
+    )
+    check("parse_timestamp is the one parser", parse_timestamp("not-a-date"), None)
 
     if failures:
         for f in failures:
