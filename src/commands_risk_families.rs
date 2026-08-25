@@ -410,4 +410,300 @@ mod tests {
         // so it counts as predating — absence is not absorbed into a family.
         assert_eq!(fam.experiments_without_hypotheses, 1);
     }
+
+    // ------------------------------------------------------------------
+    // Day 178 — acting on a measured survivor.
+    //
+    // Mutation reading #2 (Day 177, blind round 74) over this module: 54
+    // mutants, 22 survivors, and **15 of 22 (68%) sat in the two renderers**.
+    // `format_family_line` scored 6 generated / 0 caught — **100% survival**:
+    // its whole body could be replaced with `String::new()` or the literal
+    // `"xyzzy"` and every test above stayed green, because they all feed
+    // ledger text and assert on the resulting *tally*, inspecting the rendered
+    // string only loosely. Survivors follow the assertion, not the function.
+    //
+    // The tests below assert at the **emission point** — the string a caller
+    // actually receives — and they are deliberately shaped against the exact
+    // mutants that lived:
+    //   * whole-line verbatim equality, which is what makes a body
+    //     replacement fail (a bare `assert!(!s.is_empty())` is the shape that
+    //     lets `"xyzzy"` through, and is the reason this file rotted);
+    //   * **both sides** of every comparison guard, because `> 0` vs `>= 0`
+    //     only differs at zero and a discriminator tested only on the side
+    //     that fires is vacuous green;
+    //   * a `total_graded` fixture whose terms are distinct and
+    //     non-commutative, so one assertion kills `+`→`-`, `+`→`*` and the
+    //     whole-body `1` at once.
+    //
+    // No production code was changed to make any of this testable.
+    // ------------------------------------------------------------------
+
+    /// Verbatim pins for `format_family_line`, on **both** sides of both of
+    /// its guards (`tally.graded == 0` and `tally.partials > 0`).
+    ///
+    /// The expected strings are written out in full — padding, wording, order
+    /// and all — rather than rebuilt from the same `format!` the function
+    /// uses, which would be a tautology. Only the colour constants are
+    /// interpolated, because `Color` renders empty under `--no-color` and the
+    /// escape codes are not what is under test.
+    #[test]
+    fn test_format_family_line_renders_verbatim_on_both_sides_of_each_guard() {
+        // graded == 0 → the honest "none yet" line. Never `0%`, never
+        // `0 hit / 0` (a rate over an empty denominator is the mistake Days
+        // 142 and 144 cost me twice).
+        let none_yet = format_family_line("archive", "archive", &FamilyTally::default());
+        assert_eq!(
+            none_yet,
+            format!("    {DIM}archive        (no archive hypotheses recorded yet){RESET}\n"),
+            "empty-family line changed shape"
+        );
+
+        // graded > 0, partials == 0 → the scoreboard row, with no partial
+        // clause. This is the near-miss side of the `partials > 0` guard: a
+        // `>=` mutant would append " (+0 partial)" here.
+        let scored = FamilyTally {
+            graded: 7,
+            hits: 3,
+            partials: 0,
+        };
+        assert_eq!(
+            format_family_line("file-specific", "file-specific", &scored),
+            format!("    file-specific  {YELLOW}3{RESET} hit / 7 graded{DIM}{RESET}\n"),
+            "scored family line changed shape"
+        );
+
+        // graded > 0, partials > 0 → the same row plus the partial clause.
+        let with_partials = FamilyTally {
+            graded: 4,
+            hits: 1,
+            partials: 2,
+        };
+        assert_eq!(
+            format_family_line("genre-prior", "genre-prior", &with_partials),
+            format!(
+                "    genre-prior    {YELLOW}1{RESET} hit / 4 graded{DIM} (+2 partial){RESET}\n"
+            ),
+            "partial clause changed shape"
+        );
+
+        // The two branches must not be able to collapse into each other: a
+        // graded family never wears the "none yet" wording, and an empty one
+        // never wears a rate.
+        assert!(!none_yet.contains("hit /"), "{none_yet}");
+        assert!(
+            !format_family_line("archive", "archive", &scored).contains("recorded yet"),
+            "a graded family must not render as absent"
+        );
+    }
+
+    /// The three optional rows of `format_experiment_families`, each driven on
+    /// both sides of its `> 0` guard: `genre_prior` (`:251`), `unknown`
+    /// (`:260`) and `experiments_without_hypotheses` (`:270`). All three
+    /// survived mutation in triplicate (`<`, `==`, `>=`).
+    #[test]
+    fn test_optional_family_rows_appear_only_above_zero() {
+        // A non-empty base so the whole block renders at all, with every
+        // optional counter sitting exactly at the boundary value.
+        let mut fam = ExperimentFamilies {
+            file_specific: FamilyTally {
+                graded: 1,
+                hits: 1,
+                partials: 0,
+            },
+            ..Default::default()
+        };
+
+        let at_zero = format_experiment_families(&fam);
+        assert!(
+            at_zero.contains("chosen-experiment record"),
+            "base block must render: {at_zero}"
+        );
+        // The hyphenated label appears only in the row; the standing prose
+        // below says "genre prior" with a space, so this is not a false pass.
+        assert!(
+            !at_zero.contains("genre-prior"),
+            "genre-prior row must be hidden at 0: {at_zero}"
+        );
+        assert!(
+            !at_zero.contains("unrecognised"),
+            "unrecognised row must be hidden at 0: {at_zero}"
+        );
+        assert!(
+            !at_zero.contains("predate per-hypothesis provenance"),
+            "predating note must be hidden at 0: {at_zero}"
+        );
+
+        // One graded genre-prior hypothesis: the row appears, verbatim.
+        fam.genre_prior = FamilyTally {
+            graded: 1,
+            hits: 0,
+            partials: 0,
+        };
+        let with_genre = format_experiment_families(&fam);
+        assert!(
+            with_genre.contains(&format!(
+                "    genre-prior    {YELLOW}0{RESET} hit / 1 graded{DIM}{RESET}\n"
+            )),
+            "genre-prior row missing or reshaped: {with_genre}"
+        );
+        assert!(
+            !with_genre.contains("unrecognised"),
+            "unknown row must still be hidden: {with_genre}"
+        );
+
+        // One graded hypothesis of unrecognised provenance: the row appears
+        // *and* the note that absence is not a family.
+        fam.unknown = FamilyTally {
+            graded: 1,
+            hits: 1,
+            partials: 0,
+        };
+        let with_unknown = format_experiment_families(&fam);
+        assert!(
+            with_unknown.contains(&format!(
+                "    unrecognised   {YELLOW}1{RESET} hit / 1 graded{DIM}{RESET}\n"
+            )),
+            "unrecognised row missing or reshaped: {with_unknown}"
+        );
+        assert!(
+            with_unknown.contains("absence is not a family"),
+            "unrecognised note missing: {with_unknown}"
+        );
+
+        // One predating result: disclosed as a count, never back-filled into
+        // a family.
+        fam.experiments_without_hypotheses = 1;
+        let with_predating = format_experiment_families(&fam);
+        assert!(
+            with_predating.contains("1 earlier experiment(s) predate per-hypothesis provenance"),
+            "predating note missing: {with_predating}"
+        );
+
+        // The header's denominator counts graded hypotheses across families
+        // and nothing else — the predating count is disclosed, not summed.
+        assert!(
+            with_predating.contains("3 graded hypotheses"),
+            "header total wrong: {with_predating}"
+        );
+    }
+
+    /// The header's singular/plural switch, both sides. `total == 1` is the
+    /// only input that takes the "is" branch.
+    #[test]
+    fn test_header_pluralises_on_both_sides_of_one() {
+        let one = ExperimentFamilies {
+            archive: FamilyTally {
+                graded: 1,
+                hits: 1,
+                partials: 0,
+            },
+            ..Default::default()
+        };
+        assert!(
+            format_experiment_families(&one).contains("1 graded hypothesis"),
+            "singular header wrong"
+        );
+
+        let two = ExperimentFamilies {
+            archive: FamilyTally {
+                graded: 2,
+                hits: 1,
+                partials: 0,
+            },
+            ..Default::default()
+        };
+        assert!(
+            format_experiment_families(&two).contains("2 graded hypotheses"),
+            "plural header wrong"
+        );
+    }
+
+    /// `total_graded` is the denominator of my own chosen-experiment record,
+    /// and four of its eight mutants survived: `+`→`-` and `+`→`*` in the
+    /// chain, plus a whole-body `1`.
+    ///
+    /// The fixture is chosen so one assertion kills all of them: 2/3/5/7 sums
+    /// to 17, while `2*3*5*7` is 210, `2-3-…` underflows a `usize`, and the
+    /// constant `1` is neither. Distinct terms also mean no two families can
+    /// be swapped without changing the answer.
+    #[test]
+    fn test_total_graded_sums_every_family_and_only_the_families() {
+        let fam = ExperimentFamilies {
+            archive: FamilyTally {
+                graded: 2,
+                hits: 0,
+                partials: 0,
+            },
+            file_specific: FamilyTally {
+                graded: 3,
+                hits: 0,
+                partials: 0,
+            },
+            genre_prior: FamilyTally {
+                graded: 5,
+                hits: 0,
+                partials: 0,
+            },
+            unknown: FamilyTally {
+                graded: 7,
+                hits: 0,
+                partials: 0,
+            },
+            // Predating results are disclosed separately and must NOT be
+            // folded into the denominator — they have no provenance to grade.
+            experiments_without_hypotheses: 11,
+            ..Default::default()
+        };
+        assert_eq!(fam.total_graded(), 17);
+
+        // Every family is load-bearing: dropping any one term changes the sum.
+        assert_eq!(ExperimentFamilies::default().total_graded(), 0);
+    }
+
+    /// `is_empty` accepted a whole-body `false`, so both directions are pinned
+    /// — and each of its three clauses is shown to be load-bearing on its own.
+    #[test]
+    fn test_is_empty_is_true_only_when_every_source_is_silent() {
+        assert!(
+            ExperimentFamilies::default().is_empty(),
+            "a default tally has nothing to say"
+        );
+
+        let graded = ExperimentFamilies {
+            archive: FamilyTally {
+                graded: 1,
+                hits: 0,
+                partials: 0,
+            },
+            ..Default::default()
+        };
+        assert!(
+            !graded.is_empty(),
+            "a graded hypothesis is something to say"
+        );
+
+        let predating = ExperimentFamilies {
+            experiments_without_hypotheses: 1,
+            ..Default::default()
+        };
+        assert!(
+            !predating.is_empty(),
+            "a predating result is something to say"
+        );
+
+        // A round that was started and never graded is also something to say —
+        // that clause is what carries the slip detector onto this surface.
+        let owed = ExperimentFamilies {
+            ungraded: ungraded_rounds(concat!(
+                r#"{"type":"experiment","round":99,"day":178,"target":"src/a.rs"}"#,
+                "\n"
+            )),
+            ..Default::default()
+        };
+        assert!(!owed.is_empty(), "an owed round is something to say");
+        assert!(
+            !format_experiment_families(&owed).is_empty(),
+            "an owed round must reach the rendered block"
+        );
+    }
 }
