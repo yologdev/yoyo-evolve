@@ -299,13 +299,29 @@ pub fn format_cache_stats(usage: &yoagent::Usage) -> Option<String> {
     ))
 }
 
-pub fn context_bar(used: u64, max: u64) -> String {
-    // Clamped fraction drives the bar fill (never over-draws past full).
-    let pct = if max == 0 {
+/// The fraction of the context window the bar should draw as filled.
+///
+/// Two judgments live here, and both are the reason this is a `fn` rather than
+/// an inline expression (blind round 80): the bar **never over-draws past
+/// full**, so an over-budget context clamps to `1.0` rather than painting more
+/// blocks than the bar has; and an **unknown window (`max == 0`) is empty, not
+/// full** — absence reads as "nothing measured", never as "you're out of room".
+///
+/// It has its own function boundary on purpose. `cargo-mutants` has exactly two
+/// genres — `FnValue` body replacement and binary/unary operator replacement —
+/// so it can never substitute `.max()` for `.min()`; a clamp only enters the
+/// mutant population at all when it owns a `fn` that `FnValue` can name.
+fn context_fill_fraction(used: u64, max: u64) -> f64 {
+    if max == 0 {
         0.0
     } else {
         (used as f64 / max as f64).min(1.0)
-    };
+    }
+}
+
+pub fn context_bar(used: u64, max: u64) -> String {
+    // Clamped fraction drives the bar fill (never over-draws past full).
+    let pct = context_fill_fraction(used, max);
     let width = 20;
     let filled = (pct * width as f64).round() as usize;
     let empty = width - filled;
@@ -542,6 +558,11 @@ pub fn format_tool_call_summary(summary: &[ToolCallSummary]) -> String {
     lines.push("    Tool usage:".to_string());
 
     // Find max tool name length for alignment
+    // Deliberately NOT extracted like `context_fill_fraction` / `breakdown_divisor`:
+    // this is an `Iterator::max` *reduction*, not a clamp. There is no second
+    // operand that could have been written backwards, so wrapping it in a `fn`
+    // would buy a mutant that asks nothing — cargo-culting the shape into a
+    // place where it encodes no judgment.
     let max_name_len = summary.iter().map(|s| s.name.len()).max().unwrap_or(0);
 
     let total_calls: usize = summary.iter().map(|s| s.calls).sum();
@@ -584,6 +605,18 @@ pub fn format_tool_call_summary(summary: &[ToolCallSummary]) -> String {
     lines.join("\n")
 }
 
+/// The denominator to use when turning a breakdown category into a percentage.
+///
+/// The judgment: a zero total must not divide by zero, and the floor is **1**
+/// rather than a special-cased branch — every category is 0 when the total is
+/// 0, so `0/1` yields the honest `0%` for each row and no caller needs an
+/// is-empty arm. Extracted for the same reason as `context_fill_fraction`:
+/// `cargo-mutants` cannot swap `.max()` for `.min()`, so this decision was
+/// invisible to the dial until it owned a `fn`.
+fn breakdown_divisor(total: usize) -> usize {
+    total.max(1)
+}
+
 /// Format a context breakdown table with colors and percentages.
 ///
 /// Each category is shown with its token count and percentage of total.
@@ -592,7 +625,7 @@ pub fn format_tool_call_summary(summary: &[ToolCallSummary]) -> String {
 pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdown) -> String {
     use super::{BOLD, DIM, RESET, YELLOW};
 
-    let total = breakdown.total.max(1); // avoid division by zero
+    let total = breakdown_divisor(breakdown.total);
     let categories: &[(&str, usize)] = &[
         ("system prompt", breakdown.system_estimate),
         ("user messages", breakdown.user_messages),
@@ -603,6 +636,8 @@ pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdo
     ];
 
     // Find the largest non-zero category
+    // An `Iterator::max` reduction, not a clamp — skipped for the same reason
+    // as `max_name_len` above (see that comment).
     let max_val = categories.iter().map(|(_, v)| *v).max().unwrap_or(0);
 
     let mut lines = Vec::new();
@@ -703,6 +738,58 @@ mod tests {
             "expected literal 0% for zero usage, got: {bar}"
         );
         assert!(!bar.contains("<1%"));
+    }
+
+    #[test]
+    fn context_fill_fraction_table() {
+        // (used, max, expected fill fraction, what the row is for)
+        let cases: &[(u64, u64, f64, &str)] = &[
+            (0, 200_000, 0.0, "empty context draws nothing"),
+            (100_000, 200_000, 0.5, "ordinary half-full case"),
+            (200_000, 200_000, 1.0, "exactly full draws exactly full"),
+            // The case the clamp exists for: over budget must not over-draw.
+            (
+                400_000,
+                200_000,
+                1.0,
+                "over budget clamps to full, never past it",
+            ),
+            (u64::MAX, 1, 1.0, "extreme over-budget still clamps to full"),
+            // The case the `max == 0` branch exists for: an unknown window is
+            // empty, not full — absence must not read as "you're out of room".
+            (0, 0, 0.0, "unknown window with no usage is empty"),
+            (50_000, 0, 0.0, "unknown window with usage is still empty"),
+        ];
+        for &(used, max, expected, why) in cases {
+            let got = context_fill_fraction(used, max);
+            assert!(
+                (got - expected).abs() < 1e-9,
+                "context_fill_fraction({used}, {max}) = {got}, expected {expected} — {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn breakdown_divisor_table() {
+        // (total, expected divisor, what the row is for)
+        let cases: &[(usize, usize, &str)] = &[
+            // The case the floor exists for: never divide by zero.
+            (0, 1, "zero total floors to 1 so no caller divides by zero"),
+            (1, 1, "one is already the floor and passes through"),
+            (7, 7, "an ordinary total passes through unchanged"),
+            (
+                usize::MAX,
+                usize::MAX,
+                "a huge total passes through unchanged",
+            ),
+        ];
+        for &(total, expected, why) in cases {
+            assert_eq!(
+                breakdown_divisor(total),
+                expected,
+                "breakdown_divisor({total}) — {why}"
+            );
+        }
     }
 
     #[test]
