@@ -1410,6 +1410,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     //   1. `--trust-project`         — this run only, byte-identical to before.
     //   2. `--trust-project-always`  — this run **and** remembered for this directory.
     //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+    //   4. (Day 178, #749 item 2) neither, not remembered, but yoyo is on a terminal
+    //      in a project whose own .yoyo.toml grants something — so *ask*, once.
     // A user who genuinely trusts a checkout should be able to say so once instead of
     // retyping a flag forever; that pressure is what turns into "always pass the flag",
     // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
@@ -1433,6 +1435,83 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                     crate::format::is_plain_output(),
                 );
                 eprintln!("{YELLOW}{msg}{RESET}");
+            }
+        } else {
+            // Source 4: ask. The whole decision is in `config_paths`; the only thing
+            // that happens here is one terminal read.
+            //
+            // `interactive` is the guard that keeps this product-safe — piped stdin
+            // (the evolve loop, `yoyo -p`) and CI have no tty, so they never reach the
+            // read and silently take the safe answer. A non-interactive run must never
+            // block on a question nobody can answer.
+            let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+            let grants = crate::config_paths::project_trust_grants(
+                &raw_config_content,
+                std::path::Path::new(".yoyo/goal_verify.md").exists(),
+            );
+            if crate::config_paths::should_prompt_for_trust(
+                false,
+                false,
+                crate::config::loaded_config_is_project_local(),
+                &grants,
+                interactive,
+            ) {
+                // Not silenced under --quiet: a question that blocks for an answer is
+                // not "informational stderr output". See `trust_prompt_text`.
+                eprint!(
+                    "{}",
+                    crate::config_paths::trust_prompt_text(
+                        dir,
+                        &grants,
+                        crate::format::is_plain_output()
+                    )
+                );
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                // Exactly one line. Any read error (EOF, closed pipe) is `No`, because
+                // `parse_trust_answer` maps every non-yes input to `No`.
+                let mut line = String::new();
+                if std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).is_err() {
+                    line.clear();
+                }
+                match crate::config_paths::parse_trust_answer(&line) {
+                    crate::config_paths::TrustAnswer::Once => {
+                        // They just said yes; no second message needed.
+                        set_trust_project();
+                    }
+                    crate::config_paths::TrustAnswer::Always => {
+                        set_trust_project();
+                        match crate::config_paths::remember_trusted_dir(dir) {
+                            Ok(store) => {
+                                if !is_quiet() {
+                                    // Reuse the existing note rather than writing a
+                                    // second one that could drift from it.
+                                    let msg = trust_remembered_message(
+                                        dir,
+                                        &store,
+                                        crate::format::is_plain_output(),
+                                    );
+                                    eprintln!("{msg}");
+                                }
+                            }
+                            Err(e) => {
+                                // This run is trusted; only the memory failed. Saying
+                                // "remembered" here would be a lie.
+                                eprintln!(
+                                    "{YELLOW}warning:{RESET} could not record this directory \
+({e}); this run is trusted, later runs will not be."
+                                );
+                            }
+                        }
+                    }
+                    crate::config_paths::TrustAnswer::No => {
+                        if !is_quiet() {
+                            let msg = crate::config_paths::trust_declined_message(
+                                crate::format::is_plain_output(),
+                            );
+                            eprintln!("{msg}");
+                        }
+                    }
+                }
             }
         }
     }
