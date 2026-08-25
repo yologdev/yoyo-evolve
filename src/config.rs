@@ -82,7 +82,7 @@ impl DirectoryRestrictions {
         // Deny always takes priority
         for denied in &self.deny {
             let denied_resolved = resolve_path(denied);
-            if path_is_under(&resolved, &denied_resolved) {
+            if directory_entry_matches(denied, &denied_resolved, &resolved) {
                 return Err(format!(
                     "Access denied: '{}' is under restricted directory '{}'",
                     path, denied
@@ -94,7 +94,7 @@ impl DirectoryRestrictions {
         if !self.allow.is_empty() {
             let allowed = self.allow.iter().any(|a| {
                 let a_resolved = resolve_path(a);
-                path_is_under(&resolved, &a_resolved)
+                directory_entry_matches(a, &a_resolved, &resolved)
             });
             if !allowed {
                 return Err(format!(
@@ -209,6 +209,51 @@ fn resolve_path(path: &str) -> String {
 
     // Degenerate case: no ancestor exists — fall back to manual normalization.
     normalized.to_string_lossy().to_string()
+}
+
+/// Does a `[directories]` entry carry a glob metacharacter (#823)?
+///
+/// The single statement of "what counts as a wildcard here", shared by the
+/// matcher ([`directory_entry_matches`]) and the startup note
+/// ([`wildcard_directory_entries`]) so the two cannot disagree about which
+/// entries are patterns.
+fn entry_has_glob_meta(entry: &str) -> bool {
+    entry.chars().any(|c| DIRECTORY_GLOB_METACHARS.contains(&c))
+}
+
+/// Decide whether one `[directories]` entry matches a candidate path (#823).
+///
+/// Pure: every argument is already resolved by the caller, so this does no I/O
+/// and can be table-tested. `entry` is the string **the user wrote** (that is
+/// what decides pattern-ness, so the matcher and the startup note agree);
+/// `entry_resolved` and `candidate_resolved` are absolute normalized paths.
+///
+/// Two branches:
+/// - **no wildcard → [`path_is_under`], byte-identical to the pre-#823
+///   behaviour.** This is essentially every existing user, and it was the
+///   regression risk; the branch exists to make that identity structural
+///   rather than argued.
+/// - **wildcard → [`glob_match`] against the candidate *and each of its
+///   ancestors*.** The ancestor walk is what makes `deny = ["*/secrets"]`
+///   fence the files *inside* a matching directory: a directory entry already
+///   covers everything beneath it, and that is what a user writing a path
+///   pattern means. (`*` also spans `/`, so `secrets/*` matches deep paths
+///   directly; the walk is for patterns whose wildcard is not in the last
+///   component.)
+///
+/// Why widening `allow` is safe here, though widening a fence generally is not:
+/// **today a wildcard `allow` entry matches nothing**, so nobody is living
+/// inside that fence — they are locked out of every file and the tool is
+/// unusable. Going from "refuses everything" to "allows exactly what the user
+/// wrote" is not the loosening of a working restriction; it is the difference
+/// between broken and working.
+fn directory_entry_matches(entry: &str, entry_resolved: &str, candidate_resolved: &str) -> bool {
+    if !entry_has_glob_meta(entry) {
+        return path_is_under(candidate_resolved, entry_resolved);
+    }
+    std::path::Path::new(candidate_resolved)
+        .ancestors()
+        .any(|ancestor| glob_match(entry_resolved, &ancestor.to_string_lossy()))
 }
 
 /// Check if `path` is under (or equal to) `dir`.
@@ -382,22 +427,24 @@ impl DirectoryList {
 
     fn consequence(self) -> &'static str {
         match self {
-            // An allow list that is non-empty but matches nothing denies every
-            // path: "not under any allowed directory" for every file tool call.
-            DirectoryList::Allow => "matches nothing, so every file access is denied",
-            // A deny entry that matches nothing is a fence that does not exist.
-            DirectoryList::Deny => "matches nothing, so it protects nothing",
+            DirectoryList::Allow => "permits every matching path and what is beneath it",
+            DirectoryList::Deny => "blocks every matching path and what is beneath it",
         }
     }
 }
 
 /// Entries in `[directories]` that carry a glob metacharacter (#823).
 ///
-/// `[permissions]` patterns are globbed by [`glob_match`]; `[directories]`
-/// entries are matched by `path_is_under`, a plain resolved-string prefix test
-/// with **no globbing at all**. So a `*` in a `[directories]` entry is a literal
-/// `*` character: `src/*` resolves to `$CWD/src/*`, a directory that cannot
-/// exist, and the entry can never match anything.
+/// **Superseded claim, recorded rather than erased:** this doc used to say
+/// `[directories]` entries are matched by `path_is_under` "with **no globbing
+/// at all**", so a `*` was a literal character and `src/*` could never match.
+/// That was true when written and is false as of the #823 fix — wildcard
+/// entries are now globbed by [`directory_entry_matches`].
+///
+/// What survives is that the two blocks still glob *different things*, and one
+/// genuine trap remains: [`glob_match`] implements `*` and **not** `?`, so a
+/// `?` in either block is a literal question mark. That is what the note built
+/// on this scan now says.
 ///
 /// Scans **both** lists, `allow` first then `deny`, returning the offending
 /// entries verbatim. Detection only — nothing here refuses, drops or rewrites
@@ -405,29 +452,31 @@ impl DirectoryList {
 pub(crate) fn wildcard_directory_entries(
     dirs: &DirectoryRestrictions,
 ) -> Vec<(DirectoryList, String)> {
-    let has_meta = |e: &String| e.chars().any(|c| DIRECTORY_GLOB_METACHARS.contains(&c));
     dirs.allow
         .iter()
-        .filter(|e| has_meta(e))
+        .filter(|e| entry_has_glob_meta(e))
         .map(|e| (DirectoryList::Allow, e.clone()))
         .chain(
             dirs.deny
                 .iter()
-                .filter(|e| has_meta(e))
+                .filter(|e| entry_has_glob_meta(e))
                 .map(|e| (DirectoryList::Deny, e.clone())),
         )
         .collect()
 }
 
-/// Render the `[directories]` wildcard warning (#823), or `None` when there is
+/// Render the `[directories]` wildcard note (#823), or `None` when there is
 /// nothing true to say.
 ///
 /// `None` for an empty slice is the byte-identical common path: every user who
 /// does not write a wildcard sees output unchanged. Glyph-free under `plain`
 /// (no bullets, no em dashes), mirroring `cli::project_permission_refusal_message`.
 ///
-/// This is a **warning only** — the restrictions pass through untouched, and
-/// `[directories]` still has no glob support.
+/// **This used to be a warning that the entries matched nothing.** Since #823
+/// they match, so the note is now informational: it confirms the pattern was
+/// understood, states that `*` spans `/` (a directory entry covers everything
+/// beneath it), and names the one remaining trap — `?` is **not** a wildcard,
+/// it is a literal character. Nothing here refuses or rewrites an entry.
 pub(crate) fn directory_wildcard_warning(
     entries: &[(DirectoryList, String)],
     plain: bool,
@@ -442,7 +491,7 @@ pub(crate) fn directory_wildcard_warning(
         ("entries", "contain")
     };
     let mut msg = format!(
-        "{marker}{} [directories] {noun} {verb} a wildcard. [directories] takes literal paths:",
+        "{marker}{} [directories] {noun} {verb} a wildcard, matched as a path pattern:",
         entries.len()
     );
     for (list, entry) in entries {
@@ -455,7 +504,7 @@ pub(crate) fn directory_wildcard_warning(
     }
     let sep = if plain { "." } else { " —" };
     msg.push_str(&format!(
-        "\n  [directories] entries are matched by prefix, never globbed{sep} a `*` or `?` in one is a literal character.\n  Name the directory itself instead (`src`, not `src/*`): a directory entry already covers everything beneath it.\n  ([permissions] allow/deny patterns ARE globbed. The two blocks use different matchers.)"
+        "\n  `*` matches any run of characters, including `/`{sep} `secrets/*` covers everything beneath `secrets`.\n  `?` is NOT a wildcard here: it matches a literal `?` character. Use `*`.\n  ([permissions] globs command patterns; [directories] globs paths. Different subjects, same `*`.)"
     ));
     Some(msg)
 }
@@ -3031,13 +3080,14 @@ mod directory_wildcard_tests {
             (&["src", "tests"], &["secrets"], &[]),
             // `*` in allow.
             (&["src/*"], &[], &[(DirectoryList::Allow, "src/*")]),
-            // `?` in allow — over-reported on purpose (see DIRECTORY_GLOB_METACHARS).
+            // `?` in allow — reported because `glob_match` does NOT implement
+            // `?`, so it stays a literal character and the note must say so.
             (
                 &["src/mod?.rs"],
                 &[],
                 &[(DirectoryList::Allow, "src/mod?.rs")],
             ),
-            // `*` in deny — the direction that fails OPEN.
+            // `*` in deny — the direction that used to fail OPEN (#823).
             (&[], &["secrets/*"], &[(DirectoryList::Deny, "secrets/*")]),
             // Both lists at once: allow entries come first, deny after.
             (
@@ -3078,23 +3128,23 @@ mod directory_wildcard_tests {
         );
         assert!(
             msg.contains("literal"),
-            "must say the entry is matched literally: {msg}"
+            "must quote the offending entry: {msg}"
         );
         assert!(
-            msg.contains("never globbed"),
-            "must say [directories] is not globbed: {msg}"
+            msg.contains("path pattern"),
+            "must say the entry is matched as a path pattern: {msg}"
         );
         assert!(
-            msg.contains("`src`"),
-            "must name the escape hatch (the bare directory): {msg}"
+            msg.contains("NOT a wildcard"),
+            "must name the one remaining trap (`?` is literal): {msg}"
         );
         assert!(
             msg.contains("[permissions]"),
             "must explain why the two blocks differ: {msg}"
         );
         assert!(
-            msg.contains("every file access is denied"),
-            "an allow wildcard denies everything: {msg}"
+            msg.contains("permits every matching path"),
+            "an allow wildcard now permits what it matches: {msg}"
         );
     }
 
@@ -3122,8 +3172,8 @@ mod directory_wildcard_tests {
             "must say which half secrets/* came from: {msg}"
         );
         assert!(
-            msg.contains("protects nothing"),
-            "the deny half fails open and must say so: {msg}"
+            msg.contains("blocks every matching path"),
+            "the deny half now actually fences: {msg}"
         );
     }
 
@@ -3174,19 +3224,165 @@ mod directory_wildcard_tests {
         }
         // Still says the load-bearing things.
         assert!(plain.contains("src/*"));
-        assert!(plain.contains("never globbed"));
+        assert!(plain.contains("NOT a wildcard"));
     }
 
-    /// The warning is a warning: the matcher is unchanged and the restrictions
-    /// pass through byte-identically. Pinned so a future "fix" that quietly
-    /// adds globbing has to face this assertion.
+    /// **Superseded test, replaced deliberately rather than deleted quietly.**
+    ///
+    /// Day 177 shipped the detection half only, and pinned the refusal with a
+    /// test named `wildcard_entry_still_matches_nothing`:
+    ///
+    /// ```ignore
+    /// let parsed = parse_directories_from_config("[directories]\nallow = [\"src/*\"]\n");
+    /// assert!(parsed.check_path("src/main.rs").is_err(),
+    ///         "detection must not have changed the matcher");
+    /// ```
+    ///
+    /// Its stated purpose was that "a future 'fix' that quietly adds globbing
+    /// has to face this assertion". #823 is that fix, and this is the answer,
+    /// made on purpose and in the open: the same input must now be `Ok`.
+    ///
+    /// The Day-177 argument for refusing was that a glob in `allow` which
+    /// starts matching *widens a fence the user is currently living inside*.
+    /// True in general, false here — a wildcard `allow` entry matched
+    /// **nothing**, so nobody was inside that fence; every file tool call died
+    /// with "not under any allowed directory". This is broken → working, not
+    /// narrow → wide.
     #[test]
-    fn wildcard_entry_still_matches_nothing() {
+    fn wildcard_allow_entry_now_matches_instead_of_denying_everything() {
         let parsed = parse_directories_from_config("[directories]\nallow = [\"src/*\"]\n");
         assert_eq!(parsed.allow, vec!["src/*".to_string()]);
         assert!(
-            parsed.check_path("src/main.rs").is_err(),
-            "detection must not have changed the matcher"
+            parsed.check_path("src/main.rs").is_ok(),
+            "#823: a wildcard allow entry must now permit what it matches"
+        );
+    }
+
+    /// Emission point: the `Result` a caller of `check_path` receives.
+    ///
+    /// The direction that failed **open** — `deny = ["secrets/*"]` matched
+    /// nothing, so the fence the user believed they had built did not exist
+    /// and nothing complained.
+    #[test]
+    fn deny_wildcard_blocks_files_inside_matching_directories() {
+        let dirs = dirs(&[], &["secrets/*"]);
+        let err = dirs
+            .check_path("secrets/api/key.txt")
+            .expect_err("#823: a deny wildcard must actually fence");
+        assert!(
+            err.contains("secrets/*"),
+            "the refusal must name the entry that blocked it: {err}"
+        );
+    }
+
+    /// Near-miss guard: a discriminator tested only on the side that fires is
+    /// vacuous green. The same deny wildcard must let an unrelated path through.
+    #[test]
+    fn deny_wildcard_does_not_block_unrelated_paths() {
+        let dirs = dirs(&[], &["secrets/*"]);
+        assert!(
+            dirs.check_path("src/main.rs").is_ok(),
+            "a deny pattern must not fence off paths it does not match"
+        );
+    }
+
+    /// Both sides of an `allow` wildcard in one test: what it matches is
+    /// permitted, what it does not is still refused. An allow list that
+    /// permitted everything would pass the first half alone.
+    #[test]
+    fn allow_wildcard_permits_matches_and_still_refuses_outsiders() {
+        let dirs = dirs(&["src/*"], &[]);
+        assert!(
+            dirs.check_path("src/format/mod.rs").is_ok(),
+            "a path under a matching directory must be permitted"
+        );
+        let err = dirs
+            .check_path("/etc/passwd")
+            .expect_err("a path outside every allowed pattern must still be refused");
+        assert!(err.contains("not under any allowed directory"), "{err}");
+    }
+
+    /// **The byte-identity guard, and the whole safety story of #823.**
+    ///
+    /// Every user whose `[directories]` entries carry no wildcard — which is
+    /// essentially every existing user, and was the regression risk — must see
+    /// behaviour identical to before the fix, in *both* lists.
+    #[test]
+    fn literal_entries_behave_exactly_as_before() {
+        let allow_only = dirs(&["src"], &[]);
+        assert!(allow_only.check_path("src/main.rs").is_ok());
+        assert!(allow_only.check_path("src").is_ok(), "the dir itself");
+        assert!(
+            allow_only.check_path("/etc/passwd").is_err(),
+            "outside the allow list"
+        );
+        assert!(
+            allow_only.check_path("srcextra/x.rs").is_err(),
+            "a sibling sharing a name prefix is not under `src`"
+        );
+
+        let deny_only = dirs(&[], &["secrets"]);
+        assert!(deny_only.check_path("secrets/key.txt").is_err());
+        assert!(deny_only.check_path("secrets").is_err(), "the dir itself");
+        assert!(deny_only.check_path("src/main.rs").is_ok());
+        assert!(
+            deny_only.check_path("secretsafe/x").is_ok(),
+            "a sibling sharing a name prefix is not under `secrets`"
+        );
+    }
+
+    /// The pure branch decision itself. All arguments are already resolved, so
+    /// this needs no filesystem and no cwd.
+    #[test]
+    fn directory_entry_matches_table() {
+        // (entry, entry_resolved, candidate_resolved, expected)
+        let cases: &[(&str, &str, &str, bool)] = &[
+            // --- no wildcard: path_is_under, byte-identical to pre-#823 ---
+            ("src", "/w/src", "/w/src/main.rs", true),
+            ("src", "/w/src", "/w/src", true),
+            ("src", "/w/src", "/w/srcextra/x", false),
+            ("src", "/w/src", "/w/other/x", false),
+            // --- wildcard: glob over the candidate and its ancestors ---
+            // `*` spans `/`, so a trailing wildcard covers deep paths directly.
+            ("secrets/*", "/w/secrets/*", "/w/secrets/api/key.txt", true),
+            ("secrets/*", "/w/secrets/*", "/w/src/main.rs", false),
+            ("src/*", "/w/src/*", "/w/src/format/mod.rs", true),
+            // The ancestor walk: the wildcard is NOT in the last component, so
+            // a direct glob against the file would fail. A directory entry
+            // covers everything beneath it.
+            ("*/secrets", "/w/*/secrets", "/w/a/secrets/key.txt", true),
+            ("*/secrets", "/w/*/secrets", "/w/a/secrets", true),
+            ("*/secrets", "/w/*/secrets", "/w/a/public/x", false),
+            // A wildcard matching the directory itself, not just what's below.
+            ("gen*", "/w/gen*", "/w/generated", true),
+            ("gen*", "/w/gen*", "/w/generated/out.rs", true),
+            ("gen*", "/w/gen*", "/w/src/main.rs", false),
+            // `?` is a metacharacter for detection but NOT for `glob_match`,
+            // so it stays literal. A directory really named `we?rd` still
+            // fences what is beneath it, via the ancestor walk.
+            ("we?rd", "/w/we?rd", "/w/we?rd/file", true),
+            ("we?rd", "/w/we?rd", "/w/weird/file", false),
+        ];
+
+        for (entry, entry_resolved, candidate, expected) in cases {
+            assert_eq!(
+                directory_entry_matches(entry, entry_resolved, candidate),
+                *expected,
+                "directory_entry_matches({entry:?}, {entry_resolved:?}, {candidate:?})"
+            );
+        }
+    }
+
+    /// Deny still overrides allow when both match, and it does so across the
+    /// wildcard branch too — the precedence rule is not a property of the
+    /// literal matcher.
+    #[test]
+    fn deny_wildcard_overrides_a_matching_allow_wildcard() {
+        let dirs = dirs(&["src/*"], &["src/secrets/*"]);
+        assert!(dirs.check_path("src/main.rs").is_ok());
+        assert!(
+            dirs.check_path("src/secrets/key.txt").is_err(),
+            "deny takes priority over a matching allow"
         );
     }
 }
