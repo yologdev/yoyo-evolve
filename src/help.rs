@@ -247,6 +247,18 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --trust-project-always  Same, and remember this directory so later runs here are"
+    );
+    let _ = writeln!(
+        s,
+        "                    trusted without the flag (recorded in your user config dir;"
+    );
+    let _ = writeln!(
+        s,
+        "                    remove the line from trusted_dirs to revoke)"
+    );
+    let _ = writeln!(
+        s,
         "  --context-strategy <s>  Context management: compaction (default) or checkpoint"
     );
     let _ = writeln!(
