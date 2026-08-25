@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the current state of the code the evaluator flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DEFAULT_GOAL\|goal_for_… ✓ (2ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 315,360p src/gasp.rs ✓ (2ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo check --features gasp 2>&1… ✓ (3.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 260,400p src/gasp_cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "kind" tools/gasp-emit/s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate)\|^fn \|^cons… ✓ (3ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 43.0s (8 ✓)
+
+Reproduced exactly: three E0603s. Let me look at the two definitions and their surroundings before widening them.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 318,342p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 505,520p src/gasp.rs && e… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 94,103p src/main.rs ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix — widen exactly the two items the consumer needs, with the reason recorded at the definition:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (4 → 8 lines)
+    /// The standing goal an evolve session serves when none is named. Copied
+    /// unchanged from `tools/gasp-emit/src/main.rs` — a goal id is a node identity
+    /// in a shared store, so a "nicer" string is a *different graph*.
+  - const DEFAULT_GOAL: &str = "goal_self_improvement";
+  + ///
+  + /// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`], which must name the
+  + /// same default when no `--goal` is passed. Widened rather than copied: a second
+  + /// literal here would be a second graph the day one of them is edited.
+  + pub(crate) const DEFAULT_GOAL: &str = "goal_self_improvement";
+ ✓ (1m 2s)
+    /// The standing goal an evolve session serves when none is named. Copied
+    /// unchanged from `tools/gasp-emit/src/main.rs` — a goal id is a node identity
+    /// in a shared store, so a "nicer" string is a *different graph*.
+  - const DEFAULT_GOAL: &str = "goal_self_improvement";
+  + ///
+  + /// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`], which must name the
+  + /// same default when no `--goal` is passed. Widened rather than copied: a second
+  + /// literal here would be a second graph the day one of them is edited.
+  + pub(crate) const DEFAULT_GOAL: &str = "goal_self_improvement";
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (4 → 11 lines)
+    /// The `--kind product` reroute, as a pure decision.
+    ///
+    /// Any other kind (including the empty string) keeps the goal it was given.
+  - fn goal_for_kind(kind: &str, goal: &str) -> String {
+  + ///
+  + /// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`]'s `task-result` arm:
+  + /// [`task_planned`] applies this reroute itself, [`task_result`] takes no `kind`
+  + /// and so cannot, and the sidecar applies it to *every* arm
+  + /// (`tools/gasp-emit/src/main.rs:107-110`). Calling this one is what keeps the
+  + /// two lanes filing under the same goal; a second `if kind == "product"` at the
+  + /// call site would be a rule with two statements.
+  + pub(crate) fn goal_for_kind(kind: &str, goal: &str) -> String {
+ ✓ (1m 2s)
+    /// The `--kind product` reroute, as a pure decision.
+    ///
+    /// Any other kind (including the empty string) keeps the goal it was given.
+  - fn goal_for_kind(kind: &str, goal: &str) -> String {
+  + ///
+  + /// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`]'s `task-result` arm:
+  + /// [`task_planned`] applies this reroute itself, [`task_result`] takes no `kind`
+  + /// and so cannot, and the sidecar applies it to *every* arm
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (8.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 23s (3 ✓)
+
+The featured build compiles. Now the mandatory second block:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets --fea… ✓ (12.8s)
+ ✓ (1m 14s)
+  3 tools completed in 2m 40s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Featured block fully green (5192 tests, clippy clean). Now the plain gate, and the positive control the task demanded:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn require\|fn flag\|mi… ✓ (3ms)
+ ✓ (1m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+Both gates green. Now the positive control — the task requires proving the parser tests aren't vacuous:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 144,170p src/gasp_cli.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp_… (10 lines) ✓ (20.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.8s (2 ✓)
+
+Positive control confirmed — breaking required() kills exactly that test. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gasp_cli.bak src/gasp_cl… ✓ (20.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me check a stale marker my fix may have invalidated — the #[allow(dead_code)] on the four arms, which now do have a caller:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B6 "^pub(crate) async f… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 418,428p src/gasp.rs ✓ (2ms)
+  2 tools completed in 2.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The comment on those attributes claims "the caller is #683 items (3)+(7)" — that's now false, and it's the exact stale-claim class that cost eight sessions on #683. Let me test whether rustc now agrees the arms have a real caller:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.… (13 lines) ✓ (12.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two had that exact comment and clippy stays clean without them. Let me find the other two variants:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B4 "allow(dead_code)" s… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (12.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.3s (2 ✓)
+
+All four allow(dead_code) removed and featured clippy is clean — rustc now mechanically confirms every arm has a live caller. Verifying that guard actually bites:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp_… (21 lines) ✓ (12.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The guard bites — dropping one call makes -D warnings fail. Restoring:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gc2.bak src/gasp_cli.rs …

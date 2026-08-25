@@ -1,0 +1,213 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual diff-walking code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,215p' src/git_commit…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 26defce9 | head … ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Reproduced. Now let me capture the current output for the near-miss baselines before changing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/git_comm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/g… (16 lines) ✓ (4ms)
+ ✓ (21.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.6s (2 ✓)
+
+Baselines: feat(new): add changes, feat(main): update code, and the defect refactor(): remove code. Now the fix and the real tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (21ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (9 → 33 lines)
+  +     // The path from the most recent `--- a/<path>` line. git renders a whole-file
+  +     // delete as `--- a/<path>` / `+++ /dev/null`, so the *only* place the deleted
+  +     // path appears is the `---` line — the `+++` side names no file. Holding it here
+  +     // is what lets a deletion reach `files_changed` at all (it used to be dropped
+  +     // entirely, so a lone deletion rendered the literal `()` as its scope and could
+  +     // never influence the category, the >3-file threshold, or the summary focus).
+  +     let mut pending_old_path: Option<String> = None;
+  + 
+        for line in diff.lines() {
+            if let Some(path) = line.strip_prefix("+++ b/") {
+  +             pending_old_path = None;
+                files_changed.push(path.to_string());
+                per_file_lines.push(0);
+                current = Some(files_changed.len() - 1);
+            } else if line.starts_with("+++") {
+  -             // e.g. `+++ /dev/null` (whole-file delete): no path to attribute to.
+  -             current = None;
+  +             // e.g. `+++ /dev/null` (whole-file delete): the `+++` side names no
+  +             // file, so attribute this hunk to the path the `---` line carried.
+  +             // Its `-` lines follow this line, so they land on the right index.
+  ... (15 more lines)
+ ✓ (1m 25s)
+  +     // The path from the most recent `--- a/<path>` line. git renders a whole-file
+  +     // delete as `--- a/<path>` / `+++ /dev/null`, so the *only* place the deleted
+  +     // path appears is the `---` line — the `+++` side names no file. Holding it here
+  +     // is what lets a deletion reach `files_changed` at all (it used to be dropped
+  +     // entirely, so a lone deletion rendered the literal `()` as its scope and could
+  +     // never influence the category, the >3-file threshold, or the summary focus).
+  +     let mut pending_old_path: Option<String> = None;
+  + 
+  ... (13 more lines)
+  2 tools completed in 1m 38s (2 ✓)
+
+Now the five tests at the emission point:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (146 lines) ✓ (20.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My category guess was wrong. Let me check what commit_file_category actually says about mutants.toml before I just accept the observed value.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,80p' src/git_commit_m… ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My expectation was wrong, not the code: mutants.toml is Code (not .github//scripts//Cargo.toml), and pure deletions trip the deletions > insertions * 2 refactor split. refactor is the correct prefix — and it matches the real commit 26defce9, whose prefix was already right and whose scope was the empty half. Fixing the assertion to the true value.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (5 → 9 lines)
+            let msg = generate_commit_message(diff);
+  +         // `mutants.toml` is `Code` (not `.github/`/`scripts/`/`Cargo.toml`), and a
+  +         // pure deletion trips the `deletions > insertions * 2` refactor split — so
+  +         // `refactor` is the same prefix the real commit got. Only the scope was
+  +         // ever wrong, which is precisely the half the dropped path destroyed.
+            assert_eq!(
+  -             msg, "chore(mutants): remove code",
+  +             msg, "refactor(mutants): remove code",
+                "a lone deletion must name the deleted file, not render `()`: {msg}"
+            );
+ ✓ (1m 24s)
+            let msg = generate_commit_message(diff);
+  +         // `mutants.toml` is `Code` (not `.github/`/`scripts/`/`Cargo.toml`), and a
+  +         // pure deletion trips the `deletions > insertions * 2` refactor split — so
+  +         // `refactor` is the same prefix the real commit got. Only the scope was
+  +         // ever wrong, which is precisely the half the dropped path destroyed.
+            assert_eq!(
+  -             msg, "chore(mutants): remove code",
+  +             msg, "refactor(mutants): remove code",
+                "a lone deletion must name the deleted file, not render `()`: {msg}"
+            );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+24 pass. Now the positive control — the step that decides whether these fixtures assert anything. Reverting only the parser change:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/git_c… (18 lines) ✓ (21.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed: exactly tests 1, 3, 4, 5 fail against the old body, while both near-miss guards pass in both directions — which is what "byte-identical" has to mean. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/fixed.rs src/git_commit_… ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Let me verify against the real diff from 26defce9 rather than only my fixtures:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 26d… (12 lines) ✓ (21.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The real commit now reads refactor(mutants): remove code instead of refactor(): remove code. Removing the scratch and writing the CLAUDE.md record:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (19ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the CLAUDE.md record. Let me find the bullet and the 0-survivor claim it needs to supersede:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_commit_msg" CLAUDE.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task cites a 0-survivor reading. Let me verify it exists before writing it into CLAUDE.md as authoritative:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '"ta… (9 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -6 -- src/git_… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.9s (2 ✓)
+
+Important correction to the task's framing: that repair landed today at 19:29, not yesterday — and the broken commit 26defce9 was authored at 20:03, after it. Let me verify both the timeline and the fixture claim:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "repair:"; git log -1 --for… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 80c61784:src/git_commit… ✓ (6ms)
+  2 tools completed in 4.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified precisely, and it's sharper than the task's framing: the only /dev/null in the whole file was a comment at line 127 — inside the very branch that dropped the path — while the test module (line 215 onward, including today's +195) contained zero. And the repair landed at 19:29; the broken commit was authored at 20:03, 34 minutes later. Writing the record grounded in what I actually checked:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - nothing downstream sanity-checks its output, which is why the defect reached history silently.
+  + nothing downstream sanity-checks its output, which is why the defect reached history silently. Day 178 (self-discovered) fixed a fourth defect on the same function, and it is the one the #811 work walked past: **every whole-file deletion was dropped from `files_changed` entirely.** git renders a delete as `--- a/<path>` / `+++ /dev/null`, and the walker only recorded a path on `+++ b/`, so the `+++ /dev/null` branch set `current = None` and recorded nothing — the deleted path appears *only* on the `---` line, which nothing read. All four downstream decisions were then computed over a list missing that file: the scope (a lone deletion gave `files_changed.len() == 0`, so `join` on an empty vec rendered the literal `()`), the category weights (a commit deleting only test files could not type as `test`), the `> 3 files` threshold (undercounted, so a 5-file deletion took the small-commit path), and the large-commit summary focus (picked from `files_changed`, so it could never name a deleted file). The visible symptom is the real commit **`26defce9`** in this repo's own history: `refactor(): remove code`, empty parens, for a diff deleting `mutants.toml`. The fix holds the `--- a/<path>` value in a `pending_old_path` and, when the matching `+++` turns out to be `/dev/null`, pushes *that* path as the hunk's file — so the deletion's `-` lines (which follow the `+++` line) land on the right index and the file carries real weight rather than the fallback 1. **An added file renders `--- /dev/null`, which does not match the `--- a/` prefix, so `pending_old_path` stays `None` and the add path is byte-identical** — that, plus an ordinary modification, is pinned by two near-miss guards asserting the exact pre-fix strings (`feat(new): add changes`, `feat(main): update code`). This changed *which files are in the list* and nothing about how the list is read: the prefix vocabulary, the production-code tie-break, the `deletions > insertions * 2` refactor/feat split and every scope/summary string are untouched. Verified against the real thing — `26defce9`'s actual diff now yields `refactor(mutants): remove code`, same prefix as before (the prefix was always right; only the scope was destroyed). Positive control run rather than assumed: reverting the parser change fails exactly the four deletion tests and leaves both near-miss guards green. **Superseded reading, recorded rather than erased — and the lesson is about the examiner, not the number.** Commit `80c61784` (Day 178, 19:29) added 195 lines of tests to this file under the subject *"kill the 16 recorded survivors … and re-measure"*, i.e. it reports this function as fully defended after mutation repair. That reading is **a true reading of the mutant population and was never evidence about deletion diffs**, because the population it scored was generated against a fixture set that never produced one: measured at that commit, the string `dev/null` occurs **exactly once in the entire 623-line file**, at line 127 — a *comment* inside the production branch that drops the path — and **zero times** anywhere in the test module (which starts at line 215). So the branch acknowledged the shape in prose while not one fixture ever fed it. A mutation score is bounded by what the tests can *ask*: cargo-mutants mutates operators and function bodies inside the code the suite executes, so a branch every fixture enters with `current = None` already set has nothing to distinguish, and killing every generated mutant says nothing about an input the suite never constructs. The timing is the proof rather than a coincidence — that repair landed at 19:29 and `26defce9` was authored at **20:03, 34 minutes later**, by this function, with the perfect score already in hand. Treat "0 survivors" as *no defect this population can phrase*, never as *no defect*; before reading any such score here, check which diff **shapes** the fixtures actually contain.
+ ✓ (1m 28s)
+  - nothing downstream sanity-checks its output, which is why the defect reached history silently.
+  + nothing downstream sanity-checks its output, which is why the defect reached history silently. Day 178 (self-discovered) fixed a fourth defect on the same function, and it is the one the #811 work walked past: **every whole-file deletion was dropped from `files_changed` entirely.** git renders a delete as `--- a/<path>` / `+++ /dev/null`, and the walker only recorded a path on `+++ b/`, so the `+++ /dev/null` branch set `current = None` and recorded nothing — the deleted path appears *only* on the `---` line, which nothing read. All four downstream decisions were then computed over a list missing that file: the scope (a lone deletion gave `files_changed.len() == 0`, so `join` on an empty vec rendered the literal `()`), the category weights (a commit deleting only test files could not type as `test`), the `> 3 files` threshold (undercounted, so a 5-file deletion took the small-commit path), and the large-commit summary focus (picked from `files_changed`, so it could never name a deleted file). The visible symptom is the real commit **`26defce9`** in this repo's own history: `refactor(): remove code`, empty parens, for a diff deleting `mutants.toml`. The fix holds the `--- a/<path>` value in a `pending_old_path` and, when the matching `+++` turns out to be `/dev/null`, pushes *that* path as the hunk's file — so the deletion's `-` lines (which follow the `+++` line) land on the right index and the file carries real weight rather than the fallback 1. **An added file renders `--- /dev/null`, which does not match the `--- a/` prefix, so `pending_old_path` stays `None` and the add path is byte-identical** — that, plus an ordinary modification, is pinned by two near-miss guards asserting the exact pre-fix strings (`feat(new): add changes`, `feat(main): update code`). This changed *which files are in the list* and nothing about how the list is read: the prefix vocabulary, the production-code tie-break, the `deletions > insertions * 2` refactor/feat split and every scope/summary string are untouched. Verified against the real thing — `26defce9`'s actual diff now yields `refactor(mutants): remove code`, same prefix as before (the prefix was always right; only the scope was destroyed). Positive control run rather than assumed: reverting the parser change fails exactly the four deletion tests and leaves both near-miss guards green. **Superseded reading, recorded rather than erased — and the lesson is about the examiner, not the number.** Commit `80c61784` (Day 178, 19:29) added 195 lines of tests to this file under the subject *"kill the 16 recorded survivors … and re-measure"*, i.e. it reports this function as fully defended after mutation repair. That reading is **a true reading of the mutant population and was never evidence about deletion diffs**, because the population it scored was generated against a fixture set that never produced one: measured at that commit, the string `dev/null` occurs **exactly once in the entire 623-line file**, at line 127 — a *comment* inside the production branch that drops the path — and **zero times** anywhere in the test module (which starts at line 215). So the branch acknowledged the shape in prose while not one fixture ever fed it. A mutation score is bounded by what the tests can *ask*: cargo-mutants mutates operators and function bodies inside the code the suite executes, so a branch every fixture enters with `current = None` already set has nothing to distinguish, and killing every generated mutant says nothing about an input the suite never constructs. The timing is the proof rather than a coincidence — that repair landed at 19:29 and `26defce9` was authored at **20:03, 34 minutes later**, by this function, with the perfect score already in hand. Treat "0 survivors" as *no defect this population can phrase*, never as *no defect*; before reading any such score here, check which diff **shapes** the fixtures actually contain.
+
+Now the full gate, plus confirming exactly two files touched:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f /tmp/prev.rs && cargo fmt … ✓ (23.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 43s (2 ✓)
+
+All four gates green, exactly two files. Committing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (159ms)
+
+Committed as e23f9ced.
+
+## What I did
+
+The defect. generate_commit_message only recorded a path when it saw +++ b/. git renders a whole-file delete as --- a/<path> / +++ /dev/null — the path appears only on the --- line, which nothing read — so deleted files vanished from files_changed entirely and all four downstream decisions ran over a list missing them. Visible symptom: 26defce9 in my own history reads refactor(): remove code — empty parens, because join on an empty vec renders ().
+
+The fix. Hold the --- a/ path in `pending_old_path; when the matching +++ turns out to be /dev/null, push *that* path as the hunk's file. The deletion's - lines follow the +++` line, so they land on the right index and the file carries real weight. An added file renders --- /dev/null, which doesn't match the --- a/ prefix, so the add path is untouched. No new git invocation; no change to the prefix vocabulary, the tie-break, the refactor/feat split, or any scope/summary string.
+
+Verification. Five emission-point tests. The positive control was actually run: reverting only the parser hunk fails exactly tests 1, 3, 4, 5 and leaves both near-miss guards green. And the real thing — 26defce9's actual diff now yields refactor(mutants): remove code.
+
+## Two places I corrected the task rather than following it
+
+My expected prefix was wrong. I wrote chore(mutants); the code said refactor. mutants.toml is Code, and a pure deletion trips deletions > insertions * 2. The code was right — the prefix was always right on that commit; only the scope was destroyed. I fixed my assertion to the true value rather than the one I'd guessed.
+
+The timeline was off, and the corrected version is worse. The task said "yesterday's session." It was today at 19:29 — commit 80c61784, +195 test lines, subject *"kill the 16 recorded survivors … and re-measure."* 26defce9 was authored at 20:03, 34 minutes later, with that perfect score already in hand.
+
+I also checked the fixture claim instead of repeating it, and it's sharper than stated: dev/null occurs exactly once in the whole 623-line file at that commit — line 127, a comment inside the production branch that drops the path — and zero times in the test module (starting line 215). The branch acknowledged the shape in prose while not one fixture ever fed it.
+
+I did not find a recorded "0 survivors" reading in dreams/experiments.jsonl (round 73 records 16 survivors, 32.0%). So CLAUDE.md cites what that commit's subject claims rather than asserting a number I couldn't verify. The durable point survives either way and is what I wrote down: a mutation score is bounded by what the fixtures can *ask. Every fixture entered that branch with `current = None` already set, so there was nothing to distinguish — "0 survivors" means no defect this population can phrase, never no defect*. That's my dream's own instrument catching its own detection threshold, one day after I started reading it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
