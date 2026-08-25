@@ -118,14 +118,38 @@ pub fn generate_commit_message(diff: &str) -> String {
     let mut insertions = 0usize;
     let mut deletions = 0usize;
 
+    // The path from the most recent `--- a/<path>` line. git renders a whole-file
+    // delete as `--- a/<path>` / `+++ /dev/null`, so the *only* place the deleted
+    // path appears is the `---` line — the `+++` side names no file. Holding it here
+    // is what lets a deletion reach `files_changed` at all (it used to be dropped
+    // entirely, so a lone deletion rendered the literal `()` as its scope and could
+    // never influence the category, the >3-file threshold, or the summary focus).
+    let mut pending_old_path: Option<String> = None;
+
     for line in diff.lines() {
         if let Some(path) = line.strip_prefix("+++ b/") {
+            pending_old_path = None;
             files_changed.push(path.to_string());
             per_file_lines.push(0);
             current = Some(files_changed.len() - 1);
         } else if line.starts_with("+++") {
-            // e.g. `+++ /dev/null` (whole-file delete): no path to attribute to.
-            current = None;
+            // e.g. `+++ /dev/null` (whole-file delete): the `+++` side names no
+            // file, so attribute this hunk to the path the `---` line carried.
+            // Its `-` lines follow this line, so they land on the right index.
+            match pending_old_path.take() {
+                Some(path) => {
+                    files_changed.push(path);
+                    per_file_lines.push(0);
+                    current = Some(files_changed.len() - 1);
+                }
+                // No `---` path to fall back on: nothing to attribute to.
+                None => current = None,
+            }
+        } else if let Some(path) = line.strip_prefix("--- a/") {
+            // An *added* file renders `--- /dev/null`, which does not match this
+            // prefix, so `pending_old_path` stays `None` and the add path is
+            // byte-identical to before.
+            pending_old_path = Some(path.to_string());
         } else if line.starts_with('+') {
             insertions += 1;
             if let Some(i) = current {
@@ -619,5 +643,144 @@ diff --git a/src/old.rs b/src/old.rs
             msg.contains("remove code"),
             "Pure deletion should say 'remove code': {msg}"
         );
+    }
+
+    // ---- whole-file deletions (Day 178) ----
+    //
+    // git renders a delete as `--- a/<path>` / `+++ /dev/null`. The walker used to
+    // record nothing for that shape, so the deleted file was absent from
+    // `files_changed` and all four downstream decisions were computed over a list
+    // missing it. Every fixture below is a verbatim `git diff` chunk including its
+    // `---`/`+++` pair, and every assertion is on the string a caller receives.
+
+    /// The reproduction: `26defce9` in this repo's own history reads
+    /// `refactor(): remove code` — empty parens where the scope belongs.
+    #[test]
+    fn test_whole_file_deletion_names_the_file_in_the_scope() {
+        let diff = "\
+diff --git a/mutants.toml b/mutants.toml
+deleted file mode 100644
+--- a/mutants.toml
++++ /dev/null
+@@ -1,3 +0,0 @@
+-[[exclude]]
+-function = \"main::run\"
+-# gone
+";
+        let msg = generate_commit_message(diff);
+        // `mutants.toml` is `Code` (not `.github/`/`scripts/`/`Cargo.toml`), and a
+        // pure deletion trips the `deletions > insertions * 2` refactor split — so
+        // `refactor` is the same prefix the real commit got. Only the scope was
+        // ever wrong, which is precisely the half the dropped path destroyed.
+        assert_eq!(
+            msg, "refactor(mutants): remove code",
+            "a lone deletion must name the deleted file, not render `()`: {msg}"
+        );
+        assert!(
+            !msg.contains("()"),
+            "empty scope is the visible symptom of the dropped path: {msg}"
+        );
+    }
+
+    /// Near-miss guard: an *added* file renders `--- /dev/null` / `+++ b/path`,
+    /// which already worked. Byte-identical to the pre-fix output, captured by
+    /// running the old body.
+    #[test]
+    fn test_added_file_message_is_byte_identical_to_before() {
+        let diff = "\
+diff --git a/new.rs b/new.rs
+new file mode 100644
+--- /dev/null
++++ b/new.rs
+@@ -0,0 +1,2 @@
++fn a() {}
++fn b() {}
+";
+        assert_eq!(generate_commit_message(diff), "feat(new): add changes");
+    }
+
+    /// Near-miss guard: an ordinary modification is untouched by the fix.
+    #[test]
+    fn test_modified_file_message_is_byte_identical_to_before() {
+        let diff = "\
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,1 +1,1 @@
++let x = 1;
+-let y = 2;
+";
+        assert_eq!(generate_commit_message(diff), "feat(main): update code");
+    }
+
+    /// The half with no visible symptom: a deleted file never reached `weights`,
+    /// so a commit deleting only tests could not type as `test`.
+    #[test]
+    fn test_deleting_only_a_test_file_types_as_test() {
+        let diff = "\
+diff --git a/tests/foo_test.rs b/tests/foo_test.rs
+deleted file mode 100644
+--- a/tests/foo_test.rs
++++ /dev/null
+@@ -1,4 +0,0 @@
+-#[test]
+-fn t() {
+-    assert!(true);
+-}
+";
+        let msg = generate_commit_message(diff);
+        assert!(
+            msg.starts_with("test("),
+            "deleting only a test file must type as `test`: {msg}"
+        );
+        assert_eq!(msg, "test(foo_test): remove code");
+    }
+
+    /// The threshold: five deletions must take the `> 3 files` path.
+    #[test]
+    fn test_five_deleted_files_reach_the_large_commit_threshold() {
+        let mut diff = String::new();
+        for n in 1..=5 {
+            diff.push_str(&format!(
+                "diff --git a/src/gone{n}.rs b/src/gone{n}.rs\n\
+deleted file mode 100644\n\
+--- a/src/gone{n}.rs\n\
++++ /dev/null\n\
+@@ -1,2 +0,0 @@\n\
+-fn gone{n}() {{}}\n\
+-// tail\n"
+            ));
+        }
+        let msg = generate_commit_message(&diff);
+        assert!(
+            msg.contains("5 files"),
+            "five deletions must be counted as five: {msg}"
+        );
+        assert_eq!(msg, "refactor(5 files): remove gone1 (+4 more)");
+    }
+
+    /// Mixed: one added file and one deleted file both appear in the scope.
+    #[test]
+    fn test_mixed_add_and_delete_lists_both_files_in_the_scope() {
+        let diff = "\
+diff --git a/src/added.rs b/src/added.rs
+new file mode 100644
+--- /dev/null
++++ b/src/added.rs
+@@ -0,0 +1,1 @@
++fn added() {}
+diff --git a/src/removed.rs b/src/removed.rs
+deleted file mode 100644
+--- a/src/removed.rs
++++ /dev/null
+@@ -1,1 +0,0 @@
+-fn removed() {}
+";
+        let msg = generate_commit_message(diff);
+        assert!(
+            msg.contains("added") && msg.contains("removed"),
+            "both files must appear in the scope: {msg}"
+        );
+        assert_eq!(msg, "feat(added, removed): update code");
     }
 }
