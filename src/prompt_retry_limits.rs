@@ -120,6 +120,20 @@ pub enum RetryWait {
     GiveUp { retry_after: Duration },
 }
 
+/// The ceiling on an inline retry wait: never more than [`MAX_INLINE_RETRY_AFTER`],
+/// and never more than the session has left. The budget can only **shrink** the
+/// ceiling, never raise it — a session with three hours left still must not sleep
+/// an hour inside one retry.
+///
+/// Extracted from the expression it used to be inline in as the corollary test of
+/// blind round 80: cargo-mutants' two genres are `FnValue` (replace a whole function
+/// *body* with a value guessed from the return type) and operator replacement, so a
+/// clamp buried inside a larger function is invisible to it while a clamp with its
+/// own function boundary is not. See the mutation-testing block in CLAUDE.md.
+fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
+    budget_remaining.min(MAX_INLINE_RETRY_AFTER)
+}
+
 /// Decide how long to wait before the next retry — or whether to stop.
 ///
 /// Rules, in order:
@@ -149,7 +163,7 @@ pub fn retry_wait_decision(
     };
 
     let affordable = match budget_remaining {
-        Some(remaining) => remaining.min(MAX_INLINE_RETRY_AFTER),
+        Some(remaining) => inline_retry_ceiling(remaining),
         None => MAX_INLINE_RETRY_AFTER,
     };
 
@@ -372,5 +386,62 @@ mod tests {
         // A short reset renders in its own units, not padded to hours.
         let short = rate_limit_giveup_message(Duration::from_secs(90));
         assert!(short.contains("1m 30s"), "short reset misrendered: {short}");
+    }
+
+    /// The budget may only ever SHRINK the inline ceiling, never raise it.
+    /// Both directions plus the exact boundary — a discriminator tested only on
+    /// the side that fires is vacuous green.
+    #[test]
+    fn inline_retry_ceiling_lets_the_budget_shrink_but_never_raise() {
+        let cap = MAX_INLINE_RETRY_AFTER;
+        let table = [
+            // (budget remaining, expected ceiling, why)
+            (
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                "budget below the cap wins",
+            ),
+            (
+                cap,
+                cap,
+                "exactly at the cap: the boundary is the cap itself",
+            ),
+            (
+                cap + Duration::from_secs(1),
+                cap,
+                "one second over: the cap wins",
+            ),
+            (
+                Duration::from_secs(60 * 60 * 3),
+                cap,
+                "a three-hour budget cannot raise the cap",
+            ),
+            (
+                Duration::ZERO,
+                Duration::ZERO,
+                "an exhausted budget shrinks it to nothing",
+            ),
+        ];
+        for (budget, expected, why) in table {
+            assert_eq!(
+                inline_retry_ceiling(budget),
+                expected,
+                "inline_retry_ceiling({budget:?}) — {why}"
+            );
+        }
+        // The property the table is sampling, stated directly: the result is never
+        // above the cap and never above the budget.
+        for secs in [0u64, 1, 59, 120, 121, 100_000] {
+            let budget = Duration::from_secs(secs);
+            let got = inline_retry_ceiling(budget);
+            assert!(
+                got <= cap,
+                "ceiling {got:?} rose above the cap for {budget:?}"
+            );
+            assert!(
+                got <= budget,
+                "ceiling {got:?} rose above the budget {budget:?}"
+            );
+        }
     }
 }
