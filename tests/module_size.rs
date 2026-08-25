@@ -217,7 +217,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),
-    ("src/format/cost.rs", 2124),
+    ("src/format/cost.rs", 2211),
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
     // chunking-independence and carry-safety regression tests.
