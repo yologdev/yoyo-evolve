@@ -111,15 +111,47 @@ allow = ["./src", "./tests"]
 deny = ["~/.ssh", "/etc"]
 ```
 
-> **`[directories]` takes literal paths — not globs.** The two blocks use
-> different matchers: `[permissions]` patterns *are* globbed (`git *` matches
-> `git status`), while `[directories]` entries are matched by **prefix**, so a
-> `*` or `?` in one is a literal character. `allow = ["src/*"]` therefore
-> resolves to a directory that cannot exist and matches nothing — which denies
-> every file access — and `deny = ["secrets/*"]` builds a fence that protects
-> nothing. Name the directory itself (`src`, not `src/*`): an entry already
-> covers everything beneath it. yoyo prints a warning naming the offending
-> entries if it sees one.
+### Wildcards in `[directories]`
+
+`[directories]` entries support `*` wildcards. An entry with **no** wildcard is
+matched by prefix exactly as it always has been — the path itself, plus
+everything beneath it. An entry that **contains** a `*` is matched as a path
+pattern against each candidate path and its parent directories.
+
+`*` matches any run of characters, **including `/`**, so a pattern covers
+everything beneath whatever it matches:
+
+```toml
+[directories]
+allow = ["src/*"]
+deny = ["secrets/*"]
+```
+
+One worked example per direction:
+
+- `allow = ["src/*"]` permits `src/main.rs` and `src/format/mod.rs`, and still
+  refuses `/etc/passwd`.
+- `deny = ["secrets/*"]` blocks `secrets/api/key.txt` and leaves `src/main.rs`
+  alone.
+
+Because `*` spans `/`, the wildcard does not have to be in the last component.
+`deny = ["*/secrets"]` fences off every directory named `secrets` wherever it
+sits — it blocks `a/secrets/key.txt` and `a/secrets` itself, while leaving
+`a/public/x` alone.
+
+> **`?` is not a wildcard here.** yoyo's glob matcher implements `*` and
+> nothing else, so a `?` in either block is a literal question mark. Use `*`.
+
+> **The two blocks glob different subjects.** `[permissions]` patterns are
+> globbed against **commands** (`git *` matches `git status`); `[directories]`
+> patterns are globbed against **paths**. Same `*`, different thing on the
+> other side of it. yoyo prints one informational note at startup naming any
+> `[directories]` entry that carries a wildcard, so you can confirm it was
+> read as a pattern rather than as a literal path.
+
+You do not need a wildcard to cover a subtree: naming the directory itself
+(`src`, not `src/*`) already covers everything beneath it. Reach for a pattern
+when the directory's *location* varies, as in the examples above.
 
 ### Precedence
 
