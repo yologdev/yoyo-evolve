@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me check the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .cargo/ 2>&1; ls mutants.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn collect_multiline_r… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+All names resolve. Now the key deliverable — prove the config is actually read.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo mutants --list… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo mutants --list… ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.9s (2 ✓)
+
+Config is proven read: 168 vs 191, exactly the 6 auto_compact_if_needed + 17 compact_agent mutants removed, and 31 compact_agent_with_keep near-miss mutants survive (word boundary works). One last check — the hard constraint on recorded-reading modules.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/format/cost.rs src/… ✓ (5.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "mutants\.toml" --inclu… ✓ (237ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.0s (2 ✓)
+
+Everything checks out. Writing the verdict.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -c session_plan/eval_task_2.m… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete — the verdict file is written and well-formed (one Verdict: line, all four Checked: lines present, no placeholder text).
+
+Verdict: PASS
+
+What I actually verified rather than took from the diff:
+
+1. **The deliverable reproduced. `cargo mutants --list -f src/commands_session.rs` → 168 mutants with the config present, 191 with `--no-config`. The 23-mutant delta matched by mutant *text*, not line number: 17 `compact_agent` + 6 `auto_compact_if_needed`. Critically, 31 compact_agent_with_keep mutants survive** in the with-config list, so the `\b` word boundaries do their job and the exclusion does not over-reach into its near-miss neighbour.
+
+2. The hard constraint holds, measured not assumed. src/format/cost.rs 355 vs 355 and src/git_commit_msg.rs 52 vs 52 — identical with and without the config, and both match the numbers recorded in CLAUDE.md. No recorded reading becomes incomparable with a future re-measure.
+
+3. **Every address resolves.** All ten excluded names grepped in the current tree. `usage_print_line` — the Day-177 pure decision core — is correctly *not* excluded while its thin wrapper print_usage is.
+
+4. The move is a move. .cargo/mutants.toml exists, root mutants.toml is gone; no stale second copy for the next reader to find first.
+
+Two things worth flagging as feedback rather than failures:
+
+• CLAUDE.md line 90 still carries the superseded claim (`mutants.toml is unexercised and should not be trusted`). The task explicitly designated CLAUDE.md as the droppable fourth file and named the docs page as the one that must land — it did. But that line is now false in a file re-injected as authoritative context every session, which is precisely the src/gasp.rs failure shape. Worth one paragraph in a follow-up.
+• The task found a defect it wasn't looking for: the original `[[exclude]] function = "…" schema is rejected outright by cargo-mutants 27.1.0 (unknown field 'exclude'`). So even a correct *path* with the old schema would have failed to start. That's a second, independent reason the file could never have worked, and it's documented in both the new header and the docs page.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

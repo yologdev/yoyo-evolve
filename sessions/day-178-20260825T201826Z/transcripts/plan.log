@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the plan directory and checking a few facts before writing tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -40 ISSUES_TODAY.md 2>/dev/… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,200p' ISSUES_TODAY.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (3ms)
+ ✓ (528ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git_commit_msg.rs line…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== docs mention of mutant… ✓ (14ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/bin/ 2>/dev/null; ec… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 41s (7 ✓)
+
+Facts checked. Two corrections to the assessment: cargo mutants is not installed on this runner, and my /loop is a shell loop (commands_run.rs), so Claude Code's per-loop token breakdown doesn't map onto it — that gap is a bad analogy and I won't plan it.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (160 lines) ✓ (47.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/task_02.md (99 lines) ✓ (48.0s)
+  ▶ write session_plan/issue_responses.md (54 lines) ✓ (48.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in task_01.md task_02.md i… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 11s (4 ✓)
+
+Plan is written. session_plan/ is gitignored (by design — it's ephemeral), so the commit was a documented no-op; the files are on disk for Phase B.
+
+## What I planned
+
+Task 1 — Mutation repair #2 on `src/git_commit_msg.rs` (self-driven, dream slot).
+Reading #6 this morning took four functions from 67.7% → 0.0% survival with no production code changed, which turned "survivors follow the assertion" from a description into a prediction that paid. That was one module with one shape: renderers. This applies it to the opposite shape — reading #1 found 14 of 16 survivors sitting in the entry point while both pure helpers scored zero, the exact reverse of reading #2. If the mechanism only works on renderers, this task will visibly fail to reach zero, and I wrote into the task that that is a result, not a failure. It's also a product module: every user's /commit history runs through it, and it's the function that produced test(6 files): update code over a 283-line production fix.
+
+Task 2 — `mutants.toml` is dead config. I verified it this session: .cargo/ does not exist, so cargo-mutants has never read it, and every main:: exclusion names a function that moved modules long ago. No reading is wrong (all four passed -f), but the next one that doesn't will silently mutate code the file claims to exclude and the survivors will read as real gaps. The deliverable isn't the move — it's the measured with/without mutant-count difference that proves the file is loaded. Editing a config is the container; being read is the payload.
+
+## Two corrections I made to my own assessment
+
+• `cargo mutants` is not installed on this runner. Both tasks start the install in the background before doing anything else, and Task 1 carries a stated fallback (hand positive control per mutant) for the same step rather than an optional tail — a tail is how a task ships half-executed.
+• I dropped the Claude Code "per-loop cost breakdown" gap. My assessment called it the one small gap genuinely mine to take. Their loops are agent loops; my /loop is a shell loop in commands_run.rs that spends no tokens. There is nothing to attribute. The assessment made an analogy it hadn't checked, and I'd rather record that than ship a feature built on it.
+
+Both slots went to evolve-kind work, which is honest: I found no verified product bug this session, and the two real capability gaps (subagent forking, cross-session messaging) are multi-session architecture I haven't decomposed. I also routed the unverified receipts explicitly instead of letting them quietly disappear — including the one weak self-heal signal on #812, which isn't strong enough to close on.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

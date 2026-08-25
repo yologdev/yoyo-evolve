@@ -1,0 +1,263 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by kicking off the cargo-mutants install in the background, then read the current config.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (which cargo-mutants || nohup ca…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+cargo-mutants is already installed. Let me see the full file and resolve every name.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 mutants.toml && echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in fmt color_enabled disab… ✓ (18ms)
+ ✓ (81ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Color impl fmt in form…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' mutants.toml | ca… ✓ (4ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/mutants.toml ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 22.0s (5 ✓)
+
+Now the key empirical question: how does cargo-mutants 27.1.0 name functions? Let me measure before touching anything.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --list -f src/comm… ✓ (2.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baseline: 91 mutants in src/commands_run.rs with the root config ignored. Now let me empirically determine the matching syntax before writing anything.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p .ca… (10 lines) ✓ (69ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the last experiment returned 0 lines with exit code 1 — that's a failure, not a total exclusion. Let me read the actual error rather than guess.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --list -f src/comm… ✓ (6ms)
+ ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.8s (2 ✓)
+
+That is the real finding, and it is bigger than the task anticipated. [[exclude]] is not a valid field in cargo-mutants 27.1.0 — the schema is stale, not just the addresses. And note the error proves the payload: it names .cargo/mutants.toml by path, so that location is read.
+
+Let me find the correct schema for this version.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --help 2>&1 | grep…  ▶ $ ls ~/.cargo/registry/src/*/cargo-mutants-*/ 2>/dev/null | head; find / -name "*.… ✓ (17ms)
+ ✓ (43.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 47.0s (2 ✓)
+
+There's a machine-readable schema for this exact version — authoritative, better than docs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --help 2>&1 | grep…  ▶ $ cat /home/runner/.cargo/registry/src/*/cargo-mutants-27.1.0/book/src/skip_mutant… ✓ (5ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutant… (7 lines)  ▶ $ cat /home/runner/.cargo/registry/src/*/cargo-mutants-27.1.0/book/src/config-file… ✓ (3ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 11.4s (4 ✓)
+
+Now I have the authoritative schema for this version. The key is exclude_re — regexps matched against --list names. Let me verify empirically what string it matches against.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > .cargo… (9 lines) ✓ (2.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both work — and critically, the regex matches the whole line including the path. That lets me anchor exclusions to file+function, which protects the five recorded-reading files by construction. Let me check the mutant text, not just counts (reading #5's lesson).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f .cargo/mutants.toml && ech… ✓ (1.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up. Established so far: .cargo/mutants.toml is read (the parse error named it by path), the `[[exclude]] schema is **invalid** in 27.1.0, the live key is exclude_re` matching the **full `--list` line**, and a function has mutants in *both* genres (`replace <fn> -> and delete - in <fn>) — so a replace <fn>`-anchored regex would silently miss operator mutants.
+
+Let me resolve the remaining names and check each actually generates mutants.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls .cargo/ 2>&1; echo "=== forma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== cli print_help ==="; c… ✓ (1.3s)
+ ✓ (3.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.7s (2 ✓)
+
+All resolve and all generate mutants. Note usage_print_line (the pure core) has its own 3 mutants and must not be excluded. Let me check the remaining four and verify the word-boundary behaviour that keeps run_prompt from swallowing its whole family.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== prompt.rs run_prompt f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== commands_session.rs ==… ✓ (1.3s)
+ ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --list -f src/prom… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo mutants --list -f src/prom… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE "run_prompt( |$|-)" /tm… ✓ (3ms)
+  5 tools completed in 21.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me stop the grep archaeology and settle it with the authoritative engine — cargo-mutants' own regex. Writing the corrected config now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/prompt.rs src/forma… ✓ (15.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baselines captured. Three of them independently corroborate CLAUDE.md's recorded readings exactly (git_commit_msg 52, risk_families 54, risk_ungraded 34, format/cost 355). Now the corrected config.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/.cargo/mutants.toml (83 lines) ✓ (48.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rm -q mutants.toml && ls mut… ✓ (15.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 17s (2 ✓)
+
+Both proofs land. Now the text check — reading #5's lesson is that counts alone mis-score. Let me verify the right mutants vanished and the near-miss families survived.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && paste /tmp/before_counts.txt /tm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/prompt.rs src/comma… ✓ (20ms)
+ ✓ (8.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.0s (2 ✓)
+
+--no-config gives a clean control, and the removals are exactly right. Now the near-miss side — my own rule is that a discriminator tested only where it fires is vacuous green.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== commands_session: all …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== format/mod.rs: usage_p… ✓ (2.8s)
+ ✓ (2.8s)
+  2 tools completed in 2.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All verification lands. Complete picture:
+
+Payload proof — 7 files' counts moved, 5 protected files didn't. Text-level proof — prompt.rs removed exactly run_prompt + run_prompt_once while all 11+11+4 family mutants survived; commands_session.rs removed 23, *all 23* naming the two target functions, *zero* naming compact_agent_with_keep (31 of which survive); usage_print_line's 3 mutants survive.
+
+Now the docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "root\|reasonable\|mutan… ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/mutation-testing.md:80..94 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/mutation-testing.md (7 → 25 lines)
+  - The `mutants.toml` file in the project root excludes known-acceptable mutants:
+  + The `.cargo/mutants.toml` file excludes known-acceptable mutants:
+    
+    - **Cosmetic functions** — ANSI color codes, banner printing, help text
+    - **Interactive I/O** — functions that read stdin or require a terminal
+    - **Async API calls** — prompt execution that needs a live Anthropic API
+    
+    These exclusions keep mutation testing focused on logic that *should* be tested. If you add a new feature with testable logic, make sure it's not excluded.
+  + 
+  + **The path matters.** cargo-mutants reads `.cargo/mutants.toml`, not a file at the repo root. This config sat at the root from Day 9 to Day 178 and was never read once in that time. If you move it, or start a fresh copy, verify it is actually being loaded — see "Proving the config is read" below.
+  + 
+  + Exclusions are written as `exclude_re`: a list of regexps matched against the whole line `--list` prints, i.e. `path:line:col: <mutant text>`. Two conventions in this file are load-bearing:
+  + 
+  + - **Anchor each regex to its source file** with `^src/…\.rs:`. This is what stops an exclusion reaching a module it was never meant to touch — in particular the five modules with mutation readings recorded in `CLAUDE.md`, whose denominators must stay stable or every recorded number becomes incomparable with its own future re-measure.
+  + - **Keep the `\b` word boundaries.** Without them `run_prompt` also swallows `run_prompt_with_changes` and nine other live functions, and `compact_agent` swallows `compact_agent_with_keep`.
+  + 
+  + ## Proving the config is read
+  + 
+  + Editing the file is the container; being loaded is the payload. `--list` runs no tests, so the check is fast and deterministic — compare a file holding an excluded function against the same file with `--no-config`:
+  + 
+  ... (6 more lines)
+ ✓ (49.3s)
+  - The `mutants.toml` file in the project root excludes known-acceptable mutants:
+  + The `.cargo/mutants.toml` file excludes known-acceptable mutants:
+    
+    - **Cosmetic functions** — ANSI color codes, banner printing, help text
+    - **Interactive I/O** — functions that read stdin or require a terminal
+    - **Async API calls** — prompt execution that needs a live Anthropic API
+    
+    These exclusions keep mutation testing focused on logic that *should* be tested. If you add a new feature with testable logic, make sure it's not excluded.
+  ... (13 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/mutation-testing.md:150..164 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/mutation-testing.md (5 → 6 lines)
+  - The `scripts/run_mutants.sh` script and `mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+  + The `scripts/run_mutants.sh` script and `.cargo/mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+    
+    - **Git-dependent tests**: Some tests (e.g. `test_git_branch_returns_something_in_repo`, `test_build_project_tree_runs`, `test_get_staged_diff_runs`) gracefully handle running outside a git repo. cargo-mutants copies source to a temp directory without `.git/`, so these tests skip git-specific assertions when not in a repo.
+  - - **Exclusions are reasonable**: The `mutants.toml` excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key). These can't be meaningfully unit-tested.
+  + - **Exclusions were stale for ~169 days, and are now re-resolved**: the config excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key) — that policy is unchanged and still sound. What was wrong was everything else. Written on Day 9, the file sat at the repo root where cargo-mutants never looks, used a `[[exclude]] function = "…"` schema that current cargo-mutants rejects outright (`unknown field 'exclude'`), and named six functions that had since moved modules or never existed (`main::collect_multiline`, `main::run_shell_command`, `main::compact_agent`, `main::auto_compact_if_needed`, `cli::print_banner`, `format::Color::fmt`). On Day 178 it was moved to `.cargo/mutants.toml`, rewritten to the `exclude_re` schema, and every name re-resolved against the tree and verified to generate at least one real mutant. An exclusion that matches nothing is worse than no exclusion, because it reads as a considered policy.
+  + - **No previously recorded reading is invalidated by this.** All of them passed `-f` on the command line, which bypasses the config entirely.
+    - **The script cannot be added to `.github/workflows/` by the agent** (safety rules), but it exits with code 0/1 and is designed for CI use.
+ ✓ (48.8s)
+  - The `scripts/run_mutants.sh` script and `mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+  + The `scripts/run_mutants.sh` script and `.cargo/mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+    
+    - **Git-dependent tests**: Some tests (e.g. `test_git_branch_returns_something_in_repo`, `test_build_project_tree_runs`, `test_get_staged_diff_runs`) gracefully handle running outside a git repo. cargo-mutants copies source to a temp directory without `.git/`, so these tests skip git-specific assertions when not in a repo.
+  - - **Exclusions are reasonable**: The `mutants.toml` excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key). These can't be meaningfully unit-tested.
+  + - **Exclusions were stale for ~169 days, and are now re-resolved**: the config excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key) — that policy is unchanged and still sound. What was wrong was everything else. Written on Day 9, the file sat at the repo root where cargo-mutants never looks, used a `[[exclude]] function = "…"` schema that current cargo-mutants rejects outright (`unknown field 'exclude'`), and named six functions that had since moved modules or never existed (`main::collect_multiline`, `main::run_shell_command`, `main::compact_agent`, `main::auto_compact_if_needed`, `cli::print_banner`, `format::Color::fmt`). On Day 178 it was moved to `.cargo/mutants.toml`, rewritten to the `exclude_re` schema, and every name re-resolved against the tree and verified to generate at least one real mutant. An exclusion that matches nothing is worse than no exclusion, because it reads as a considered policy.
+  + - **No previously recorded reading is invalidated by this.** All of them passed `-f` on the command line, which bypasses the config entirely.
+    - **The script cannot be added to `.github/workflows/` by the agent** (safety rules), but it exits with code 0/1 and is designed for CI use.
+  5 tools completed in 2m 7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two things I must check before committing: whether .gitignore swallows .cargo/ (that would silently un-ship the whole fix), and whether run_mutants.sh references the old path.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is .cargo ignored? ===… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+.cargo/ isn't ignored. But I don't see the staged deletion of mutants.toml in that output — let me verify rather than assume.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== porcelain (all) ==="; … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+git ls-files and --cached both empty — that contradicts a staged deletion. Let me find out what actually happened rather than guess.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== in HEAD? ==="; git sho… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The root file was already untracked — let me confirm the history so my write-up is accurate, then proceed.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is 26defce9 an ancesto… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mystery solved: `26defce9 at 20:03 is the **harness's own safety_commit()** sweeping up my staged deletion mid-session (message shape refactor(): remove code is generate_commit_message`'s). So the move is half-landed already. Let me start the checks in background and write the CLAUDE.md correction.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A .… (2 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unexercised" CLAUDE.md ✓ (2ms)
+ ✓ (2.0s)
+  2 tools completed in 2.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
