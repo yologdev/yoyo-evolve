@@ -205,6 +205,40 @@ EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
 # could-not-run branch makes, the refusal UngradedScan's unread-lines clause makes.
 EXCLUDED_NO_HARNESS_OUTPUT = "EXCLUDED_NO_HARNESS_OUTPUT"
 
+# The next exclusion state (#810, @yuanhao 2026-08-25), layered ON TOP of the
+# no-harness-output one rather than replacing it. Buckets are referred to BY NAME and
+# never by ordinal here: the two sentences above already disagree about which ordinal
+# EXCLUDED_NO_HARNESS_OUTPUT holds, and inventing an agreement they never had would be
+# a worse record than the collision.
+#
+# The measured defect. Three real workflow logs (32667319793, 32679577526, 32688121916,
+# ~107 KB each) scored `abstentions=0 firings=0 fallback=0 gradeable=no` — the row a
+# healthy zero-abstention session prints. Every one of them died BEFORE Phase A1:
+# `cargo test` failed at the build-verification step, three startup attempts per run,
+# zero phases, zero tasks (the sonnet-5 preset-pricing episode, fixed at f9073e8d /
+# 0577bfe7). EXCLUDED_NO_HARNESS_OUTPUT missed them because it asks `markers == 0` and
+# a run that started and immediately died carries 3 SESSION_HEADER markers.
+#
+# Why that inverts the metric: "the harness printed something" and "the harness got far
+# enough to be measurable" are different questions, and only the second licenses
+# scoring a session. A STARVED loop and a HEALTHY loop produced the identical row —
+# those sessions were not clean and not merely unmeasured, they were destroyed, and the
+# instrument reported the outcome as indistinguishable from health. That is my own
+# "could not check must never read as checked; clean" rule failing in the sharpest
+# direction available, inside the meter that decides whether #808 works.
+#
+# SESSION_HEADER is deliberately NOT weakened. @yuanhao is explicit and correct that it
+# is real evidence a log *is* a session log; this is a separate eligibility test on top
+# of that fact, not a retreat from it.
+EXCLUDED_NO_PHASE_REACHED = "EXCLUDED_NO_PHASE_REACHED"
+
+# The three states of `classify_phase_reach`. None is folded into another, and the
+# first is what keeps the two buckets DISJOINT: a log with no markers at all belongs to
+# EXCLUDED_NO_HARNESS_OUTPUT and must not also be counted as having reached no phase.
+PHASE_REACH_NO_OUTPUT = "PHASE_REACH_NO_OUTPUT"
+PHASE_REACH_NONE = "PHASE_REACH_NONE"
+PHASE_REACH_MEASURABLE = "PHASE_REACH_MEASURABLE"
+
 # `sessions/day-N-YYYYMMDDTHHMMSSZ` — written by scripts/evolve.sh:3471.
 SESSION_DIR_TS_RE = re.compile(r"^day-\d+-(\d{8}T\d{6}Z)$")
 COMPACT_TS_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$")
@@ -318,6 +352,12 @@ PHASE_A2 = "PHASE_A2"
 PHASE_B = "PHASE_B"
 TASK_START = "TASK_START"
 SESSION_FOOTER = "SESSION_FOOTER"
+
+# The markers that prove the loop got PAST build verification. SESSION_HEADER and
+# SESSION_FOOTER are deliberately absent: they are bookends the harness prints whether
+# or not any work happened, and SESSION_HEADER's presence in a destroyed run is the
+# whole reason EXCLUDED_NO_HARNESS_OUTPUT could not see #810's three logs.
+_PHASE_MARKERS = frozenset({PHASE_A1, PHASE_A2, PHASE_B, TASK_START})
 
 _HARNESS_OUTPUT_PATTERNS = (
     (
@@ -449,6 +489,53 @@ def has_harness_output(lines):
     return False
 
 
+def phase_reach_markers(lines):
+    """Pure: the SET of UNQUOTED harness-marker names appearing in `lines`.
+
+    The fold `classify_phase_reach` consumes. A set, not a count: the question it
+    answers is *which* markers were reached, and the count half already lives in
+    `SessionCounts.harness_markers`.
+    """
+    seen = set()
+    for line in lines:
+        marker, _prose = classify_harness_output(line)
+        if marker is not None:
+            seen.add(marker)
+    return seen
+
+
+def classify_phase_reach(markers):
+    """Pure: three states over the set of unquoted harness markers seen.
+
+    - no markers at all -> PHASE_REACH_NO_OUTPUT. Not this bucket's business; it is
+      EXCLUDED_NO_HARNESS_OUTPUT's, and returning a distinct value here is what keeps
+      the two disjoint rather than double-counting an empty log.
+    - markers present, but every one of them a BOOKEND -> PHASE_REACH_NONE. The harness
+      spoke and then died before any measurable phase (#810: three ~107 KB logs
+      carrying three `=== Day N (...) ===` headers each and nothing else).
+    - any PHASE marker present -> PHASE_REACH_MEASURABLE. Byte-identical to the
+      pre-fix behaviour, which is every healthy session and was the regression risk.
+
+    The split is bookends vs phases, and that is a deliberate widening of #810's task
+    wording ("markers present but no PHASE_A1"). The bookends print whether or not any
+    work happened; a phase marker is printed only once `scripts/evolve.sh` is past
+    build verification, which is the property being tested. Anchoring on PHASE_A1
+    ALONE would exclude a head-truncated log carrying `Phase B: Implementation...` and
+    `→ Task 1: ...` — over-firing, which costs real data, where under-firing only
+    leaves today's behaviour. Both real inputs are unaffected: the starved logs carry
+    no phase marker at all, the healthy ones carry every kind.
+
+    **Stated limit:** this distinguishes "reached a measurable phase" from "did not".
+    It says nothing about whether the session was any GOOD — a full session that
+    reached Phase A1 and produced garbage scores exactly as an honest one does.
+    """
+    if not markers:
+        return PHASE_REACH_NO_OUTPUT
+    if markers & _PHASE_MARKERS:
+        return PHASE_REACH_MEASURABLE
+    return PHASE_REACH_NONE
+
+
 def parse_timestamp(text):
     """Pure: an aware UTC datetime from a compact or ISO-8601 stamp, else None.
 
@@ -529,6 +616,10 @@ class SessionCounts:
         # it out of `prose_excluded` is deliberate: that counter is rendered on every
         # healthy row, and folding these in would change the healthy path's output.
         self.harness_prose_excluded = 0
+        # The SET of unquoted marker names seen, folded beside the count above (#810,
+        # 2026-08-25). None for the same reason `harness_markers` is: no stream was
+        # folded at all, which is "nobody looked", not "nothing was there".
+        self.harness_marker_names = None
         # Age and eligibility. The default is ELIGIBLE so that every path with no
         # `--since*` boundary behaves and renders exactly as it did before #810's
         # boundary landed.
@@ -576,11 +667,24 @@ class SessionCounts:
         return self.harness_markers == 0
 
     @property
+    def no_phase_reached(self):
+        """Markers were seen, but none of them was PHASE_A1 (#810, 2026-08-25).
+
+        Disjoint from `no_harness_output` by construction: an empty marker set
+        classifies as PHASE_REACH_NO_OUTPUT, which is that bucket's state, not this
+        one's. An unfolded stream (`harness_marker_names is None`) is neither.
+        """
+        if self.harness_marker_names is None:
+            return False
+        return classify_phase_reach(self.harness_marker_names) == PHASE_REACH_NONE
+
+    @property
     def gradeable(self):
         return (
             self.abstentions > 0
             and not self.provider_error_excluded
             and not self.no_harness_output
+            and not self.no_phase_reached
         )
 
     def row(self):
@@ -590,6 +694,14 @@ class SessionCounts:
         suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
         if self.no_harness_output:
             suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+            if self.harness_prose_excluded:
+                suffix += (
+                    f" [harness_markers_quoted={self.harness_prose_excluded}]"
+                )
+        elif self.no_phase_reached:
+            # `elif`, not `if`: the two buckets are disjoint, and rendering both on one
+            # row would suggest a session can sit in each.
+            suffix += f" [{EXCLUDED_NO_PHASE_REACHED}]"
             if self.harness_prose_excluded:
                 suffix += (
                     f" [harness_markers_quoted={self.harness_prose_excluded}]"
@@ -612,6 +724,7 @@ def count_lines(name, lines):
     """Pure: fold an iterable of lines into a SessionCounts."""
     counts = SessionCounts(name)
     counts.harness_markers = 0
+    counts.harness_marker_names = set()
     for line in lines:
         # Harness-output evidence first, and deliberately WITHOUT `continue`: its six
         # shapes are disjoint from the marker and provider-error shapes, and falling
@@ -619,6 +732,7 @@ def count_lines(name, lines):
         harness_marker, harness_prose = classify_harness_output(line)
         if harness_marker is not None:
             counts.harness_markers += 1
+            counts.harness_marker_names.add(harness_marker)
         elif harness_prose:
             counts.harness_prose_excluded += 1
         # Provider-error evidence next; its shapes are disjoint from the markers', so
@@ -882,8 +996,26 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
             f"and denominator both, because an absent input must never stand in for a "
             f"measured zero.\n"
         )
+    # Disjoint from the bucket above by construction (an empty marker set classifies as
+    # PHASE_REACH_NO_OUTPUT, not PHASE_REACH_NONE), so no extra filtering is needed
+    # here — but it IS reported separately and never summed into any other bucket.
+    no_phase_excluded = [s for s in sessions if s.no_phase_reached]
+    if no_phase_excluded:
+        header += (
+            f"excluded (no phase reached): {len(no_phase_excluded)} session(s) carried "
+            f"harness output but never reached a measurable phase (no Phase A1/A2/B "
+            f"and no task start — only the bookend `=== Day N ===` lines the harness "
+            f"prints whether or not work happened). The loop started and died before "
+            f"any phase, so a starved session would otherwise print the row a healthy "
+            f"one prints. Excluded from numerator and denominator both. Says only that "
+            f"no measurable phase was reached, never that the session was any good.\n"
+        )
     provider_excluded = [
-        s for s in sessions if s.provider_error_excluded and not s.no_harness_output
+        s
+        for s in sessions
+        if s.provider_error_excluded
+        and not s.no_harness_output
+        and not s.no_phase_reached
     ]
     if provider_excluded:
         header += (
@@ -903,7 +1035,13 @@ def grade(sessions, boundary_label=None, boundary_ts=None):
         prov_clause += (
             f", {len(no_output_excluded)} excluded for no harness output"
         )
-    other_excluded = len(provider_excluded) + len(no_output_excluded)
+    if no_phase_excluded:
+        prov_clause += (
+            f", {len(no_phase_excluded)} excluded for reaching no phase"
+        )
+    other_excluded = (
+        len(provider_excluded) + len(no_output_excluded) + len(no_phase_excluded)
+    )
     if n < MIN_GRADEABLE_SESSIONS:
         return header + (
             f"NOT YET GRADEABLE: {n} of {MIN_GRADEABLE_SESSIONS} gradeable sessions "
@@ -1815,6 +1953,124 @@ def run_self_tests():
     # "nobody looked" must not be reported as "nothing was there".
     check("unobserved stream is not the bucket", mk("hand", 1, 0).no_harness_output, False)
     check("unobserved stream stays gradeable", mk("hand", 1, 0).gradeable, True)
+
+    # -- EXCLUDED_NO_PHASE_REACHED (#810, @yuanhao 2026-08-25) --------------------
+    # A destroyed session must not score like a healthy one. The three real logs
+    # (32667319793, 32679577526, 32688121916) died at build verification and carry
+    # three `=== Day N (...) ===` headers each — harness output present, no phase.
+
+    # (a) The pure classifier, all three states, none folded into another.
+    check("no markers is the other bucket's state",
+          classify_phase_reach(set()), PHASE_REACH_NO_OUTPUT)
+    check("bookends only -> no phase reached",
+          classify_phase_reach({SESSION_HEADER}), PHASE_REACH_NONE)
+    check("header+footer is still bookends only",
+          classify_phase_reach({SESSION_HEADER, SESSION_FOOTER}), PHASE_REACH_NONE)
+    check("Phase A1 -> measurable",
+          classify_phase_reach({SESSION_HEADER, PHASE_A1}), PHASE_REACH_MEASURABLE)
+    # The widening over #810's literal wording: a head-truncated log that lost its
+    # A1 line but carries later phases has demonstrably done work. Under-fire here
+    # rather than over-fire, because over-firing destroys real data points.
+    for late in (PHASE_A2, PHASE_B, TASK_START):
+        check(f"{late} alone is still measurable",
+              classify_phase_reach({SESSION_HEADER, late}), PHASE_REACH_MEASURABLE)
+
+    # (b) The set fold, and the prose filter surviving into it. `Phase A1` appears in
+    # #810's thread, in this file, and in CLAUDE.md — a log holding only my prose
+    # about the detector must NOT read as having reached Phase A1.
+    check("fold collects unquoted names",
+          phase_reach_markers(["  Phase A1: Assessment (5400s)...",
+                               "=== Day 177 (2026-08-24 22:41) ==="]),
+          {PHASE_A1, SESSION_HEADER})
+    check("fold drops quoted prose",
+          phase_reach_markers(["=== Day 177 (2026-08-24 22:41) ===",
+                               "the harness prints `  Phase A1: Assessment (5400s)...`",
+                               "| Phase A1: Assessment (5400s)... |"]),
+          {SESSION_HEADER})
+
+    # (c) End to end: the starved shape is excluded, and its quoted-prose twin lands
+    # in the SAME bucket rather than sneaking into the measurable set.
+    starved = count_lines("starved.log", [
+        "=== Day 177 (2026-08-24 22:41) ===",
+        "  error: test failed, to rerun pass `--bin yoyo`",
+        "=== Day 177 (2026-08-24 23:05) ===",
+    ])
+    check("starved shape excluded", starved.no_phase_reached, True)
+    check("starved is not the marker-less bucket", starved.no_harness_output, False)
+    check("starved is not gradeable", starved.gradeable, False)
+    check("row names the bucket",
+          f"[{EXCLUDED_NO_PHASE_REACHED}]" in starved.row(), True)
+
+    prose_phase = count_lines("prose_phase.log", [
+        "=== Day 177 (2026-08-24 22:41) ===",
+        "scripts/evolve.sh:1167:  Phase A1: Assessment (5400s)...",
+    ])
+    check("quoted Phase A1 does not rescue a starved log",
+          prose_phase.no_phase_reached, True)
+    check("quoted Phase A1 is counted, not dropped",
+          prose_phase.harness_prose_excluded, 1)
+
+    # (d) THE NEGATIVE CONTROL. My most recent injury sets the direction I guard, and
+    # last time I shipped a bucket verified only where it fires. A log that reached a
+    # phase must be untouched — same row, same gradeability.
+    healthy = count_lines("healthy.log", [
+        "=== Day 177 (2026-08-24 22:41) ===",
+        "  Phase A1: Assessment (5400s)...",
+        "  Phase A2: Planning (5400s)...",
+        "  WARNING: No assessment produced — planning agent will read source "
+        "directly (slower).",
+        "=== Day 177 complete ===",
+    ])
+    check("healthy log reaches a phase", healthy.no_phase_reached, False)
+    check("healthy log still gradeable", healthy.gradeable, True)
+    check("healthy row carries no exclusion suffix", "[" in healthy.row(), False)
+
+    # (e) Disjointness: an empty log belongs to ONE bucket, not two.
+    empty_both = count_lines("empty.log", [])
+    check("empty log is the marker-less bucket", empty_both.no_harness_output, True)
+    check("empty log is NOT this bucket", empty_both.no_phase_reached, False)
+    check("empty row names one bucket only",
+          f"[{EXCLUDED_NO_PHASE_REACHED}]" in empty_both.row(), False)
+
+    # (f) An unfolded stream is neither — "nobody looked" is not "nothing was there".
+    check("unobserved stream is not this bucket", mk("hand", 1, 0).no_phase_reached,
+          False)
+
+    # (g) The verdict reports it separately and sums it into nothing.
+    def mk_starved(name, abstentions, firings):
+        c = mk(name, abstentions, firings)
+        c.harness_markers = 3
+        c.harness_marker_names = {SESSION_HEADER}
+        return c
+
+    def mk_phased(name, abstentions, firings):
+        c = mk(name, abstentions, firings)
+        c.harness_markers = 5
+        c.harness_marker_names = {SESSION_HEADER, PHASE_A1}
+        return c
+
+    v5 = grade([mk_phased("a", 1, 1), mk_phased("b", 1, 0),
+                mk_starved("dead", 1, 0), mk_noout("empty", 1, 0)])
+    check("verdict names the new bucket",
+          "excluded (no phase reached): 1 session(s)" in v5, True)
+    check("new bucket named in the tail",
+          "1 excluded for reaching no phase" in v5, True)
+    check("still names the marker-less bucket separately",
+          "excluded (no harness output): 1 session(s)" in v5, True)
+    check("buckets are not summed", "2 session(s)" in v5, False)
+    check("starved session left the denominator",
+          "2 of 4 gradeable sessions" in v5, True)
+    check("MIN_GRADEABLE_SESSIONS unchanged", MIN_GRADEABLE_SESSIONS, 4)
+
+    # (h) A log that reaches a phase produces the byte-identical verdict it did before
+    # this bucket existed — the common path, and the regression risk.
+    check(
+        "measurable sessions verdict unchanged",
+        grade([mk_phased("a", 1, 1), mk_phased("b", 1, 1),
+               mk_phased("c", 1, 0), mk_phased("d", 1, 0)]),
+        "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
+        "(4 session(s) read, 0 excluded for zero abstentions).",
+    )
 
     if failures:
         for f in failures:
