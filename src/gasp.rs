@@ -322,7 +322,11 @@ pub(crate) async fn tee_prompt_messages(
 /// The standing goal an evolve session serves when none is named. Copied
 /// unchanged from `tools/gasp-emit/src/main.rs` — a goal id is a node identity
 /// in a shared store, so a "nicer" string is a *different graph*.
-const DEFAULT_GOAL: &str = "goal_self_improvement";
+///
+/// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`], which must name the
+/// same default when no `--goal` is passed. Widened rather than copied: a second
+/// literal here would be a second graph the day one of them is edited.
+pub(crate) const DEFAULT_GOAL: &str = "goal_self_improvement";
 /// Title/summary for a session goal created on first reference.
 const DEFAULT_GOAL_TITLE: &str = "Evolve: improve yoyo's own code, skills, and reliability";
 const DEFAULT_GOAL_SUMMARY: &str = "the standing goal every evolve session serves; tasks and patches under it are the self-improvement ratchet";
@@ -334,7 +338,14 @@ const PRODUCT_GOAL: &str = "goal_product_value";
 /// The `--kind product` reroute, as a pure decision.
 ///
 /// Any other kind (including the empty string) keeps the goal it was given.
-fn goal_for_kind(kind: &str, goal: &str) -> String {
+///
+/// `pub(crate)` for [`crate::gasp_cli::run_gasp_command`]'s `task-result` arm:
+/// [`task_planned`] applies this reroute itself, [`task_result`] takes no `kind`
+/// and so cannot, and the sidecar applies it to *every* arm
+/// (`tools/gasp-emit/src/main.rs:107-110`). Calling this one is what keeps the
+/// two lanes filing under the same goal; a second `if kind == "product"` at the
+/// call site would be a rule with two statements.
+pub(crate) fn goal_for_kind(kind: &str, goal: &str) -> String {
     if kind == "product" {
         PRODUCT_GOAL.to_string()
     } else {
@@ -410,9 +421,6 @@ async fn ensure_goal<S: EventStore>(
 /// behind a 600s lease — opening a second `GitEventStore` on the same root
 /// collides with the recorder's rather than cooperating (measured Day 165, and
 /// the whole reason the sidecar cannot run alongside).
-// Dormant: the caller is #683 items (3)+(7) (the operator-lane env bridge),
-// which cannot exist until the sidecar's session record is retired.
-#[allow(dead_code)]
 pub(crate) async fn session_start(
     recorder: &GaspRecorder,
     run_id: &str,
@@ -479,8 +487,6 @@ async fn session_start_in<S: EventStore>(
 }
 
 /// Record a task planned inside a session, under the goal its `kind` selects.
-// Dormant for the same reason as [`session_start`] — #683 items (3)+(7).
-#[allow(dead_code)]
 pub(crate) async fn task_planned(
     recorder: &GaspRecorder,
     run_id: &str,
@@ -578,9 +584,6 @@ fn session_outcome(requested: Option<&str>) -> &str {
 /// Takes the recorder for the same reason its siblings do: a GASP repo is
 /// single-writer behind that lease, so opening a second `GitEventStore` on the
 /// same root collides with the recorder's rather than cooperating.
-// Dormant: the caller is #683 items (3)+(7) (the operator-lane env bridge),
-// which cannot exist until the sidecar's session record is retired.
-#[allow(dead_code)]
 pub(crate) async fn session_end(
     recorder: &GaspRecorder,
     run_id: &str,
@@ -651,10 +654,6 @@ pub(crate) async fn session_end(
 /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
 /// the two graphs must agree on what a promotion is, so this is deliberately a
 /// byte-identical comparison and not a looser parse.
-// Dormant for the same reason as its three siblings: the caller is #683 items
-// (3)+(7) (the operator-lane env bridge), which cannot exist until the
-// sidecar's session record is retired.
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn task_result(
     recorder: &GaspRecorder,
