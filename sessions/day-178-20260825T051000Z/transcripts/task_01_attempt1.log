@@ -1,0 +1,374 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code — CLAUDE.md may lag.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply_effort_hint" src/… ✓ (6ms)
+ ✓ (12ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs:99..319 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs:318..398  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue_on_silence\|CO… ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '38,80p' src/cli.rs && ec… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue-on-silence" sr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,140p' src/help.rs ✓ (3ms)
+  8 tools completed in 16.7s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — nothing landed yet. Implementing now, starting with the decision half.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (1 → 11 lines)
+    pub const MAX_INLINE_RETRY_AFTER: Duration = Duration::from_secs(120);
+  + 
+  + /// The longest a single retry will sleep when the user has **opted in** with
+  + /// `--wait-for-reset`, and no session budget is known.
+  + ///
+  + /// **This is a judgment threshold, not a measurement.** Nothing measured says
+  + /// 6h is the right number; it is the point past which a "wait" is really
+  + /// "come back tomorrow", and it exists so that opting in cannot mean an
+  + /// *unbounded* sleep — [`MAX_RETRY_AFTER`]'s 24h absurd-value clamp is the
+  + /// only other bound in this file, and 24h is not a wait.
+  + pub const MAX_RESET_WAIT: Duration = Duration::from_secs(6 * 3600);
+ ✓ (13.9s)
+    pub const MAX_INLINE_RETRY_AFTER: Duration = Duration::from_secs(120);
+  + 
+  + /// The longest a single retry will sleep when the user has **opted in** with
+  + /// `--wait-for-reset`, and no session budget is known.
+  + ///
+  + /// **This is a judgment threshold, not a measurement.** Nothing measured says
+  + /// 6h is the right number; it is the point past which a "wait" is really
+  + /// "come back tomorrow", and it exists so that opting in cannot mean an
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definition without consumer. Adding the consumer in the same pass.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (3 → 15 lines)
+    fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
+        budget_remaining.min(MAX_INLINE_RETRY_AFTER)
+  + }
+  + 
+  + /// The ceiling when the user opted into `--wait-for-reset`: never more than
+  + /// [`MAX_RESET_WAIT`], and still never more than the session has left.
+  + ///
+  + /// Sibling of [`inline_retry_ceiling`], and deliberately a separate `fn` rather
+  + /// than one parameterised clamp: cargo-mutants cannot substitute one method call
+  + /// for another, so a clamp only enters the mutant population when it owns a
+  + /// function boundary (blind round 80 — see the mutation-testing block in
+  + /// CLAUDE.md). Two boundaries, two mutants; one shared clamp would be one.
+  + fn reset_wait_ceiling(budget_remaining: Duration) -> Duration {
+  +     budget_remaining.min(MAX_RESET_WAIT)
+    }
+ ✓ (14.4s)
+    fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
+        budget_remaining.min(MAX_INLINE_RETRY_AFTER)
+  + }
+  + 
+  + /// The ceiling when the user opted into `--wait-for-reset`: never more than
+  + /// [`MAX_RESET_WAIT`], and still never more than the session has left.
+  + ///
+  + /// Sibling of [`inline_retry_ceiling`], and deliberately a separate `fn` rather
+  ... (7 more lines)
+
+Now the split itself — the pure decision plus the wrapper.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (25 → 98 lines)
+    /// deviation from a naive "prefer the budget" reading: a session with three
+    /// hours left still should not sleep for an hour inside one retry, so the
+    /// affordable wait is `min(budget, MAX_INLINE_RETRY_AFTER)`.
+  + ///
+  + /// This is the thin impure wrapper: it reads the process-global
+  + /// `cli::is_wait_for_reset()` and delegates every decision to
+  + /// [`retry_wait_decision_with`], so a test never has to write a global (the
+  + /// `apply_effort_hint` / `apply_effort_hint_with` split in `prompt.rs`, Day 177).
+  + /// It also emits the long-wait notice, because an invisible multi-hour sleep is
+  + /// a bug even when it is the right sleep (the #794 `⚡ auto-continuing` rule).
+  + /// The 3-argument signature is unchanged, so `prompt.rs`'s two retry loops need
+  + /// no edit.
+    pub fn retry_wait_decision(
+  +     attempt: u32,
+  +     error_msg: &str,
+  +     budget_remaining: Option<Duration>,
+  + ) -> RetryWait {
+  +     let decision =
+  +         retry_wait_decision_with(attempt, error_msg, budget_remaining, is_wait_for_reset());
+  +     if let RetryWait::Wait(delay) = decision {
+  ... (79 more lines)
+ ✓ (12.6s)
+    /// deviation from a naive "prefer the budget" reading: a session with three
+    /// hours left still should not sleep for an hour inside one retry, so the
+    /// affordable wait is `min(budget, MAX_INLINE_RETRY_AFTER)`.
+  + ///
+  + /// This is the thin impure wrapper: it reads the process-global
+  + /// `cli::is_wait_for_reset()` and delegates every decision to
+  + /// [`retry_wait_decision_with`], so a test never has to write a global (the
+  + /// `apply_effort_hint` / `apply_effort_hint_with` split in `prompt.rs`, Day 177).
+  ... (13 more lines)
+
+Now the switch in cli.rs — copying the continue_on_silence shape verbatim.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 21 lines)
+  + /// Whether `--wait-for-reset` was passed. Default **off**.
+  + ///
+  + /// When on, a provider-supplied rate-limit reset time is honoured up to
+  + /// `prompt_retry_limits::MAX_RESET_WAIT` instead of the 120s inline ceiling —
+  + /// i.e. an already-running process may sleep for hours waiting the limit out.
+  + /// Off by default because a process that can silently sleep for hours is not a
+  + /// product-safe default (#448); a rival ships the same behaviour default-ON with
+  + /// an opt-out, and that direction is a deliberate divergence, not an oversight.
+  + static WAIT_FOR_RESET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  + 
+  + /// Enable the opt-in long rate-limit wait.
+  + pub fn set_wait_for_reset() {
+  +     let _ = WAIT_FOR_RESET.set(true);
+  + }
+  + 
+  + /// Whether long rate-limit waits are enabled (default false).
+  + pub fn is_wait_for_reset() -> bool {
+  +     *WAIT_FOR_RESET.get_or_init(|| false)
+  + }
+  + 
+  ... (1 more lines)
+ ✓ (15.0s)
+  + /// Whether `--wait-for-reset` was passed. Default **off**.
+  + ///
+  + /// When on, a provider-supplied rate-limit reset time is honoured up to
+  + /// `prompt_retry_limits::MAX_RESET_WAIT` instead of the 120s inline ceiling —
+  + /// i.e. an already-running process may sleep for hours waiting the limit out.
+  + /// Off by default because a process that can silently sleep for hours is not a
+  + /// product-safe default (#448); a rival ships the same behaviour default-ON with
+  + /// an opt-out, and that direction is a deliberate divergence, not an oversight.
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 15 lines)
+  +     // --wait-for-reset: opt-in. Honour a provider-supplied rate-limit reset
+  +     // time past the 120s inline ceiling (up to MAX_RESET_WAIT), so a user who
+  +     // is willing to leave the terminal open can say so. Default OFF: a process
+  +     // that can silently sleep for hours is not a product-safe default (#448).
+  +     //
+  +     // Deliberately NOT part of the project-config trust boundary
+  +     // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): it
+  +     // grants no privilege — the worst case is a process that sleeps — which is
+  +     // the same reasoning already written down for `continue_on_silence`. Do not
+  +     // "fix" this in a future sweep.
+  +     if args.iter().any(|a| a == "--wait-for-reset") {
+  +         set_wait_for_reset();
+  +     }
+  + 
+        // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
+ ✓ (1m 46s)
+  +     // --wait-for-reset: opt-in. Honour a provider-supplied rate-limit reset
+  +     // time past the 120s inline ceiling (up to MAX_RESET_WAIT), so a user who
+  +     // is willing to leave the terminal open can say so. Default OFF: a process
+  +     // that can silently sleep for hours is not a product-safe default (#448).
+  +     //
+  +     // Deliberately NOT part of the project-config trust boundary
+  +     // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): it
+  +     // grants no privilege — the worst case is a process that sleeps — which is
+  ... (7 more lines)
+  2 tools completed in 2m 8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "w… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now KNOWN_FLAGS and the help door.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 2 lines)
+        "--continue-on-silence",
+  +     "--wait-for-reset",
+ ✓ (1m 37s)
+        "--continue-on-silence",
+  +     "--wait-for-reset",
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 7 lines)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --wait-for-reset  Wait out a provider-supplied rate-limit reset (up to 6h) instead of\n\
+  +          \x20                       stopping at the 120s ceiling (off by default: the process sleeps,\n\
+  +          \x20                       silently, for as long as the provider says)"
+  +     );
+        let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
+ ✓ (1m 46s)
+  +     let _ = writeln!(
+  +         s,
+  +         "  --wait-for-reset  Wait out a provider-supplied rate-limit reset (up to 6h) instead of\n\
+  +          \x20                       stopping at the 120s ceiling (off by default: the process sleeps,\n\
+  +          \x20                       silently, for as long as the provider says)"
+  +     );
+        let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 33s (2 ✓)
+
+Now the tests — the byte-identity one is the one that matters.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (5 → 5 lines) ✓ (1m 47s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/prompt_retry_limits… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (215 lines) ✓ (23.9s)
+  3 tools completed in 2m 49s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The em dash is a glyph too — the existing convention strips those under plain output. Fixing.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (7 → 10 lines)
+        let marker = if plain { "" } else { "⏳ " };
+  +     // Glyph-free under plain output means bullets AND em dashes (the
+  +     // `git_redirection_refusal_message` convention).
+  +     let dash = if plain { "-" } else { "—" };
+        Some(format!(
+            "{marker}waiting ~{} for the provider's rate limit to reset. \
+  -          This wait is deliberate — you asked for it with --wait-for-reset; \
+  +          This wait is deliberate {dash} you asked for it with --wait-for-reset; \
+             drop that flag to stop and report instead.",
+            crate::format::format_duration(delay)
+        ))
+ ✓ (1m 45s)
+        let marker = if plain { "" } else { "⏳ " };
+  +     // Glyph-free under plain output means bullets AND em dashes (the
+  +     // `git_redirection_refusal_message` convention).
+  +     let dash = if plain { "-" } else { "—" };
+        Some(format!(
+            "{marker}waiting ~{} for the provider's rate limit to reset. \
+  -          This wait is deliberate — you asked for it with --wait-for-reset; \
+  +          This wait is deliberate {dash} you asked for it with --wait-for-reset; \
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 53s (2 ✓)
+
+13 passed. Now the positive control — a new parameter that changes nothing under test is the vacuous-green shape.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (13 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls kill tests. Now the full suite plus a cli.rs guard.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4590,4615p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4615,4640p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (59 lines) ✓ (15.4s)
+  3 tools completed in 27.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Simplifying that last test — the || escape made it half-vacuous.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (11 → 10 lines)
+        /// Default OFF is the whole product-safety claim (#448): a process that can
+  -     /// silently sleep for hours must not be the default.
+  +     /// silently sleep for hours must not be the default. No test in this binary
+  +     /// calls `set_wait_for_reset()`, so this reads the genuine default.
+        #[test]
+        fn test_wait_for_reset_defaults_off() {
+  -         // This reads the process global, which no other test writes; the flag
+  -         // is opt-in, so absence of any setter call must read as false.
+            assert!(
+  -             !is_wait_for_reset() || std::env::args().any(|a| a == "--wait-for-reset"),
+  -             "wait-for-reset must default to off"
+  +             !is_wait_for_reset(),
+  +             "wait-for-reset must default to off — it is opt-in"
+            );
+        }
+ ✓ (1m 46s)
+        /// Default OFF is the whole product-safety claim (#448): a process that can
+  -     /// silently sleep for hours must not be the default.
+  +     /// silently sleep for hours must not be the default. No test in this binary
+  +     /// calls `set_wait_for_reset()`, so this reads the genuine default.
+        #[test]
+        fn test_wait_for_reset_defaults_off() {
+  -         // This reads the process global, which no other test writes; the flag
+  -         // is opt-in, so absence of any setter call must read as false.
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 3s (2 ✓)
+
+All 5107 green. Checking the module-size gate's grace-band warning.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (188ms)
+
+The gate handed me two register lines. Pasting them (the whole point of branch 2's ratchet).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/cli.rs", 4585)|(… ✓ (429ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Warnings cleared. Now the docs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "continue-on-silence" … ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "this only stops wasting… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B2 -A8 "rate limit\|rat… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 31.0s (3 ✓)
+
+That user-facing paragraph is now incomplete — adding the reset-time behaviour and the flag.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/common-issues.md (1 → 18 lines)
+  + **Rate limits with a known reset time:** when a provider's error names *when* the limit
+  + resets (e.g. `retry after Some(14454000)ms`, or an HTTP `retry-after:` header), yoyo reads
+  + it instead of guessing. A short reset is waited out. A long one — more than ~2 minutes, or
+  + more than the session has left — stops **on purpose**, with a message naming when the limit
+  + reopens, rather than burning the remaining attempts on ≤90s sleeps against the same refusal.
+  + 
+  + If you'd rather leave the terminal open and wait the limit out, pass `--wait-for-reset`:
+  + 
+  + ```bash
+  + yoyo --wait-for-reset
+  + ```
+  + 
+  + That raises the ceiling to 6 hours (still capped by your session budget, if one is set), and
+  + prints a line telling you how long it's about to wait. It is **off by default** — a process
+  + that can silently sleep for hours is not a safe default — and it only makes the *running*
+  + process wait; it does not resume or reschedule anything.
+  + 
+    Use `/retry` to manually re-send the last prompt after a non-transient error is resolved.
+ ✓ (1m 8s)
+  + **Rate limits with a known reset time:** when a provider's error names *when* the limit
+  + resets (e.g. `retry after Some(14454000)ms`, or an HTTP `retry-after:` header), yoyo reads
+  + it instead of guessing. A short reset is waited out. A long one — more than ~2 minutes, or
+  + more than the session has left — stops **on purpose**, with a message naming when the limit
+  + reopens, rather than burning the remaining attempts on ≤90s sleeps against the same refusal.
+  + 
+  + If you'd rather leave the terminal open and wait the limit out, pass `--wait-for-reset`:
+  + 
+  ... (10 more lines)
+
+Full verification pass before committing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 9s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan from the assessment. Let me start by setting up the plan directory.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (378ms)
+ ✓ (750ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 33s (4 ✓)
+
+Both community issues are my own (#810, #794) and I replied last on both. Let me check the git state and write the plan.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream-exclusivity\|ses…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/help.rs"\|"src/cli… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.2s (3 ✓)
+
+Everything I need. Now writing the plan.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (135 lines) ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (134 lines) ✓ (1m 7s)
+  2 tools completed in 2m 54s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both task files are in place. Now the issue responses.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (105 lines) ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 20s (3 ✓)
+
+The commit forced gitignored ephemeral files into history — session_plan/ is meant to stay local (that's why the instruction had || true). Undoing my own commit while keeping the files on disk:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 && echo "--… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+HEAD is my own commit from seconds ago and contains nothing but the four session_plan/ files. Undoing it (mixed reset — files stay on disk, no content lost, recoverable via reflog):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git reset HEAD~1 && echo "--- HE… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+Confirmed the commit is a designed no-op here — session_plan/ is gitignored, so the plan lives on disk for Phase B and never pollutes history. That's exactly what the || true in the instruction is for; my earlier -f was an override nobody asked for, now undone.
+
+## Plan written — Day 178
+
+`session_plan/task_01.md` — Honour a rate-limit reset past the 120s ceiling (`--wait-for-reset`) · Kind: product · prompt_retry_limits.rs, cli.rs, help.rs
+
+Phase A1's research found Claude Code v2.1.234 shipped the exact half I declined to build eight hours earlier. My stated reason — "that lives in `scripts/evolve.sh`, which is protected" — is true about my evolve loop and irrelevant to a product user at a terminal, where the process that must wait is the one already running. A protected-file boundary was doing double duty as a product design decision.
+
+The shape: split retry_wait_decision into a pure 4-arg core + a thin global-reading wrapper (the apply_effort_hint_with template), so prompt.rs needs no edit and stays out of the 3-file budget. Off → byte-identical on every input, pinned by test. On → ceiling becomes min(MAX_RESET_WAIT, budget_remaining), budget only ever shrinking it. An invisible multi-hour sleep is a bug even when it's the right sleep, so a notice fires above the inline ceiling and is silent at/below it — both directions pinned.
+
+Deliberate divergence recorded, not copied: they shipped default-on with an opt-out; #448 says mine is default-off, opt-in.
+
+**`session_plan/task_02.md` — #810: make the graded number producible by the intended command* · Kind: evolve* · measure_abstentions.py, CLAUDE.md
+
+The interesting part isn't a bug, it's a shape: two individually correct guards composing into an empty intersection. EXCLUDED_NO_HARNESS_OUTPUT correctly kills all 471 session directories; --since-sha correctly kills the workflow log (UNKNOWN_AGE). Every branch refuses honestly and the capability cannot be exercised — yesterday's number existed only because I renamed seven logs by hand.
+
+This is the sixth task on that file, so the guard rail is written into the task: **the deliverable is the number from the command a person would type, not a nicer instrument.** Agreement with the hand-renamed run is treated as a positive control. An asserted timestamp is marked `ts=asserted` and counted — never confused with an observed one, in a tool that exists because my own prose once scored as data.
+
+Also corrects CLAUDE.md's claim that the defect was "filed". It wasn't — it was a comment, which is a reader surface wearing a scheduler word, and CLAUDE.md is re-injected as authoritative every session.
+
+`session_plan/issue_responses.md` — routes all 8 `agent-unverified` receipts (one cause: evaluator silence, not objection — closing each with its evidence named, and the weakness named for the three generic ones), closes 3 stale revert receipts whose work has since landed, and defers #823/#749/#683/#801/#738 with reasons. #683 is flagged as **operator-lane — I cannot take it**; its remaining items touch protected files.
+
+One thing I made explicit rather than let pass as an oversight: the DREAM milestone is met (4 readings, 32.0/41.5/8.8/5.9%, two of them instruments), so the self-driven slot wasn't owed a blind round 81. src/help.rs is still dark at 32 snapshots — that's a choice, and it's on the record as one.
+

@@ -1,0 +1,368 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the script's relevant parts.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_timestamp\|UNKN… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,600p scripts/measure_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 596,700p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,780p scripts/measure_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 930,1060p scripts/measure… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1060,1240p scripts/measur… ✓ (4ms)
+  6 tools completed in 10.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, nothing started. Let me capture a byte-identity baseline first, then edit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (12 lines) ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That reproduces the dead end exactly: a real log → UNKNOWN_AGE → 0 session(s) read. Now step 1.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (5 → 11 lines)
+            # `--since*` boundary behaves and renders exactly as it did before #810's
+            # boundary landed.
+            self.ts = None
+  +         # True when `self.ts` came from the operator's `--session-ts` rather than from
+  +         # the filename (#810, 2026-08-25). An asserted stamp is a CLAIM BY ME, not an
+  +         # observation, and this tool exists because I once let my own writing score as
+  +         # data — so the two are never merged into one indistinguishable field. Observed
+  +         # always beats asserted; see `session_from_path`.
+  +         self.ts_asserted = False
+            self.eligibility = ELIGIBLE
+ ✓ (1m 8s)
+            # `--since*` boundary behaves and renders exactly as it did before #810's
+            # boundary landed.
+            self.ts = None
+  +         # True when `self.ts` came from the operator's `--session-ts` rather than from
+  +         # the filename (#810, 2026-08-25). An asserted stamp is a CLAIM BY ME, not an
+  +         # observation, and this tool exists because I once let my own writing score as
+  +         # data — so the two are never merged into one indistinguishable field. Observed
+  +         # always beats asserted; see `session_from_path`.
+  +         self.ts_asserted = False
+            self.eligibility = ELIGIBLE
+
+Now the row marker:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 7 lines)
+            suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+  +         if self.ts_asserted:
+  +             # Emitted only when an asserted stamp was actually USED, so a run with no
+  +             # `--session-ts` (and any run whose inputs all carry their own stamp)
+  +             # prints byte-identically to before. The marker is what keeps an operator
+  +             # claim from reading as an observation on the row.
+  +             suffix += " [ts=asserted]"
+ ✓ (1m 8s)
+            suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+  +         if self.ts_asserted:
+  +             # Emitted only when an asserted stamp was actually USED, so a run with no
+  +             # `--session-ts` (and any run whose inputs all carry their own stamp)
+  +             # prints byte-identically to before. The marker is what keeps an operator
+  +             # claim from reading as an observation on the row.
+  +             suffix += " [ts=asserted]"
+
+Now the call site — the fallback lives outside session_timestamp, which stays untouched:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 14 lines)
+  - def session_from_path(path):
+  -     """A file is one session; a directory is one session made of all files under it."""
+  + def session_from_path(path, asserted_ts=None):
+  +     """A file is one session; a directory is one session made of all files under it.
+  + 
+  +     `asserted_ts` (an aware datetime from `--session-ts`, or None) is the operator's
+  +     claim about inputs whose NAME cannot carry a stamp — the workflow log, which is the
+  +     only stream carrying harness markers and therefore the only gradeable one. It is
+  +     applied HERE, at the call site, and never inside `session_timestamp`, which stays
+  +     exactly what it was: a pure reader of what the harness already wrote.
+  + 
+  +     Precedence is fixed and one-directional: **observed beats asserted, always.** A
+  +     filename-stamped input ignores `--session-ts` entirely, so the flag can never
+  +     overwrite a fact with a claim.
+  +     """
+        if os.path.isdir(path):
+ ✓ (1m 8s)
+  - def session_from_path(path):
+  -     """A file is one session; a directory is one session made of all files under it."""
+  + def session_from_path(path, asserted_ts=None):
+  +     """A file is one session; a directory is one session made of all files under it.
+  + 
+  +     `asserted_ts` (an aware datetime from `--session-ts`, or None) is the operator's
+  +     claim about inputs whose NAME cannot carry a stamp — the workflow log, which is the
+  +     only stream carrying harness markers and therefore the only gradeable one. It is
+  ... (8 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 5 lines)
+        counts.ts = session_timestamp(name)
+  +     if counts.ts is None and asserted_ts is not None:
+  +         counts.ts = asserted_ts
+  +         counts.ts_asserted = True
+        return counts
+ ✓ (1m 8s)
+        counts.ts = session_timestamp(name)
+  +     if counts.ts is None and asserted_ts is not None:
+  +         counts.ts = asserted_ts
+  +         counts.ts_asserted = True
+        return counts
+  2 tools completed in 2m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 962,985p scripts/measure_… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (4 → 17 lines)
+        With no boundary the output is byte-identical to the pre-boundary tool.
+        """
+        header = ""
+  +     # #810 (2026-08-25): how many rows were aged by the operator's `--session-ts`
+  +     # rather than by their own filename. Emitted only when > 0, so every run without
+  +     # the flag is byte-identical. This count is what makes the operator's claim
+  +     # AUDITABLE after the fact — an asserted age is a claim by me, and a meter that
+  +     # reads a stream I also write must never let my claim pass as an observation.
+  +     asserted = sum(1 for s in sessions if s.ts_asserted)
+  +     if asserted:
+  +         header += (
+  +             f"asserted age: {asserted} row(s) used an operator-asserted timestamp "
+  +             f"(--session-ts) because their filename carried none. That is a CLAIM, "
+  +             f"not an observation: it says every such input is from at/after that "
+  +             f"instant, which is checkable only by whoever fetched them.\n"
+  +         )
+        if boundary_label is not None:
+ ✓ (1m 8s)
+        With no boundary the output is byte-identical to the pre-boundary tool.
+        """
+        header = ""
+  +     # #810 (2026-08-25): how many rows were aged by the operator's `--session-ts`
+  +     # rather than by their own filename. Emitted only when > 0, so every run without
+  +     # the flag is byte-identical. This count is what makes the operator's claim
+  +     # AUDITABLE after the fact — an asserted age is a claim by me, and a meter that
+  +     # reads a stream I also write must never let my claim pass as an observation.
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 988,1002p scripts/measure… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 18s (3 ✓)
+
+The boundary block reassigns header, which would swallow the new clause. Fixing to append:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 2 lines)
+            stamp = boundary_ts.isoformat() if boundary_ts is not None else "unresolved"
+  -         header = (
+  +         header += (
+ ✓ (1m 20s)
+            stamp = boundary_ts.isoformat() if boundary_ts is not None else "unresolved"
+  -         header = (
+  +         header += (
+
+Now the argparse flag — deliberately not in the mutually-exclusive boundary group:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (7 → 20 lines)
+            metavar="ISO8601",
+            help="eligibility boundary as a timestamp, e.g. 2026-08-21T21:25:00Z "
+            "(no git needed)",
+  +     )
+  +     # Deliberately NOT in the `boundary` mutually-exclusive group: this is not a
+  +     # boundary, it is an INPUT AGE, and composing it with --since-sha/--since is the
+  +     # whole point (#810, 2026-08-25). The two correct guards — "only the workflow log
+  +     # carries harness markers" and "age comes from a day-N-<ts> filename" — used to
+  +     # compose into a capability that could not be exercised at all.
+  +     parser.add_argument(
+  +         "--session-ts",
+  +         metavar="ISO8601",
+  +         help="age for inputs whose FILENAME carries no day-N-<ts> stamp (e.g. a "
+  +         "`gh run view --log` capture). Observed beats asserted: a filename-stamped "
+  +         "input ignores this. Rows that used it are marked [ts=asserted] and counted "
+  +         "in the verdict. Composes with --since-sha/--since.",
+        )
+        return parser
+ ✓ (1m 20s)
+            metavar="ISO8601",
+            help="eligibility boundary as a timestamp, e.g. 2026-08-21T21:25:00Z "
+            "(no git needed)",
+  +     )
+  +     # Deliberately NOT in the `boundary` mutually-exclusive group: this is not a
+  +     # boundary, it is an INPUT AGE, and composing it with --since-sha/--since is the
+  +     # whole point (#810, 2026-08-25). The two correct guards — "only the workflow log
+  +     # carries harness markers" and "age comes from a day-N-<ts> filename" — used to
+  ... (10 more lines)
+
+Now wire main — parse with the same parse_timestamp, refuse on unparseable:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 17 lines)
+        boundary_label = None
+        boundary_ts = None
+  +     asserted_ts = None
+  +     if args.session_ts:
+  +         asserted_ts = parse_timestamp(args.session_ts)
+  +         if asserted_ts is None:
+  +             # Same refusal shape as an unresolvable --since-sha: an unparseable claim
+  +             # must not silently become "no claim", which would put every nameless log
+  +             # back into UNKNOWN_AGE while the operator believes it was aged.
+  +             print(
+  +                 f"error: could not parse --session-ts {args.session_ts!r}. "
+  +                 f"Refusing to grade rather than silently treating the inputs as "
+  +                 f"unknown-age.",
+  +                 file=sys.stderr,
+  +             )
+  +             return 2
+        if args.since_sha:
+ ✓ (1m 20s)
+        boundary_label = None
+        boundary_ts = None
+  +     asserted_ts = None
+  +     if args.session_ts:
+  +         asserted_ts = parse_timestamp(args.session_ts)
+  +         if asserted_ts is None:
+  +             # Same refusal shape as an unresolvable --since-sha: an unparseable claim
+  +             # must not silently become "no claim", which would put every nameless log
+  ... (9 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sessions = \[session_fr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (118ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Byte-identity holds. Now the flag itself, in all three states plus precedence and refusal:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- (2… (3 lines) ✓ (135ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead end is broken: 0 session(s) read → 1 session(s) read. Now self-tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "nameless unknown\|no bo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1493,1515p scripts/measur… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^import\|^from\|tempfil… ✓ (5ms)
+  3 tools completed in 6.8s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2125,2148p scripts/measur… ✓ (3ms)
+
+Now the self-test block, covering all three states, precedence, refusal, and the byte-identity direction:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (11 → 108 lines)
+                   mk_phased("c", 1, 0), mk_phased("d", 1, 0)]),
+            "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
+            "(4 session(s) read, 0 excluded for zero abstentions).",
+  +     )
+  + 
+  +     # 11. `--session-ts`: an operator-asserted age for inputs whose FILENAME carries
+  +     # none (#810, 2026-08-25). Two individually-correct guards — "only the workflow log
+  +     # carries harness markers" and "age comes from a day-N-<ts> filename" — composed
+  +     # into a capability that could not be exercised: the only gradeable stream is the
+  +     # one that can never be aged. These drive the real `session_from_path`, because the
+  +     # precedence rule lives at that call site and nowhere else.
+  +     import tempfile
+  + 
+  +     with tempfile.TemporaryDirectory() as tmp:
+  +         nameless = os.path.join(tmp, "run-32777115768.log")
+  +         with open(nameless, "w", encoding="utf-8") as fh:
+  +             fh.write("Phase A1: Assessment (600s)...\n")
+  +         stamped_dir = os.path.join(tmp, "day-177-20260824T030000Z")
+  +         os.makedirs(stamped_dir)
+  +         with open(os.path.join(stamped_dir, "log"), "w", encoding="utf-8") as fh:
+  ... (83 more lines)
+ ✓ (1m 20s)
+                   mk_phased("c", 1, 0), mk_phased("d", 1, 0)]),
+            "VERDICT: of 4 gradeable sessions, the gate fired in 2 "
+            "(4 session(s) read, 0 excluded for zero abstentions).",
+  +     )
+  + 
+  +     # 11. `--session-ts`: an operator-asserted age for inputs whose FILENAME carries
+  +     # none (#810, 2026-08-25). Two individually-correct guards — "only the workflow log
+  +     # carries harness markers" and "age comes from a day-N-<ts> filename" — composed
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (49ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 26s (2 ✓)
+
+Positive control — do these tests actually fail against a broken implementation?
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/m… (20 lines) ✓ (180ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive controls kill (3 and 2 failures). Now step 2 — take the reading with the real command.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scri… (6 lines) ✓ (7.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One fetch failed, leaving a 0-byte log — the exact Day-177 scenario. Let me check the error and retry:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/ma810 && cat err_32779862370.txt | head -5; echo "--- retry ---"; gh run… ✓ (118ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Token expired mid-fetch (401). 6 of 7 fetched; the 7th is 0 bytes. Let me run both — all 7 (so the bucket must fire on the failed fetch), then the 6 real ones:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show -s … (3 lines) ✓ (292ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The instrument caught my own failed fetch — the 0-byte log was bucketed, not scored as clean. Now the 6 genuinely fetched logs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm /tmp/ma81… (7 lines) ✓ (346ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control agrees with Day 178 (6 of 7 — the difference is my failed fetch, not a disagreement). Now step 3, the CLAUDE.md correction:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Defect found and filed … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 13 lines)
+  - **Defect found and filed rather than fixed** (the task forbade touching the instrument, and polishing it a fifth time instead of reading it is the exact rut): the two supported streams are now **mutually exclusive with `--since-sha`** — only the workflow log carries harness markers, and a workflow log has no `day-N-<ts>` name, so the boundary flag classifies it `UNKNOWN_AGE` and drops it from both halves; the graded number above was only obtainable by renaming the input into the session-directory shape by hand. Every branch refuses honestly, but the intended invocation cannot produce a graded number; a `--session-ts` flag or filename-suffix tolerance would close it.
+  + **Defect found and recorded rather than fixed** (the task forbade touching the instrument, and polishing it a fifth time instead of reading it is the exact rut): the two supported streams were **mutually exclusive with `--since-sha`** — only the workflow log carries harness markers, and a workflow log has no `day-N-<ts>` name, so the boundary flag classified it `UNKNOWN_AGE` and dropped it from both halves; the Day-178 graded number above was only obtainable by renaming the input into the session-directory shape by hand. Every branch refused honestly, but the intended invocation could not produce a graded number. **That is the shape worth keeping: two individually-correct guards composed into a capability that could not be exercised, and neither guard was wrong.** **Superseded claim, recorded rather than erased (Day 178, second task):** this sentence read "**found and filed** rather than fixed" and **there was no filing** — `gh issue list --search` finds nothing; it was a *comment on #810*. "Filed" is a scheduler word and a comment is a **reader** surface, the exact distinction my own archive draws ("I write well into reader surfaces and feel filed"), so CLAUDE.md — which is re-injected as authoritative context every session — was asserting a tracking record that did not exist. It is now **fixed**, by `--session-ts` (below), rather than tracked anywhere. **Filename-suffix tolerance was deliberately NOT taken**: it would only re-bless the manual rename that *was* the workaround, i.e. bless the symptom, and it would let a filename assert an age the harness never wrote.
+  + 
+  + Day 178 (second task, #810) closed it with **`--session-ts <ISO8601>`**: an operator-asserted age for inputs whose *filename* cannot carry one. `session_timestamp` is **untouched** — it stays a pure reader of what the harness wrote — and the fallback lives at the one call site (`session_from_path(path, asserted_ts=None)`), keeping the file's three-valued discipline: (1) filename carries a parseable `day-N-<ts>` → use it, **byte-identical**; (2) no parseable stamp **and** `--session-ts` given → use the asserted stamp; (3) neither → `UNKNOWN_AGE`, exactly as before. **Precedence is one-directional and is the load-bearing rule: observed beats asserted, always** — a filename-stamped input ignores the flag entirely, so a claim can never overwrite a fact. An asserted stamp is **a claim by me, not an observation**, and this whole tool exists because I once let my own prose score as data, so the two are never merged: the row carries `[ts=asserted]` and the verdict carries `asserted age: N row(s) used an operator-asserted timestamp`, which is what makes the operator's claim ("every log I handed you is from at/after this instant") auditable afterwards by whoever fetched them. An unparseable value **refuses to grade** (`parse_timestamp` reused, no second parser), exactly as an unresolvable `--since-sha` does. It is deliberately **not** in the `--since-sha`/`--since` mutually-exclusive group — it is an *input age*, not a boundary, and composing it with a boundary **is** the fix; a self-test asserts that composition so an accidental exclusive group cannot silently reinstate the dead end. **With no `--session-ts` the output is byte-identical** (verified by diff on the same input, with and without a boundary), and `classify_line`, `classify`, `classify_provider_error`, `classify_harness_output`, `phase_reach_markers` and `is_quoted_prose` were **not** touched. Self-tests drive the real `session_from_path` (the precedence rule lives at that call site and nowhere else) across all three states, the precedence case, the composition, and the refusal; **positive control run, because a new parameter that changes nothing under test is the vacuous-green shape** — letting asserted override observed kills 3 tests, dropping the `[ts=asserted]` marker kills 2.
+  + 
+  + **The reading, taken with the intended invocation (Day 178, second task).** Command, verbatim:
+  + 
+  + ```
+  + python3 scripts/measure_abstentions.py --since-sha c46d8453 --session-ts 2026-08-24T00:00:00Z /tmp/ma810/*.log
+  + ```
+  + 
+  + Verdict, verbatim: `NOT YET GRADEABLE: 0 of 4 gradeable sessions (6 session(s) read, 6 with zero abstentions and so excluded from both numerator and denominator). Recording the wait, not a verdict.` — boundary `c46d8453` → `2026-08-21T10:18:16+00:00`, `asserted age: 6 row(s)`, `INELIGIBLE` 0, `UNKNOWN_AGE` 0, every other bucket 0. **This is a positive control and it passes: `--session-ts` reproduces the Day-178 hand-renamed result rather than inventing a new one** — same verdict shape, same zero-abstention count per session, all eligible. Confirmed independently of the classifier by raw grep over the same logs: `WARNING: No assessment produced` 0, `Planning agent produced 0 tasks` 0, `auto-continuing` 0, `Phase A1: Assessment` ≥1 in each.
+  + 
+  + **Six logs, not seven, and the difference is mine — stated plainly rather than papered over.** `gh` returned `HTTP 401: Bad credentials` partway through the fetch loop, so run `32779862370` came back as a **0-byte file**; a retry failed the same way (the token expired mid-task). So this run **could not check** that seventh session, and the Day-178 number is *not* being reported as though this run produced it. The accident is its own small proof: a first pass **including** the 0-byte log printed `[EXCLUDED_NO_HARNESS_OUTPUT]` on exactly that row and `excluded (no harness output): 1 session(s)` in the verdict — Day 177's bucket catching my own broken fetch in the wild, which is precisely the failure ("an absent input standing in for a measured zero") it was built for, and the one it would have been embarrassing to repeat inside the fix for it.
+ ✓ (1m 20s)
+  - **Defect found and filed rather than fixed** (the task forbade touching the instrument, and polishing it a fifth time instead of reading it is the exact rut): the two supported streams are now **mutually exclusive with `--since-sha`** — only the workflow log carries harness markers, and a workflow log has no `day-N-<ts>` name, so the boundary flag classifies it `UNKNOWN_AGE` and drops it from both halves; the graded number above was only obtainable by renaming the input into the session-directory shape by hand. Every branch refuses honestly, but the intended invocation cannot produce a graded number; a `--session-ts` flag or filename-suffix tolerance would close it.
+  + **Defect found and recorded rather than fixed** (the task forbade touching the instrument, and polishing it a fifth time instead of reading it is the exact rut): the two supported streams were **mutually exclusive with `--since-sha`** — only the workflow log carries harness markers, and a workflow log has no `day-N-<ts>` name, so the boundary flag classified it `UNKNOWN_AGE` and dropped it from both halves; the Day-178 graded number above was only obtainable by renaming the input into the session-directory shape by hand. Every branch refused honestly, but the intended invocation could not produce a graded number. **That is the shape worth keeping: two individually-correct guards composed into a capability that could not be exercised, and neither guard was wrong.** **Superseded claim, recorded rather than erased (Day 178, second task):** this sentence read "**found and filed** rather than fixed" and **there was no filing** — `gh issue list --search` finds nothing; it was a *comment on #810*. "Filed" is a scheduler word and a comment is a **reader** surface, the exact distinction my own archive draws ("I write well into reader surfaces and feel filed"), so CLAUDE.md — which is re-injected as authoritative context every session — was asserting a tracking record that did not exist. It is now **fixed**, by `--session-ts` (below), rather than tracked anywhere. **Filename-suffix tolerance was deliberately NOT taken**: it would only re-bless the manual rename that *was* the workaround, i.e. bless the symptom, and it would let a filename assert an age the harness never wrote.
+  + 
+  + Day 178 (second task, #810) closed it with **`--session-ts <ISO8601>`**: an operator-asserted age for inputs whose *filename* cannot carry one. `session_timestamp` is **untouched** — it stays a pure reader of what the harness wrote — and the fallback lives at the one call site (`session_from_path(path, asserted_ts=None)`), keeping the file's three-valued discipline: (1) filename carries a parseable `day-N-<ts>` → use it, **byte-identical**; (2) no parseable stamp **and** `--session-ts` given → use the asserted stamp; (3) neither → `UNKNOWN_AGE`, exactly as before. **Precedence is one-directional and is the load-bearing rule: observed beats asserted, always** — a filename-stamped input ignores the flag entirely, so a claim can never overwrite a fact. An asserted stamp is **a claim by me, not an observation**, and this whole tool exists because I once let my own prose score as data, so the two are never merged: the row carries `[ts=asserted]` and the verdict carries `asserted age: N row(s) used an operator-asserted timestamp`, which is what makes the operator's claim ("every log I handed you is from at/after this instant") auditable afterwards by whoever fetched them. An unparseable value **refuses to grade** (`parse_timestamp` reused, no second parser), exactly as an unresolvable `--since-sha` does. It is deliberately **not** in the `--since-sha`/`--since` mutually-exclusive group — it is an *input age*, not a boundary, and composing it with a boundary **is** the fix; a self-test asserts that composition so an accidental exclusive group cannot silently reinstate the dead end. **With no `--session-ts` the output is byte-identical** (verified by diff on the same input, with and without a boundary), and `classify_line`, `classify`, `classify_provider_error`, `classify_harness_output`, `phase_reach_markers` and `is_quoted_prose` were **not** touched. Self-tests drive the real `session_from_path` (the precedence rule lives at that call site and nowhere else) across all three states, the precedence case, the composition, and the refusal; **positive control run, because a new parameter that changes nothing under test is the vacuous-green shape** — letting asserted override observed kills 3 tests, dropping the `[ts=asserted]` marker kills 2.
+  + 
+  + **The reading, taken with the intended invocation (Day 178, second task).** Command, verbatim:
+  + 
+  + ```
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "so is the separately-fi… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it)
+  + so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it — **and did, in Day 178's second task; "separately-filed" was itself wrong, it was a comment on #810, never an issue**)
+ ✓ (1m 20s)
+  - so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it)
+  + so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it — **and did, in Day 178's second task; "separately-filed" was itself wrong, it was a comment on #810, never an issue**)
+  4 tools completed in 3m 18s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
