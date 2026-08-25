@@ -2,8 +2,13 @@
 # scripts/gasp_shim.sh — GASP instrumentation for evolve.sh (sourced, never run).
 #
 # Emits yoyo's session transitions as GASP events (github.com/yologdev/gasp)
-# into the yoyo-gasp state repo (github.com/yologdev/yoyo-gasp), via the
-# gasp-emit sidecar (tools/gasp-emit, built on yoagent-state 0.4).
+# into the yoyo-gasp state repo (github.com/yologdev/yoyo-gasp), via
+# `yoyo gasp <arm>` — the featured yoyo binary itself (#683 item 7).
+#
+# The gasp-emit sidecar it used to shell out to is DELETED. One writer, one
+# crate, one set of node-id rules: the arms live in src/gasp.rs and the CLI
+# door in src/gasp_cli.rs, so a change to a goal id or a node-id shape cannot
+# drift between two implementations any more.
 #
 # DESIGN RULE: strictly fail-soft. Every entry point returns 0; any failure
 # disables emission for the rest of the session with a warning naming the
@@ -28,7 +33,14 @@
 GASP_ENABLED=false
 GASP_STATE_REPO="${GASP_STATE_REPO:-github.com/yologdev/yoyo-gasp}"
 GASP_STATE_DIR="${GASP_STATE_DIR:-/tmp/yoyo-gasp-state.$$}"
-GASP_EMIT_BIN="target/gasp-emit/debug/gasp-emit"
+# The featured yoyo binary IS the emitter now (#683 item 7 — the sidecar is
+# retired). Built into its own --target-dir on purpose: cargo uplifts a
+# default-target build to target/debug/yoyo, so a plain `cargo build`
+# anywhere in Phase B would silently replace a featured binary with an
+# unfeatured one and every `yoyo gasp` call would start failing mid-session.
+# A separate dir cannot be clobbered that way (evolve.sh:381 documents the
+# uplift hazard that made this necessary).
+GASP_YOYO_BIN="target/gasp-yoyo/debug/yoyo"
 GASP_PUSH_URL=""
 GASP_RUN_ID=""
 GASP_FAIL_COUNTER=".yoyo/gasp_failures"
@@ -57,7 +69,7 @@ _gasp_note_failure() {
     [ "${GITHUB_ACTIONS:-}" = "true" ] && echo "::warning::GASP state stream failure ($n recorded failures) — check the [gasp] log lines" 2>/dev/null
     if [ "$n" -ge 3 ]; then
         echo "  [gasp] ⚠⚠⚠ GASP has failed $n recorded sessions — the state stream may be dead" >&2
-        echo "  [gasp]     check: GH_PAT validity/push access to ${GASP_STATE_REPO}, gasp-emit build" >&2
+        echo "  [gasp]     check: GH_PAT validity/push access to ${GASP_STATE_REPO}, featured yoyo build" >&2
         echo "  [gasp]     reset with: echo 0 > $GASP_FAIL_COUNTER (gitignored — counts persist only on non-ephemeral runners)" >&2
     fi
     return 0
@@ -74,8 +86,8 @@ _gasp_off() {
 _gasp_emit() {
     [ "$GASP_ENABLED" = true ] || return 0
     local out
-    if ! out=$("$GASP_EMIT_BIN" "$@" 2>&1); then
-        _gasp_off "gasp-emit $1 failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' '; ')"
+    if ! out=$("$GASP_YOYO_BIN" gasp "$@" 2>&1); then
+        _gasp_off "yoyo gasp $1 failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' '; ')"
     fi
     return 0
 }
@@ -89,10 +101,12 @@ gasp_session_start() {
     [ "${GASP_DISABLE:-}" = "1" ] && return 0
     local day="${1:-0}" kind="${2:-day}" task="${3:-evolve session day ${1:-0}}" out
 
-    # 1. build the emitter (own manifest; target/ is cached+ignored already)
-    if ! out=$(cargo build --quiet --manifest-path tools/gasp-emit/Cargo.toml \
-        --target-dir target/gasp-emit 2>&1); then
-        _gasp_off "gasp-emit build failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' '; ')"
+    # 1. build the featured emitter. Same crate as the session's own binary but
+    #    a DIFFERENT --target-dir, so Phase B's plain `cargo build` cannot uplift
+    #    over it (see the GASP_YOYO_BIN note above).
+    if ! out=$(cargo build --quiet --locked --features gasp \
+        --target-dir target/gasp-yoyo 2>&1); then
+        _gasp_off "featured yoyo build failed: $(printf '%s' "$out" | tail -n 3 | tr '\n' '; ')"
         return 0
     fi
 
@@ -158,10 +172,26 @@ gasp_session_start() {
     #
     # This is the two-writer interim #683 explicitly exists to avoid
     # ("replacement avoids ever operating the awkward two-writer interim").
-    # The bridge is correct only AFTER tools/gasp-emit is retired and this shim
-    # stops opening runs — same commit, not before. Until then the in-process
-    # recorder must stay unreachable, which is exactly what an unset
-    # YOYO_GASP_STATE_DIR gives us (src/gasp.rs -> RecorderPlan::Disabled).
+    #
+    # STATUS after item (7) landed: the sidecar is gone, but the bridge is
+    # STILL not correct, and the reason is the second half of the original
+    # condition — "and this shim stops opening runs". It has not. The session
+    # tier is now emitted by `yoyo gasp session-start ... session-end`, which
+    # opens and holds a run exactly as the sidecar did; only the binary
+    # changed. Exporting the bridge now would put the agent processes'
+    # in-process recorder on the same single-writer store WHILE that run is
+    # open — the identical lease-theft failure measured on Day 165, with the
+    # same outcome: run.finished written against a live run, session-end
+    # failing with Validation("cannot finish <run>: no run is open"), and the
+    # whole session's record lost.
+    #
+    # That is what #683 item (3) still has to solve, and it is an ARCHITECTURE
+    # question, not a wiring one: either the session tier moves inside the
+    # agent process (so one process owns the run for its whole life), or the
+    # run/model/tool tier is written through these same short-lived calls.
+    # Whichever is chosen, the bridge is exported in THAT commit, not this one.
+    # Until then an unset YOYO_GASP_STATE_DIR keeps the recorder unreachable
+    # (src/gasp.rs -> RecorderPlan::Disabled), which is the safe default.
     [ "$GASP_ENABLED" = true ] && echo "  [gasp] recording as $GASP_RUN_ID -> ${GASP_STATE_REPO}"
     return 0
 }
@@ -488,7 +518,7 @@ gasp_session_end() {
         | tr '\0' '\n' | cut -c4- | grep -v '^state/' | grep -v '^$' | cut -d/ -f1 | sort -u | paste -sd, - || true)
     [ -n "$GASP_EXTRA_PATHS" ] && echo "  [gasp] state streams synced: ${GASP_EXTRA_PATHS}"
 
-    if ! out=$("$GASP_EMIT_BIN" session-end --state-dir "$GASP_STATE_DIR" \
+    if ! out=$("$GASP_YOYO_BIN" gasp session-end --state-dir "$GASP_STATE_DIR" \
         --run-id "$GASP_RUN_ID" --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
         --extra "$GASP_EXTRA_PATHS" --outcome "$outcome" 2>&1); then
         printf '%s\n' "$(_gasp_scrub "$out")" | sed 's/^/  [gasp] /' >&2
