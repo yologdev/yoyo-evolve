@@ -1,0 +1,303 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at HEAD to ground everything in what's really there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retry_delay\|CAP_SECS\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "retry_delay" src/ --in… ✓ (5ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 255,300p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1040,1100p src/prompt.rs … ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1064 && NR<=1092 {print…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1393 && NR<=1418 {print… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn format_duration"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_budget_remainin… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub fn session_budget_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/prompt_retry.rs… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1000 && NR<=1040 {print…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_duration\|pub us… ✓ (3ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 36s (12 ✓)
+
+Now I have the full picture. Writing the pure half first, right after retry_delay:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 166 lines)
+        let jittered_ms = capped * factor_bp; // capped(sec) * factor_bp == capped*1000*factor_bp/1000 (ms)
+  -     Duration::from_millis(jittered_ms.max(500))
+  +     Duration::from_millis(jittered_ms.max(MIN_RETRY_DELAY_MS))
+  + }
+  + 
+  + /// Floor for any retry sleep, in milliseconds. Shared by `retry_delay`'s
+  + /// jitter and by `retry_wait_decision`, so a provider that answers
+  + /// `retry after 1ms` cannot turn the retry loop into a hot loop.
+  + const MIN_RETRY_DELAY_MS: u64 = 500;
+  + 
+  + /// Sanity clamp on a parsed retry-after value.
+  + ///
+  + /// A provider naming a reset further out than this is clamped rather than
+  + /// rejected: the *decision* (stop retrying) is the same either way, and
+  + /// rejecting it would fall back to exponential backoff — the exact
+  + /// attempt-burning this exists to stop. The reported time then understates
+  + /// the real reset, which is the safer direction to be wrong in.
+  + const MAX_RETRY_AFTER: Duration = Duration::from_secs(24 * 3600);
+  + 
+  + /// The longest a single retry is willing to sleep inline when no session
+  ... (147 more lines)
+ ✓ (13.8s)
+        let jittered_ms = capped * factor_bp; // capped(sec) * factor_bp == capped*1000*factor_bp/1000 (ms)
+  -     Duration::from_millis(jittered_ms.max(500))
+  +     Duration::from_millis(jittered_ms.max(MIN_RETRY_DELAY_MS))
+  + }
+  + 
+  + /// Floor for any retry sleep, in milliseconds. Shared by `retry_delay`'s
+  + /// jitter and by `retry_wait_decision`, so a provider that answers
+  + /// `retry after 1ms` cannot turn the retry loop into a hot loop.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead-code errors are expected — definitions without consumers. Wiring both call sites now (that's the rule: definition and consumer in the same edit).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,165p src/prompt.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 3 lines)
+        is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  -     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     rate_limit_giveup_message, retry_wait_decision, RetryWait, StopHandling, MAX_AUTO_RETRIES,
+    };
+ ✓ (12.2s)
+        is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  -     retry_delay, StopHandling, MAX_AUTO_RETRIES,
+  +     rate_limit_giveup_message, retry_wait_decision, RetryWait, StopHandling, MAX_AUTO_RETRIES,
+    };
+  2 tools completed in 19.0s (2 ✓)
+
+Now both call sites — site 1 (text path):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (10 → 29 lines)
+                    if attempt < MAX_RETRIES {
+  -                     let delay = retry_delay(attempt + 1);
+  -                     let delay_secs = delay.as_secs();
+  -                     let next = attempt + 2; // human-readable attempt number
+  -                     eprintln!(
+  -                         "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  -                         MAX_RETRIES + 1
+  -                     );
+  -                     tokio::time::sleep(delay).await;
+  +                     // One decision, both retry loops (the other is in
+  +                     // `run_prompt_auto_retry_with_content`) — a per-token pass
+  +                     // is not a per-entry-point pass.
+  +                     match retry_wait_decision(
+  +                         attempt + 1,
+  +                         &error_msg,
+  +                         crate::prompt_budget::session_budget_remaining(),
+  +                     ) {
+  +                         RetryWait::Wait(delay) => {
+  +                             let delay_secs = delay.as_secs();
+  +                             let next = attempt + 2; // human-readable attempt number
+  ... (17 more lines)
+ ✓ (12.0s)
+                    if attempt < MAX_RETRIES {
+  -                     let delay = retry_delay(attempt + 1);
+  -                     let delay_secs = delay.as_secs();
+  -                     let next = attempt + 2; // human-readable attempt number
+  -                     eprintln!(
+  -                         "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  -                         MAX_RETRIES + 1
+  -                     );
+  ... (13 more lines)
+
+Site 2 (image/content path) — same decision, same shape:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (10 → 27 lines)
+                    if attempt < MAX_RETRIES {
+  -                     let delay = retry_delay(attempt + 1);
+  -                     let delay_secs = delay.as_secs();
+  -                     let next = attempt + 2;
+  -                     eprintln!(
+  -                         "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  -                         MAX_RETRIES + 1
+  -                     );
+  -                     tokio::time::sleep(delay).await;
+  +                     // Same shared decision as `run_prompt_auto_retry` above.
+  +                     match retry_wait_decision(
+  +                         attempt + 1,
+  +                         &error_msg,
+  +                         crate::prompt_budget::session_budget_remaining(),
+  +                     ) {
+  +                         RetryWait::Wait(delay) => {
+  +                             let delay_secs = delay.as_secs();
+  +                             let next = attempt + 2;
+  +                             eprintln!(
+  +                                 "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  ... (15 more lines)
+ ✓ (1m 48s)
+                    if attempt < MAX_RETRIES {
+  -                     let delay = retry_delay(attempt + 1);
+  -                     let delay_secs = delay.as_secs();
+  -                     let next = attempt + 2;
+  -                     eprintln!(
+  -                         "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+  -                         MAX_RETRIES + 1
+  -                     );
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "retry_delay(" src/ --i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (10ms)
+ ✓ (149ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 59s (3 ✓)
+
+Both call sites routed; zero retry_delay callers remain outside the module. Now the tests — parser table, decision table, message:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_retry_delay_zer… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Inserting the test block between the retry_delay tests and the retriable tests:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 197 lines)
+  +     // ---- retry-after parsing (Day 177) -------------------------------
+  +     // Measured evidence: two post-#808 sessions died on the verbatim string
+  +     // asserted first below, each burning every attempt against a ~4h reset.
+  + 
+  +     #[test]
+  +     fn test_retry_after_hint_reads_the_observed_shapes() {
+  +         // The exact string from the two dead sessions.
+  +         let observed = retry_after_hint("error: Rate limited, retry after Some(14454000)ms")
+  +             .expect("the observed rate-limit shape must parse");
+  +         assert_eq!(observed, Duration::from_millis(14_454_000));
+  +         assert!(
+  +             observed > Duration::from_secs(4 * 3600) && observed < Duration::from_secs(5 * 3600),
+  +             "14454000ms should read as ~4h, got {observed:?}"
+  +         );
+  + 
+  +         // Same fact without the Option wrapper.
+  +         assert_eq!(
+  +             retry_after_hint("rate_limit_error: retry after 14454000ms"),
+  +             Some(Duration::from_millis(14_454_000))
+  +         );
+  ... (177 more lines)
+ ✓ (1m 48s)
+  +     // ---- retry-after parsing (Day 177) -------------------------------
+  +     // Measured evidence: two post-#808 sessions died on the verbatim string
+  +     // asserted first below, each burning every attempt against a ~4h reset.
+  + 
+  +     #[test]
+  +     fn test_retry_after_hint_reads_the_observed_shapes() {
+  +         // The exact string from the two dead sessions.
+  +         let observed = retry_after_hint("error: Rate limited, retry after Some(14454000)ms")
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo retry_afte… ✓ (272ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 58s (2 ✓)
+
+All 7 new tests pass. Now the module-size register drift the task flagged:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/prompt_r… ✓ (5ms)
+ ✓ (143ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (145ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 21.2s (3 ✓)
+
+prompt_retry.rs is now 156 lines past the cap — fatal, and correctly so: that's the design event, not register debt. Splitting the new family into its own module instead:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^//… (3 lines) ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (28ms)
+  2 tools completed in 9.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -8 /tmp/defs.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod prompt_retry;\|^mo… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (2 → 3 lines)
+    mod prompt_budget;
+    mod prompt_retry;
+  + mod prompt_retry_limits;
+ ✓ (11.6s)
+    mod prompt_budget;
+    mod prompt_retry;
+  + mod prompt_retry_limits;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (3 → 7 lines)
+        is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  -     rate_limit_giveup_message, retry_wait_decision, RetryWait, StopHandling, MAX_AUTO_RETRIES,
+  +     StopHandling, MAX_AUTO_RETRIES,
+    };
+  + // Rate-limit aware retry (Day 177) — imported from its own module rather than
+  + // re-exported through `prompt_retry`, so a pass-through can't outlive its
+  + // callers.
+  + use crate::prompt_retry_limits::{rate_limit_giveup_message, retry_wait_decision, RetryWait};
+ ✓ (1m 47s)
+        is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
+  -     rate_limit_giveup_message, retry_wait_decision, RetryWait, StopHandling, MAX_AUTO_RETRIES,
+  +     StopHandling, MAX_AUTO_RETRIES,
+    };
+  + // Rate-limit aware retry (Day 177) — imported from its own module rather than
+  + // re-exported through `prompt_retry`, so a pass-through can't outlive its
+  + // callers.
+  + use crate::prompt_retry_limits::{rate_limit_giveup_message, retry_wait_decision, RetryWait};
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -8 ✓ (147ms)
+  6 tools completed in 2m 30s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (144ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fatal violation gone (the split worked). Now paying both register warnings, as the task requires:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/format/cost.rs",… ✓ (403ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register clean, zero warnings. Full verification:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 1s)
+  4 tools completed in 3m 51s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control — do these tests actually catch a break? Mutating the unit handling and the give-up boundary:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt_retry_limits.rs /t… ✓ (21.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/backup.rs src/prompt_ret… ✓ (21.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 52.0s (2 ✓)
+
+Both mutations killed — the tests are non-vacuous. Restoring and confirming green, then docs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo retry_ 2>&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry.rs\` — err… ✓ (3ms)
+ ✓ (22.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "rate limit\|rate_limi… ✓ (5ms)
+  4 tools completed in 51.7s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

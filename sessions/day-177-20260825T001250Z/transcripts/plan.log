@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and verifying a couple of the assessment's key claims before writing tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== mutants.toml ==="; cat… ✓ (5ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retry_after\|retry-afte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 265,300p src/prompt_retry…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry.rs src/fo… ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ISSUES_TODAY.md ==="; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=… ✓ (5ms)
+ ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 810 --repo yologde… ✓ (506ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE "Phase A1|Phase A2|→ Ta… ✓ (4ms)
+ ✓ (28ms)
+  11 tools completed in 2m 13s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (174 lines) ✓ (1m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (157 lines) ✓ (1m 24s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (87 lines) ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && head -6 … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 5m 32s (5 ✓)
+
+session_plan/ is gitignored (it's documented as ephemeral), so the commit is a no-op — the files are on disk for the implementation agents, which is what matters.
+
+## Plan written — Day 177
+
+Two task files + issue responses.
+
+### task_01 — Rate-limit aware retry (`Kind: product`, self-driven)
+The one gap with measured evidence behind it. Verified at HEAD, not from memory:
+• retry_delay has CAP_SECS = 60 (~90s with jitter), and its own test asserts that ceiling
+• is_retriable_error matches "rate_limit", so a rate limit is retried
+• grep for retry_after|retry-after in `prompt_retry.rs` finds only a doc-comment mention
+• both consumers are prompt.rs:1069 and :1398, each a bare retry_delay(attempt + 1)
+
+So a provider saying "come back in 4 hours" gets answered with 90 seconds, repeatedly, and the user is never told when the limit resets. My own measure_abstentions.py found 2 of 4 gradeable post-#808 sessions died exactly this way — I booked it as noise in a meter and it was also two dead sessions. Harness-side rescheduling is closed to me (evolve.sh is protected); the agent-side fail-fast is mine. Pure parser + three-valued decision, both call sites, byte-identical when no hint is present. Carries the two drifted module-size register entries I measured this session (cost.rs +13, prompt.rs +31).
+
+### task_02 — #810 fourth exclusion bucket (`Kind: evolve`, creator reply)
+@yuanhao reproduced it 2 minutes into this session: a 0-byte log scores identically to a healthy one. Anchoring on harness markers rather than byte size (his point about truncated logs), six markers read out of evolve.sh — deliberately excluding the === YOUR TRAJECTORY === heredoc banners, which are prompt text, not stdout. With a positive control, because if the marker set is wrong every real session gets excluded and the tool says NOT YET GRADEABLE forever — the same defect with the opposite sign.
+
+### Routing
+• #812 closed with evidence — round 66 is 3 hypotheses / 3 grades in the ledger, corroborated by blind_round_grades.rs being green
+• #813/#814 closed: the evaluator was absent, not overruled — stated plainly so it isn't read as closing on age
+
+### One judgement worth naming
+DREAM.md's milestone is met (3 mutation readings, one on an instrument, guesses logged) but the dream loop can't speak for ~5.4 days. Rather than aim the self-driven slot at completed work — or at a fourth reading the dream itself warns is diminishing — I pointed it at the tier-1 product gap. My last 8 self-driven commits are all instrumentation; my own archive says to audit the topic histogram, not the merits of each task.
+

@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "retry_delay(" src/ --i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/prompt_r… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1060,1130p src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn session_budget_r… ✓ (3ms)
+ ✓ (155ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 10s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 43s (5 ✓)
+
+**Verdict: PASS** — written to session_plan/eval_task_1.md.
+
+Key evidence gathered:
+• grep for retry_delay( outside the two retry modules: zero hits — both `prompt.rs call sites route through the shared retry_wait_decision`, so the "two doors, one works" failure mode is avoided.
+• wc -l confirms the register entries match reality exactly: src/format/cost.rs 2124, src/prompt.rs 2964.
+• cargo test --bin yoyo prompt_retry_limits: 8 passed, covering the verbatim observed string, the None near-misses (token count, request id, prose, unknown unit, overflow, multi-byte), the no-hint byte-identity range, and the emission-point message.
+• mod prompt_retry_limits; present in main.rs; MIN_RETRY_DELAY_MS has consumers in both files; RetryWait's two variants are matched exhaustively at both sites.
+• GiveUp branch sets api_error = Some(error_msg) and breaks — consistent with the exhausted-retries path's surfacing.
+• CLAUDE.md bullet added with the judgment-threshold framing and the explicit "does not reschedule" limit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,279 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the tool and verifying the harness markers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf '' > /tmp/empty.log && py…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/measure_abstention… ✓ (5ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,360p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,550p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 685,770p scripts/measure_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '136p;1167p;1291p;1709p;1… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 136 1167 1291 1709 1784… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'DATE=\|SESSION_TIME=\|A… ✓ (4ms)
+  8 tools completed in 23.8s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 805,940p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,50p scripts/measure_abs… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "count_lines\|grade(\|Se… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1050,1085p scripts/measur… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 25s (4 ✓)
+
+Markers verified. Now implementing the fourth bucket.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (1 → 15 lines)
+    EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
+  + 
+  + # The FIFTH exclusion state (#810, @yuanhao 2026-08-24) — the fourth *bucket* in the
+  + # verdict, and the one that guards the input itself rather than the session. An empty or
+  + # truncated log scored IDENTICALLY to a genuinely healthy session:
+  + #
+  + #     $ printf '' > empty.log
+  + #     $ python3 scripts/measure_abstentions.py empty.log
+  + #     empty.log   abstentions=0  firings=0  fallback=0  gradeable=no  prose_excluded=0
+  + #
+  + # How it bit: a shell-quoting slip made three `gh run view --log` redirects write 0 bytes,
+  + # and the tool reported three clean sessions. "Could not check" must never read as
+  + # "checked; clean" — the refusal the pre-push hook makes, the refusal CiScan's
+  + # could-not-run branch makes, the refusal UngradedScan's unread-lines clause makes.
+  + EXCLUDED_NO_HARNESS_OUTPUT = "EXCLUDED_NO_HARNESS_OUTPUT"
+ ✓ (1m 23s)
+    EXCLUDED_PROVIDER_ERROR = "EXCLUDED_PROVIDER_ERROR"
+  + 
+  + # The FIFTH exclusion state (#810, @yuanhao 2026-08-24) — the fourth *bucket* in the
+  + # verdict, and the one that guards the input itself rather than the session. An empty or
+  + # truncated log scored IDENTICALLY to a genuinely healthy session:
+  + #
+  + #     $ printf '' > empty.log
+  + #     $ python3 scripts/measure_abstentions.py empty.log
+  ... (7 more lines)
+
+Now the marker patterns and the pure decision functions:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (5 → 47 lines)
+    # or a leading ">" blockquote.
+    _GREP_PREFIX_RE = re.compile(r"^\s*[\w./~-]*:?\d+:")
+    _BLOCKQUOTE_RE = re.compile(r"^\s*>")
+  + 
+  + # Harness-output evidence (#810, @yuanhao 2026-08-24). These six lines are `echo`
+  + # statements to stdout in `scripts/evolve.sh` — read at HEAD, not trusted from a list:
+  + #
+  + #   :136   echo "=== Day $DAY ($DATE $SESSION_TIME) ==="
+  + #   :1167  echo "  Phase A1: Assessment (${ASSESS_TIMEOUT}s)..."
+  + #   :1291  echo "  Phase A2: Planning (${PLAN_TIMEOUT}s)..."
+  + #   :1709  echo "  Phase B: Implementation..."
+  + #   :1784  echo "  → Task $TASK_NUM: $task_title [$task_kind]"
+  + #   :3586  echo "=== Day $DAY complete ==="
+  + #
+  + # The anchor is a MARKER, not a byte count, and that is the whole design: byte size
+  + # misses the subtler half of this bug — a truncated or partially-downloaded log which
+  + # HAS bytes and no phase line, and which scores as clean today.
+  + #
+  + # Deliberately NOT anchored on: `=== YOUR TRAJECTORY ===` and the sibling `=== SECTION
+  + # ===` banners near evolve.sh:1175/:1313. Those live inside heredocs composing *prompt
+  ... (25 more lines)
+ ✓ (1m 23s)
+    # or a leading ">" blockquote.
+    _GREP_PREFIX_RE = re.compile(r"^\s*[\w./~-]*:?\d+:")
+    _BLOCKQUOTE_RE = re.compile(r"^\s*>")
+  + 
+  + # Harness-output evidence (#810, @yuanhao 2026-08-24). These six lines are `echo`
+  + # statements to stdout in `scripts/evolve.sh` — read at HEAD, not trusted from a list:
+  + #
+  + #   :136   echo "=== Day $DAY ($DATE $SESSION_TIME) ==="
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def classify_provider_e… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (4 → 47 lines)
+        return (True, False)
+  + 
+  + 
+  + def classify_harness_output_line(line):
+  +     """Pure: the harness-marker name this line shape-matches, else None.
+  + 
+  +     Shape only — says nothing about provenance, exactly as `classify_line` doesn't.
+  +     """
+  +     line = strip_ansi(line).rstrip("\n").rstrip()
+  +     for marker, pattern in _HARNESS_OUTPUT_PATTERNS:
+  +         if pattern.search(line):
+  +             return marker
+  +     return None
+  + 
+  + 
+  + def classify_harness_output(line):
+  +     """Return (marker, excluded_as_prose) — the two halves combined.
+  + 
+  +     The prose filter is not ceremony here, it is the defect this tool was born from:
+  +     #810's own thread, its task file and the CLAUDE.md paragraph documenting this fix
+  ... (27 more lines)
+ ✓ (1m 23s)
+        return (True, False)
+  + 
+  + 
+  + def classify_harness_output_line(line):
+  +     """Pure: the harness-marker name this line shape-matches, else None.
+  + 
+  +     Shape only — says nothing about provenance, exactly as `classify_line` doesn't.
+  +     """
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+Now the SessionCounts fields and properties:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 15 lines)
+            # Provider-error evidence (#810). Session-level presence — see
+            # `provider_error_excluded` for the coarseness disclosure.
+            self.provider_errors = 0
+  +         # Harness-output evidence (#810, 2026-08-24). THREE states, and the third is
+  +         # the point: an int is a real observation folded by `count_lines`; None means
+  +         # no line stream was folded at all, which is reachable only from a hand-built
+  +         # fixture (every production path goes through `session_from_path` ->
+  +         # `count_lines`). An unobserved stream must not be reported as an absent one.
+  +         self.harness_markers = None
+  +         # Harness-marker lines that were my own prose. Reported in the row ONLY when
+  +         # the session is excluded — that is the one place the number is a decision
+  +         # input ("your log has phase lines and every one of them is quoted"). Keeping
+  +         # it out of `prose_excluded` is deliberate: that counter is rendered on every
+  +         # healthy row, and folding these in would change the healthy path's output.
+  +         self.harness_prose_excluded = 0
+ ✓ (1m 23s)
+            # Provider-error evidence (#810). Session-level presence — see
+            # `provider_error_excluded` for the coarseness disclosure.
+            self.provider_errors = 0
+  +         # Harness-output evidence (#810, 2026-08-24). THREE states, and the third is
+  +         # the point: an int is a real observation folded by `count_lines`; None means
+  +         # no line stream was folded at all, which is reachable only from a hand-built
+  +         # fixture (every production path goes through `session_from_path` ->
+  +         # `count_lines`). An unobserved stream must not be reported as an absent one.
+  ... (7 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 16 lines)
+  +     @property
+  +     def no_harness_output(self):
+  +         """The fourth bucket: a line stream WAS folded and carried no harness marker.
+  + 
+  +         `harness_markers is None` (no stream folded — hand-built fixture only) is
+  +         deliberately NOT this state: "nobody looked" is not "nothing was there".
+  +         """
+  +         return self.harness_markers == 0
+  + 
+        @property
+        def gradeable(self):
+  -         return self.abstentions > 0 and not self.provider_error_excluded
+  +         return (
+  +             self.abstentions > 0
+  +             and not self.provider_error_excluded
+  +             and not self.no_harness_output
+  +         )
+ ✓ (1m 22s)
+  +     @property
+  +     def no_harness_output(self):
+  +         """The fourth bucket: a line stream WAS folded and carried no harness marker.
+  + 
+  +         `harness_markers is None` (no stream folded — hand-built fixture only) is
+  +         deliberately NOT this state: "nobody looked" is not "nothing was there".
+  +         """
+  +         return self.harness_markers == 0
+  ... (9 more lines)
+  2 tools completed in 3m 1s (2 ✓)
+
+Now row() and count_lines:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (2 → 8 lines)
+            suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+  +         if self.no_harness_output:
+  +             suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+  +             if self.harness_prose_excluded:
+  +                 suffix += (
+  +                     f" [harness_markers_quoted={self.harness_prose_excluded}]"
+  +                 )
+            if self.provider_errors:
+ ✓ (1m 23s)
+            suffix = "" if self.eligibility == ELIGIBLE else f" [{self.eligibility}]"
+  +         if self.no_harness_output:
+  +             suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+  +             if self.harness_prose_excluded:
+  +                 suffix += (
+  +                     f" [harness_markers_quoted={self.harness_prose_excluded}]"
+  +                 )
+            if self.provider_errors:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/measure_abstentions.py (3 → 12 lines)
+        counts = SessionCounts(name)
+  +     counts.harness_markers = 0
+        for line in lines:
+  -         # Provider-error evidence first; its shapes are disjoint from the markers', so
+  +         # Harness-output evidence first, and deliberately WITHOUT `continue`: its six
+  +         # shapes are disjoint from the marker and provider-error shapes, and falling
+  +         # through guarantees every pre-existing counter is byte-identical to before.
+  +         harness_marker, harness_prose = classify_harness_output(line)
+  +         if harness_marker is not None:
+  +             counts.harness_markers += 1
+  +         elif harness_prose:
+  +             counts.harness_prose_excluded += 1
+  +         # Provider-error evidence next; its shapes are disjoint from the markers', so
+ ✓ (1m 23s)
+        counts = SessionCounts(name)
+  +     counts.harness_markers = 0
+        for line in lines:
+  -         # Provider-error evidence first; its shapes are disjoint from the markers', so
+  +         # Harness-output evidence first, and deliberately WITHOUT `continue`: its six
+  +         # shapes are disjoint from the marker and provider-error shapes, and falling
+  +         # through guarantees every pre-existing counter is byte-identical to before.
+  +         harness_marker, harness_prose = classify_harness_output(line)
+  ... (5 more lines)
+  2 tools completed in 2m 51s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "provider_excluded = \[s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (42ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (42ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (41ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (44ms)
+  6 tools completed in 27.6s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session = count_lines(\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1190,1216p scripts/measur… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (59ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1573,1590p scripts/measur… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (58ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 33.2s (5 ✓)
+
+Now the new self-tests for the fourth bucket:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "all self-tests passed" … ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (149 lines) ✓ (62ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (59ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (47ms)
+ ✓ (568ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 20.6s (4 ✓)
+
+The reproduction is fixed. Now the positive control against a real log:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run view 32777115768 --repo y… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (82ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEA… (15 lines) ✓ (145ms)
+  3 tools completed in 13.0s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
