@@ -631,6 +631,108 @@ class CiScan:
     undated: int = 0
     fetch_errors: int = 0
     reason: str = ""
+    # ISO-8601 stamp of the NEWEST in-window failure, or None when there are
+    # none. This is the anchor `green_since_verdict` compares a later success
+    # against. Deliberately the newest failure OVERALL rather than the newest
+    # one that produced a rendered cluster: every rendered row comes from an
+    # in-window failure, so "every failure below predates it" stays true, and
+    # an unreadable-log run can only make the green-since claim HARDER to
+    # earn — the conservative direction for a line whose whole job is to stop
+    # over-claiming.
+    newest_failure_ts: str | None = None
+
+
+@dataclass
+class GreenScan:
+    """Has CI passed since the newest failure? Three states, none folded.
+
+    `checked` separates "the query ran and answered" from "I could not ask".
+    A `checked=False` scan must never render as "no successes" and must never
+    render as green: collapsing could-not-check into either is precisely the
+    defect this whole probe exists to prevent ("was red" must not read as "is
+    red", and its mirror, "could not check" must not read as "checked; clean").
+    """
+
+    newest_success_ts: str | None = None
+    checked: bool = False
+
+
+def newest_successful_run(repo: str) -> GreenScan:
+    """The most recent SUCCESSFUL run, via one `gh run list` call. I/O half.
+
+    Fail-soft by contract: any missing repo, non-zero exit, unparseable JSON,
+    empty result or missing `createdAt` yields `checked=False` — never an
+    exception, never a fabricated timestamp. The extractor must never block a
+    session.
+
+    Callers must gate this on there actually being an in-window failure to
+    qualify, so a healthy session makes zero extra `gh` calls."""
+    if not repo:
+        return GreenScan(checked=False)
+    rc, stdout, _stderr = run_cmd(
+        [
+            "gh", "run", "list", "--repo", repo,
+            "--status", "success", "--limit", "1",
+            "--json", "createdAt,workflowName",
+        ],
+        timeout=GH_RUN_LIST_TIMEOUT,
+    )
+    if rc != 0:
+        warn(f"gh run list --status success rc={rc} — green-since check unavailable")
+        return GreenScan(checked=False)
+    try:
+        runs = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        warn(f"gh run list --status success returned non-JSON: {e}")
+        return GreenScan(checked=False)
+    if not isinstance(runs, list):
+        return GreenScan(checked=False)
+    if not runs:
+        # The query ran and honestly answered "no successful runs". That is a
+        # real observation, NOT a failure to check.
+        return GreenScan(newest_success_ts=None, checked=True)
+    record = runs[0] if isinstance(runs[0], dict) else {}
+    ts = record.get("createdAt")
+    if not isinstance(ts, str) or not ts.strip():
+        return GreenScan(checked=False)
+    return GreenScan(newest_success_ts=ts, checked=True)
+
+
+def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
+    """One sentence: has CI passed since the newest failure below? Pure.
+
+    Returns None ONLY when there is no in-window failure to qualify — that
+    world already prints its own honest line and stays byte-identical.
+
+    The comparison is STRICT: a success stamped exactly at the newest failure
+    is NOT green-since. Ties go to "still live", the conservative direction."""
+    if not newest_failure_ts:
+        return None
+    if green is None or not green.checked:
+        return (
+            "green-since check could not run — this claims neither that the "
+            "failures below are live nor that they are cured"
+        )
+    fail_age = run_age_days(newest_failure_ts, now)
+    success_age = (
+        run_age_days(green.newest_success_ts, now) if green.newest_success_ts else None
+    )
+    if fail_age is None or (green.newest_success_ts and success_age is None):
+        # An unparseable stamp on either side is an unknown, and an unknown
+        # must not be promoted into either confident answer.
+        return (
+            "green-since check could not run — this claims neither that the "
+            "failures below are live nor that they are cured"
+        )
+    if success_age is not None and success_age < fail_age:
+        return (
+            f"CI has gone green since ({format_run_age(success_age)}): every failure "
+            "below predates it. Not proof the causes are fixed — a flaky test passes "
+            "sometimes — only that CI is not red on these patterns now."
+        )
+    return (
+        "no successful run has landed since the newest failure below — these are live"
+    )
 
 
 def collect_failed_ci_fingerprints(repo: str, now: datetime | None = None) -> CiScan:
@@ -670,6 +772,13 @@ def collect_failed_ci_fingerprints(repo: str, now: datetime | None = None) -> Ci
         excluded_old=len(too_old),
         undated=len(undated),
     )
+    if in_window:
+        # Smallest age == newest run. Read the stamp back off the record so the
+        # anchor is the timestamp gh reported, never one reconstructed from a
+        # float age.
+        newest_record = min(in_window, key=lambda pair: pair[1])[0]
+        ts = newest_record.get("createdAt")
+        scan.newest_failure_ts = ts if isinstance(ts, str) and ts.strip() else None
     if not in_window:
         return scan
 
@@ -713,11 +822,22 @@ def collect_failed_ci_fingerprints(repo: str, now: datetime | None = None) -> Ci
     return scan
 
 
-def render_ci_errors(scan: CiScan | None) -> str:
+def render_ci_errors(scan: CiScan | None, green: "GreenScan | None" = None,
+                     now: datetime | None = None) -> str:
     """Render the CI section. Every world gets its own sentence.
 
     Rows carry the age of their newest run, and the header names the window, so
-    a four-day-old resolved failure cannot read as "CI is failing right now"."""
+    a four-day-old resolved failure cannot read as "CI is failing right now".
+
+    `green` adds ONE line under the header answering the cheap, checkable
+    question the age filter cannot: has any run SUCCEEDED since the newest
+    failure below? Recent, real and already repaired was a fourth state this
+    partition did not have, and it failed in the alarming direction — priority
+    0 of the planning prompt is "fix CI failures", so a cured defect rendered
+    as live can outrank the whole rest of the plan.
+
+    Row shape, header text and every other branch are unchanged: nothing is
+    dropped, filtered or re-ranked. This adds one sentence of context."""
     if scan is None:
         return ""
     if not scan.ok:
@@ -740,6 +860,11 @@ def render_ci_errors(scan: CiScan | None) -> str:
             )
         return f"## CI: no failed runs in last {WINDOW_DAYS} days{note}"
     lines = [f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days){note}"]
+    verdict = green_since_verdict(
+        scan.newest_failure_ts, green, now or datetime.now(timezone.utc)
+    )
+    if verdict:
+        lines.append(verdict)
     for fp, run_ids, age in scan.clusters[:5]:
         n = len(run_ids)
         # Truncate fingerprint to keep line tidy
@@ -1068,6 +1193,14 @@ def main() -> int:
     tasks, reverts = collect_task_commits()
     sessions_audited, provider_hits = collect_provider_errors(audit_dir)
     ci_scan = collect_failed_ci_fingerprints(repo)
+    # Cost guard: only ask "has CI gone green since?" when there is actually a
+    # failure to qualify. Gated on `clusters` rather than `in_window` because
+    # the clusters branch is the ONLY one that renders the verdict — a healthy
+    # session (the common case) makes zero extra `gh` calls and its output is
+    # byte-identical to before.
+    green_scan = (
+        newest_successful_run(repo) if (ci_scan.ok and ci_scan.clusters) else None
+    )
 
     sections: list[str] = []
     s = render_outcomes(outcomes)
@@ -1096,7 +1229,7 @@ def main() -> int:
         s = render_subsystem_concentration(sub_counts, sub_total)
         if s:
             sections.append(s)
-    s = render_ci_errors(ci_scan)
+    s = render_ci_errors(ci_scan, green_scan)
     # A "could not check" CI note is honest, but it is not trajectory DATA —
     # it must not suppress the global "(no trajectory data yet)" state below.
     ci_unknown = bool(s) and not ci_scan.ok
@@ -2151,11 +2284,142 @@ src/commands_config.rs
         "but no error lines could be read from their logs",
     )
 
+    # 9. green_since_verdict — the fourth state the age partition never had:
+    #    recent, real, and ALREADY REPAIRED. Three verdicts plus the near-miss.
+    gnow = datetime(2026, 8, 25, 12, 0, 0, tzinfo=timezone.utc)
+    fail_ts = "2026-08-23T12:00:00Z"
+
+    assert_true(
+        "no in-window failure to qualify -> None (that branch is untouched)",
+        green_since_verdict(None, GreenScan(checked=True), gnow) is None,
+    )
+
+    # A success strictly NEWER than the newest failure: the whole point.
+    green_v = green_since_verdict(
+        fail_ts, GreenScan(newest_success_ts="2026-08-25T06:00:00Z", checked=True), gnow
+    )
+    assert_true(
+        "a later success reports CI has gone green since",
+        "gone green since" in green_v and "predates it" in green_v,
+    )
+    assert_true(
+        "the green verdict names its own limit rather than implying repair",
+        "Not proof the causes are fixed" in green_v and "flaky" in green_v,
+    )
+
+    # An OLDER success: the failures really are live, and we say so.
+    assert_eq(
+        "an older success means the failures below are still live",
+        green_since_verdict(
+            fail_ts,
+            GreenScan(newest_success_ts="2026-08-22T12:00:00Z", checked=True),
+            gnow,
+        ),
+        "no successful run has landed since the newest failure below — these are live",
+    )
+    # Checked, and there are genuinely zero successful runs. Real observation.
+    assert_eq(
+        "zero successful runs is a real answer, not a could-not-check",
+        green_since_verdict(fail_ts, GreenScan(newest_success_ts=None, checked=True), gnow),
+        "no successful run has landed since the newest failure below — these are live",
+    )
+
+    # THE NEAR MISS: equal timestamps. Strict >, so a tie is NOT green-since.
+    # A discriminator tested only on the side that fires is vacuous green.
+    assert_eq(
+        "a success stamped exactly at the newest failure is NOT green-since",
+        green_since_verdict(fail_ts, GreenScan(newest_success_ts=fail_ts, checked=True), gnow),
+        "no successful run has landed since the newest failure below — these are live",
+    )
+
+    # 10. checked=False must never render as green and never as "no successes".
+    unchecked = green_since_verdict(fail_ts, GreenScan(checked=False), gnow)
+    assert_true(
+        "could-not-run says so and claims neither live nor cured",
+        "could not run" in unchecked
+        and "neither" in unchecked
+        and "gone green" not in unchecked,
+    )
+    assert_true(
+        "a None green scan is could-not-run, never a silent 'still live'",
+        "could not run" in (green_since_verdict(fail_ts, None, gnow) or ""),
+    )
+    # An unparseable stamp on either side is an unknown, not a confident answer.
+    assert_true(
+        "an unparseable success stamp degrades to could-not-run",
+        "could not run"
+        in green_since_verdict(fail_ts, GreenScan(newest_success_ts="not-a-date", checked=True), gnow),
+    )
+
+    # 11. Emission point: the string the planner actually receives. A
+    #     could-not-check scan must carry no claim of greenness anywhere.
+    cured = CiScan(
+        ok=True,
+        clusters=[("boom", ["1", "2"], 0.9)],
+        in_window=2,
+        newest_failure_ts=fail_ts,
+    )
+    rendered_unchecked = render_ci_errors(cured, GreenScan(checked=False), gnow)
+    assert_true(
+        "rendered could-not-check section makes no greenness claim",
+        "gone green" not in rendered_unchecked and "could not run" in rendered_unchecked,
+    )
+    assert_true(
+        "the verdict sits under the header, above the cluster rows",
+        rendered_unchecked.splitlines()[0].startswith("## Recurring CI errors")
+        and "could not run" in rendered_unchecked.splitlines()[1]
+        and rendered_unchecked.splitlines()[2].startswith("[2×,"),
+    )
+    assert_true(
+        "no cluster is dropped, filtered or re-ranked by the new line",
+        "boom" in rendered_unchecked,
+    )
+    # And with a real later success, the same rows render under a green verdict.
+    rendered_green = render_ci_errors(
+        cured, GreenScan(newest_success_ts="2026-08-25T06:00:00Z", checked=True), gnow
+    )
+    assert_true(
+        "green-since verdict renders above the same untouched rows",
+        "gone green since" in rendered_green and "[2×, last <1d ago] boom" in rendered_green,
+    )
+    # A scan carrying no failure anchor renders byte-identically to before:
+    # nothing to qualify means nothing to say.
+    assert_eq(
+        "no failure anchor -> section is byte-identical to the pre-change render",
+        render_ci_errors(
+            CiScan(ok=True, clusters=[("boom", ["1", "2"], 0.9)], in_window=2)
+        ),
+        f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days)\n"
+        "[2×, last <1d ago] boom",
+    )
+
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
 
 
+USAGE = """usage: extract_trajectory.py [--test] [--help]
+
+Aggregate audit-log session outcomes, git log and recent CI runs into a
+`YOUR TRAJECTORY` markdown block for the Phase A1/A2 planning prompts.
+
+options:
+  --test    run the self-tests and exit non-zero on failure
+  --help    show this message and exit
+
+environment:
+  YOYO_AUDIT_DIR        directory of `sessions/day-*/` audit-log checkouts
+  YOYO_REPO             owner/name, enables the `gh`-backed CI sections
+  YOYO_DAY              day number for the header
+  YOYO_TRAJECTORY_OUT   output path (default .yoyo/session_staging/trajectory.md)
+
+Fail-soft by contract: every section degrades to an honest note rather than
+raising, so this never blocks a session."""
+
+
 if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(USAGE)
+        sys.exit(0)
     if "--test" in sys.argv:
         sys.exit(run_self_tests())
     sys.exit(main())
