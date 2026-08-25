@@ -132,6 +132,12 @@ pub fn cli_help_text() -> String {
          \x20                       (off by default: providers that legitimately finish quietly will\n\
          \x20                       get up to 5 extra turns per prompt — bounded, but wasted tokens)"
     );
+    let _ = writeln!(
+        s,
+        "  --wait-for-reset  Wait out a provider-supplied rate-limit reset (up to 6h) instead of\n\
+         \x20                       stopping at the 120s ceiling (off by default: the process sleeps,\n\
+         \x20                       silently, for as long as the provider says)"
+    );
     let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
     let _ = writeln!(s, "  --no-notify       Disable desktop notifications on long completions (also respects YOYO_NO_NOTIFY env)");
     let _ = writeln!(

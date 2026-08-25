@@ -56,6 +56,26 @@ pub fn is_continue_on_silence() -> bool {
     *CONTINUE_ON_SILENCE.get_or_init(|| false)
 }
 
+/// Whether `--wait-for-reset` was passed. Default **off**.
+///
+/// When on, a provider-supplied rate-limit reset time is honoured up to
+/// `prompt_retry_limits::MAX_RESET_WAIT` instead of the 120s inline ceiling —
+/// i.e. an already-running process may sleep for hours waiting the limit out.
+/// Off by default because a process that can silently sleep for hours is not a
+/// product-safe default (#448); a rival ships the same behaviour default-ON with
+/// an opt-out, and that direction is a deliberate divergence, not an oversight.
+static WAIT_FOR_RESET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable the opt-in long rate-limit wait.
+pub fn set_wait_for_reset() {
+    let _ = WAIT_FOR_RESET.set(true);
+}
+
+/// Whether long rate-limit waits are enabled (default false).
+pub fn is_wait_for_reset() -> bool {
+    *WAIT_FOR_RESET.get_or_init(|| false)
+}
+
 /// Whether `--trust-project` was passed. Default **off** (issue #748).
 ///
 /// A project-local `./.yoyo.toml` is written by whoever wrote the repository,
@@ -342,6 +362,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--no-color",
     "--screen-reader",
     "--continue-on-silence",
+    "--wait-for-reset",
     "--no-bell",
     "--no-notify",
     "--no-rtk",
@@ -1307,6 +1328,20 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         || crate::config::parse_continue_on_silence_from_config(&file_config)
     {
         set_continue_on_silence();
+    }
+
+    // --wait-for-reset: opt-in. Honour a provider-supplied rate-limit reset
+    // time past the 120s inline ceiling (up to MAX_RESET_WAIT), so a user who
+    // is willing to leave the terminal open can say so. Default OFF: a process
+    // that can silently sleep for hours is not a product-safe default (#448).
+    //
+    // Deliberately NOT part of the project-config trust boundary
+    // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): it
+    // grants no privilege — the worst case is a process that sleeps — which is
+    // the same reasoning already written down for `continue_on_silence`. Do not
+    // "fix" this in a future sweep.
+    if args.iter().any(|a| a == "--wait-for-reset") {
+        set_wait_for_reset();
     }
 
     // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
@@ -4581,5 +4616,45 @@ command = "server-two"
         let args = vec!["yoyo".to_string(), "--trust-project".to_string()];
         let value_taking = ["--model", "--mcp", "--provider"];
         assert!(check_flag_values(&args, &value_taking).is_empty());
+    }
+
+    #[test]
+    fn test_wait_for_reset_in_known_flags_and_takes_no_value() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--wait-for-reset"),
+            "an unknown flag is warned about and silently ignored"
+        );
+        // It takes no value, so a bare occurrence must not be reported as a
+        // flag missing its value (and must not swallow the next token).
+        let args = vec![
+            "yoyo".to_string(),
+            "--wait-for-reset".to_string(),
+            "--model".to_string(),
+            "opus".to_string(),
+        ];
+        let value_taking = ["--model", "--mcp", "--provider"];
+        assert!(check_flag_values(&args, &value_taking).is_empty());
+    }
+
+    /// The door: an undocumented flag is the discoverability defect fixed three
+    /// times already (#745, #767, #769). Do not create a fourth.
+    #[test]
+    fn test_wait_for_reset_is_documented_in_help() {
+        let help = crate::help::cli_help_text();
+        assert!(
+            help.contains("--wait-for-reset"),
+            "--wait-for-reset must appear in --help output"
+        );
+    }
+
+    /// Default OFF is the whole product-safety claim (#448): a process that can
+    /// silently sleep for hours must not be the default. No test in this binary
+    /// calls `set_wait_for_reset()`, so this reads the genuine default.
+    #[test]
+    fn test_wait_for_reset_defaults_off() {
+        assert!(
+            !is_wait_for_reset(),
+            "wait-for-reset must default to off — it is opt-in"
+        );
     }
 }

@@ -67,6 +67,23 @@ This appears when the Anthropic API returns an error. Common causes:
 
 **Tool error auto-recovery:** When a tool execution fails during a natural-language prompt, yoyo automatically retries the prompt with error context appended (up to 2 times). This lets the agent self-correct — for example, retrying a failed file read with a corrected path. You'll see `⚡ auto-retrying after tool error...` when this kicks in.
 
+**Rate limits with a known reset time:** when a provider's error names *when* the limit
+resets (e.g. `retry after Some(14454000)ms`, or an HTTP `retry-after:` header), yoyo reads
+it instead of guessing. A short reset is waited out. A long one — more than ~2 minutes, or
+more than the session has left — stops **on purpose**, with a message naming when the limit
+reopens, rather than burning the remaining attempts on ≤90s sleeps against the same refusal.
+
+If you'd rather leave the terminal open and wait the limit out, pass `--wait-for-reset`:
+
+```bash
+yoyo --wait-for-reset
+```
+
+That raises the ceiling to 6 hours (still capped by your session budget, if one is set), and
+prints a line telling you how long it's about to wait. It is **off by default** — a process
+that can silently sleep for hours is not a safe default — and it only makes the *running*
+process wait; it does not resume or reschedule anything.
+
 Use `/retry` to manually re-send the last prompt after a non-transient error is resolved.
 
 ## Context window full

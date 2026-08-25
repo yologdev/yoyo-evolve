@@ -33,6 +33,16 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(24 * 3600);
 /// information than one told when the limit resets.
 pub const MAX_INLINE_RETRY_AFTER: Duration = Duration::from_secs(120);
 
+/// The longest a single retry will sleep when the user has **opted in** with
+/// `--wait-for-reset`, and no session budget is known.
+///
+/// **This is a judgment threshold, not a measurement.** Nothing measured says
+/// 6h is the right number; it is the point past which a "wait" is really
+/// "come back tomorrow", and it exists so that opting in cannot mean an
+/// *unbounded* sleep — [`MAX_RETRY_AFTER`]'s 24h absurd-value clamp is the
+/// only other bound in this file, and 24h is not a wait.
+pub const MAX_RESET_WAIT: Duration = Duration::from_secs(6 * 3600);
+
 /// Parse an explicit reset time out of a provider error message.
 ///
 /// Recognises only the shapes that actually occur, and returns `None` for
@@ -134,6 +144,18 @@ fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
     budget_remaining.min(MAX_INLINE_RETRY_AFTER)
 }
 
+/// The ceiling when the user opted into `--wait-for-reset`: never more than
+/// [`MAX_RESET_WAIT`], and still never more than the session has left.
+///
+/// Sibling of [`inline_retry_ceiling`], and deliberately a separate `fn` rather
+/// than one parameterised clamp: cargo-mutants cannot substitute one method call
+/// for another, so a clamp only enters the mutant population when it owns a
+/// function boundary (blind round 80 — see the mutation-testing block in
+/// CLAUDE.md). Two boundaries, two mutants; one shared clamp would be one.
+fn reset_wait_ceiling(budget_remaining: Duration) -> Duration {
+    budget_remaining.min(MAX_RESET_WAIT)
+}
+
 /// Decide how long to wait before the next retry — or whether to stop.
 ///
 /// Rules, in order:
@@ -153,18 +175,68 @@ fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
 /// deviation from a naive "prefer the budget" reading: a session with three
 /// hours left still should not sleep for an hour inside one retry, so the
 /// affordable wait is `min(budget, MAX_INLINE_RETRY_AFTER)`.
+///
+/// This is the thin impure wrapper: it reads the process-global
+/// `cli::is_wait_for_reset()` and delegates every decision to
+/// [`retry_wait_decision_with`], so a test never has to write a global (the
+/// `apply_effort_hint` / `apply_effort_hint_with` split in `prompt.rs`, Day 177).
+/// It also emits the long-wait notice, because an invisible multi-hour sleep is
+/// a bug even when it is the right sleep (the #794 `⚡ auto-continuing` rule).
+/// The 3-argument signature is unchanged, so `prompt.rs`'s two retry loops need
+/// no edit.
 pub fn retry_wait_decision(
     attempt: u32,
     error_msg: &str,
     budget_remaining: Option<Duration>,
 ) -> RetryWait {
+    let decision =
+        retry_wait_decision_with(attempt, error_msg, budget_remaining, is_wait_for_reset());
+    if let RetryWait::Wait(delay) = decision {
+        if !crate::format::is_quiet() {
+            if let Some(notice) = rate_limit_wait_notice(delay, crate::format::is_plain_output()) {
+                eprintln!("{notice}");
+            }
+        }
+    }
+    decision
+}
+
+/// Whether the opt-in long-wait behaviour is on. Split out so the one global
+/// read has a name and the decision half stays pure.
+fn is_wait_for_reset() -> bool {
+    crate::cli::is_wait_for_reset()
+}
+
+/// Decision half of [`retry_wait_decision`], with the opt-in injected.
+///
+/// `wait_for_reset == false` is **byte-identical to the pre-flag behaviour on
+/// every input** — that is every existing user, and it is the regression risk,
+/// so it is pinned by an explicit equality test rather than by inspection.
+///
+/// `wait_for_reset == true` raises the ceiling from [`MAX_INLINE_RETRY_AFTER`]
+/// to `min(MAX_RESET_WAIT, budget_remaining)`, keeping the existing rule that
+/// the budget may only ever *shrink* a ceiling. Nothing else moves: the no-hint
+/// path, the `MIN_RETRY_DELAY_MS` floor and the `GiveUp` message are unchanged.
+///
+/// **Deliberate divergence from a rival, not an oversight.** Claude Code
+/// v2.1.234 ships this behaviour default-ON with an opt-out. A process that can
+/// silently sleep for hours is not a product-safe default (#448), so yoyo ships
+/// it default-OFF and opt-in.
+pub fn retry_wait_decision_with(
+    attempt: u32,
+    error_msg: &str,
+    budget_remaining: Option<Duration>,
+    wait_for_reset: bool,
+) -> RetryWait {
     let Some(hint) = retry_after_hint(error_msg) else {
         return RetryWait::Wait(retry_delay(attempt));
     };
 
-    let affordable = match budget_remaining {
-        Some(remaining) => inline_retry_ceiling(remaining),
-        None => MAX_INLINE_RETRY_AFTER,
+    let affordable = match (budget_remaining, wait_for_reset) {
+        (Some(remaining), false) => inline_retry_ceiling(remaining),
+        (Some(remaining), true) => reset_wait_ceiling(remaining),
+        (None, false) => MAX_INLINE_RETRY_AFTER,
+        (None, true) => MAX_RESET_WAIT,
     };
 
     if hint > affordable {
@@ -172,6 +244,30 @@ pub fn retry_wait_decision(
     }
 
     RetryWait::Wait(hint.max(Duration::from_millis(MIN_RETRY_DELAY_MS)))
+}
+
+/// The line printed when yoyo is about to sleep longer than it ever would
+/// without `--wait-for-reset`.
+///
+/// `None` at or below [`MAX_INLINE_RETRY_AFTER`] — short waits stay silent
+/// exactly as before, so nothing new prints on the common path. Above it, the
+/// wait is named in human units and declared *deliberate*, along with the flag
+/// that turns it off: a user who sees a frozen prompt for two hours and was
+/// never told is looking at a hang, not a feature.
+pub fn rate_limit_wait_notice(delay: Duration, plain: bool) -> Option<String> {
+    if delay <= MAX_INLINE_RETRY_AFTER {
+        return None;
+    }
+    let marker = if plain { "" } else { "⏳ " };
+    // Glyph-free under plain output means bullets AND em dashes (the
+    // `git_redirection_refusal_message` convention).
+    let dash = if plain { "-" } else { "—" };
+    Some(format!(
+        "{marker}waiting ~{} for the provider's rate limit to reset. \
+         This wait is deliberate {dash} you asked for it with --wait-for-reset; \
+         drop that flag to stop and report instead.",
+        crate::format::format_duration(delay)
+    ))
 }
 
 /// The user-facing line printed when a retry-after is too long to wait out.
@@ -443,5 +539,211 @@ mod tests {
                 "ceiling {got:?} rose above the budget {budget:?}"
             );
         }
+    }
+
+    // ---- opt-in long rate-limit wait (Day 178) -----------------------
+
+    /// The pre-flag rule, transcribed verbatim from the body that shipped on
+    /// Day 177. This exists so the byte-identity claim below is checked against
+    /// a *second statement* of the old behaviour rather than against the new
+    /// code agreeing with itself.
+    fn legacy_retry_wait_decision(
+        attempt: u32,
+        error_msg: &str,
+        budget_remaining: Option<Duration>,
+    ) -> RetryWait {
+        let Some(hint) = retry_after_hint(error_msg) else {
+            return RetryWait::Wait(retry_delay(attempt));
+        };
+        let affordable = match budget_remaining {
+            Some(remaining) => remaining.min(MAX_INLINE_RETRY_AFTER),
+            None => MAX_INLINE_RETRY_AFTER,
+        };
+        if hint > affordable {
+            return RetryWait::GiveUp { retry_after: hint };
+        }
+        RetryWait::Wait(hint.max(Duration::from_millis(MIN_RETRY_DELAY_MS)))
+    }
+
+    /// THE regression test. `wait_for_reset == false` is every existing user,
+    /// so it must be byte-identical to the pre-flag rule on every input shape:
+    /// the no-hint backoff path, the honoured short reset, the floor, the
+    /// budget-shrunk ceiling, and the long-reset `GiveUp`.
+    #[test]
+    fn wait_for_reset_off_is_byte_identical_to_the_legacy_rule() {
+        let messages = [
+            // No parseable hint — the exponential-backoff path.
+            "429 Too Many Requests",
+            "the server is overloaded",
+            "retry after 5 minutes", // marker present, unit refused
+            // Hints, short and long.
+            "rate limited, retry-after: 5",
+            "retry after 30s",
+            "retry after 1ms",
+            "retry after 120s", // exactly at the ceiling
+            "retry after 121s", // one second over
+            "error: Rate limited, retry after Some(14454000)ms",
+        ];
+        let budgets = [
+            None,
+            Some(Duration::ZERO),
+            Some(Duration::from_secs(10)),
+            Some(Duration::from_secs(120)),
+            Some(Duration::from_secs(45 * 60)),
+            Some(Duration::from_secs(6 * 3600)),
+        ];
+        for msg in messages {
+            for budget in budgets {
+                for attempt in [1u32, 3, 20] {
+                    let legacy = legacy_retry_wait_decision(attempt, msg, budget);
+                    let now = retry_wait_decision_with(attempt, msg, budget, false);
+                    if retry_after_hint(msg).is_none() {
+                        // retry_delay is jittered, so the two cannot be compared
+                        // by value; the claim is that both take the same branch
+                        // and land in the same window.
+                        match (legacy, now) {
+                            (RetryWait::Wait(a), RetryWait::Wait(b)) => {
+                                assert!(
+                                    a <= Duration::from_secs(90) && b <= Duration::from_secs(90),
+                                    "no-hint path left retry_delay's range: {a:?} / {b:?}"
+                                );
+                            }
+                            other => panic!("no-hint path must Wait, got {other:?} for {msg:?}"),
+                        }
+                    } else {
+                        assert_eq!(
+                            legacy, now,
+                            "off-mode diverged from the legacy rule for \
+                             msg={msg:?} budget={budget:?} attempt={attempt}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opting in raises the ceiling — and only the ceiling. The same 4h reset
+    /// that gives up by default is waited out, while the budget still shrinks
+    /// it and `MAX_RESET_WAIT` still bounds it.
+    #[test]
+    fn wait_for_reset_on_raises_the_ceiling_but_stays_bounded() {
+        let four_hours = "error: Rate limited, retry after Some(14454000)ms";
+        let four_hours_d = Duration::from_millis(14_454_000);
+
+        // The headline: default gives up, opted-in waits.
+        assert_eq!(
+            retry_wait_decision_with(1, four_hours, None, false),
+            RetryWait::GiveUp {
+                retry_after: four_hours_d
+            },
+            "default must still stop at the inline ceiling"
+        );
+        assert_eq!(
+            retry_wait_decision_with(1, four_hours, None, true),
+            RetryWait::Wait(four_hours_d),
+            "opted in, a 4h reset under MAX_RESET_WAIT must be honoured"
+        );
+
+        // The budget may only SHRINK the raised ceiling, never raise it.
+        assert_eq!(
+            retry_wait_decision_with(1, four_hours, Some(Duration::from_secs(45 * 60)), true),
+            RetryWait::GiveUp {
+                retry_after: four_hours_d
+            },
+            "a 45m budget cannot outlast a 4h reset even when opted in"
+        );
+
+        // MAX_RESET_WAIT still bounds it: 24h clamps to MAX_RETRY_AFTER, which
+        // is above the 6h ceiling, so opting in does NOT mean an unbounded sleep.
+        assert_eq!(
+            retry_wait_decision_with(1, "retry after 86400", None, true),
+            RetryWait::GiveUp {
+                retry_after: MAX_RETRY_AFTER
+            },
+            "opting in must not license a 24h sleep"
+        );
+
+        // The no-hint path is untouched by the flag.
+        match retry_wait_decision_with(1, "server error", None, true) {
+            RetryWait::Wait(d) => assert!(d <= Duration::from_secs(90), "not capped: {d:?}"),
+            other => panic!("no hint must never give up, got {other:?}"),
+        }
+    }
+
+    /// The raised ceiling's own clamp, both directions plus the boundary.
+    #[test]
+    fn reset_wait_ceiling_lets_the_budget_shrink_but_never_raise() {
+        let cap = MAX_RESET_WAIT;
+        for (budget, expected, why) in [
+            (
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                "budget below the cap wins",
+            ),
+            (
+                cap,
+                cap,
+                "exactly at the cap: the boundary is the cap itself",
+            ),
+            (
+                cap + Duration::from_secs(1),
+                cap,
+                "one second over: the cap wins",
+            ),
+            (
+                Duration::from_secs(24 * 3600),
+                cap,
+                "a day-long budget cannot raise the cap",
+            ),
+        ] {
+            assert_eq!(reset_wait_ceiling(budget), expected, "{why}");
+        }
+        // And it really is higher than the default ceiling — otherwise the
+        // whole flag is a no-op wearing a name.
+        assert!(
+            MAX_RESET_WAIT > MAX_INLINE_RETRY_AFTER,
+            "the opt-in ceiling must exceed the default one"
+        );
+    }
+
+    /// Emission point: the literal string a caller receives, in BOTH
+    /// directions. A long sleep nobody announced is a hang, and a notice that
+    /// fires on ordinary short retries is noise on the common path.
+    #[test]
+    fn rate_limit_wait_notice_speaks_only_above_the_inline_ceiling() {
+        // Silent at and below the inline ceiling — the untouched common path.
+        assert_eq!(rate_limit_wait_notice(Duration::from_secs(5), false), None);
+        assert_eq!(
+            rate_limit_wait_notice(MAX_INLINE_RETRY_AFTER, false),
+            None,
+            "exactly at the ceiling must stay silent (inclusive boundary)"
+        );
+
+        // One second over: it speaks.
+        let notice = rate_limit_wait_notice(MAX_INLINE_RETRY_AFTER + Duration::from_secs(1), false)
+            .expect("a wait past the inline ceiling must be announced");
+        assert!(notice.contains("2m 1s"), "must name the wait: {notice}");
+        assert!(
+            notice.contains("deliberate"),
+            "must say the wait was chosen, not a hang: {notice}"
+        );
+        assert!(
+            notice.contains("--wait-for-reset"),
+            "must name the flag that turns it off: {notice}"
+        );
+
+        // A four-hour wait renders in hours.
+        let long = rate_limit_wait_notice(Duration::from_millis(14_454_000), false)
+            .expect("a 4h wait must be announced");
+        assert!(long.contains("4h 0m"), "misrendered long wait: {long}");
+
+        // Glyph-free under plain output, and otherwise the same sentence.
+        let plain = rate_limit_wait_notice(Duration::from_secs(3600), true)
+            .expect("plain mode still announces");
+        assert!(
+            plain.is_ascii(),
+            "plain output must carry no glyphs: {plain}"
+        );
+        assert!(plain.starts_with("waiting"), "plain output shape: {plain}");
     }
 }
