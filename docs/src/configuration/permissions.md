@@ -239,6 +239,51 @@ To opt in for that run:
 yoyo --trust-project
 ```
 
+### Remembering a directory you trust
+
+`--trust-project` applies to **one run**. If you genuinely trust a repository you would
+otherwise retype it on every invocation, which is the pressure that turns into a shell alias —
+i.e. back to the unsafe default, by habit. `--trust-project-always` does the same thing for
+this run *and* records the directory so later runs there need no flag:
+
+```bash
+yoyo --trust-project-always
+```
+
+```
+✓ Trusting this directory from now on: /home/me/proj
+  Recorded in /home/me/.config/yoyo/trusted_dirs. Remove that line to revoke.
+  Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks will run here without a flag.
+```
+
+The store is a plain text file, one absolute directory path per line, at
+`$XDG_CONFIG_HOME/yoyo/trusted_dirs` (or `~/.config/yoyo/trusted_dirs`). Four properties are
+worth knowing before you use it:
+
+- **It is user-level, never project-level.** yoyo does not look for a `trusted_dirs` file
+  inside the repository, so a repository can never trust itself — the same reason a
+  project-local `.yoyo.toml` cannot grant its own MCP servers permission to start.
+- **Exact directory match only — there is no subdirectory inheritance.** Trusting
+  `/home/me/proj` does not trust `/home/me/proj/vendor/anything`, and does not trust
+  `/home/me/proj-other`. Each directory you want trusted has to be recorded on its own.
+- **Paths are stored canonicalized**, so `.`, `..` and a symlinked checkout cannot present as
+  a path different from the one you trusted. If the directory cannot be resolved to a real
+  path, yoyo refuses rather than falling back to the raw string — "could not check" must not
+  read as "trusted".
+- **Every run that is trusted by the store says so.** You should never discover that a
+  project's MCP servers, `[permissions] allow` and shell hooks are live because of a decision
+  you made weeks ago and cannot see:
+
+```
+⚠ This directory is trusted by a previous --trust-project-always: /home/me/proj
+  Listed in /home/me/.config/yoyo/trusted_dirs; remove that line to revoke.
+  Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks are live this run.
+```
+
+There is deliberately **no un-trust flag**: revoking is deleting the line from that file, and
+both messages above name its full path so you can find it. Both are informational stderr
+output — they are silent under `--quiet` and print without glyphs under `--screen-reader`.
+
 ### Only privilege-*granting* fields are gated
 
 The gate is not a symmetric distrust of everything the project says about permissions. Each
@@ -261,17 +306,19 @@ The boundary is deliberately narrow:
 |---|---|
 | `--mcp <command>`, `--allow`, `--deny` typed on the command line | Yes — you typed it |
 | `~/.yoyo.toml` or the XDG config | Yes — you authored it |
-| `./.yoyo.toml` in the working directory — MCP servers and `[permissions] allow` | **No** — needs `--trust-project` |
+| `./.yoyo.toml` in the working directory — MCP servers and `[permissions] allow` | **No** — needs `--trust-project`, or this exact directory recorded by `--trust-project-always` |
 | `./.yoyo.toml` — `[permissions] deny` and `[directories]` | Yes — they only reduce access |
 | Any of the above under `--safe-mode` | No — safe mode disables all customizations |
 
 If your cwd *is* your home directory, `~/.yoyo.toml` reached as `./.yoyo.toml` still counts as
 your own config and is not gated.
 
-**What this does not cover yet.** There is no persisted per-directory trust decision (the flag
-applies to one run) and no interactive "do you trust this folder?" prompt — you re-pass
-`--trust-project` every time. Use `--safe-mode` if you want none of a project's config
-applied. Those two remaining items are tracked in issue #749.
+**What this does not cover yet.** There is no interactive "do you trust this folder?" prompt —
+trust is granted by a flag you type, never by a question yoyo asks, so in a script or a
+non-interactive run the answer is always the safe one. Recording a directory is therefore
+something you do on purpose with `--trust-project-always`, and it applies to that exact
+directory only. Use `--safe-mode` if you want none of a project's config applied. The prompt
+is tracked in issue #749.
 
 ## Summary
 
@@ -286,6 +333,7 @@ applied. Those two remaining items are tracked in issue #749.
 | `[permissions]` in config | Bash commands | Same as `--allow`/`--deny` (project-local `allow` needs `--trust-project`) |
 | `[directories]` in config | File tools | Same as `--allow-dir`/`--deny-dir` |
 | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
-| Project-config trust | MCP servers and `[permissions] allow` from `./.yoyo.toml` | Not started/applied unless `--trust-project` |
+| Project-config trust | MCP servers and `[permissions] allow` from `./.yoyo.toml` | Not started/applied unless `--trust-project`, or the directory was recorded by `--trust-project-always` |
+| `--trust-project-always` | This directory | Records the canonicalized cwd in `~/.config/yoyo/trusted_dirs`; exact match only, no subdirectory inheritance; revoke by deleting the line |
 
 > **Tip:** Use `/permissions` during a session to see the full security posture — auto-approve status, command patterns, and directory restrictions all in one view.
