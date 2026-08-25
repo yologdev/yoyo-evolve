@@ -378,14 +378,16 @@ fi
 YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
 
-# No `--features gasp` build here on purpose (#683). Nothing in the session can
-# use a gasp-featured binary until the sidecar is retired — see the long note in
-# gasp_shim.sh's gasp_session_start — and building one anyway would be actively
-# misleading: cargo uplifts to the same target/debug/yoyo, so the first plain
-# `cargo build` in Phase B (evolve.sh's own re-verify, plus the ones the impl
-# prompt tells the agent to run) silently replaces it, while the "Build OK
-# (--features gasp)" line stays in the log. The feature's build integrity is
-# verified in CI instead, where it cannot be clobbered mid-run.
+# Still no `--features gasp` build HERE, and the reason changed with #683 item
+# (7). The sidecar is retired and gasp_session_start now builds the featured
+# binary itself — but into `target/gasp-yoyo/`, never the default target dir.
+# That separation is the whole point: cargo uplifts a default-target build to
+# target/debug/yoyo, so building the featured binary here would be silently
+# replaced by the first plain `cargo build` in Phase B (this script's own
+# re-verify, plus the ones the impl prompt tells the agent to run) while a
+# "Build OK (--features gasp)" line stayed in the log claiming otherwise.
+# The shim's own target dir cannot be clobbered that way. The feature's build
+# integrity is also verified in CI, where nothing can uplift over it.
 gasp_session_start "$DAY"
 echo ""
 
