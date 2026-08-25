@@ -289,6 +289,180 @@ pub(crate) fn remember_trusted_dir(dir: &std::path::Path) -> std::io::Result<std
     Ok(path)
 }
 
+// === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+//
+// Item 1 above gave yoyo a memory. It still had no way to *ask*: trust could only be
+// granted by a flag the user typed, and a capability reachable only by retyping a flag
+// is the shape that trains people to alias it away — i.e. back to the unsafe default,
+// by habit (#749 says so out loud). Claude Code, Cursor and VS Code all ask once per
+// folder and remember the answer.
+//
+// Everything below is the **decision** half: pure, table-tested, no I/O and no terminal
+// reads. `src/cli.rs` owns the one line of stdin and the printing.
+
+/// What the user answered when asked whether to trust this directory.
+///
+/// There is deliberately no `RememberNo` variant. Declining is free and costs one
+/// keypress next time; persisting a refusal would be a second kind of stored state
+/// with its own revocation problem, for no gain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrustAnswer {
+    /// Trust for this run only.
+    Once,
+    /// Trust this run **and** record the directory in the user-level store.
+    Always,
+    /// Do not trust. The run continues without the project's grants.
+    No,
+}
+
+/// Whether to ask the user about trusting this directory.
+///
+/// True **only** when all five hold; every other combination returns `false` and the
+/// run proceeds byte-identically to before this existed.
+///
+/// `interactive` is the load-bearing guard and it is what keeps this product-safe: in
+/// the evolve loop stdin is piped, in `yoyo -p` it is piped, in CI neither end is a
+/// tty — all of them skip the prompt and take the safe answer. **A non-interactive run
+/// must never block on a question nobody can answer.**
+///
+/// `grants` non-empty is the second guard: there is no point asking about a project
+/// config that grants nothing (this repo's own `.yoyo.toml` sets `continue_on_silence`,
+/// which grants no privilege at all — see [`project_trust_grants`]).
+pub(crate) fn should_prompt_for_trust(
+    already_trusted: bool,
+    flag_passed: bool,
+    project_local: bool,
+    grants: &[&'static str],
+    interactive: bool,
+) -> bool {
+    !already_trusted && !flag_passed && project_local && !grants.is_empty() && interactive
+}
+
+/// Human names for what a project-local config would grant, so the prompt can list them.
+///
+/// A user cannot judge what they cannot see, so this exists purely to fill the prompt's
+/// body — it decides whether to **ask**, never what to **grant**. The four gates
+/// (`gate_mcp_sources`, `gate_project_permissions`, `gate_project_hooks`,
+/// `gate_goal_verify`) are untouched and still decide that.
+///
+/// **Both error directions are safe here**, which is why a cheap detection is the right
+/// one: a false positive costs one question the user did not strictly need, and a false
+/// negative means no prompt — which is today's behaviour, which is the safe state.
+///
+/// The first three surfaces are read through the **already-existing parsers**
+/// (`config::parse_mcp_servers_from_config`, `config::parse_permissions_from_config`)
+/// rather than a second text scan, so a config shape those gates honour cannot silently
+/// disagree with what this prompt claims. Hooks are the one exception: their parser
+/// takes the flattened key/value map rather than raw text, so the raw keys are matched
+/// directly — see the comment at that branch.
+pub(crate) fn project_trust_grants(
+    config_text: &str,
+    goal_verify_exists: bool,
+) -> Vec<&'static str> {
+    let mut grants = Vec::new();
+
+    if !crate::config::parse_mcp_servers_from_config(config_text).is_empty()
+        || config_text.lines().any(|line| {
+            // The other MCP shape: a top-level `mcp = ["cmd", ...]` list, which the
+            // loader flattens into `file_config["mcp"]` rather than into
+            // `parse_mcp_servers_from_config`. Matched as a bare key so a `mcp_servers`
+            // section header cannot double-count.
+            line.trim()
+                .split_once('=')
+                .is_some_and(|(k, _)| k.trim() == "mcp")
+        })
+    {
+        grants.push("MCP servers (external processes yoyo would start)");
+    }
+
+    // Only the *granting* half of [permissions]. `deny` narrows yoyo and needs no
+    // trust — the same asymmetry `gate_project_permissions` enforces.
+    if !crate::config::parse_permissions_from_config(config_text)
+        .allow
+        .is_empty()
+    {
+        grants.push("auto-approved bash commands (permissions.allow)");
+    }
+
+    // `hooks::parse_hooks_from_config` takes the flattened `HashMap` the loader
+    // produces, not raw text, and rebuilding that map here would be a second loader.
+    // A key-prefix scan is enough for a predicate whose only job is "is there
+    // something worth asking about" — and both error directions are safe (above).
+    if config_text.lines().any(|line| {
+        let t = line.trim_start();
+        t.starts_with("hooks.pre.") || t.starts_with("hooks.post.") || t.starts_with("[hooks")
+    }) {
+        grants.push("shell hooks (commands run on tool calls)");
+    }
+
+    if goal_verify_exists {
+        grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+    }
+
+    grants
+}
+
+/// Read one line of user input as a trust answer.
+///
+/// **Default-No is the entire safety property.** `y`/`yes` grants this run, `a`/`always`
+/// grants and remembers, and *everything else* — `n`, an empty line, EOF, whitespace,
+/// a typo, a paste — is `No`. Case-insensitive and trimmed.
+pub(crate) fn parse_trust_answer(input: &str) -> TrustAnswer {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => TrustAnswer::Once,
+        "a" | "always" => TrustAnswer::Always,
+        _ => TrustAnswer::No,
+    }
+}
+
+/// The question itself.
+///
+/// Mirrors `project_mcp_refusal_message` / `goal_verify_refusal_message`, because it is
+/// the same act one step earlier: it names the directory verbatim, lists **every** grant
+/// verbatim (a user cannot judge what they cannot see), states that answering no still
+/// runs yoyo, and names all three answers.
+///
+/// **Deliberately not silenced under `is_quiet()`** — `--quiet`'s documented scope is
+/// informational stderr output, and a question that blocks for an answer is not
+/// informational. Silencing it would either hang the process or answer for the user.
+/// That is a judgment, not an oversight.
+pub(crate) fn trust_prompt_text(
+    dir: &std::path::Path,
+    grants: &[&'static str],
+    plain: bool,
+) -> String {
+    let marker = if plain { "" } else { "🔐 " };
+    let bullet = if plain { "  - " } else { "  • " };
+    let dash = if plain { ", " } else { " — " };
+
+    let mut msg = format!(
+        "{marker}Do you trust the files in this folder?\n  {}\n\nIts .yoyo.toml would grant:",
+        dir.display()
+    );
+    for grant in grants {
+        msg.push('\n');
+        msg.push_str(bullet);
+        msg.push_str(grant);
+    }
+    msg.push_str(&format!(
+        "\n\nAnswering no still runs yoyo{dash}just without those.\n  \
+[y] trust this run  [a] trust always (remembers this folder)  [N] no\n> "
+    ));
+    msg
+}
+
+/// The one-line note printed when the user declines.
+///
+/// Informational (nothing is blocking on it), so the caller drops it under `--quiet`.
+pub(crate) fn trust_declined_message(plain: bool) -> String {
+    let marker = if plain { "" } else { "○ " };
+    format!(
+        "{marker}Not trusting this folder. yoyo is running without the project's MCP servers, \
+permissions.allow and shell hooks.\n  Pass --trust-project to allow them for one run, or \
+--trust-project-always to remember this folder."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,5 +746,209 @@ mod tests {
         assert!(!dir_is_trusted(&p(
             "/nonexistent-yoyo-trust-probe/definitely/not/here"
         )));
+    }
+
+    // === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+
+    #[test]
+    fn test_should_prompt_for_trust_needs_all_five_inputs() {
+        let grants = ["MCP servers (external processes yoyo would start)"];
+
+        // The one row that asks: untrusted, no flag, project-local config that grants
+        // something, on a terminal.
+        assert!(
+            should_prompt_for_trust(false, false, true, &grants, true),
+            "the all-clear row must prompt, or every near-miss below is vacuous"
+        );
+
+        // Each of the five inputs flipped independently. A discriminator tested only
+        // on the side that fires is vacuous green, so every guard gets its own row.
+        assert!(
+            !should_prompt_for_trust(true, false, true, &grants, true),
+            "already trusted by the store: asking again would be noise"
+        );
+        assert!(
+            !should_prompt_for_trust(false, true, true, &grants, true),
+            "a --trust-project* flag is the user's own word; never second-guess it"
+        );
+        assert!(
+            !should_prompt_for_trust(false, false, false, &grants, true),
+            "a home/XDG config is the user's own config — nothing to ask about"
+        );
+        assert!(
+            !should_prompt_for_trust(false, false, true, &[], true),
+            "a config that grants nothing must not produce a question"
+        );
+        assert!(
+            !should_prompt_for_trust(false, false, true, &grants, false),
+            "NON-INTERACTIVE MUST NEVER PROMPT: piped stdin (the evolve loop, `yoyo -p`) \
+and CI have nobody to answer, so they take the safe answer silently"
+        );
+    }
+
+    #[test]
+    fn test_parse_trust_answer_defaults_to_no() {
+        let cases = [
+            ("y", TrustAnswer::Once),
+            ("Y", TrustAnswer::Once),
+            ("yes", TrustAnswer::Once),
+            ("  YES  ", TrustAnswer::Once),
+            ("y\n", TrustAnswer::Once),
+            ("a", TrustAnswer::Always),
+            ("A", TrustAnswer::Always),
+            ("always", TrustAnswer::Always),
+            (" Always \n", TrustAnswer::Always),
+            // Default-No is the entire safety property of this parser.
+            ("n", TrustAnswer::No),
+            ("no", TrustAnswer::No),
+            ("", TrustAnswer::No),
+            ("   ", TrustAnswer::No),
+            ("\n", TrustAnswer::No),
+            ("maybe", TrustAnswer::No),
+            ("yolo", TrustAnswer::No),
+            ("aa", TrustAnswer::No),
+            ("yes please", TrustAnswer::No),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                parse_trust_answer(input),
+                expected,
+                "parse_trust_answer({input:?}) should be {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_project_trust_grants_detects_each_privilege_shape() {
+        // [mcp_servers.*] — an external process yoyo would start.
+        assert_eq!(
+            project_trust_grants("[mcp_servers.fs]\ncommand = \"npx\"\n", false),
+            vec!["MCP servers (external processes yoyo would start)"]
+        );
+        // The other MCP shape: a top-level list.
+        assert_eq!(
+            project_trust_grants("mcp = [\"some-server\"]\n", false),
+            vec!["MCP servers (external processes yoyo would start)"]
+        );
+        // Only the *granting* half of [permissions].
+        assert_eq!(
+            project_trust_grants("[permissions]\nallow = [\"curl *\"]\n", false),
+            vec!["auto-approved bash commands (permissions.allow)"]
+        );
+        // Shell hooks, in both the dotted-key and section shapes.
+        assert_eq!(
+            project_trust_grants("hooks.pre.bash = \"echo hi\"\n", false),
+            vec!["shell hooks (commands run on tool calls)"]
+        );
+        assert_eq!(
+            project_trust_grants("[hooks.post]\nbash = \"echo hi\"\n", false),
+            vec!["shell hooks (commands run on tool calls)"]
+        );
+        // The fourth surface has no config key at all — it is a file on disk.
+        assert_eq!(
+            project_trust_grants("", true),
+            vec![".yoyo/goal_verify.md (a shell command /goal check runs)"]
+        );
+    }
+
+    #[test]
+    fn test_project_trust_grants_is_empty_for_keys_that_grant_nothing() {
+        // THIS REPO'S OWN .yoyo.toml sets `continue_on_silence`, and it must never
+        // produce a trust question: it grants no privilege — the worst case is extra
+        // API turns in a repo you already chose to run yoyo in. The keys below are
+        // that file's real key set, verbatim, so a regression here fails loudly.
+        assert!(project_trust_grants(
+            "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
+continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+            false
+        )
+        .is_empty());
+
+        // `permissions.deny` narrows yoyo rather than widening it — a repo may always
+        // confine yoyo further without being trusted, so it is not a grant.
+        assert!(project_trust_grants("[permissions]\ndeny = [\"rm *\"]\n", false).is_empty());
+
+        // An empty config asks nothing.
+        assert!(project_trust_grants("", false).is_empty());
+    }
+
+    #[test]
+    fn test_project_trust_grants_lists_every_shape_present() {
+        let all = project_trust_grants(
+            "mcp = [\"srv\"]\nhooks.pre.bash = \"x\"\n[permissions]\nallow = [\"curl *\"]\n",
+            true,
+        );
+        assert_eq!(all.len(), 4, "every grant present must be listed: {all:?}");
+    }
+
+    #[test]
+    fn test_trust_prompt_text_names_the_directory_grants_and_all_three_answers() {
+        let grants = [
+            "MCP servers (external processes yoyo would start)",
+            "shell hooks (commands run on tool calls)",
+        ];
+        let msg = trust_prompt_text(&p("/home/me/stranger-repo"), &grants, false);
+
+        // A user cannot judge what they cannot see.
+        assert!(
+            msg.contains("/home/me/stranger-repo"),
+            "the prompt must name the directory verbatim: {msg}"
+        );
+        for grant in grants {
+            assert!(
+                msg.contains(grant),
+                "the prompt must list every grant verbatim, missing {grant:?}: {msg}"
+            );
+        }
+
+        // All three answers, with No as the capitalised default.
+        assert!(msg.contains("[y]"), "missing the trust-once answer: {msg}");
+        assert!(
+            msg.contains("[a]"),
+            "missing the trust-always answer: {msg}"
+        );
+        assert!(msg.contains("[N]"), "missing the default no answer: {msg}");
+
+        // Declining must be stated as safe, not as a failure.
+        assert!(
+            msg.contains("Answering no still runs yoyo"),
+            "the prompt must say a no still runs yoyo: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_trust_prompt_text_plain_drops_glyphs_and_em_dashes() {
+        let grants = ["auto-approved bash commands (permissions.allow)"];
+        let plain = trust_prompt_text(&p("/home/me/proj"), &grants, true);
+
+        assert!(
+            plain.is_ascii(),
+            "screen-reader output must be glyph-free and em-dash-free: {plain}"
+        );
+        // Still says everything the decorated form says.
+        assert!(plain.contains("/home/me/proj"));
+        assert!(plain.contains(grants[0]));
+        assert!(plain.contains("[N]"));
+    }
+
+    #[test]
+    fn test_trust_declined_message_names_both_flags_and_claims_nothing_ran() {
+        let msg = trust_declined_message(false);
+        assert!(
+            msg.contains("--trust-project"),
+            "declining must name the way back: {msg}"
+        );
+        assert!(
+            msg.contains("--trust-project-always"),
+            "declining must name the remembered way back too: {msg}"
+        );
+        assert!(
+            msg.contains("running without"),
+            "the note must state what is NOT in force: {msg}"
+        );
+        assert!(
+            trust_declined_message(true).is_ascii(),
+            "plain output must be glyph-free"
+        );
     }
 }
