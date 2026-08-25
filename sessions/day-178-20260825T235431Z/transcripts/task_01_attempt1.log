@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — verify the claim before writing any fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn glob_match" -A 40 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl PermissionConfig" … ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Now Step 0 — verify the claim by running it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/s… (35 lines) ✓ (81ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — the hole is real. git * main matches git -c core.sshCommand=... push main. Now the failing test first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PermissionConfig" src/c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1573,1615p' src/config.r… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 52 lines)
+  +     /// A wildcard *before* a literal must not swallow option tokens the user never
+  +     /// wrote. Asserted at the emission point — the `Option<bool>` a caller of
+  +     /// `PermissionConfig::check` receives — never on the helper one layer below.
+  +     ///
+  +     /// The rows that do NOT fire are the near-miss guards: a discriminator tested only
+  +     /// on the side that blocks is vacuous green.
+  +     #[test]
+  +     fn allow_wildcard_before_literal_does_not_swallow_option_tokens() {
+  +         let perms = PermissionConfig {
+  +             allow: vec!["git * main".to_string()],
+  +             deny: vec![],
+  +         };
+  +         // The case the user meant: no option tokens at all.
+  +         assert_eq!(perms.check("git push main"), Some(true));
+  +         // The hole, closed: `-c core.sshCommand=…` runs an arbitrary command, and the
+  +         // user never wrote that token. Falls through to the confirmation prompt.
+  +         assert_eq!(perms.check("git -c core.sshCommand=x push main"), None);
+  + 
+  +         // Near-miss 1 — trailing wildcard is an honest "anything goes" pattern and is
+  +         // byte-identical to before. This is the regression risk.
+  ... (32 more lines)
+ ✓ (1m 47s)
+  +     /// A wildcard *before* a literal must not swallow option tokens the user never
+  +     /// wrote. Asserted at the emission point — the `Option<bool>` a caller of
+  +     /// `PermissionConfig::check` receives — never on the helper one layer below.
+  +     ///
+  +     /// The rows that do NOT fire are the near-miss guards: a discriminator tested only
+  +     /// on the side that blocks is vacuous green.
+  +     #[test]
+  +     fn allow_wildcard_before_literal_does_not_swallow_option_tokens() {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo allow_wild… ✓ (161ms)
+  4 tools completed in 2m 4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Test fails exactly at the hole row (Some(true) where None is required). Now the fix.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (40 lines) ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (15 → 21 lines)
+  -         // Deny takes priority — check deny patterns first
+  +         // Deny takes priority — check deny patterns first.
+  +         //
+  +         // `deny` deliberately keeps plain `glob_match`, and this asymmetry is the point:
+  +         // narrowing an `allow` removes privilege (safe), while narrowing a `deny` makes a
+  +         // fence stop matching — i.e. it fails open. Mirroring the allow-branch guard onto
+  +         // this loop would be a regression dressed as a security fix. Same asymmetry
+  +         // `cli::gate_project_permissions` already encodes (#749 item 3).
+            for pattern in &self.deny {
+                if glob_match(pattern, command) {
+                    return Some(false);
+                }
+            }
+  -         // Then check allow patterns
+  +         // Then check allow patterns.
+            for pattern in &self.allow {
+  -             if glob_match(pattern, command) {
+  +             if glob_match(pattern, command) && !allow_wildcard_swallows_options(pattern, command) {
+                    return Some(true);
+                }
+  ... (1 more lines)
+ ✓ (12.0s)
+  -         // Deny takes priority — check deny patterns first
+  +         // Deny takes priority — check deny patterns first.
+  +         //
+  +         // `deny` deliberately keeps plain `glob_match`, and this asymmetry is the point:
+  +         // narrowing an `allow` removes privilege (safe), while narrowing a `deny` makes a
+  +         // fence stop matching — i.e. it fails open. Mirroring the allow-branch guard onto
+  +         // this loop would be a regression dressed as a security fix. Same asymmetry
+  +         // `cli::gate_project_permissions` already encodes (#749 item 3).
+  ... (13 more lines)
+  2 tools completed in 19.8s (2 ✓)
+
+Now the helper itself (definition and consumer land in the same edit):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (5 → 47 lines)
+        /// Returns true if no patterns are configured.
+        pub fn is_empty(&self) -> bool {
+            self.allow.is_empty() && self.deny.is_empty()
+  +     }
+  + }
+  + 
+  + /// True when `pattern` matched `command` **only** because a wildcard swallowed an option
+  + /// token the user never wrote.
+  + ///
+  + /// The motivating shape: a user writes `allow = ["git * main"]` meaning "the `*` is the
+  + /// subcommand slot", and `glob_match` — which only requires prefix / suffix / in-order
+  + /// middle matching — also accepts `git -c core.sshCommand=<arbitrary command> push main`.
+  + /// That auto-approves an arbitrary command for the whole session, i.e. it *widens* a fence
+  + /// the user is currently living inside. Verified before the fix by running it (see the
+  + /// `config.rs` bullet in CLAUDE.md).
+  + ///
+  + /// Two rules, and the precision is the whole point — a broader rule breaks legitimate
+  + /// configs:
+  + ///
+  + /// 1. It applies **only** to a **non-trailing** `*`, i.e. a non-empty literal segment
+  ... (27 more lines)
+ ✓ (1m 55s)
+        /// Returns true if no patterns are configured.
+        pub fn is_empty(&self) -> bool {
+            self.allow.is_empty() && self.deny.is_empty()
+  +     }
+  + }
+  + 
+  + /// True when `pattern` matched `command` **only** because a wildcard swallowed an option
+  + /// token the user never wrote.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo allow_wild… ✓ (167ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 2s (2 ✓)
+
+Six rows green. Now the positive control — neuter the helper and confirm the hole-closing row fails.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (12 lines) ✓ (45.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passes — neutered helper fails the hole row, restored passes. Now the docs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow\|Wildcard\|glob\|… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '45,73p' docs/src/configu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/permissions.md (3 → 32 lines)
+    Both `--allow` and `--deny` are repeatable — pass them multiple times to build up your pattern lists.
+  + 
+  + ### A wildcard *before* a literal does not swallow option tokens
+  + 
+  + A pattern like `git * main` reads as "the `*` is the subcommand slot". But `*` matches any
+  + characters, so on a plain glob it would also match `git -c core.sshCommand=<anything> push main`
+  + — auto-approving an arbitrary command for the whole session, from a pattern that looks narrow.
+  + 
+  + So in an **allow** pattern, when a `*` is followed by a literal segment, the match is rejected
+  + if the command carries an option token (one starting with `-`) that you did not write verbatim
+  + in the pattern. The command then falls through to the normal `[y/N]` prompt — it is not
+  + refused, just not auto-approved.
+  + 
+  + | Pattern | Command | Result |
+  + |---|---|---|
+  + | `git * main` | `git push main` | auto-approved — no option tokens |
+  + | `git * main` | `git -c core.sshCommand=x push main` | prompts — `-c` isn't in the pattern |
+  + | `git * --force` | `git push --force` | auto-approved — `--force` is in the pattern |
+  + 
+  + **Trailing wildcards are unchanged.** `cargo *`, `npm run *` and `git commit -m *` are honest
+  ... (12 more lines)
+ ✓ (1m 40s)
+    Both `--allow` and `--deny` are repeatable — pass them multiple times to build up your pattern lists.
+  + 
+  + ### A wildcard *before* a literal does not swallow option tokens
+  + 
+  + A pattern like `git * main` reads as "the `*` is the subcommand slot". But `*` matches any
+  + characters, so on a plain glob it would also match `git -c core.sshCommand=<anything> push main`
+  + — auto-approving an arbitrary command for the whole session, from a pattern that looks narrow.
+  + 
+  ... (13 more lines)
+  2 tools completed in 1m 53s (2 ✓)
+
+Now CLAUDE.md — extending the config.rs bullet:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Wildcards in \`\[direct… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Wildcards in " CLAUDE.m… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Its consumer is the single `set_continue_on_silence()` site in `cli.rs`, and this repo's own `.yoyo.toml` sets it (see the `main.rs` bullet for why the config key rather than a flag).
+  + Its consumer is the single `set_continue_on_silence()` site in `cli.rs`, and this repo's own `.yoyo.toml` sets it (see the `main.rs` bullet for why the config key rather than a flag). Day 178 (self-discovered; transferred class — Claude Code v2.1.246 shipped a *warning* for the same shape): **a `permissions.allow` wildcard sitting before a literal swallowed option tokens.** `glob_match` only requires prefix / suffix / in-order-middle matching, so `allow = ["git * main"]` — which a user writes meaning "the `*` is the subcommand slot" — also matched `git -c core.sshCommand=<arbitrary command> push main`, auto-approving an arbitrary command **for the whole session** from a pattern that looks narrow. **Verified before writing any fix rather than reasoned about**, because the task's own step 0 was to stop if the reading was wrong: a standalone transcription of `glob_match` compiled with `rustc` returned `true` for `git * main` vs `git -c core.sshCommand=curl_evil.sh push main`, and the test added in this diff failed at exactly that row (`left: Some(true), right: None`) before the fix landed. Project-local configs are gated by the trust boundary (#748/#749), so the exposed path is the user's own `~/.yoyo.toml`, which is deliberately ungated — a real path, not a hypothetical one. **`glob_match` was not touched**: every `[permissions]` pattern in the world depends on it and, since #823, `[directories]` consumes it too — changing it would be a semantic change to a security control with two consumers. The fix is the pure `allow_wildcard_swallows_options(pattern, command)`, consulted **only** on the allow branch of `PermissionConfig::check`, and its precision is the whole task since a broader rule breaks legitimate configs: (1) it applies **only** to a **non-trailing** `*` — a non-empty literal segment must follow some `*`, so `cargo *`, `npm run *` and `git commit -m *` are honest "anything goes" patterns and stay **byte-identical to before**, which is essentially every existing user and the whole regression risk; (2) when it applies, the match is rejected if the command carries any whitespace-separated token starting with `-` that does not appear verbatim as a token in the pattern, so `git * --force` still auto-approves `git push --force`. **Rejection means "not auto-approved", never "refused"** — the command falls through to the normal confirmation prompt, which is graceful degradation by design and the reason no warning or refusal message was added; the doc comment says so outright so a later reader does not helpfully add one. **`deny` keeps plain `glob_match`, verbatim, and this asymmetry is written into the code rather than only here:** narrowing an `allow` removes privilege (safe), while narrowing a `deny` makes a fence stop matching — i.e. it **fails open**, so a naive mirror onto the deny branch would be a regression dressed as a security fix. Same asymmetry `cli::gate_project_permissions` already encodes (#749 item 3); `[directories]` is untouched. Pinned at the **emission point** — the `Option<bool>` a caller of `check` receives, never the helper one layer below — with all four near-miss guards beside the two hole rows (trailing wildcard still auto-approves; an option token written verbatim in the pattern still auto-approves; a wildcard-free pattern is untouched; a `deny` pattern still blocks the option-carrying command), since a discriminator tested only on the side that blocks is vacuous green. **Positive control run rather than assumed**: neutering the helper to always return `false` fails the hole row and restoring it returns green. **The limit, stated rather than implied: this narrows `allow` matching only, and it is not a claim that `permissions.allow` is now safe against every option-injection shape** — it closes the wildcard-swallows-options class and nothing wider.
+ ✓ (1m 31s)
+  - Its consumer is the single `set_continue_on_silence()` site in `cli.rs`, and this repo's own `.yoyo.toml` sets it (see the `main.rs` bullet for why the config key rather than a flag).
+  + Its consumer is the single `set_continue_on_silence()` site in `cli.rs`, and this repo's own `.yoyo.toml` sets it (see the `main.rs` bullet for why the config key rather than a flag). Day 178 (self-discovered; transferred class — Claude Code v2.1.246 shipped a *warning* for the same shape): **a `permissions.allow` wildcard sitting before a literal swallowed option tokens.** `glob_match` only requires prefix / suffix / in-order-middle matching, so `allow = ["git * main"]` — which a user writes meaning "the `*` is the subcommand slot" — also matched `git -c core.sshCommand=<arbitrary command> push main`, auto-approving an arbitrary command **for the whole session** from a pattern that looks narrow. **Verified before writing any fix rather than reasoned about**, because the task's own step 0 was to stop if the reading was wrong: a standalone transcription of `glob_match` compiled with `rustc` returned `true` for `git * main` vs `git -c core.sshCommand=curl_evil.sh push main`, and the test added in this diff failed at exactly that row (`left: Some(true), right: None`) before the fix landed. Project-local configs are gated by the trust boundary (#748/#749), so the exposed path is the user's own `~/.yoyo.toml`, which is deliberately ungated — a real path, not a hypothetical one. **`glob_match` was not touched**: every `[permissions]` pattern in the world depends on it and, since #823, `[directories]` consumes it too — changing it would be a semantic change to a security control with two consumers. The fix is the pure `allow_wildcard_swallows_options(pattern, command)`, consulted **only** on the allow branch of `PermissionConfig::check`, and its precision is the whole task since a broader rule breaks legitimate configs: (1) it applies **only** to a **non-trailing** `*` — a non-empty literal segment must follow some `*`, so `cargo *`, `npm run *` and `git commit -m *` are honest "anything goes" patterns and stay **byte-identical to before**, which is essentially every existing user and the whole regression risk; (2) when it applies, the match is rejected if the command carries any whitespace-separated token starting with `-` that does not appear verbatim as a token in the pattern, so `git * --force` still auto-approves `git push --force`. **Rejection means "not auto-approved", never "refused"** — the command falls through to the normal confirmation prompt, which is graceful degradation by design and the reason no warning or refusal message was added; the doc comment says so outright so a later reader does not helpfully add one. **`deny` keeps plain `glob_match`, verbatim, and this asymmetry is written into the code rather than only here:** narrowing an `allow` removes privilege (safe), while narrowing a `deny` makes a fence stop matching — i.e. it **fails open**, so a naive mirror onto the deny branch would be a regression dressed as a security fix. Same asymmetry `cli::gate_project_permissions` already encodes (#749 item 3); `[directories]` is untouched. Pinned at the **emission point** — the `Option<bool>` a caller of `check` receives, never the helper one layer below — with all four near-miss guards beside the two hole rows (trailing wildcard still auto-approves; an option token written verbatim in the pattern still auto-approves; a wildcard-free pattern is untouched; a `deny` pattern still blocks the option-carrying command), since a discriminator tested only on the side that blocks is vacuous green. **Positive control run rather than assumed**: neutering the helper to always return `false` fails the hole row and restoring it returns green. **The limit, stated rather than implied: this narrows `allow` matching only, and it is not a claim that `permissions.allow` is now safe against every option-injection shape** — it closes the wildcard-swallows-options class and nothing wider.
+  3 tools completed in 1m 53s (3 ✓)
+
+
+Docs done. Now the full check suite.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 38s (2 ✓)
+
+All green. Let me check the module-size warnings to see whether config.rs drift needs paying off.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+98 of 100 — inside the grace band, but that leaves the next task in this file tripping the fatal branch for a reason unrelated to it. My own Day-174 lesson is that absorbed drift is the defect. Paying mine off:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only my three files are dirty. help.rs's 41-line drift isn't mine — I never opened it, so I'll leave it rather than launder unrelated drift into this commit.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/config.rs", 3388),
+  +     ("src/config.rs", 3486), // Day 178: +98 for the allow-wildcard option-token guard (#823 sibling).
+ ✓ (1m 30s)
+  -     ("src/config.rs", 3388),
+  +     ("src/config.rs", 3486), // Day 178: +98 for the allow-wildcard option-token guard (#823 sibling).
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (188ms)
+
+config.rs drift paid off (its warning is gone; help.rs's remains, correctly, as not-mine). Final full verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (17.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 28s)
+  3 tools completed in 3m 52s (2 ✓, 1 ✗)
+
+All four checks green. Committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (49 lines) ✓ (29ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed clean — 1134caad, 4 files, +132/−5, working tree empty. Task complete.
+
+## What happened
+
+Step 0 confirmed the bug, so I proceeded. Two independent verifications before touching anything: a standalone rustc transcription of glob_match returned true for git * main vs git -c core.sshCommand=curl_evil.sh push main, and the test I wrote first failed at exactly that row (`left: Some(true), right: None). A pattern a user writes meaning "the *` is the subcommand slot" was auto-approving an arbitrary command for the whole session.
+
+The fix. glob_match untouched — two consumers depend on it ([permissions], and [directories] since #823). Instead a pure allow_wildcard_swallows_options, consulted only on the allow branch:
+
+• fires only for a non-trailing * → cargo *, git commit -m * byte-identical to before (the regression risk, and essentially every existing user)
+• when it fires, rejects an option token not written verbatim in the pattern → git * --force still approves git push --force
+• rejection = "not auto-approved", never "refused" — falls through to the normal prompt, so no new warning was needed; the doc comment says so explicitly so a later reader doesn't add one
+
+`deny` keeps plain `glob_match`, and the asymmetry is written into the code rather than only the docs: narrowing an allow removes privilege; narrowing a deny makes a fence stop matching — it fails open.
+
+Verification. Six rows at the emission point (the Option<bool> a caller receives), four of them near-miss guards. Positive control run: neutering the helper fails the hole row, restoring it returns green.
+
+Two judgment calls worth naming:
+
+• Paid off my own register drift (config.rs 3388 → 3486). At +98 it was only a warning, but 98-of-100 means the next task in this file trips fatal for an unrelated reason — and Day 174 already cost me eleven absorbed entries for exactly this.
+• Left `help.rs`'s +41 alone. Not my drift, never opened the file. Laundering someone else's into my commit is the opposite of what the ratchet is for.
+
+The limit, stated rather than implied: this narrows allow matching only. It is not a claim that permissions.allow is now safe against every option-injection shape — it closes one class.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
