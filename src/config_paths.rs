@@ -167,6 +167,128 @@ pub(crate) fn demoted_write_warning(
     )
 }
 
+// === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+//
+// The four project-config trust gates (`gate_mcp_sources`, `gate_project_permissions`,
+// `gate_project_hooks`, `gate_goal_verify`) all refuse by default and name
+// `--trust-project` as the escape hatch — which applies to **one run**. A user who
+// genuinely trusts a checkout has to retype it on every invocation, and that is exactly
+// the pressure that turns into "always pass the flag", i.e. back to the unsafe default by
+// habit. This is the remembered half: `--trust-project-always` records the directory in a
+// user-level store, and later runs in that same directory are trusted without a flag.
+//
+// It lives in this module because "which persisted **user-level** file governs this
+// directory?" is the question this file already answers for the config ladder — the trust
+// store is that same question one surface over.
+
+/// The name of the trust store inside the user's XDG config directory.
+const TRUSTED_DIRS_FILE: &str = "trusted_dirs";
+
+/// Whether `content` already lists `dir` as a trusted directory.
+///
+/// Pure. `content` is the whole store file body; `dir` is compared against each
+/// **non-blank, non-comment** line, trimmed, by **exact string equality**.
+///
+/// Exact match only, and that is the security design rather than a simplification:
+/// a prefix/subdirectory match would silently widen a security control across
+/// directories the user never saw — trusting `/home/me/proj` must not trust
+/// `/home/me/proj/vendor/evil` (a path a dependency can create) and must not trust
+/// `/home/me/proj-other` (a different checkout entirely).
+pub(crate) fn trusted_dirs_contains(content: &str, dir: &std::path::Path) -> bool {
+    let needle = dir.to_string_lossy();
+    content.lines().any(|line| {
+        let line = line.trim();
+        !line.is_empty() && !line.starts_with('#') && line == needle
+    })
+}
+
+/// The store body with `dir` appended on its own line.
+///
+/// Pure and **idempotent**: a directory already listed returns `content` unchanged,
+/// so re-running `--trust-project-always` never grows a duplicate line. The result
+/// always ends in exactly one trailing newline.
+pub(crate) fn append_trusted_dir(content: &str, dir: &std::path::Path) -> String {
+    if trusted_dirs_contains(content, dir) {
+        return content.to_string();
+    }
+    let mut out = content.trim_end_matches('\n').to_string();
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&dir.to_string_lossy());
+    out.push('\n');
+    out
+}
+
+/// Where the trust store lives: `$XDG_CONFIG_HOME/yoyo/trusted_dirs`, else
+/// `~/.config/yoyo/trusted_dirs`.
+///
+/// Derived from [`crate::cli::user_config_path`] (the XDG rung of the config ladder)
+/// rather than resolving XDG a second time — one statement of that rule, never two to
+/// drift apart.
+///
+/// **The store is user-level and never project-level, on purpose: a repo must never be
+/// able to trust itself.** There is deliberately no `./.yoyo/trusted_dirs` lookup — that
+/// would let the very file whose provenance is in question grant its own trust, which is
+/// the provenance question `crate::config::config_path_is_project_local` already answers
+/// for configs.
+pub(crate) fn trusted_dirs_path() -> Option<std::path::PathBuf> {
+    let config = crate::cli::user_config_path()?;
+    Some(config.with_file_name(TRUSTED_DIRS_FILE))
+}
+
+/// Canonicalize a directory for storage/lookup.
+///
+/// `.`, `..` and a symlinked checkout must not present as a different string than the
+/// one that was trusted. **Failure returns `None` rather than falling back to the raw
+/// path**: "could not check" must not read as "trusted".
+fn canonical_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::canonicalize(dir).ok()
+}
+
+/// Whether a previous `--trust-project-always` recorded this exact directory.
+///
+/// Missing store, unreadable store, or a directory that cannot be canonicalized all
+/// return `false` — every failure mode lands on "not trusted".
+pub(crate) fn dir_is_trusted(dir: &std::path::Path) -> bool {
+    let Some(dir) = canonical_dir(dir) else {
+        return false;
+    };
+    let Some(path) = trusted_dirs_path() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    trusted_dirs_contains(&content, &dir)
+}
+
+/// Record `dir` in the user-level trust store, creating it if needed.
+///
+/// Read-modify-write through the idempotent [`append_trusted_dir`], so repeated calls
+/// leave one line. Returns the path written on success. A directory that cannot be
+/// canonicalized is **refused** rather than stored raw.
+pub(crate) fn remember_trusted_dir(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let dir = canonical_dir(dir).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not resolve the directory to a real path",
+        )
+    })?;
+    let path = trusted_dirs_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "could not locate a user config directory",
+        )
+    })?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    std::fs::write(&path, append_trusted_dir(&existing, &dir))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +451,126 @@ mod tests {
             lower.contains("stopped being read") || lower.contains("no longer"),
             "warning must state the consequence, not just the precedence: {msg}"
         );
+    }
+
+    // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+    //
+    // Driven through the two pure functions with fabricated content: no HOME /
+    // XDG_CONFIG_HOME mutation (those are process-globals — see
+    // tests/global_state_races.rs) and no set_current_dir (#780 spent two tasks
+    // removing those).
+
+    fn p(s: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(s)
+    }
+
+    #[test]
+    fn test_trusted_dirs_contains_exact_match_only() {
+        // The table is the security design. Each row is (store body, queried dir,
+        // expected), and the rows that must be *false* are the point: a prefix or
+        // subdirectory match would silently widen a security control across
+        // directories the user never saw.
+        let store = "/home/me/proj\n";
+        let cases: &[(&str, &str, bool)] = &[
+            // The exact directory that was trusted.
+            (store, "/home/me/proj", true),
+            // A subdirectory — a path a dependency can create inside the repo.
+            (store, "/home/me/proj/vendor/evil", false),
+            // A sibling sharing the prefix — a different checkout entirely.
+            (store, "/home/me/proj-other", false),
+            // A parent — trusting a child must never trust the tree above it.
+            (store, "/home/me", false),
+            // Nothing is trusted by an empty or missing store.
+            ("", "/home/me/proj", false),
+            ("\n\n  \n", "/home/me/proj", false),
+        ];
+        for (content, dir, expected) in cases {
+            assert_eq!(
+                trusted_dirs_contains(content, &p(dir)),
+                *expected,
+                "trusted_dirs_contains({content:?}, {dir:?}) should be {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_trusted_dirs_contains_ignores_blank_and_comment_lines() {
+        let content = "# yoyo trusted directories\n\n  /home/me/proj  \n\n#/home/me/commented\n";
+        // A line with surrounding whitespace still matches — trimmed, then compared.
+        assert!(trusted_dirs_contains(content, &p("/home/me/proj")));
+        // A commented-out entry grants nothing. This is the revocation path: a user
+        // can comment a line instead of deleting it and the trust must really be gone.
+        assert!(!trusted_dirs_contains(content, &p("/home/me/commented")));
+        // The comment marker itself is not a directory.
+        assert!(!trusted_dirs_contains(
+            content,
+            &p("# yoyo trusted directories")
+        ));
+    }
+
+    #[test]
+    fn test_append_trusted_dir_is_idempotent_and_newline_terminated() {
+        // Empty store: one line, one trailing newline.
+        let first = append_trusted_dir("", &p("/home/me/proj"));
+        assert_eq!(first, "/home/me/proj\n");
+
+        // Re-running --trust-project-always must not grow a duplicate line.
+        let again = append_trusted_dir(&first, &p("/home/me/proj"));
+        assert_eq!(
+            again, first,
+            "appending an already-trusted directory must return the body unchanged"
+        );
+
+        // A second, different directory is appended beneath the first.
+        let two = append_trusted_dir(&first, &p("/home/me/other"));
+        assert_eq!(two, "/home/me/proj\n/home/me/other\n");
+        assert!(trusted_dirs_contains(&two, &p("/home/me/proj")));
+        assert!(trusted_dirs_contains(&two, &p("/home/me/other")));
+
+        // A store that lost its trailing newline is repaired rather than concatenated
+        // onto — exactly one trailing newline, and no glued-together line.
+        let unterminated = append_trusted_dir("/home/me/proj", &p("/home/me/other"));
+        assert_eq!(unterminated, "/home/me/proj\n/home/me/other\n");
+
+        // Comments and blank lines in the file are preserved by the append.
+        let with_comment = append_trusted_dir("# mine\n\n", &p("/home/me/proj"));
+        assert_eq!(with_comment, "# mine\n/home/me/proj\n");
+    }
+
+    #[test]
+    fn test_trusted_dirs_path_is_user_level_never_project_level() {
+        // A repo must never be able to trust itself: the store sits beside the XDG
+        // user config, never at a project-relative path. If no user config dir can be
+        // located we get None — "could not check" must not become "trusted".
+        let Some(path) = trusted_dirs_path() else {
+            return;
+        };
+        assert!(
+            path.is_absolute(),
+            "the trust store must be an absolute user-level path, got {}",
+            path.display()
+        );
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some(TRUSTED_DIRS_FILE)
+        );
+        // It shares a directory with the XDG config rung — one XDG resolver, not two.
+        assert_eq!(
+            path.parent(),
+            crate::cli::user_config_path()
+                .as_deref()
+                .and_then(|p| p.parent()),
+            "the trust store must live beside the user config, not in a second location"
+        );
+    }
+
+    #[test]
+    fn test_dir_is_trusted_refuses_a_directory_that_cannot_be_canonicalized() {
+        // The default path for every user with no store: not trusted. A path that
+        // does not exist cannot be canonicalized, and the failure lands on `false`
+        // rather than falling back to the raw string.
+        assert!(!dir_is_trusted(&p(
+            "/nonexistent-yoyo-trust-probe/definitely/not/here"
+        )));
     }
 }

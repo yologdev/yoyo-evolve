@@ -389,6 +389,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--lite",
     "--safe-mode",
     "--trust-project",
+    "--trust-project-always",
     "--help",
     "-h",
     "--version",
@@ -1032,6 +1033,51 @@ pub(crate) fn project_hook_refusal_message(
     msg
 }
 
+/// The note printed when `--trust-project-always` records this directory.
+///
+/// Names the directory recorded **and the full path of the store file**, because that
+/// file is the revocation mechanism: there is deliberately no un-trust flag, so a user
+/// who cannot find the file cannot take the decision back. `plain` drops the glyph for
+/// screen-reader output; the caller drops the whole message under `--quiet`.
+pub(crate) fn trust_remembered_message(
+    dir: &std::path::Path,
+    store: &std::path::Path,
+    plain: bool,
+) -> String {
+    let marker = if plain { "" } else { "✓ " };
+    format!(
+        "{marker}Trusting this directory from now on: {}\n  Recorded in {}. Remove that line to \
+revoke.\n  Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks will run here \
+without a flag.",
+        dir.display(),
+        store.display()
+    )
+}
+
+/// The note printed when a run is trusted by the **store** rather than by a flag.
+///
+/// This is the important one of the pair. A silent trust grant is a bug even when it is
+/// the right grant: a user must never discover that project MCP servers,
+/// `[permissions].allow` and shell hooks are live because of a decision they made weeks
+/// ago and cannot see. `store` is `None` only when no user config directory could be
+/// located, in which case the message says so rather than naming a path that is a guess.
+pub(crate) fn trusted_by_store_message(
+    dir: &std::path::Path,
+    store: Option<&std::path::Path>,
+    plain: bool,
+) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let where_ = match store {
+        Some(p) => format!("Listed in {}; remove that line to revoke.", p.display()),
+        None => "Listed in your user-level trusted_dirs store.".to_string(),
+    };
+    format!(
+        "{marker}This directory is trusted by a previous --trust-project-always: {}\n  {where_}\n  \
+Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks are live this run.",
+        dir.display()
+    )
+}
+
 /// Parse permission and directory restriction config from CLI args and config file content.
 fn parse_permission_and_dir_config(
     args: &[String],
@@ -1358,8 +1404,58 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // to start the MCP servers it declares. Off by default — that file ships
     // with the repository, so starting the commands it names is execution the
     // user never approved.
-    if args.iter().any(|a| a == "--trust-project") {
+    //
+    // Day 178 (#749 item 1): the same OR shape `continue_on_silence` (#794) and
+    // `wait_for_reset` (Day 178) use — one setter site, several sources.
+    //   1. `--trust-project`         — this run only, byte-identical to before.
+    //   2. `--trust-project-always`  — this run **and** remembered for this directory.
+    //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+    // A user who genuinely trusts a checkout should be able to say so once instead of
+    // retyping a flag forever; that pressure is what turns into "always pass the flag",
+    // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
+    // flag** — the store is a plain text file and deleting a line is the revocation,
+    // which is why every message below names the file's full path.
+    let trust_always = args.iter().any(|a| a == "--trust-project-always");
+    let trust_once = args.iter().any(|a| a == "--trust-project");
+    let cwd = std::env::current_dir().ok();
+    if trust_once || trust_always {
         set_trust_project();
+    } else if let Some(dir) = cwd.as_deref() {
+        // A trust grant made weeks ago and invisible today is exactly the state a user
+        // must never be surprised by, so this run says so out loud.
+        if crate::config_paths::dir_is_trusted(dir) {
+            set_trust_project();
+            if !is_quiet() {
+                let store = crate::config_paths::trusted_dirs_path();
+                let msg = trusted_by_store_message(
+                    dir,
+                    store.as_deref(),
+                    crate::format::is_plain_output(),
+                );
+                eprintln!("{YELLOW}{msg}{RESET}");
+            }
+        }
+    }
+    if trust_always {
+        if let Some(dir) = cwd.as_deref() {
+            match crate::config_paths::remember_trusted_dir(dir) {
+                Ok(store) => {
+                    if !is_quiet() {
+                        let msg =
+                            trust_remembered_message(dir, &store, crate::format::is_plain_output());
+                        eprintln!("{msg}");
+                    }
+                }
+                Err(e) => {
+                    // This run is still trusted (the flag said so); only the memory
+                    // failed. Saying "remembered" here would be a lie.
+                    eprintln!(
+                        "{YELLOW}warning:{RESET} --trust-project-always could not record this \
+directory ({e}); this run is trusted, later runs will not be."
+                    );
+                }
+            }
+        }
     }
 
     // Validate that flags requiring values actually have them
@@ -4626,6 +4722,128 @@ command = "server-two"
         let args = vec!["yoyo".to_string(), "--trust-project".to_string()];
         let value_taking = ["--model", "--mcp", "--provider"];
         assert!(check_flag_values(&args, &value_taking).is_empty());
+    }
+
+    // === Persisted per-directory workspace trust (Day 178, #749 item 1) ===
+
+    #[test]
+    fn test_trust_project_always_in_known_flags_and_takes_no_value() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--trust-project-always"),
+            "an unknown flag is warned about and silently ignored"
+        );
+        // It takes no value, so it is deliberately NOT in the value-taking list
+        // check_flag_values scans, and a bare occurrence must not be reported as a
+        // flag missing its value.
+        let args = vec!["yoyo".to_string(), "--trust-project-always".to_string()];
+        let value_taking = ["--model", "--mcp", "--provider"];
+        assert!(check_flag_values(&args, &value_taking).is_empty());
+    }
+
+    #[test]
+    fn test_trust_remembered_message_names_the_directory_and_the_store() {
+        let msg = trust_remembered_message(
+            std::path::Path::new("/home/u/proj"),
+            std::path::Path::new("/home/u/.config/yoyo/trusted_dirs"),
+            false,
+        );
+        assert!(
+            msg.contains("/home/u/proj"),
+            "must name the directory recorded: {msg}"
+        );
+        // The store path is the revocation mechanism — there is no un-trust flag, so
+        // a user who cannot find the file cannot take the decision back.
+        assert!(
+            msg.contains("/home/u/.config/yoyo/trusted_dirs"),
+            "must name the full path of the store file: {msg}"
+        );
+        assert!(
+            msg.to_ascii_lowercase().contains("revoke"),
+            "must say how to undo it: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_trusted_by_store_message_says_a_past_decision_is_in_force() {
+        let msg = trusted_by_store_message(
+            std::path::Path::new("/home/u/proj"),
+            Some(std::path::Path::new("/home/u/.config/yoyo/trusted_dirs")),
+            false,
+        );
+        assert!(msg.contains("/home/u/proj"), "{msg}");
+        assert!(msg.contains("/home/u/.config/yoyo/trusted_dirs"), "{msg}");
+        // The whole point: a user must never discover that project MCP servers,
+        // permissions.allow and shell hooks are live because of a decision they made
+        // weeks ago and cannot see.
+        assert!(
+            msg.contains("--trust-project-always"),
+            "must name the flag that granted it: {msg}"
+        );
+        assert!(
+            msg.contains("permissions.allow") && msg.contains("hooks"),
+            "must name what the grant actually enables: {msg}"
+        );
+
+        // No store path resolvable → say so rather than naming a guessed path.
+        let unknown = trusted_by_store_message(std::path::Path::new("/home/u/proj"), None, false);
+        assert!(
+            !unknown.contains("None"),
+            "an unresolvable store must not render as a debug value: {unknown}"
+        );
+        assert!(unknown.contains("trusted_dirs"), "{unknown}");
+    }
+
+    #[test]
+    fn test_trust_messages_are_glyph_free_under_plain_output() {
+        // --screen-reader users get no glyphs. Both messages, both directions.
+        for msg in [
+            trust_remembered_message(
+                std::path::Path::new("/home/u/proj"),
+                std::path::Path::new("/home/u/.config/yoyo/trusted_dirs"),
+                true,
+            ),
+            trusted_by_store_message(
+                std::path::Path::new("/home/u/proj"),
+                Some(std::path::Path::new("/home/u/.config/yoyo/trusted_dirs")),
+                true,
+            ),
+        ] {
+            assert!(
+                msg.is_ascii(),
+                "plain output must carry no glyphs or em dashes: {msg}"
+            );
+        }
+        // Near-miss guard: the non-plain variants DO carry a marker, so the plain
+        // branch is not vacuously passing over a message that never had one.
+        assert!(!trust_remembered_message(
+            std::path::Path::new("/home/u/proj"),
+            std::path::Path::new("/s"),
+            false
+        )
+        .is_ascii());
+        assert!(!trusted_by_store_message(
+            std::path::Path::new("/home/u/proj"),
+            Some(std::path::Path::new("/s")),
+            false
+        )
+        .is_ascii());
+    }
+
+    #[test]
+    fn test_untrusted_directory_is_the_unchanged_default() {
+        // The regression risk: a user who passes neither flag and has no store entry
+        // must be byte-identical to before. Trust must come from the store and
+        // nothing else — never from the directory merely existing.
+        let cwd = std::env::current_dir().expect("cwd");
+        let listed = crate::config_paths::trusted_dirs_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|c| {
+                std::fs::canonicalize(&cwd)
+                    .map(|d| crate::config_paths::trusted_dirs_contains(&c, &d))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        assert_eq!(crate::config_paths::dir_is_trusted(&cwd), listed);
     }
 
     #[test]
