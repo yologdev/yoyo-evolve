@@ -507,6 +507,24 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 eprintln!("{DIM}  Start yoyo and use: /extended <task> [--turns N]{RESET}\n");
                 return Some(None);
             }
+            "gasp" => {
+                // #827: the CLI door onto the four ported GASP session-graph arms,
+                // so `scripts/gasp_shim.sh` has a path to them at all. Deliberately
+                // NOT in `subcommand_tables()`, the completion tables or
+                // `cli_help_text()` — it is a harness-facing verb behind a
+                // default-off feature, and advertising it in user help would
+                // promise something a normal build refuses. Do not "fix" that.
+                //
+                // Routed UNCONDITIONALLY, feature or no feature. The Day-165
+                // near-miss guard only inspects the bare two-token `yoyo <word>`
+                // shape, so a multi-token `yoyo gasp session-start --run-id …`
+                // would sail straight past it into the single-prompt path and be
+                // executed as a billed LLM turn with write-capable tools attached
+                // (#745/#767/#769/#816, "two doors, one works"). An honest refusal
+                // is the whole point of routing it.
+                let exit_code = run_gasp_subcommand(&args[2..]);
+                std::process::exit(exit_code);
+            }
             _ => {}
         }
     }
@@ -714,6 +732,70 @@ fn run_review_subcommand(args: &[String], review_arg: &str) -> i32 {
             1
         }
     }
+}
+
+/// Run `yoyo gasp <arm> …`, returning the process exit code (#827).
+///
+/// `args` is everything after `yoyo gasp`, so `args[0]` is the arm name.
+///
+/// The parse half is compiled and table-tested unconditionally
+/// ([`crate::gasp_cli::parse_gasp_args`]); only the half that opens the store is
+/// behind the default-off `gasp` feature. A parse error exits 2 with the offending
+/// flag named — the shim logs this output, so "bad arguments" alone would be
+/// useless there.
+fn run_gasp_subcommand(args: &[String]) -> i32 {
+    match crate::gasp_cli::parse_gasp_args(args) {
+        Ok(cmd) => run_parsed_gasp_command(cmd),
+        Err(e) => {
+            eprintln!("{RED}✗ gasp: {e}{RESET}");
+            eprintln!("{DIM}  {}{RESET}", crate::gasp_cli::gasp_usage());
+            2
+        }
+    }
+}
+
+#[cfg(feature = "gasp")]
+fn run_parsed_gasp_command(cmd: crate::gasp_cli::GaspCommand) -> i32 {
+    // Only `session-end` can produce a boundary sha; the other three arms return
+    // `None` meaning "nothing to print", which is a different fact from
+    // session-end's "nothing to commit". Captured before the move so the two are
+    // never conflated.
+    let is_session_end = matches!(cmd, crate::gasp_cli::GaspCommand::SessionEnd { .. });
+
+    // We're inside a tokio runtime (called from parse_args in async main), so use
+    // block_in_place + block_on, exactly as the review subcommand above does.
+    let result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(crate::gasp_cli::run_gasp_command(cmd))
+    });
+
+    match result {
+        Ok(sha) => {
+            if is_session_end {
+                // Byte-identical to the sidecar's own line — the shim captures
+                // this output, so a reworded line is a different log.
+                println!(
+                    "gasp boundary commit: {}",
+                    sha.as_deref().unwrap_or("(nothing to commit)")
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("{RED}✗ gasp: {e}{RESET}");
+            1
+        }
+    }
+}
+
+/// The honest refusal in a default build. It must exit non-zero and must never
+/// fall through to the single-prompt path — see the comment at the dispatch arm.
+#[cfg(not(feature = "gasp"))]
+fn run_parsed_gasp_command(_cmd: crate::gasp_cli::GaspCommand) -> i32 {
+    eprintln!(
+        "{RED}✗ gasp: this build has no GASP recorder — rebuild with `--features gasp`.{RESET}"
+    );
+    eprintln!("{DIM}  (nothing was recorded){RESET}");
+    2
 }
 
 #[cfg(test)]

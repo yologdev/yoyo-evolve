@@ -28,6 +28,7 @@ pub const ROUTED_SUBCOMMANDS: &[&str] = &[
     "evolution",
     "extended",
     "find",
+    "gasp",
     "goal",
     "grep",
     "health",

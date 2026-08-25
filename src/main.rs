@@ -95,6 +95,10 @@ mod docs;
 mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
+// Unconditional: the argument contract in here is compiled and table-tested by a
+// plain `cargo test`, which compiles none of `gasp` above. Only the half that
+// touches the store is behind the feature.
+mod gasp_cli;
 mod git;
 mod git_commit_msg;
 mod help;

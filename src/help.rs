@@ -1784,6 +1784,19 @@ mod tests {
         // than hand-typing the enumeration again here (the exact habit that
         // caused the drift), walk the real dispatch arms and demand each one
         // is documented.
+        // `DELIBERATELY_UNDOCUMENTED` is the escape hatch, in the same shape as
+        // this repo's other gates: it does not forbid an undocumented routed
+        // verb, it forbids an *unnamed* one. It runs in both directions — a
+        // registered verb that has become documented, or that stopped being
+        // routed, is also fatal — so the register can only shrink.
+        const DELIBERATELY_UNDOCUMENTED: &[(&str, &str)] = &[(
+            "gasp",
+            "#827: harness-facing door onto the ported GASP arms, behind the \
+             default-off `gasp` feature. Listing it in user help would promise a \
+             normal build something it refuses; it is routed anyway so a \
+             multi-token `yoyo gasp …` cannot fall through to a billed LLM turn.",
+        )];
+
         let dispatch_src = include_str!("dispatch_sub.rs");
         let arms = routed_cli_subcommands(dispatch_src);
         assert!(
@@ -1793,19 +1806,35 @@ mod tests {
             arms.len()
         );
         let text = cli_help_text();
+        let documented =
+            |arm: &str| text.contains(&format!("  {arm} ")) || text.contains(&format!("  {arm}\n"));
         let mut undocumented: Vec<&str> = Vec::new();
         for arm in &arms {
-            let listed =
-                text.contains(&format!("  {arm} ")) || text.contains(&format!("  {arm}\n"));
-            if !listed {
+            if !documented(arm) && !DELIBERATELY_UNDOCUMENTED.iter().any(|(v, _)| v == arm) {
                 undocumented.push(arm);
             }
         }
         assert!(
             undocumented.is_empty(),
             "cli_help_text() is missing routed subcommand(s): {undocumented:?} — \
-             every `yoyo <subcmd>` that dispatch_sub.rs routes must appear in --help"
+             every `yoyo <subcmd>` that dispatch_sub.rs routes must appear in --help. \
+             Document it, or register it in DELIBERATELY_UNDOCUMENTED with the reason."
         );
+
+        // The ratchet: an exception list only pays itself down if *improving* is
+        // a failure too.
+        for (verb, reason) in DELIBERATELY_UNDOCUMENTED {
+            assert!(
+                arms.iter().any(|a| a == verb),
+                "`{verb}` is registered as deliberately undocumented but dispatch_sub.rs \
+                 no longer routes it — delete the register entry ({reason})"
+            );
+            assert!(
+                !documented(verb),
+                "`{verb}` is now documented in cli_help_text() — delete its \
+                 DELIBERATELY_UNDOCUMENTED entry ({reason})"
+            );
+        }
     }
 
     #[test]
