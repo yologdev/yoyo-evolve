@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff. Let me look at the key uncertainties first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1395,1530p src/cli.rs ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deliberately not covere…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "raw_config_content\|gat… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | grep -i c… ✓ (13ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 16s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 2s (6 ✓)
+
+Verdict: FAIL — on docs only; the implementation itself is sound.
+
+What's right:
+• All four pure decision functions live in config_paths.rs; cli.rs gains only the tty check, one read_line, and the branch at the single `set_trust_project()` site.
+• Ordering verified: the prompt block (~1436–1515) runs before gate_project_permissions (1758), gate_mcp_sources (1792) and gate_project_hooks (1805), so answering y actually takes effect this run.
+• Tests hit every requirement: all-true row + five independent near-miss flips, empty/whitespace/junk → No, this repo's real .yoyo.toml key set → empty grants, plain-output is_ascii.
+• Ran the binary with piped stdio: no prompt, no hang, exit 0. Non-interactive guard holds.
+• TrustAnswer's three variants are all matched; every new fn has a consumer in this diff; the module-size register line was updated in the same commit.
+
+Why it fails: CLAUDE.md was in the task's own Files: line and had a dedicated ## Docs section, and the commit doesn't touch it. Line 180 still reads:
+
+│ Deliberately not covered (follow-up #749 item 2): there is still no interactive "do you trust this folder?" prompt, so trust is only ever granted by a flag the user types
+
+That is now false in the document re-injected as authoritative context every session — the exact stale-claim class that cost eight sessions on #683. The commands_goal.rs bullet carries the same stale sentence. The fix is one paragraph in the cli.rs bullet (fourth source, interactive-only guard, default-No, and that trust is still never grantable by a project-local file) plus striking the two stale claims.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

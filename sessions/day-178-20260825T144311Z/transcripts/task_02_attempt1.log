@@ -1,0 +1,300 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the CI section of the extractor.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CiScan\|collect_failed_… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '555,760p' scripts/extrac… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '636,672p' scripts/extrac… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def main/,/^def run_se… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2150,2161p' scripts/extr… ✓ (134ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def main/,/ci_scan = c… ✓ (4ms)
+  6 tools completed in 56.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — implementing now. Starting with the CiScan timestamp field and the new GreenScan type.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 109 lines)
+        undated: int = 0
+        fetch_errors: int = 0
+        reason: str = ""
+  +     # ISO-8601 stamp of the NEWEST in-window failure, or None when there are
+  +     # none. This is the anchor `green_since_verdict` compares a later success
+  +     # against. Deliberately the newest failure OVERALL rather than the newest
+  +     # one that produced a rendered cluster: every rendered row comes from an
+  +     # in-window failure, so "every failure below predates it" stays true, and
+  +     # an unreadable-log run can only make the green-since claim HARDER to
+  +     # earn — the conservative direction for a line whose whole job is to stop
+  +     # over-claiming.
+  +     newest_failure_ts: str | None = None
+  + 
+  + 
+  + @dataclass
+  + class GreenScan:
+  +     """Has CI passed since the newest failure? Three states, none folded.
+  + 
+  +     `checked` separates "the query ran and answered" from "I could not ask".
+  +     A `checked=False` scan must never render as "no successes" and must never
+  ... (85 more lines)
+ ✓ (1m 43s)
+        undated: int = 0
+        fetch_errors: int = 0
+        reason: str = ""
+  +     # ISO-8601 stamp of the NEWEST in-window failure, or None when there are
+  +     # none. This is the anchor `green_since_verdict` compares a later success
+  +     # against. Deliberately the newest failure OVERALL rather than the newest
+  +     # one that produced a rendered cluster: every rendered row comes from an
+  +     # in-window failure, so "every failure below predates it" stays true, and
+  ... (13 more lines)
+
+Now populate newest_failure_ts and wire the render:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 14 lines)
+            excluded_old=len(too_old),
+            undated=len(undated),
+        )
+  +     if in_window:
+  +         # Smallest age == newest run. Read the stamp back off the record so the
+  +         # anchor is the timestamp gh reported, never one reconstructed from a
+  +         # float age.
+  +         newest_record = min(in_window, key=lambda pair: pair[1])[0]
+  +         ts = newest_record.get("createdAt")
+  +         scan.newest_failure_ts = ts if isinstance(ts, str) and ts.strip() else None
+ ✓ (1m 42s)
+            excluded_old=len(too_old),
+            undated=len(undated),
+        )
+  +     if in_window:
+  +         # Smallest age == newest run. Read the stamp back off the record so the
+  +         # anchor is the timestamp gh reported, never one reconstructed from a
+  +         # float age.
+  +         newest_record = min(in_window, key=lambda pair: pair[1])[0]
+  +         ts = newest_record.get("createdAt")
+  +         scan.newest_failure_ts = ts if isinstance(ts, str) and ts.strip() else None
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (33 → 49 lines)
+  - def render_ci_errors(scan: CiScan | None) -> str:
+  + def render_ci_errors(scan: CiScan | None, green: "GreenScan | None" = None,
+  +                      now: datetime | None = None) -> str:
+        """Render the CI section. Every world gets its own sentence.
+    
+        Rows carry the age of their newest run, and the header names the window, so
+  -     a four-day-old resolved failure cannot read as "CI is failing right now"."""
+  +     a four-day-old resolved failure cannot read as "CI is failing right now".
+  + 
+  +     `green` adds ONE line under the header answering the cheap, checkable
+  +     question the age filter cannot: has any run SUCCEEDED since the newest
+  +     failure below? Recent, real and already repaired was a fourth state this
+  +     partition did not have, and it failed in the alarming direction — priority
+  +     0 of the planning prompt is "fix CI failures", so a cured defect rendered
+  +     as live can outrank the whole rest of the plan.
+  + 
+  +     Row shape, header text and every other branch are unchanged: nothing is
+  +     dropped, filtered or re-ranked. This adds one sentence of context."""
+        if scan is None:
+            return ""
+  ... (13 more lines)
+ ✓ (1m 43s)
+  - def render_ci_errors(scan: CiScan | None) -> str:
+  + def render_ci_errors(scan: CiScan | None, green: "GreenScan | None" = None,
+  +                      now: datetime | None = None) -> str:
+        """Render the CI section. Every world gets its own sentence.
+    
+        Rows carry the age of their newest run, and the header names the window, so
+  -     a four-day-old resolved failure cannot read as "CI is failing right now"."""
+  +     a four-day-old resolved failure cannot read as "CI is failing right now".
+  ... (13 more lines)
+  2 tools completed in 3m 44s (2 ✓)
+
+Now wire it into main() with the cost guard:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 1 lines)
+  -     s = render_ci_errors(ci_scan)
+  +     s = render_ci_errors(ci_scan, green_scan)
+ ✓ (1m 43s)
+  -     s = render_ci_errors(ci_scan)
+  +     s = render_ci_errors(ci_scan, green_scan)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 9 lines)
+        ci_scan = collect_failed_ci_fingerprints(repo)
+  +     # Cost guard: only ask "has CI gone green since?" when there is actually a
+  +     # failure to qualify. Gated on `clusters` rather than `in_window` because
+  +     # the clusters branch is the ONLY one that renders the verdict — a healthy
+  +     # session (the common case) makes zero extra `gh` calls and its output is
+  +     # byte-identical to before.
+  +     green_scan = (
+  +         newest_successful_run(repo) if (ci_scan.ok and ci_scan.clusters) else None
+  +     )
+ ✓ (1m 43s)
+        ci_scan = collect_failed_ci_fingerprints(repo)
+  +     # Cost guard: only ask "has CI gone green since?" when there is actually a
+  +     # failure to qualify. Gated on `clusters` rather than `in_window` because
+  +     # the clusters branch is the ONLY one that renders the verdict — a healthy
+  +     # session (the common case) makes zero extra `gh` calls and its output is
+  +     # byte-identical to before.
+  +     green_scan = (
+  +         newest_successful_run(repo) if (ci_scan.ok and ci_scan.clusters) else None
+  +     )
+  2 tools completed in 3m 30s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && python3 -c "i… ✓ (107ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Existing tests pass. Now adding the self-tests for the new code:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2240,2262p' scripts/extr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "in-window failures with… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2278,2292p' scripts/extr… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 109 lines)
+            f"## CI: 2 failed run(s) in last {WINDOW_DAYS} days, "
+            "but no error lines could be read from their logs",
+  +     )
+  + 
+  +     # 9. green_since_verdict — the fourth state the age partition never had:
+  +     #    recent, real, and ALREADY REPAIRED. Three verdicts plus the near-miss.
+  +     gnow = datetime(2026, 8, 25, 12, 0, 0, tzinfo=timezone.utc)
+  +     fail_ts = "2026-08-23T12:00:00Z"
+  + 
+  +     assert_true(
+  +         "no in-window failure to qualify -> None (that branch is untouched)",
+  +         green_since_verdict(None, GreenScan(checked=True), gnow) is None,
+  +     )
+  + 
+  +     # A success strictly NEWER than the newest failure: the whole point.
+  +     green_v = green_since_verdict(
+  +         fail_ts, GreenScan(newest_success_ts="2026-08-25T06:00:00Z", checked=True), gnow
+  +     )
+  +     assert_true(
+  +         "a later success reports CI has gone green since",
+  ... (89 more lines)
+ ✓ (1m 43s)
+            f"## CI: 2 failed run(s) in last {WINDOW_DAYS} days, "
+            "but no error lines could be read from their logs",
+  +     )
+  + 
+  +     # 9. green_since_verdict — the fourth state the age partition never had:
+  +     #    recent, real, and ALREADY REPAIRED. Three verdicts plus the near-miss.
+  +     gnow = datetime(2026, 8, 25, 12, 0, 0, tzinfo=timezone.utc)
+  +     fail_ts = "2026-08-23T12:00:00Z"
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 18s (4 ✓)
+
+green=None with a timestamp correctly yields could-not-run — my byte-identity assertion picked the wrong subject. Fixing it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 10 lines)
+  -     # Passing no green scan at all leaves the section byte-identical to before.
+  +     # A scan carrying no failure anchor renders byte-identically to before:
+  +     # nothing to qualify means nothing to say.
+        assert_eq(
+  -         "no green scan -> section is byte-identical to the pre-change render",
+  -         render_ci_errors(cured),
+  +         "no failure anchor -> section is byte-identical to the pre-change render",
+  +         render_ci_errors(
+  +             CiScan(ok=True, clusters=[("boom", ["1", "2"], 0.9)], in_window=2)
+  +         ),
+            f"## Recurring CI errors (failed runs, last {WINDOW_DAYS} days)\n"
+            "[2×, last <1d ago] boom",
+        )
+ ✓ (1m 43s)
+  -     # Passing no green scan at all leaves the section byte-identical to before.
+  +     # A scan carrying no failure anchor renders byte-identically to before:
+  +     # nothing to qualify means nothing to say.
+        assert_eq(
+  -         "no green scan -> section is byte-identical to the pre-change render",
+  -         render_ci_errors(cured),
+  +         "no failure anchor -> section is byte-identical to the pre-change render",
+  +         render_ci_errors(
+  ... (5 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (61ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (122ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now the positive controls — a new discriminator that changes nothing under test is the vacuous-green shape:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (14 lines) ✓ (88ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (16 lines) ✓ (194ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (19 lines) ✓ (244ms)
+  3 tools completed in 10.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both positive controls kill tests (1 and 4 respectively), file restored green. Now the --help surface:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 scripts/extract_trajecto… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 26 lines)
+  + USAGE = """usage: extract_trajectory.py [--test] [--help]
+  + 
+  + Aggregate audit-log session outcomes, git log and recent CI runs into a
+  + `YOUR TRAJECTORY` markdown block for the Phase A1/A2 planning prompts.
+  + 
+  + options:
+  +   --test    run the self-tests and exit non-zero on failure
+  +   --help    show this message and exit
+  + 
+  + environment:
+  +   YOYO_AUDIT_DIR        directory of `sessions/day-*/` audit-log checkouts
+  +   YOYO_REPO             owner/name, enables the `gh`-backed CI sections
+  +   YOYO_DAY              day number for the header
+  +   YOYO_TRAJECTORY_OUT   output path (default .yoyo/session_staging/trajectory.md)
+  + 
+  + Fail-soft by contract: every section degrades to an honest note rather than
+  + raising, so this never blocks a session."""
+  + 
+  + 
+    if __name__ == "__main__":
+  ... (6 more lines)
+ ✓ (1m 44s)
+  + USAGE = """usage: extract_trajectory.py [--test] [--help]
+  + 
+  + Aggregate audit-log session outcomes, git log and recent CI runs into a
+  + `YOUR TRAJECTORY` markdown block for the Phase A1/A2 planning prompts.
+  + 
+  + options:
+  +   --test    run the self-tests and exit non-zero on failure
+  +   --help    show this message and exit
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scri… (4 lines) ✓ (244ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/tra… (2 lines) ✓ (128ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is this crash pre-exis… ✓ (145ms)
+  5 tools completed in 2m 4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed pre-existing at HEAD (unset YOYO_AUDIT_DIR → /dev/null crash) — out of scope, noting not fixing. Verifying with a valid audit dir:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptyaudit && YOYO… ✓ (5.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && export GH_RE… (3 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/tra… (11 lines) ✓ (562ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO="yologdev/yoyo-evolve"… ✓ (5.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 39.4s (4 ✓)
+
+The feature works live — the first run was before the 14:00 success landed, the second after. Now the fail-soft check with gh unavailable:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (10 lines) ✓ (1.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

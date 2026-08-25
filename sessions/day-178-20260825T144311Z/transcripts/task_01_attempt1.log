@@ -1,0 +1,263 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the existing trust store and wiring.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config_paths.rs src/cl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "trust_project\|trust_re… ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1020,1110p src/cli.rs && … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1395,1462p src/cli.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1403..1463 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "file_config" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "goal_verify\|GOAL_VERIF… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_mcp_server…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 560,576p src/config_paths… ✓ (4ms)
+ ✓ (4ms)
+  9 tools completed in 22.5s (9 ✓)
+
+
+I'll pick up where I left off: I've read the existing trust store and the set_trust_project() site. Now let me make the first concrete change — the pure decision half in config_paths.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust… ✓ (7ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs:262..312 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3.8s (3 ✓)
+
+Now let me add the pure decision half to config_paths.rs, inserting before the test module.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (7 → 171 lines)
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        std::fs::write(&path, append_trusted_dir(&existing, &dir))?;
+        Ok(path)
+  + }
+  + 
+  + // === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+  + //
+  + // Item 1 above gave yoyo a memory. It still had no way to *ask*: trust could only be
+  + // granted by a flag the user typed, and a capability reachable only by retyping a flag
+  + // is the shape that trains people to alias it away — i.e. back to the unsafe default,
+  + // by habit (#749 says so out loud). Claude Code, Cursor and VS Code all ask once per
+  + // folder and remember the answer.
+  + //
+  + // Everything below is the **decision** half: pure, table-tested, no I/O and no terminal
+  + // reads. `src/cli.rs` owns the one line of stdin and the printing.
+  + 
+  + /// What the user answered when asked whether to trust this directory.
+  + ///
+  + /// There is deliberately no `RememberNo` variant. Declining is free and costs one
+  + /// keypress next time; persisting a refusal would be a second kind of stored state
+  ... (150 more lines)
+ ✓ (14.1s)
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        std::fs::write(&path, append_trusted_dir(&existing, &dir))?;
+        Ok(path)
+  + }
+  + 
+  + // === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+  + //
+  + // Item 1 above gave yoyo a memory. It still had no way to *ask*: trust could only be
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — my own rule: no definition without its consumer in the same edit. Wiring cli.rs now.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (29 → 108 lines)
+        //   1. `--trust-project`         — this run only, byte-identical to before.
+        //   2. `--trust-project-always`  — this run **and** remembered for this directory.
+        //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+  +     //   4. (Day 178, #749 item 2) neither, not remembered, but yoyo is on a terminal
+  +     //      in a project whose own .yoyo.toml grants something — so *ask*, once.
+        // A user who genuinely trusts a checkout should be able to say so once instead of
+        // retyping a flag forever; that pressure is what turns into "always pass the flag",
+        // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
+  ···
+                        crate::format::is_plain_output(),
+                    );
+                    eprintln!("{YELLOW}{msg}{RESET}");
+  +             }
+  +         } else {
+  +             // Source 4: ask. The whole decision is in `config_paths`; the only thing
+  +             // that happens here is one terminal read.
+  +             //
+  +             // `interactive` is the guard that keeps this product-safe — piped stdin
+  +             // (the evolve loop, `yoyo -p`) and CI have no tty, so they never reach the
+  +             // read and silently take the safe answer. A non-interactive run must never
+  ... (72 more lines)
+ ✓ (1m 54s)
+        //   1. `--trust-project`         — this run only, byte-identical to before.
+        //   2. `--trust-project-always`  — this run **and** remembered for this directory.
+        //   3. neither, but a previous `--trust-project-always` recorded this cwd.
+  +     //   4. (Day 178, #749 item 2) neither, not remembered, but yoyo is on a terminal
+  +     //      in a project whose own .yoyo.toml grants something — so *ask*, once.
+        // A user who genuinely trusts a checkout should be able to say so once instead of
+        // retyping a flag forever; that pressure is what turns into "always pass the flag",
+        // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|IsTerminal" src/… ✓ (4ms)
+  2 tools completed in 1m 59s (2 ✓)
+
+IsTerminal is already imported. Let me build.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -25 ✓ (164ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo buil… ✓ (141ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 476,520p src/config.rs &&… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (3 → 13 lines)
+  -     if !crate::config::parse_mcp_servers_from_config(config_text).is_empty() {
+  +     if !crate::config::parse_mcp_servers_from_config(config_text).is_empty()
+  +         || config_text.lines().any(|line| {
+  +             // The other MCP shape: a top-level `mcp = ["cmd", ...]` list, which the
+  +             // loader flattens into `file_config["mcp"]` rather than into
+  +             // `parse_mcp_servers_from_config`. Matched as a bare key so a `mcp_servers`
+  +             // section header cannot double-count.
+  +             line.trim()
+  +                 .split_once('=')
+  +                 .is_some_and(|(k, _)| k.trim() == "mcp")
+  +         })
+  +     {
+            grants.push("MCP servers (external processes yoyo would start)");
+        }
+ ✓ (1m 54s)
+  -     if !crate::config::parse_mcp_servers_from_config(config_text).is_empty() {
+  +     if !crate::config::parse_mcp_servers_from_config(config_text).is_empty()
+  +         || config_text.lines().any(|line| {
+  +             // The other MCP shape: a top-level `mcp = ["cmd", ...]` list, which the
+  +             // loader flattens into `file_config["mcp"]` rather than into
+  +             // `parse_mcp_servers_from_config`. Matched as a bare key so a `mcp_servers`
+  +             // section header cannot double-count.
+  +             line.trim()
+  ... (6 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 17s (3 ✓)
+
+Now the tests. Let me find the end of the test module.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -14 src/config_paths.rs && … ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (10 → 209 lines)
+            assert!(!dir_is_trusted(&p(
+                "/nonexistent-yoyo-trust-probe/definitely/not/here"
+            )));
+  +     }
+  + 
+  +     // === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+  + 
+  +     #[test]
+  +     fn test_should_prompt_for_trust_needs_all_five_inputs() {
+  +         let grants = ["MCP servers (external processes yoyo would start)"];
+  + 
+  +         // The one row that asks: untrusted, no flag, project-local config that grants
+  +         // something, on a terminal.
+  +         assert!(
+  +             should_prompt_for_trust(false, false, true, &grants, true),
+  +             "the all-clear row must prompt, or every near-miss below is vacuous"
+  +         );
+  + 
+  +         // Each of the five inputs flipped independently. A discriminator tested only
+  +         // on the side that fires is vacuous green, so every guard gets its own row.
+  ... (184 more lines)
+ ✓ (1m 54s)
+            assert!(!dir_is_trusted(&p(
+                "/nonexistent-yoyo-trust-probe/definitely/not/here"
+            )));
+  +     }
+  + 
+  +     // === The interactive workspace-trust prompt (Day 178, #749 item 2) ===
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config_pat… ✓ (173ms)
+  3 tools completed in 2m 32s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+24 tests pass. Now the positive controls — a new guard that changes nothing under test is the vacuous-green shape.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (9 lines) ✓ (23.5s)
+
+Control 1 kills a test. Now control 2 — neutering the interactive guard.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cp_b… (8 lines) ✓ (23.1s)
+
+Both positive controls kill a test. Restoring and running the full gate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cp_backup.rs src/config_… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (1m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 6s)
+  3 tools completed in 3m 14s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5137 tests pass. The gate asks for a register line for src/cli.rs (my own drift — the other two are pre-existing). Paying off mine:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"' tests/mod… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 4888),
+  +     ("src/cli.rs", 4967),
+ ✓ (1m 30s)
+  -     ("src/cli.rs", 4888),
+  +     ("src/cli.rs", 4967),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (192ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo.toml ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (8 → 10 lines)
+            // THIS REPO'S OWN .yoyo.toml sets `continue_on_silence`, and it must never
+            // produce a trust question: it grants no privilege — the worst case is extra
+  -         // API turns in a repo you already chose to run yoyo in.
+  +         // API turns in a repo you already chose to run yoyo in. The keys below are
+  +         // that file's real key set, verbatim, so a regression here fails loudly.
+            assert!(project_trust_grants(
+  -             "model = \"claude-opus-5\"\ncontinue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+  +             "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
+  + continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+                false
+            )
+            .is_empty());
+ ✓ (1m 55s)
+            // THIS REPO'S OWN .yoyo.toml sets `continue_on_silence`, and it must never
+            // produce a trust question: it grants no privilege — the worst case is extra
+  -         // API turns in a repo you already chose to run yoyo in.
+  +         // API turns in a repo you already chose to run yoyo in. The keys below are
+  +         // that file's real key set, verbatim, so a regression here fails loudly.
+            assert!(project_trust_grants(
+  -             "model = \"claude-opus-5\"\ncontinue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
+  +             "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\nauto_watch = true\n\
+  ... (4 more lines)
+  5 tools completed in 3m 49s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now a runtime smoke test — a piped (non-interactive) run in a temp repo whose .yoyo.toml does grant something must not prompt or hang:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && BI… ✓ (2.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && T=$(mktemp -d) && cd "$T" && printf '[permissions]\nallow = ["curl *"… ✓ (2.0s)
+  ▶ $ cd /tmp && T=$(mktemp -d) && cd "$T" && printf '[permissions]\nallow = ["curl *"… ✓ (277ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 20.9s (3 ✓)
+
+The interactive prompt fires and n is honoured. Now a — it must write the store and a second run must be trusted without asking:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && T=$(mktemp -d) && X=$(mktemp -d) && cd "$T" && printf '[permissions]\… ✓ (278ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

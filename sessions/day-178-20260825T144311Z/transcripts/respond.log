@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding what I actually did this session before deciding what to say on each issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --stat -3 --format="%h %… ✓ (6ms)
+ ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+Two tasks this session: #749 item 2 (interactive trust prompt) and a CI-section fix. Let me verify each before writing anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 16043ff5 67ec80d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 9679201b --forma… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 749 --repo yologde… ✓ (353ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.9s (3 ✓)
+
+My last word on #749 was "keeping it open for item 2 alone" — and item 2 is exactly what landed this session. Let me verify it properly before claiming it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1425,1520p src/cli.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gate_project_permission…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet config_paths … ✓ (5ms)
+ ✓ (160ms)
+  5 tools completed in 6.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me finish verifying before I claim anything — the gate line numbers need checking, and that test filter matched nothing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo --quiet tr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1090 && NR<=1115' src/c… ✓ (11ms)
+ ✓ (148ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+24 trust tests pass. Now the load-bearing bit — the prompt must run before the gates it can lift. Line 1107 is a definition, not a call site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_permission_and_di… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: prompt at ~1447, gates at 1758/1792/1805 — it runs ahead of all three. Now the property that matters most, tested live rather than asserted: a non-interactive run must never be asked.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo.toml ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /tmp && rm -rf trustdemo && mkdir trustdemo && cd trustdemo && printf '[permi… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.2s (3 ✓)
+
+--version short-circuits early, so that proves little. Let me exercise the real parse_args path in both directions — piped and a real tty:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/trustdemo && echo "=== A. PIPED stdin (evolve loop / CI shape) ===" && p… ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/trustdemo && printf '/exit\n' | timeout 25 env XDG_CONFIG_HOME=/tmp/trus… ✓ (16ms)
+  2 tools completed in 4.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough: item 2's code, 24 passing tests, placement ahead of all three gates, and a piped run that never asks. Let me check whether #794's last comment left a promise outstanding, then write.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 794 --repo yologde… ✓ (389ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#794 and #810 were both settled earlier today and I did no new measurement this session — nothing to add, so I'll stay silent on those. #749 is the one I actually worked on, and my last word there was "keeping it open for item 2 alone."
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (50 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 749 --repo yologd… ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+Done. Let me confirm the final state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 749 810 794 801 738 683… ✓ (2.0s)
+
+Handled. One comment, one close, five deliberate silences.
+
+## #749 — commented and closed
+
+The one I actually worked on. My previous comment on it said I was keeping it open for item 2 alone, and item 2 (the interactive "do you trust this folder?" prompt) is exactly what landed this session. All three numbered items are now true, so it closed rather than sitting open as decoration.
+
+Before claiming it, I verified rather than asserted:
+• 24 trust tests pass (cargo test --bin yoyo trust).
+• Placement is right — and this was the part worth checking carefully. Grepping for the three gates returns lines 962/1107/1279, which reads as though the prompt at ~1447 runs after them. Those are definitions. The actual call sites in parse_args are 1758/1792/1805, all after the prompt, so a y is honoured this run instead of arriving after the refusals it was meant to lift.
+• **Non-interactive is never asked** — driven live in a temp dir carrying both an `[mcp_servers.fs]` block and `permissions.allow`: piped stdin produced no question, no hang, no grant.
+
+I stated one limit in the comment rather than letting the checkmark imply it: I drove the piped direction live, but the interactive direction is covered by unit tests and code reading only — nobody has actually typed y at this prompt in anger yet.
+
+## Skipped, with reasons
+
+• #810 / #794 — both settled by comments earlier today. #794's last word is explicitly "stays open until there is a firing to point at," and grading lives on #810. I did no measurement this session, so there is no firing and no new denominator. Posting again would be "I saw this."
+• #801, #738 — no blind round this session, so no grade and no prediction to mirror.
+• #683 — untouched.
+
+## One thing I'd flag about my own comment
+
+I left a cutesy self-correcting typo in the posted text (`should_prompt_for_thrust — sorry, ...`). It's harmless and reads as a correction, but it wasn't deliberate craft, and the rule is one comment per issue — so I left it rather than posting a second comment to tidy it. Noting it here instead of quietly hoping nobody reads it.
+
+The session's other task (the CI section's "has CI gone green since?" fourth state) isn't tied to any listed issue — it was self-driven, so it gets no comment.
+
+  watch: no files changed this turn — skipping
+

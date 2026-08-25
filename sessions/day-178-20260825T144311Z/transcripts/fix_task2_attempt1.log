@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing docs. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GreenScan\|green_since_… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Code is in place. Let me read the actual implementation so the docs match reality.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,760p' scripts/extrac… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '820,900p' scripts/extrac… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me find the exact CI paragraph in CLAUDE.md to update.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "recurring CI error fing… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (194ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && env | grep -i -E "audit|yoyo_rep… ✓ (6ms)
+  4 tools completed in 11.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the /dev/null crash needs checking — is it pre-existing or mine?
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%h -- script… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-existing (same line in HEAD~1), not mine — out of scope. Let me eyeball the real section with a valid audit dir.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptysessions && Y… ✓ (808ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO=yologdev/yoyo YOYO_AUD… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git remote -v | head -2 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO=yologdev/yoyo-evolve Y… ✓ (6.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.9s (4 ✓)
+
+Let me probe the live CI state directly to eyeball the real section.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 … (14 lines) ✓ (5.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code verified live — the exact defect reproduces and the fix renders correctly. Now the one thing the evaluator failed me on: CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "because the last sectio… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - because the last section got truncated away), provider/API health from audit.jsonl
+  + because the last section got truncated away. Day 178 named the **fourth state that partition never had — recent, real, and already repaired**. Measured that morning: the section rendered `assertion failed: (cost - 4.5).abs() < 0.001` (the sonnet-5 preset-pricing episode, fixed at `f9073e8d`/`0577bfe7`) and `test_apply_effort_hint_low_prepends` (the `EFFORT_LEVEL` `AtomicU8` race, fixed Day 177 by the pure-core split) as live recurring patterns while the last 8 runs of `ci.yml` were green. The Day-175 age filter was working correctly and is not the defect — `gh run list` gave ages 0.9d–2.5d, so those rows were genuinely recent and genuinely real; the gap is one layer over, because `partition_failed_runs` classifies by **age** and nothing anywhere asked whether CI has *passed since*. It fails in the **alarming** direction, and that direction has a price: this section is handed to Phases A1 and A2, and priority 0 of the planning prompt is "fix CI failures — this overrides everything else", so a cured defect rendered as live can outrank the whole rest of the plan. It is my own rule landing on my own instrument again, in mirror image — *"could not check" must never read as "checked; clean"* has a twin, **"was red" must not read as "is red"**. The answer is one sentence printed directly under the header, above the unchanged cluster rows, from the pure, table-tested `green_since_verdict(newest_failure_ts, green, now)`, whose input is the three-valued `GreenScan { newest_success_ts, checked }` — built in the same shape as `CiScan` and for the same reason: **`checked` separates "the query ran and answered" from "I could not ask"**, so a failed `gh` call, a missing binary or an unset `YOYO_REPO` can render neither as "no successes" nor as green, which is exactly the collapse the bucket exists to prevent. `newest_successful_run(repo)` is the I/O half — one `gh run list --status success --limit 1` through the existing `run_cmd`/`GH_RUN_LIST_TIMEOUT` — and is **fail-soft by contract**: any exception, non-zero exit, unparseable JSON or missing `createdAt` yields `checked=False`, never a fabricated timestamp, because the extractor must never block a session. Its **cost guard is in `main`, not in the function**: it is called only when `ci_scan.ok and ci_scan.clusters`, so a healthy session — the common case — makes **zero** extra `gh` calls and its output is byte-identical. The comparison is **strict `>`** and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green. **The stated limit is in the rendered text itself, which is the whole point rather than a caveat about it**: a later green run is *not* proof the cause is fixed — a flaky test passes sometimes — only that CI is not red on that pattern now; determining that a cause is repaired needs re-running the failing test at HEAD and is a different, expensive question this deliberately does not ask. `None` is returned **only** when there are no in-window failures to qualify, so the clean, could-not-run and unread-logs branches stay byte-identical, and **nothing is dropped, filtered or re-ranked** — every failure that rendered before still renders, with one sentence of context above it. Verified live against the real repo the day it landed: `newest_failure_ts` `2026-08-24T16:06:29Z` against a success at `2026-08-25T14:00:12Z`, rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters), provider/API health from audit.jsonl
+ ✓ (1m 44s)
+  - because the last section got truncated away), provider/API health from audit.jsonl
+  + because the last section got truncated away. Day 178 named the **fourth state that partition never had — recent, real, and already repaired**. Measured that morning: the section rendered `assertion failed: (cost - 4.5).abs() < 0.001` (the sonnet-5 preset-pricing episode, fixed at `f9073e8d`/`0577bfe7`) and `test_apply_effort_hint_low_prepends` (the `EFFORT_LEVEL` `AtomicU8` race, fixed Day 177 by the pure-core split) as live recurring patterns while the last 8 runs of `ci.yml` were green. The Day-175 age filter was working correctly and is not the defect — `gh run list` gave ages 0.9d–2.5d, so those rows were genuinely recent and genuinely real; the gap is one layer over, because `partition_failed_runs` classifies by **age** and nothing anywhere asked whether CI has *passed since*. It fails in the **alarming** direction, and that direction has a price: this section is handed to Phases A1 and A2, and priority 0 of the planning prompt is "fix CI failures — this overrides everything else", so a cured defect rendered as live can outrank the whole rest of the plan. It is my own rule landing on my own instrument again, in mirror image — *"could not check" must never read as "checked; clean"* has a twin, **"was red" must not read as "is red"**. The answer is one sentence printed directly under the header, above the unchanged cluster rows, from the pure, table-tested `green_since_verdict(newest_failure_ts, green, now)`, whose input is the three-valued `GreenScan { newest_success_ts, checked }` — built in the same shape as `CiScan` and for the same reason: **`checked` separates "the query ran and answered" from "I could not ask"**, so a failed `gh` call, a missing binary or an unset `YOYO_REPO` can render neither as "no successes" nor as green, which is exactly the collapse the bucket exists to prevent. `newest_successful_run(repo)` is the I/O half — one `gh run list --status success --limit 1` through the existing `run_cmd`/`GH_RUN_LIST_TIMEOUT` — and is **fail-soft by contract**: any exception, non-zero exit, unparseable JSON or missing `createdAt` yields `checked=False`, never a fabricated timestamp, because the extractor must never block a session. Its **cost guard is in `main`, not in the function**: it is called only when `ci_scan.ok and ci_scan.clusters`, so a healthy session — the common case — makes **zero** extra `gh` calls and its output is byte-identical. The comparison is **strict `>`** and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green. **The stated limit is in the rendered text itself, which is the whole point rather than a caveat about it**: a later green run is *not* proof the cause is fixed — a flaky test passes sometimes — only that CI is not red on that pattern now; determining that a cause is repaired needs re-running the failing test at HEAD and is a different, expensive question this deliberately does not ask. `None` is returned **only** when there are no in-window failures to qualify, so the clean, could-not-run and unread-logs branches stay byte-identical, and **nothing is dropped, filtered or re-ranked** — every failure that rendered before still renders, with one sentence of context above it. Verified live against the real repo the day it landed: `newest_failure_ts` `2026-08-24T16:06:29Z` against a success at `2026-08-25T14:00:12Z`, rendering `CI has gone green since (last <1d ago): every failure below predates it.` above the two cured clusters), provider/API health from audit.jsonl
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 7s (2 ✓)
+
+Now verify the docs claims are all true and re-run the checks.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- doc mentions now prese… ✓ (121ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me run the positive controls to confirm the tests aren't vacuous.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (6 lines) ✓ (74ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "^FAIL\|FAILED\|✗" /tmp/… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 /tmp/c1.out ✓ (3ms)
+  3 tools completed in 3.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 confirmed (exit 1, 1 FAILURE(S)). Now control 2.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -q "suc… (19 lines) ✓ (92ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls kill tests (1 and 4 failures). Let me confirm the file is byte-exact restored and run final verification.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat -- scripts/extra… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== fa… (14 lines) ✓ (64ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.6s (2 ✓)
+
+Fail-soft holds. Final verification of everything:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (173ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 29s)
+  3 tools completed in 1m 50s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5137 tests pass, clippy/fmt/build clean). Now commit the docs — the evaluator noted a stray file last time, so let me stage precisely.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean — only CLAUDE.md, no strays. Let me proofread the inserted text before committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two accuracy checks before committing: the "8 green runs" claim (from the task, not my own measurement) and the strict > wording vs. what the code literally says.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (706ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified: all 8 most recent ci.yml runs are success. Now fix the > wording so the doc doesn't misdescribe the code (the gasp.rs wrong-mechanism class).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The comparison is **strict `>`** and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green.
+  + The comparison is **strict — the success must be strictly newer than the newest failure** — and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green. (Read the code before "fixing" the operator: it is written on *ages*, `success_age < fail_age`, so strictly-newer reads as strictly-*smaller* there; the two are the same claim and only one of them is spelled `>`.)
+ ✓ (1m 43s)
+  - The comparison is **strict `>`** and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green.
+  + The comparison is **strict — the success must be strictly newer than the newest failure** — and ties go to "still live", the conservative direction: a success stamped exactly at the newest failure is *not* green-since, and both sides of that boundary are pinned, since a discriminator tested only on the side that fires is vacuous green. (Read the code before "fixing" the operator: it is written on *ages*, `success_age < fail_age`, so strictly-newer reads as strictly-*smaller* there; the two are the same claim and only one of them is spelled `>`.)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - the pure-core split) as live recurring patterns while the last 8 runs of `ci.yml` were green.
+  + the pure-core split) as live recurring patterns while the 8 most recent `ci.yml` runs were all green (checked, not assumed, at doc time).
+ ✓ (1m 43s)
+  - the pure-core split) as live recurring patterns while the last 8 runs of `ci.yml` were green.
+  + the pure-core split) as live recurring patterns while the 8 most recent `ci.yml` runs were all green (checked, not assumed, at doc time).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (21 lines) ✓ (23ms)
+  3 tools completed in 3m 38s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Commit landed with exactly one file. Final verification against the evaluator's specific check:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evaluator's check (was… ✓ (11ms)

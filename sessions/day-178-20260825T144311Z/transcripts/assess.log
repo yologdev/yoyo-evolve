@@ -1,0 +1,152 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git history, and source structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (12ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+Green streak with one revert. Let me read recent history and check those CI errors.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (7 lines) ✓ (5ms)
+ ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.3s (2 ✓)
+
+CI is green now. Let me check the backlog and probe the binary.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (187ms)
+ ✓ (452ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/highlight_lang.… ✓ (745ms)
+ ✓ (747ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -6 drea… (9 lines) ✓ (28ms)
+ ✓ (742ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 … (14 lines) ✓ (763ms)
+  7 tools completed in 20.4s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Context is tight — writing the assessment now with what I have, then committing.
+  ▶ write session_plan/assessment.md (160 lines) ✓ (1m 32s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the CI staleness claim before committing — it's a factual assertion in the assessment.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (7 lines) ✓ (817ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The failures are genuinely recent (0.9–2.5d), so the age filter is working — my "stale" framing was wrong. Correcting it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (7 → 14 lines)
+  - **The trajectory's "Recurring CI errors" section is reporting already-cured failures.**
+  - `assertion failed: (cost - 4.5).abs() < 0.001` is the sonnet-5 preset-pricing episode
+  - (fixed `f9073e8d`/`0577bfe7`); `test_apply_effort_hint_low_prepends` is the `EFFORT_LEVEL`
+  - `AtomicU8` race (fixed Day 177 by the pure-core split). Both are dead, both still render
+  - under a header the planner reads as live. Worth a quick check whether the Day-175
+  - age-filter is doing its job here or whether cured-but-recent is a fourth state the
+  - `CiScan` partition doesn't have.
+  + **The trajectory's "Recurring CI errors" section reports real, recent, and
+  + already-repaired failures — checked, not assumed.** `gh run list --status failure` gives
+  + ages 0.9d / 1.2d / 1.3d / 2.2d / 2.5d, so the Day-175 age filter **is** working; my first
+  + reading ("stale") was wrong and is corrected here rather than shipped. What is true is
+  + narrower and more interesting: `assertion failed: (cost - 4.5).abs() < 0.001` is the
+  + sonnet-5 preset-pricing episode (fixed `f9073e8d`/`0577bfe7`) and
+  + `test_apply_effort_hint_low_prepends` is the `EFFORT_LEVEL` `AtomicU8` race (fixed Day 177
+  + by the pure-core split). Both causes are dead; both still render as live recurring
+  + patterns, because `partition_failed_runs` classifies by **age** and nothing anywhere asks
+  + whether the failure's cause has since been repaired. *Recent, real, and already fixed* is
+  + a fourth state the `CiScan` partition does not have — and it fails in the alarming
+  + direction, aiming the planner at cured defects. Whether that is worth a fix or just worth
+  + knowing is the planner's call; the honest version of the gap is "no repair-awareness",
+  ... (1 more lines)
+ ✓ (1m 31s)
+  - **The trajectory's "Recurring CI errors" section is reporting already-cured failures.**
+  - `assertion failed: (cost - 4.5).abs() < 0.001` is the sonnet-5 preset-pricing episode
+  - (fixed `f9073e8d`/`0577bfe7`); `test_apply_effort_hint_low_prepends` is the `EFFORT_LEVEL`
+  - `AtomicU8` race (fixed Day 177 by the pure-core split). Both are dead, both still render
+  - under a header the planner reads as live. Worth a quick check whether the Day-175
+  - age-filter is doing its job here or whether cured-but-recent is a fourth state the
+  - `CiScan` partition doesn't have.
+  + **The trajectory's "Recurring CI errors" section reports real, recent, and
+  ... (13 more lines)
+  ▶ edit session_plan/assessment.md (2 → 3 lines)
+  - 1. **Cured CI failures rendering as live** in the trajectory (above) — the planner is
+  -    being handed stale alarm.
+  + 1. **CI failures rendering without repair-awareness** (above) — five recent real failures,
+  +    at least two with causes already fixed, presented to the planner as live recurring
+  +    patterns. Age is filtered; repair status is not modelled at all.
+ ✓ (1m 30s)
+  - 1. **Cured CI failures rendering as live** in the trajectory (above) — the planner is
+  -    being handed stale alarm.
+  + 1. **CI failures rendering without repair-awareness** (above) — five recent real failures,
+  +    at least two with causes already fixed, presented to the planner as live recurring
+  +    patterns. Age is filtered; repair status is not modelled at all.
+  2 tools completed in 3m 5s (2 ✓)
+
+Now a quick binary self-test to fill the one gap in that section:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- bare-word near-miss gu… ✓ (689ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both guards work correctly. Updating self-test results and committing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (3 → 7 lines)
+    ## Self-Test Results
+    
+    - `./target/debug/yoyo risk epistemic` — works, full output.
+  + - `yoyo tokens` — the Day-165 bare-word near-miss guard fires correctly: names the REPL
+  +   command, gives the `yoyo -p "tokens"` escape hatch, **exit 2, zero tokens spent**.
+  + - `yoyo def retry_wait_decision` — the Day-169 CLI door works, resolves to
+  +   `src/prompt_retry_limits.rs:187` with the source line. No LSP, but the gesture lands.
+ ✓ (1m 29s)
+    ## Self-Test Results
+    
+    - `./target/debug/yoyo risk epistemic` — works, full output.
+  + - `yoyo tokens` — the Day-165 bare-word near-miss guard fires correctly: names the REPL
+  +   command, gives the `yoyo -p "tokens"` escape hatch, **exit 2, zero tokens spent**.
+  + - `yoyo def retry_wait_decision` — the Day-169 CLI door works, resolves to
+  +   `src/prompt_retry_limits.rs:187` with the source line. No LSP, but the gesture lands.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored (as CLAUDE.md documents — it's an ephemeral directory), so the git add correctly refuses and the harness's || true swallows it. The file on disk is what feeds the planner, and it's there.
+
+Assessment complete — session_plan/assessment.md, 172 lines.
+
+## What I found
+
+Health: 9 of last 10 sessions 2/2 green, one revert (day-177 16:06). Build clean, binary works. Probed three surfaces: risk epistemic (full output), the bare-word near-miss guard (yoyo tokens → exit 2, zero tokens spent), and the CLI def door (resolves correctly).
+
+One claim I had to retract mid-assessment. I first wrote that the trajectory's CI-error section was showing stale failures. Then I checked: gh run list --status failure gives ages 0.9d–2.5d, so the Day-175 age filter is working fine. The honest finding is narrower and more useful — those failures are recent, real, and already repaired (the sonnet-5 preset-pricing assertion, the EFFORT_LEVEL race). partition_failed_runs classifies by age and nothing models repair status, so cured defects render as live recurring patterns and aim the planner at them. "No repair-awareness" ≠ "stale data", and I corrected it in place rather than shipping the first reading.
+
+The thing the planner most needs to know: the DREAM milestone has landed. It asked for survival rates on ≥3 modules with at least one instrument, guesses logged beside each — I have four (32.0% / 41.5% / 8.8% / 5.9%, two instruments), plus the blind-spot census, the first repair (67.7% → 0.0%), and the first widening. So the self-driven slot no longer has a "take the next reading" mandate, and five of the last seven self-driven diffs were readings or meter repairs. Setting the next milestone is the dream loop's job, not the planner's — but the groove exists and I flagged it so the planner doesn't fall into it by default.
+
+Backlog: #810 and #801 both look answerable/closable rather than needing more instrument work. #749 item 2 (interactive trust prompt) is the sharpest concrete product gap — I now remember trust decisions but still don't ask, where Claude Code, Cursor and VS Code all do.
+
+Not done, stated rather than hidden: the research step (yopedia recall + web_search) was cut short by the context budget. I wrote what I could evidence from material already in hand and labelled the section as truncated rather than padding it with plausible competitor claims.
+
