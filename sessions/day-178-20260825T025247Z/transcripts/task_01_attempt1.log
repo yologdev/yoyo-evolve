@@ -1,0 +1,239 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by pre-registering the prediction before touching any measurement. Let me first look at the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry_limits.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 drea… (6 lines) ✓ (6ms)
+ ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -l '\.min(\|\.max(' src/for… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.0s (3 ✓)
+
+grep -l (presence only, no count — keeps h0's census unpeeked). Now pre-registering before any measurement.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (25ms)
+
+Now mirroring to #738 before the first measurement — a revert erases the local commit, GitHub it cannot rewrite.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (18 lines) ✓ (740ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mirrored. Now installing cargo-mutants (3–5 min) while I run the step-3 census in parallel.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup cargo … (2 lines) ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (172ms)
+  2 tools completed in 9.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -20 &&… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo mutants --list… ✓ (100ms)
+ ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- full list ---" && cat … ✓ (4ms)
+  ▶ read /tmp/list_before.txt ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 23.8s (5 ✓)
+
+h1 hits both halves exactly — 18 mutants, none at 67/152/160. Now h3.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E ':(307|545|595|606):' /t… ✓ (5ms)
+  2 tools completed in 5.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+State recovered: census 93 non-test / 104 raw; h1 hit both halves (18 mutants, none at 67/152/160); h3's cost.rs — none of its four min/max sites named (line 307 appears only as / operator mutants on the same line, and zero mutants anywhere replace min/max/clamp). Now step 4: the one extraction.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '128,166p' src/prompt_ret… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (4 → 4 lines)
+        let affordable = match budget_remaining {
+  -         Some(remaining) => remaining.min(MAX_INLINE_RETRY_AFTER),
+  +         Some(remaining) => inline_retry_ceiling(remaining),
+            None => MAX_INLINE_RETRY_AFTER,
+        };
+ ✓ (11.6s)
+        let affordable = match budget_remaining {
+  -         Some(remaining) => remaining.min(MAX_INLINE_RETRY_AFTER),
+  +         Some(remaining) => inline_retry_ceiling(remaining),
+            None => MAX_INLINE_RETRY_AFTER,
+        };
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.9s (2 ✓)
+
+Expected — now the definition (my own rule: never a definition without its consumer, so the consumer landed first and the compiler is naming the gap).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (1 → 15 lines)
+  + /// The ceiling on an inline retry wait: never more than [`MAX_INLINE_RETRY_AFTER`],
+  + /// and never more than the session has left. The budget can only **shrink** the
+  + /// ceiling, never raise it — a session with three hours left still must not sleep
+  + /// an hour inside one retry.
+  + ///
+  + /// Extracted from the expression it used to be inline in as the corollary test of
+  + /// blind round 80: cargo-mutants' two genres are `FnValue` (replace a whole function
+  + /// *body* with a value guessed from the return type) and operator replacement, so a
+  + /// clamp buried in a larger function is invisible to it while a clamp with its own
+  + /// function boundary is not. See the mutation-testing block in CLAUDE.md.
+  + fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
+  +     budget_remaining.min(MAX_INLINE_RETRY_AFTER)
+  + }
+  + 
+    /// Decide whether to wait (and for how long) or give up on this attempt.
+ ✗ (98ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub fn retry_wait_decis… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (2 → 16 lines)
+  + /// The ceiling on an inline retry wait: never more than [`MAX_INLINE_RETRY_AFTER`],
+  + /// and never more than the session has left. The budget can only **shrink** the
+  + /// ceiling, never raise it — a session with three hours left still must not sleep
+  + /// an hour inside one retry.
+  + ///
+  + /// Extracted from the expression it used to be inline in as the corollary test of
+  + /// blind round 80: cargo-mutants' two genres are `FnValue` (replace a whole function
+  + /// *body* with a value guessed from the return type) and operator replacement, so a
+  + /// clamp buried inside a larger function is invisible to it while a clamp with its
+  + /// own function boundary is not. See the mutation-testing block in CLAUDE.md.
+  + fn inline_retry_ceiling(budget_remaining: Duration) -> Duration {
+  +     budget_remaining.min(MAX_INLINE_RETRY_AFTER)
+  + }
+  + 
+    /// Decide how long to wait before the next retry — or whether to stop.
+    ///
+ ✓ (1m 46s)
+  + /// The ceiling on an inline retry wait: never more than [`MAX_INLINE_RETRY_AFTER`],
+  + /// and never more than the session has left. The budget can only **shrink** the
+  + /// ceiling, never raise it — a session with three hours left still must not sleep
+  + /// an hour inside one retry.
+  + ///
+  + /// Extracted from the expression it used to be inline in as the corollary test of
+  + /// blind round 80: cargo-mutants' two genres are `FnValue` (replace a whole function
+  + /// *body* with a value guessed from the return type) and operator replacement, so a
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 57s (2 ✓, 1 ✗)
+
+Now the table test — both directions plus the exact boundary.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'mod tests' src/prompt_r… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (4 → 35 lines)
+            let short = rate_limit_giveup_message(Duration::from_secs(90));
+            assert!(short.contains("1m 30s"), "short reset misrendered: {short}");
+  +     }
+  + 
+  +     /// The budget may only ever SHRINK the inline ceiling, never raise it.
+  +     /// Both directions plus the exact boundary — a discriminator tested only on
+  +     /// the side that fires is vacuous green.
+  +     #[test]
+  +     fn inline_retry_ceiling_lets_the_budget_shrink_but_never_raise() {
+  +         let cap = MAX_INLINE_RETRY_AFTER;
+  +         let table = [
+  +             // (budget remaining, expected ceiling, why)
+  +             (Duration::from_secs(5), Duration::from_secs(5), "budget below the cap wins"),
+  +             (cap, cap, "exactly at the cap: the boundary is the cap itself"),
+  +             (cap + Duration::from_secs(1), cap, "one second over: the cap wins"),
+  +             (Duration::from_secs(60 * 60 * 3), cap, "a three-hour budget cannot raise the cap"),
+  +             (Duration::ZERO, Duration::ZERO, "an exhausted budget shrinks it to nothing"),
+  +         ];
+  +         for (budget, expected, why) in table {
+  +             assert_eq!(
+  ... (15 more lines)
+ ✓ (1m 45s)
+            let short = rate_limit_giveup_message(Duration::from_secs(90));
+            assert!(short.contains("1m 30s"), "short reset misrendered: {short}");
+  +     }
+  + 
+  +     /// The budget may only ever SHRINK the inline ceiling, never raise it.
+  +     /// Both directions plus the exact boundary — a discriminator tested only on
+  +     /// the side that fires is vacuous green.
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (37.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff <(cut -d: -f4- /tmp/list_be… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 1s (4 ✓)
+
+h2 hits both halves, non-vacuously: 18 → 19, and the single new mutant is exactly replace inline_retry_ceiling -> Duration with Default::default() — an FnValue body replacement, not an operator mutant. Now the grades, in this same pass.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (51ms)
+
+Now CLAUDE.md — Reading #5 plus the caveat beside readings #1–#4 (added, not overwritten).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'no `src/` file was modi… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '117,118p' CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.3s (2 ✓)
+
+Now the full verification gate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '^test… ✓ (1m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'test … ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 51s (3 ✓)
+
+All green — including blind_round_grades, the gate that fails a run if a prediction ships without its grade. Checking diff scope before committing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (9ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything is done and green; diff scope is exactly the three task files. Committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Closing the mirror loop on #738 — the prediction is public, so the grade should be too.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/r… (15 lines) ✓ (1.2s)
+
+Done. Blind round 80 complete, committed as ddc2bf5a.
+
+## What happened
+
+The reading (the deliverable): 93 non-test occurrences of .min( / .max( / .clamp( across src/ (104 raw). That is how many decision sites my mutation instrument structurally cannot ask a question about — and it's a documented design property, not a version gap: cargo-mutants has exactly two genres, FnValue (whole-body replacement) and operator replacement. There is no method-substitution genre, so .min() will never become .max(). No flag fixes it.
+
+All four bets hit — 18 mutants on prompt_retry_limits.rs, none at lines 67/152/160; cost.rs (never read, 350 mutants) names zero of its four min/max sites; and the corollary held: extracting one clamp into `fn inline_retry_ceiling took the list 18 → 19, with a sorted diff showing exactly one added line, an FnValue` body replacement naming the new function. Not an operator mutant that would have existed anyway.
+
+**Three things I made myself write down rather than enjoy:**
+
+1. The remedy is narrower than it sounds. Body replacement asks "does anything notice if this returns nothing?" — never "did you write `.min` where you meant `.max`." Extraction converts no mutant into one coarse mutant. Real, one fn cheap, and not swept repo-wide by this task.
+2. **My pre-registered self-check was wrong**, which is worth more than the 4/4. I predicted h0 and h3 would miss, citing six straight rounds where only verbatim-expression bets hit. The pattern died at n=7 — and the discriminator isn't the subject, it's the kind of unknown: bets about what my tests cover keep losing; bets about what the **tool generates** follow from a stateable mechanism.
+3. A 4/4 round is a difficulty-calibration warning. Three of four were near-certainties in prediction costume. Only h0 had a real distribution over outcomes.
+
+Readings #1–#4 keep their numbers; a caveat now sits beside them saying each was measured over a population that skips clamp-expressed decisions. Superseded framing recorded, not erased.
+
+cargo fmt --check, clippy -D warnings, build, and 5,100 tests all green — including blind_round_grades, the gate that exists precisely to fail a run where a prediction ships without its grade.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

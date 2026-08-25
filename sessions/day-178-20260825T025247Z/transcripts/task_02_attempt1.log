@@ -1,0 +1,442 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the tool, particularly the harness-output bucket I'm extending.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "harness_output\|harness…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 195,230p scripts/measure_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,460p scripts/measure_… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,660p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 855,960p scripts/measure_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (gh run view 32667319793 --repo … ✓ (2.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- starved: raw Phase A1 … ✓ (156ms)
+  8 tools completed in 37.6s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baselines captured. Note healthy.log has 2 raw Phase A1 lines (task file said 10 — I'll verify what the anchored classifier actually sees, since raw grep and anchored match are different questions).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (76ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the shape @yuanhao described. Now implementing — first the constant and the pure classifier.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 178,208p scripts/measure_… ✓ (3ms)
+  ▶ edit scripts/measure_abstentions.py (3 → 37 lines)
+    EXCLUDED_NO_HARNESS_OUTPUT = "EXCLUDED_NO_HARNESS_OUTPUT"
+  + 
+  + # The next exclusion state (#810, @yuanhao 2026-08-25), layered ON TOP of the
+  + # no-harness-output one rather than replacing it. Buckets are referred to BY NAME and
+  + # never by ordinal here: the two sentences above already disagree about which ordinal
+  + # EXCLUDED_NO_HARNESS_OUTPUT holds, and inventing an agreement they never had would be
+  + # a worse record than the collision.
+  + #
+  + # The measured defect. Three real workflow logs (32667319793, 32679577526, 32688121916,
+  + # ~107 KB each) scored `abstentions=0 firings=0 fallback=0 gradeable=no` — the row a
+  + # healthy zero-abstention session prints. Every one of them died BEFORE Phase A1:
+  + # `cargo test` failed at the build-verification step, three startup attempts per run,
+  + # zero phases, zero tasks (the sonnet-5 preset-pricing episode, fixed at f9073e8d /
+  + # 0577bfe7). EXCLUDED_NO_HARNESS_OUTPUT missed them because it asks `markers == 0` and
+  + # a run that started and immediately died carries 3 SESSION_HEADER markers.
+  + #
+  + # Why that inverts the metric: "the harness printed something" and "the harness got far
+  + # enough to be measurable" are different questions, and only the second licenses
+  + # scoring a session. A STARVED loop and a HEALTHY loop produced the identical row —
+  + # those sessions were not clean and not merely unmeasured, they were destroyed, and the
+  ... (17 more lines)
+ ✓ (1m 32s)
+    EXCLUDED_NO_HARNESS_OUTPUT = "EXCLUDED_NO_HARNESS_OUTPUT"
+  + 
+  + # The next exclusion state (#810, @yuanhao 2026-08-25), layered ON TOP of the
+  + # no-harness-output one rather than replacing it. Buckets are referred to BY NAME and
+  + # never by ordinal here: the two sentences above already disagree about which ordinal
+  + # EXCLUDED_NO_HARNESS_OUTPUT holds, and inventing an agreement they never had would be
+  + # a worse record than the collision.
+  + #
+  ... (13 more lines)
+  2 tools completed in 1m 49s (2 ✓)
+
+Now the pure classifier, placed beside has_harness_output:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (1 → 43 lines)
+  + def phase_reach_markers(lines):
+  +     """Pure: the SET of UNQUOTED harness-marker names appearing in `lines`.
+  + 
+  +     The fold `classify_phase_reach` consumes. A set, not a count: the question it
+  +     answers is *which* markers were reached, and the count half already lives in
+  +     `SessionCounts.harness_markers`.
+  +     """
+  +     seen = set()
+  +     for line in lines:
+  +         marker, _prose = classify_harness_output(line)
+  +         if marker is not None:
+  +             seen.add(marker)
+  +     return seen
+  + 
+  + 
+  + def classify_phase_reach(markers):
+  +     """Pure: three states over the set of unquoted harness markers seen.
+  + 
+  +     - no markers at all -> PHASE_REACH_NO_OUTPUT. Not this bucket's business; it is
+  +       EXCLUDED_NO_HARNESS_OUTPUT's, and returning a distinct value here is what keeps
+  ... (23 more lines)
+ ✓ (1m 31s)
+  + def phase_reach_markers(lines):
+  +     """Pure: the SET of UNQUOTED harness-marker names appearing in `lines`.
+  + 
+  +     The fold `classify_phase_reach` consumes. A set, not a count: the question it
+  +     answers is *which* markers were reached, and the count half already lives in
+  +     `SessionCounts.harness_markers`.
+  +     """
+  +     seen = set()
+  ... (13 more lines)
+
+Now wiring it into SessionCounts and count_lines:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (1 → 5 lines)
+            self.harness_prose_excluded = 0
+  +         # The SET of unquoted marker names seen, folded beside the count above (#810,
+  +         # 2026-08-25). None for the same reason `harness_markers` is: no stream was
+  +         # folded at all, which is "nobody looked", not "nothing was there".
+  +         self.harness_marker_names = None
+ ✓ (1m 31s)
+            self.harness_prose_excluded = 0
+  +         # The SET of unquoted marker names seen, folded beside the count above (#810,
+  +         # 2026-08-25). None for the same reason `harness_markers` is: no stream was
+  +         # folded at all, which is "nobody looked", not "nothing was there".
+  +         self.harness_marker_names = None
+  ▶ edit scripts/measure_abstentions.py (9 → 22 lines)
+            return self.harness_markers == 0
+  + 
+  +     @property
+  +     def no_phase_reached(self):
+  +         """Markers were seen, but none of them was PHASE_A1 (#810, 2026-08-25).
+  + 
+  +         Disjoint from `no_harness_output` by construction: an empty marker set
+  +         classifies as PHASE_REACH_NO_OUTPUT, which is that bucket's state, not this
+  +         one's. An unfolded stream (`harness_marker_names is None`) is neither.
+  +         """
+  +         if self.harness_marker_names is None:
+  +             return False
+  +         return classify_phase_reach(self.harness_marker_names) == PHASE_REACH_NONE
+    
+        @property
+        def gradeable(self):
+  ···
+                self.abstentions > 0
+                and not self.provider_error_excluded
+                and not self.no_harness_output
+  ... (2 more lines)
+ ✓ (1m 30s)
+            return self.harness_markers == 0
+  + 
+  +     @property
+  +     def no_phase_reached(self):
+  +         """Markers were seen, but none of them was PHASE_A1 (#810, 2026-08-25).
+  + 
+  +         Disjoint from `no_harness_output` by construction: an empty marker set
+  +         classifies as PHASE_REACH_NO_OUTPUT, which is that bucket's state, not this
+  ... (13 more lines)
+  2 tools completed in 3m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_harness_output\|harn… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the row suffix and the fold in count_lines:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (6 → 14 lines)
+            if self.no_harness_output:
+                suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+  +             if self.harness_prose_excluded:
+  +                 suffix += (
+  +                     f" [harness_markers_quoted={self.harness_prose_excluded}]"
+  +                 )
+  +         elif self.no_phase_reached:
+  +             # `elif`, not `if`: the two buckets are disjoint, and rendering both on one
+  +             # row would suggest a session can sit in each.
+  +             suffix += f" [{EXCLUDED_NO_PHASE_REACHED}]"
+                if self.harness_prose_excluded:
+                    suffix += (
+                        f" [harness_markers_quoted={self.harness_prose_excluded}]"
+ ✓ (1m 32s)
+            if self.no_harness_output:
+                suffix += f" [{EXCLUDED_NO_HARNESS_OUTPUT}]"
+  +             if self.harness_prose_excluded:
+  +                 suffix += (
+  +                     f" [harness_markers_quoted={self.harness_prose_excluded}]"
+  +                 )
+  +         elif self.no_phase_reached:
+  +             # `elif`, not `if`: the two buckets are disjoint, and rendering both on one
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 713,726p scripts/measure_… ✓ (3ms)
+  ▶ edit scripts/measure_abstentions.py (2 → 3 lines)
+        counts.harness_markers = 0
+  +     counts.harness_marker_names = set()
+        for line in lines:
+ ✓ (1m 31s)
+        counts.harness_markers = 0
+  +     counts.harness_marker_names = set()
+        for line in lines:
+  ▶ edit scripts/measure_abstentions.py (2 → 3 lines)
+            if harness_marker is not None:
+                counts.harness_markers += 1
+  +             counts.harness_marker_names.add(harness_marker)
+ ✓ (1m 30s)
+            if harness_marker is not None:
+                counts.harness_markers += 1
+  +             counts.harness_marker_names.add(harness_marker)
+  4 tools completed in 4m 44s (4 ✓)
+
+Now the verdict clause in grade(), keeping the buckets disjoint:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 970,1010p scripts/measure… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit scripts/measure_abstentions.py (3 → 20 lines)
+  +     # Disjoint from the bucket above by construction (an empty marker set classifies as
+  +     # PHASE_REACH_NO_OUTPUT, not PHASE_REACH_NONE), so no extra filtering is needed
+  +     # here — but it IS reported separately and never summed into any other bucket.
+  +     no_phase_excluded = [s for s in sessions if s.no_phase_reached]
+  +     if no_phase_excluded:
+  +         header += (
+  +             f"excluded (no phase reached): {len(no_phase_excluded)} session(s) carried "
+  +             f"harness output but never reached Phase A1 — the loop started and died "
+  +             f"before the first measurable phase, so a starved session would otherwise "
+  +             f"print the row a healthy one prints. Excluded from numerator and "
+  +             f"denominator both. Says only that no measurable phase was reached, never "
+  +             f"that the session was any good.\n"
+  +         )
+        provider_excluded = [
+  -         s for s in sessions if s.provider_error_excluded and not s.no_harness_output
+  +         s
+  +         for s in sessions
+  +         if s.provider_error_excluded
+  +         and not s.no_harness_output
+  +         and not s.no_phase_reached
+  ... (1 more lines)
+ ✓ (1m 31s)
+  +     # Disjoint from the bucket above by construction (an empty marker set classifies as
+  +     # PHASE_REACH_NO_OUTPUT, not PHASE_REACH_NONE), so no extra filtering is needed
+  +     # here — but it IS reported separately and never summed into any other bucket.
+  +     no_phase_excluded = [s for s in sessions if s.no_phase_reached]
+  +     if no_phase_excluded:
+  +         header += (
+  +             f"excluded (no phase reached): {len(no_phase_excluded)} session(s) carried "
+  +             f"harness output but never reached Phase A1 — the loop started and died "
+  ... (13 more lines)
+  ▶ edit scripts/measure_abstentions.py (5 → 11 lines)
+            prov_clause += (
+                f", {len(no_output_excluded)} excluded for no harness output"
+            )
+  -     other_excluded = len(provider_excluded) + len(no_output_excluded)
+  +     if no_phase_excluded:
+  +         prov_clause += (
+  +             f", {len(no_phase_excluded)} excluded for reaching no phase"
+  +         )
+  +     other_excluded = (
+  +         len(provider_excluded) + len(no_output_excluded) + len(no_phase_excluded)
+  +     )
+ ✓ (1m 31s)
+            prov_clause += (
+                f", {len(no_output_excluded)} excluded for no harness output"
+            )
+  -     other_excluded = len(provider_excluded) + len(no_output_excluded)
+  +     if no_phase_excluded:
+  +         prov_clause += (
+  +             f", {len(no_phase_excluded)} excluded for reaching no phase"
+  +         )
+  ... (3 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 8s (2 ✓)
+
+Now the self-tests. Let me see the existing harness-output test block to match its style:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1845,1880p scripts/measur… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1836,1846p scripts/measur… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.2s (2 ✓)
+
+Existing test (c)'s fixture has PHASE_A2 but no PHASE_A1 — which surfaces a real design question the task's literal wording gets wrong. A head-truncated log carrying Phase B / → Task 1: but no Phase A1 line would be excluded as "never reached a phase", which is the over-firing direction that costs me real data. The honest anchor is any phase marker, since the bookends (=== Day N === / complete) print regardless of whether work happened:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (25 → 30 lines)
+        - no markers at all -> PHASE_REACH_NO_OUTPUT. Not this bucket's business; it is
+          EXCLUDED_NO_HARNESS_OUTPUT's, and returning a distinct value here is what keeps
+          the two disjoint rather than double-counting an empty log.
+  -     - markers present but no PHASE_A1 -> PHASE_REACH_NONE. The harness spoke and then
+  -       died before the first measurable phase (#810: three ~107 KB logs carrying three
+  -       `=== Day N (...) ===` headers each and nothing else).
+  -     - PHASE_A1 present -> PHASE_REACH_MEASURABLE. Byte-identical to the pre-#810-fix
+  -       behaviour, which is every healthy session and was the regression risk.
+  +     - markers present, but every one of them a BOOKEND -> PHASE_REACH_NONE. The harness
+  +       spoke and then died before any measurable phase (#810: three ~107 KB logs
+  +       carrying three `=== Day N (...) ===` headers each and nothing else).
+  +     - any PHASE marker present -> PHASE_REACH_MEASURABLE. Byte-identical to the
+  +       pre-fix behaviour, which is every healthy session and was the regression risk.
+    
+  -     PHASE_A1 is the anchor because it is the first phase `scripts/evolve.sh` announces
+  -     that implies the build-verification step passed; a header alone implies only that
+  -     the script started.
+  +     The split is bookends vs phases, and that is a deliberate widening of #810's task
+  +     wording ("markers present but no PHASE_A1"). The bookends print whether or not any
+  +     work happened; a phase marker is printed only once `scripts/evolve.sh` is past
+  ... (16 more lines)
+ ✓ (1m 31s)
+        - no markers at all -> PHASE_REACH_NO_OUTPUT. Not this bucket's business; it is
+          EXCLUDED_NO_HARNESS_OUTPUT's, and returning a distinct value here is what keeps
+          the two disjoint rather than double-counting an empty log.
+  -     - markers present but no PHASE_A1 -> PHASE_REACH_NONE. The harness spoke and then
+  -       died before the first measurable phase (#810: three ~107 KB logs carrying three
+  -       `=== Day N (...) ===` headers each and nothing else).
+  -     - PHASE_A1 present -> PHASE_REACH_MEASURABLE. Byte-identical to the pre-#810-fix
+  -       behaviour, which is every healthy session and was the regression risk.
+  ... (13 more lines)
+  ▶ edit scripts/measure_abstentions.py (3 → 9 lines)
+    PHASE_REACH_NO_OUTPUT = "PHASE_REACH_NO_OUTPUT"
+    PHASE_REACH_NONE = "PHASE_REACH_NONE"
+    PHASE_REACH_MEASURABLE = "PHASE_REACH_MEASURABLE"
+  + 
+  + # The markers that prove the loop got PAST build verification. SESSION_HEADER and
+  + # SESSION_FOOTER are deliberately absent: they are bookends the harness prints whether
+  + # or not any work happened, and SESSION_HEADER's presence in a destroyed run is the
+  + # whole reason EXCLUDED_NO_HARNESS_OUTPUT could not see #810's three logs.
+  + _PHASE_MARKERS = frozenset({PHASE_A1, PHASE_A2, PHASE_B, TASK_START})
+ ✓ (1m 43s)
+    PHASE_REACH_NO_OUTPUT = "PHASE_REACH_NO_OUTPUT"
+    PHASE_REACH_NONE = "PHASE_REACH_NONE"
+    PHASE_REACH_MEASURABLE = "PHASE_REACH_MEASURABLE"
+  + 
+  + # The markers that prove the loop got PAST build verification. SESSION_HEADER and
+  + # SESSION_FOOTER are deliberately absent: they are bookends the harness prints whether
+  + # or not any work happened, and SESSION_HEADER's presence in a destroyed run is the
+  + # whole reason EXCLUDED_NO_HARNESS_OUTPUT could not see #810's three logs.
+  + _PHASE_MARKERS = frozenset({PHASE_A1, PHASE_A2, PHASE_B, TASK_START})
+  2 tools completed in 3m 21s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ordering bug — _PHASE_MARKERS references the marker names 110 lines before they exist. Moving it below them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (62ms)
+
+Now the self-tests. Let me append them after the existing harness-output block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unobserved stream is no… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1946,1958p scripts/measur… ✓ (3ms)
+  ▶ edit scripts/measure_abstentions.py (1 → 119 lines)
+        check("unobserved stream stays gradeable", mk("hand", 1, 0).gradeable, True)
+  + 
+  +     # -- EXCLUDED_NO_PHASE_REACHED (#810, @yuanhao 2026-08-25) --------------------
+  +     # A destroyed session must not score like a healthy one. The three real logs
+  +     # (32667319793, 32679577526, 32688121916) died at build verification and carry
+  +     # three `=== Day N (...) ===` headers each — harness output present, no phase.
+  + 
+  +     # (a) The pure classifier, all three states, none folded into another.
+  +     check("no markers is the other bucket's state",
+  +           classify_phase_reach(set()), PHASE_REACH_NO_OUTPUT)
+  +     check("bookends only -> no phase reached",
+  +           classify_phase_reach({SESSION_HEADER}), PHASE_REACH_NONE)
+  +     check("header+footer is still bookends only",
+  +           classify_phase_reach({SESSION_HEADER, SESSION_FOOTER}), PHASE_REACH_NONE)
+  +     check("Phase A1 -> measurable",
+  +           classify_phase_reach({SESSION_HEADER, PHASE_A1}), PHASE_REACH_MEASURABLE)
+  +     # The widening over #810's literal wording: a head-truncated log that lost its
+  +     # A1 line but carries later phases has demonstrably done work. Under-fire here
+  +     # rather than over-fire, because over-firing destroys real data points.
+  +     for late in (PHASE_A2, PHASE_B, TASK_START):
+  ... (99 more lines)
+ ✓ (1m 43s)
+        check("unobserved stream stays gradeable", mk("hand", 1, 0).gradeable, True)
+  + 
+  +     # -- EXCLUDED_NO_PHASE_REACHED (#810, @yuanhao 2026-08-25) --------------------
+  +     # A destroyed session must not score like a healthy one. The three real logs
+  +     # (32667319793, 32679577526, 32688121916) died at build verification and carry
+  +     # three `=== Day N (...) ===` headers each — harness output present, no phase.
+  + 
+  +     # (a) The pure classifier, all three states, none folded into another.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/measure_abstenti… ✓ (44ms)
+  4 tools completed in 2m 20s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests green. Now the real-log controls — the part that decides whether this is real:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== POSITIVE CONTROL (star… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls pass. One inaccuracy to fix: the verdict prose says "never reached Phase A1" but the implementation widened to any phase marker:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/measure_abstentions.py (6 → 7 lines)
+                f"excluded (no phase reached): {len(no_phase_excluded)} session(s) carried "
+  -             f"harness output but never reached Phase A1 — the loop started and died "
+  -             f"before the first measurable phase, so a starved session would otherwise "
+  -             f"print the row a healthy one prints. Excluded from numerator and "
+  -             f"denominator both. Says only that no measurable phase was reached, never "
+  -             f"that the session was any good.\n"
+  +             f"harness output but never reached a measurable phase (no Phase A1/A2/B "
+  +             f"and no task start — only the bookend `=== Day N ===` lines the harness "
+  +             f"prints whether or not work happened). The loop started and died before "
+  +             f"any phase, so a starved session would otherwise print the row a healthy "
+  +             f"one prints. Excluded from numerator and denominator both. Says only that "
+  +             f"no measurable phase was reached, never that the session was any good.\n"
+ ✓ (1m 43s)
+                f"excluded (no phase reached): {len(no_phase_excluded)} session(s) carried "
+  -             f"harness output but never reached Phase A1 — the loop started and died "
+  -             f"before the first measurable phase, so a starved session would otherwise "
+  -             f"print the row a healthy one prints. Excluded from numerator and "
+  -             f"denominator both. Says only that no measurable phase was reached, never "
+  -             f"that the session was any good.\n"
+  +             f"harness output but never reached a measurable phase (no Phase A1/A2/B "
+  +             f"and no task start — only the bookend `=== Day N ===` lines the harness "
+  ... (4 more lines)
+
+Now checking the other two logs @yuanhao named — one specimen isn't a class:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for r in 32679577526 32688121916… ✓ (3.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three starved logs excluded, healthy one untouched in the same run. Now CLAUDE.md:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Ordinal collision" CLAU… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==318' CLAUDE.md | tail -… ✓ (4ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - so the buckets are referred to **by name, never by ordinal**, and neither sentence is edited to invent an agreement that did not exist.
+  + so the buckets are referred to **by name, never by ordinal**, and neither sentence is edited to invent an agreement that did not exist. Day 178 (@yuanhao on #810) added **`EXCLUDED_NO_PHASE_REACHED`**, because **a destroyed session was scoring like a healthy one**. Three real workflow logs — `32667319793`, `32679577526`, `32688121916`, ~107 KB each — printed `abstentions=0 firings=0 fallback=0 gradeable=no`, the row a healthy zero-abstention session prints. Every one had died **before any phase**: `cargo test` failed at the build-verification step, three startup attempts per run, zero Phase A1, zero tasks (the sonnet-5 preset-pricing episode, fixed at `f9073e8d` / `0577bfe7`). `EXCLUDED_NO_HARNESS_OUTPUT` missed them because it asks `markers == 0`, and a run that starts and immediately dies carries **3 `=== Day N (...) ===` headers**. The two questions are different — "the harness printed something" and "the harness got far enough to be measurable" — and only the second licenses scoring a session; a **starved** loop and a **healthy** loop produced the identical row, which is my own *"could not check must never read as checked; clean"* rule failing in the sharpest direction available, inside the meter that decides whether #808 works. **`SESSION_HEADER` was deliberately not weakened** — @yuanhao is explicit and correct that it is real evidence a log *is* a session log; this is a separate eligibility test layered on top, not a retreat from that bucket, which is untouched. The decision half is the pure, table-tested pair `phase_reach_markers(lines)` (the **set** of unquoted marker names, beside the existing count) and `classify_phase_reach(markers)`, returning **three** states with none folded into another: no markers → `PHASE_REACH_NO_OUTPUT` (the other bucket's business, and returning a distinct value here is precisely what keeps the two **disjoint** rather than double-counting an empty log), only bookends → `PHASE_REACH_NONE`, any phase marker → `PHASE_REACH_MEASURABLE`. **The split is bookends vs phases, a deliberate widening of the task's literal wording ("markers present but no `PHASE_A1`"), and the reason is the over-firing direction**: `SESSION_HEADER`/`SESSION_FOOTER` print whether or not work happened, while `PHASE_A1`/`PHASE_A2`/`PHASE_B`/`TASK_START` are printed only once the loop is past build verification — anchoring on `PHASE_A1` alone would exclude a head-truncated log carrying `Phase B: Implementation...` and `→ Task 1: …`, and over-firing destroys real data points where under-firing only leaves today's behaviour. Both real inputs are unaffected either way: the starved logs carry **no** phase marker, the healthy ones carry every kind. The prose filter is not bypassed and is load-bearing for the founding reason — #810's thread, the task file and this very paragraph all contain the literal string `Phase A1`, so a log holding only my writing *about* the detector must not read as having reached it; a shape-match that trips `is_quoted_prose` is **counted** (`harness_markers_quoted=N`), never silently accepted. The bucket is reported as its own verdict clause, **never summed** into `INELIGIBLE`, `UNKNOWN_AGE`, `EXCLUDED_PROVIDER_ERROR`, `EXCLUDED_NO_HARNESS_OUTPUT` or the zero-abstention exclusions (the provider-error list is filtered to stay disjoint), and an unfolded stream (`harness_marker_names is None`, hand-built fixture only) is **neither** — "nobody looked" is not "nothing was there". `MIN_GRADEABLE_SESSIONS = 4` is **unchanged**, so `NOT YET GRADEABLE` becoming more common is the correct outcome rather than a regression. **Verified in both directions against real logs, because my most recent injury sets the direction I guard and the last bucket shipped verified only where it fires:** all three of @yuanhao's runs now score `[EXCLUDED_NO_PHASE_REACHED]` and leave the denominator (confirmed independently of the classifier by `grep -c "Phase A1"` → **0** on each), while run `32777115768` — a real post-#808 session — still scores measurable with its row and the whole verdict **byte-identical to the pre-bucket tool**, checked by `diff`. Self-tests cover all three classifier states, the widening (each of `PHASE_A2`/`PHASE_B`/`TASK_START` alone is measurable), the disjointness (zero markers → the other bucket, and the row names one bucket only), a fixture whose only `Phase A1` is quoted prose → *not reached*, and the unchanged verdict string for an all-measurable run. **What it cannot do, stated rather than implied: it distinguishes "reached a measurable phase" from "did not", never "the session was any good"** — a session that reached Phase A1 and produced garbage scores exactly as an honest one does. **Deliberately out of scope, and named rather than left as an optional tail:** @yuanhao's optional *starved-vs-idle cause report* ("report the cause when the log carries a build/test failure before the first phase") is **not** built — it needs line-ordering the current fold does not preserve, and an optional tail is exactly how a task ships half-executed; so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it).
+ ✓ (1m 43s)
+  - so the buckets are referred to **by name, never by ordinal**, and neither sentence is edited to invent an agreement that did not exist.
+  + so the buckets are referred to **by name, never by ordinal**, and neither sentence is edited to invent an agreement that did not exist. Day 178 (@yuanhao on #810) added **`EXCLUDED_NO_PHASE_REACHED`**, because **a destroyed session was scoring like a healthy one**. Three real workflow logs — `32667319793`, `32679577526`, `32688121916`, ~107 KB each — printed `abstentions=0 firings=0 fallback=0 gradeable=no`, the row a healthy zero-abstention session prints. Every one had died **before any phase**: `cargo test` failed at the build-verification step, three startup attempts per run, zero Phase A1, zero tasks (the sonnet-5 preset-pricing episode, fixed at `f9073e8d` / `0577bfe7`). `EXCLUDED_NO_HARNESS_OUTPUT` missed them because it asks `markers == 0`, and a run that starts and immediately dies carries **3 `=== Day N (...) ===` headers**. The two questions are different — "the harness printed something" and "the harness got far enough to be measurable" — and only the second licenses scoring a session; a **starved** loop and a **healthy** loop produced the identical row, which is my own *"could not check must never read as checked; clean"* rule failing in the sharpest direction available, inside the meter that decides whether #808 works. **`SESSION_HEADER` was deliberately not weakened** — @yuanhao is explicit and correct that it is real evidence a log *is* a session log; this is a separate eligibility test layered on top, not a retreat from that bucket, which is untouched. The decision half is the pure, table-tested pair `phase_reach_markers(lines)` (the **set** of unquoted marker names, beside the existing count) and `classify_phase_reach(markers)`, returning **three** states with none folded into another: no markers → `PHASE_REACH_NO_OUTPUT` (the other bucket's business, and returning a distinct value here is precisely what keeps the two **disjoint** rather than double-counting an empty log), only bookends → `PHASE_REACH_NONE`, any phase marker → `PHASE_REACH_MEASURABLE`. **The split is bookends vs phases, a deliberate widening of the task's literal wording ("markers present but no `PHASE_A1`"), and the reason is the over-firing direction**: `SESSION_HEADER`/`SESSION_FOOTER` print whether or not work happened, while `PHASE_A1`/`PHASE_A2`/`PHASE_B`/`TASK_START` are printed only once the loop is past build verification — anchoring on `PHASE_A1` alone would exclude a head-truncated log carrying `Phase B: Implementation...` and `→ Task 1: …`, and over-firing destroys real data points where under-firing only leaves today's behaviour. Both real inputs are unaffected either way: the starved logs carry **no** phase marker, the healthy ones carry every kind. The prose filter is not bypassed and is load-bearing for the founding reason — #810's thread, the task file and this very paragraph all contain the literal string `Phase A1`, so a log holding only my writing *about* the detector must not read as having reached it; a shape-match that trips `is_quoted_prose` is **counted** (`harness_markers_quoted=N`), never silently accepted. The bucket is reported as its own verdict clause, **never summed** into `INELIGIBLE`, `UNKNOWN_AGE`, `EXCLUDED_PROVIDER_ERROR`, `EXCLUDED_NO_HARNESS_OUTPUT` or the zero-abstention exclusions (the provider-error list is filtered to stay disjoint), and an unfolded stream (`harness_marker_names is None`, hand-built fixture only) is **neither** — "nobody looked" is not "nothing was there". `MIN_GRADEABLE_SESSIONS = 4` is **unchanged**, so `NOT YET GRADEABLE` becoming more common is the correct outcome rather than a regression. **Verified in both directions against real logs, because my most recent injury sets the direction I guard and the last bucket shipped verified only where it fires:** all three of @yuanhao's runs now score `[EXCLUDED_NO_PHASE_REACHED]` and leave the denominator (confirmed independently of the classifier by `grep -c "Phase A1"` → **0** on each), while run `32777115768` — a real post-#808 session — still scores measurable with its row and the whole verdict **byte-identical to the pre-bucket tool**, checked by `diff`. Self-tests cover all three classifier states, the widening (each of `PHASE_A2`/`PHASE_B`/`TASK_START` alone is measurable), the disjointness (zero markers → the other bucket, and the row names one bucket only), a fixture whose only `Phase A1` is quoted prose → *not reached*, and the unchanged verdict string for an all-measurable run. **What it cannot do, stated rather than implied: it distinguishes "reached a measurable phase" from "did not", never "the session was any good"** — a session that reached Phase A1 and produced garbage scores exactly as an honest one does. **Deliberately out of scope, and named rather than left as an optional tail:** @yuanhao's optional *starved-vs-idle cause report* ("report the cause when the log carries a build/test failure before the first phase") is **not** built — it needs line-ordering the current fold does not preserve, and an optional tail is exactly how a task ships half-executed; so is the separately-filed stream-exclusivity defect (`--since-sha` classifies a workflow log as `UNKNOWN_AGE`, so the intended invocation still cannot produce a graded number; a `--session-ts` flag closes it).
+  3 tools completed in 2m 14s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
