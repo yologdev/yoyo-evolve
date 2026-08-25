@@ -1,0 +1,83 @@
+# cargo-mutants configuration for yoyo
+#
+# Location matters: cargo-mutants reads `.cargo/mutants.toml` in the source
+# tree root. This file lived at the repo root from Day 9 until Day 178 and was
+# therefore never read once. It is not a copy — the root file was MOVED here,
+# because two copies of one exclusion list that can disagree is worse than none.
+#
+# Run mutation testing locally:
+#   cargo install cargo-mutants
+#   cargo mutants -f src/<one_module>.rs --timeout 60 -- <that module's tests>
+#
+# A whole-repo run is ~28h. Read one module at a time; the slice is the design.
+#
+# --- Day 178 correction (read this before editing) ---
+#
+# Two things were wrong with this file, and the second was worse than the first:
+#
+#   1. SCHEMA. Every entry used `[[exclude]] function = "..."`, which
+#      cargo-mutants 27.1.0 rejects outright: `unknown field 'exclude'`. Had this
+#      file ever been in a location the tool reads, `cargo mutants` would have
+#      failed to start. The live key is `exclude_re`: a list of regexps matched
+#      against the whole line `--list` prints, i.e. `path:line:col: <mutant text>`.
+#
+#   2. ADDRESSES. Six entries named functions that had moved or never existed:
+#        cli::print_banner          -> src/banner.rs
+#        main::collect_multiline    -> src/repl.rs, and it is `collect_multiline_rl`
+#        main::run_shell_command    -> src/commands_run.rs
+#        main::compact_agent        -> src/commands_session.rs
+#        main::auto_compact_if_needed -> src/commands_session.rs
+#        format::Color::fmt         -> `<impl std::fmt::Display for Color>::fmt`
+#      Every name below was re-resolved against the tree on Day 178 and verified
+#      to generate at least one real mutant. An exclusion matching nothing is
+#      worse than no exclusion, because it reads as a considered policy.
+#
+# This correction changed ADDRESSES and SCHEMA only. It did not re-litigate
+# POLICY: the intent is still to skip cosmetic/display output, interactive I/O,
+# and async paths that need a live API key.
+#
+# --- Hard constraint: do not shrink a module that has a recorded reading ---
+#
+# CLAUDE.md records mutation readings for these five files:
+#     src/git_commit_msg.rs, src/commands_risk_families.rs,
+#     src/commands_risk_ungraded.rs, src/prompt_retry_limits.rs,
+#     src/format/cost.rs
+# Excluding anything in them would silently change the denominator and make every
+# recorded number incomparable with its own future re-measure. Every regex below
+# is therefore anchored to a specific source file with `^`, so it cannot reach
+# those five by accident. If you add an entry, anchor it the same way and re-run
+# the before/after counts for all five.
+#
+# Note on `\b`: these are single-quoted TOML literal strings, so backslashes
+# reach the regex engine unprocessed. The word boundary is load-bearing —
+# without it `run_prompt` would also swallow `run_prompt_with_changes`,
+# `run_prompt_auto_retry` and nine other live functions, and `compact_agent`
+# would swallow `compact_agent_with_keep`.
+
+exclude_re = [
+  # --- Cosmetic / display-only ---
+  # These emit ANSI escapes or banners; mutating them shows formatting
+  # differences, not logic bugs.
+  '^src/format/mod\.rs:.*Display for Color>::fmt',
+  '^src/format/mod\.rs:.*\bcolor_enabled\b',
+  '^src/format/mod\.rs:.*\bdisable_color\b',
+  # print_usage only — NOT usage_print_line, which is the pure decision core
+  # split out on Day 177 and is exactly the half worth mutating.
+  '^src/format/mod\.rs:.*\bprint_usage\b',
+  '^src/cli\.rs:.*\bprint_help\b',
+  '^src/banner\.rs:.*\bprint_banner\b',
+
+  # --- Interactive I/O that cannot be unit-tested ---
+  # These read stdin, write to terminals, or run subprocesses in ways that
+  # need a real terminal.
+  '^src/repl\.rs:.*\bcollect_multiline_rl\b',
+  '^src/commands_run\.rs:.*\brun_shell_command\b',
+
+  # --- Async prompt execution (needs a live API key) ---
+  '^src/prompt\.rs:.*\brun_prompt\b',
+  '^src/prompt\.rs:.*\brun_prompt_once\b',
+
+  # --- Gated behind interactive mode ---
+  '^src/commands_session\.rs:.*\bauto_compact_if_needed\b',
+  '^src/commands_session\.rs:.*\bcompact_agent\b',
+]
