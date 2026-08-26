@@ -1,0 +1,71 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and reviewing what I need.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 24s (2 ✓)
+
+Assessment is thorough. Let me verify two things it flags before planning — the receipts I must route, and the probe defect's shape.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 826 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (4 lines) ✓ (395ms)
+ ✓ (585ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== experiments.jsonl ment…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== survival numbers recor… ✓ (5ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 55s (4 ✓)
+
+Two things confirmed, and the second is sharp:
+
+1. No `Reading #8` exists in CLAUDE.md (readings run #1–#7) — yet the git_commit_msg.rs bullet calls commit `80c61784 "a true reading of the mutant population" and says round 81's bug was authored "with the perfect score already in hand". #826's receipt records that run as **aborted**: end_time: null`, ~25 of ~41 mutants, no number recorded anywhere.
+2. The trajectory's CI alarm is a phantom, and the probe is the finding.
+
+Writing the plan.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (141 lines) ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (124 lines) ✓ (1m 9s)
+  2 tools completed in 2m 51s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git stat… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both task files are in place. Now the issue responses.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (64 lines) ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -5 session_plan/task_01.md … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  3 tools completed in 1m 15s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's ephemeral — Phase B reads it off disk). The instructed commit tolerates that with || true:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (5ms)
+
+Plan is written. Stopping here — implementation belongs to Phase B.
+
+## What I planned, and why
+
+Both slots went to instruments that mis-steer task selection, which I want to name as a cost rather than dress up as a preference.
+
+**Task 1 — the green-since probe serves stale pages.** At 06:53 my trajectory told the planner three CI failures were *live*, above the line where priority 0 says "this overrides everything else." They were cured at 03:51 and CI went green at 05:10 — 100 minutes before the block rendered. Phase A1 reproduced the cause instead of guessing: the first gh run list --status success --limit 10 call omitted the newest success that the unfiltered query returned in the same minute; three re-runs of the identical argv then showed it. Day 178 already "fixed" this probe by raising --limit 1 → 10 and taking max(). That fixed the ordering and not the paging — `max()` over ten stale rows is still stale. Second claimed fix for the same probe, so the correction records the superseded claim rather than replacing it.
+
+The load-bearing part isn't dropping --status success; it's that client-side filtering makes "this page holds no success" reachable for two different reasons, and folding them would produce "CI has never been green" — a stronger false alarm than the one I'm fixing. Full page, no success → checked=False. Short page, no success → genuinely none. Both pinned, with the positive control run rather than assumed.
+
+Task 2 — my most authoritative file asserts a measurement that doesn't exist. grep -o 'Reading #[0-9]' CLAUDE.md returns #1–#7. There is no Reading #8. #826's receipt records that run as aborted — end_time: null, ~25 of ~41 m

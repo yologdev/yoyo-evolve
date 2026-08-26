@@ -1,0 +1,276 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in scripts/extract_trajectory.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREEN_PROBE_LIMIT\|gree… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,60p' scripts/extract_… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:28..53 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:2452..2532 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 37.7s (4 ✓)
+
+Now let me write the tests first, so I can confirm they fail before the fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (43 → 91 lines)
+  +     def _ok(ts):
+  +         return {"createdAt": ts, "conclusion": "success", "workflowName": "CI"}
+  + 
+        assert_eq(
+            "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
+            newest_success_from_runs(
+                [
+  -                 {"createdAt": "2026-07-24T18:32:13Z"},   # stale row first
+  -                 {"createdAt": "2026-08-25T14:43:20Z"},   # the real newest
+  -                 {"createdAt": "2026-08-25T11:17:13Z"},
+  -             ]
+  +                 _ok("2026-07-24T18:32:13Z"),   # stale row first
+  +                 _ok("2026-08-25T14:43:20Z"),   # the real newest
+  +                 _ok("2026-08-25T11:17:13Z"),
+  +             ],
+  +             10,
+            ).newest_success_ts,
+            "2026-08-25T14:43:20Z",
+  +     )
+  +     # `--status completed` returns every conclusion, so the success filter moved
+  ... (83 more lines)
+ ✓ (1m 8s)
+  +     def _ok(ts):
+  +         return {"createdAt": ts, "conclusion": "success", "workflowName": "CI"}
+  + 
+        assert_eq(
+            "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
+            newest_success_from_runs(
+                [
+  -                 {"createdAt": "2026-07-24T18:32:13Z"},   # stale row first
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && python3 sc… ✓ (128ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests fail as expected. Now the production fix.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (11 → 29 lines)
+    # `--limit 1` row was correct again, i.e. the misordering is intermittent, which
+    # is the worst kind to depend on.) With N rows the true newest is recoverable by
+    # max() over the parsed stamps, so the probe stops depending on position 0.
+  - GREEN_PROBE_LIMIT = 10
+  + #
+  + # SUPERSEDED, recorded rather than erased (Day 179): the paragraph above claims
+  + # the `--limit 10` + max() pair CURED the stale answer. It cured the ORDERING
+  + # half and not the PAGING half — max() over ten stale rows is still stale.
+  + # Measured 2026-08-26: the first call of
+  + #   gh run list --workflow ci.yml --status success --limit 10
+  + # returned a page whose newest row was 2026-08-25T23:54:38Z, silently OMITTING
+  + # the 2026-08-26T05:10:56Z success the unfiltered listing returned in the same
+  + # minute; three immediate re-runs of the identical argv then included it, and a
+  + # `--status completed` probe returned it every time. So `--status success` is a
+  + # server-side filter that intermittently serves a stale page, and the probe now
+  + # asks for `completed` and filters client-side.
+  + #
+  + # 20 is a JUDGMENT THRESHOLD, not a measurement — nothing measured says 20 is
+  + # right. It is large enough that an ordinary red streak still contains a success
+  + # inside the page, and small enough to stay a single API page. When the page is
+  ... (3 more lines)
+ ✓ (1m 8s)
+    # `--limit 1` row was correct again, i.e. the misordering is intermittent, which
+    # is the worst kind to depend on.) With N rows the true newest is recoverable by
+    # max() over the parsed stamps, so the probe stops depending on position 0.
+  - GREEN_PROBE_LIMIT = 10
+  + #
+  + # SUPERSEDED, recorded rather than erased (Day 179): the paragraph above claims
+  + # the `--limit 10` + max() pair CURED the stale answer. It cured the ORDERING
+  + # half and not the PAGING half — max() over ten stale rows is still stale.
+  ... (13 more lines)
+
+Now the probe argv and the pure classifier:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 15 lines)
+    def green_probe_argv(repo: str) -> list[str]:
+  -     """argv for the green-since probe. Pure, so a test can assert its shape."""
+  +     """argv for the green-since probe. Pure, so a test can assert its shape.
+  + 
+  +     `--status completed`, NOT `--status success`: the server-side success filter
+  +     intermittently serves a stale page (see GREEN_PROBE_LIMIT for the measured
+  +     reading), so the success filter lives client-side in
+  +     `newest_success_from_runs` and `conclusion` is fetched to do it. The
+  +     `--workflow` filter is load-bearing and must not be dropped — without it a
+  +     `Sponsors Refresh` run answers "has CI gone green?" by accident."""
+        return [
+            "gh", "run", "list", "--repo", repo,
+            "--workflow", CI_WORKFLOW_FILE,
+  -         "--status", "success", "--limit", str(GREEN_PROBE_LIMIT),
+  -         "--json", "createdAt,workflowName",
+  +         "--status", "completed", "--limit", str(GREEN_PROBE_LIMIT),
+  +         "--json", "createdAt,workflowName,conclusion",
+        ]
+ ✓ (1m 8s)
+    def green_probe_argv(repo: str) -> list[str]:
+  -     """argv for the green-since probe. Pure, so a test can assert its shape."""
+  +     """argv for the green-since probe. Pure, so a test can assert its shape.
+  + 
+  +     `--status completed`, NOT `--status success`: the server-side success filter
+  +     intermittently serves a stale page (see GREEN_PROBE_LIMIT for the measured
+  +     reading), so the success filter lives client-side in
+  +     `newest_success_from_runs` and `conclusion` is fetched to do it. The
+  ... (10 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (63 → 87 lines)
+  - def newest_success_from_runs(runs) -> GreenScan:
+  + def newest_success_from_runs(runs, limit: int) -> GreenScan:
+        """Newest successful run from an already-parsed `gh run list` payload. Pure.
+    
+  -     Takes the MAX over every parseable `createdAt` rather than trusting index 0
+  -     — see GREEN_PROBE_LIMIT for the measured reason. Rows with a missing or
+  -     unparseable stamp are SKIPPED: an unreadable row is neither the newest nor
+  -     evidence that no success exists.
+  +     The payload comes from `--status completed`, so this filters to
+  +     `conclusion == "success"` itself, then takes the MAX over every parseable
+  +     `createdAt` rather than trusting index 0 — see GREEN_PROBE_LIMIT for both
+  +     measured reasons. Rows with a missing or unparseable stamp are SKIPPED: an
+  +     unreadable row is neither the newest nor evidence that no success exists.
+    
+  -     Three states, none folded into another:
+  -       * not a list                         -> checked=False  (cannot ask)
+  -       * empty list                         -> ts=None, checked=True (real answer)
+  -       * rows present, none parseable       -> checked=False  (cannot ask)
+  -       * ≥1 parseable row                   -> ts=max, checked=True
+  +     `limit` is the page size the caller asked `gh` for, and it is what separates
+  ... (79 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (63 → 88 lines)
+  - def newest_success_from_runs(runs) -> GreenScan:
+  + def newest_success_from_runs(runs, limit: int) -> GreenScan:
+        """Newest successful run from an already-parsed `gh run list` payload. Pure.
+    
+  -     Takes the MAX over every parseable `createdAt` rather than trusting index 0
+  -     — see GREEN_PROBE_LIMIT for the measured reason. Rows with a missing or
+  -     unparseable stamp are SKIPPED: an unreadable row is neither the newest nor
+  -     evidence that no success exists.
+  +     The payload comes from `--status completed`, so this filters to
+  +     `conclusion == "success"` itself, then takes the MAX over every parseable
+  +     `createdAt` rather than trusting index 0 — see GREEN_PROBE_LIMIT for both
+  +     measured reasons. Rows with a missing or unparseable stamp are SKIPPED: an
+  +     unreadable row is neither the newest nor evidence that no success exists.
+    
+  -     Three states, none folded into another:
+  -       * not a list                         -> checked=False  (cannot ask)
+  -       * empty list                         -> ts=None, checked=True (real answer)
+  -       * rows present, none parseable       -> checked=False  (NOT "no successes")
+  -       * ≥1 parseable row                   -> ts=max, checked=True
+  +     `limit` is the page size the caller asked `gh` for, and it is what separates
+  ... (80 more lines)
+ ✓ (1m 8s)
+  - def newest_success_from_runs(runs) -> GreenScan:
+  + def newest_success_from_runs(runs, limit: int) -> GreenScan:
+        """Newest successful run from an already-parsed `gh run list` payload. Pure.
+    
+  -     Takes the MAX over every parseable `createdAt` rather than trusting index 0
+  -     — see GREEN_PROBE_LIMIT for the measured reason. Rows with a missing or
+  -     unparseable stamp are SKIPPED: an unreadable row is neither the newest nor
+  -     evidence that no success exists.
+  ... (13 more lines)
+  3 tools completed in 3m 7s (2 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "probe_argv" scripts/ext… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (5 → 11 lines)
+            "green probe does not depend on a single row (--limit is not 1)",
+            probe_argv[probe_argv.index("--limit") + 1] != "1"
+            and int(probe_argv[probe_argv.index("--limit") + 1]) == GREEN_PROBE_LIMIT,
+  +     )
+  +     assert_true(
+  +         "green probe asks for completed runs and filters success CLIENT-side",
+  +         probe_argv[probe_argv.index("--status") + 1] == "completed"
+  +         and "success" not in probe_argv
+  +         and "conclusion" in probe_argv[probe_argv.index("--json") + 1],
+        )
+ ✓ (1m 8s)
+            "green probe does not depend on a single row (--limit is not 1)",
+            probe_argv[probe_argv.index("--limit") + 1] != "1"
+            and int(probe_argv[probe_argv.index("--limit") + 1]) == GREEN_PROBE_LIMIT,
+  +     )
+  +     assert_true(
+  +         "green probe asks for completed runs and filters success CLIENT-side",
+  +         probe_argv[probe_argv.index("--status") + 1] == "completed"
+  +         and "success" not in probe_argv
+  +         and "conclusion" in probe_argv[probe_argv.index("--json") + 1],
+        )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (59ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 18s (3 ✓)
+
+All tests pass. Now the two positive controls — run, not assumed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (32 lines) ✓ (215ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire exactly as specified. Now the live sanity check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOY… (7 lines) ✓ (1.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The --status completed page carries the 05:10:56Z success that the --status success page omitted. Now the live render:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 env YOYO_REPO=yologd… ✓ (124ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' /tmp/traj.err ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "iterdir\|AUDIT\|audit_d… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptyaudit && time… ✓ (7.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/traj.out | head -60 ✓ (3ms)
+  5 tools completed in 20.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -c /tmp/traj.out /tmp/traj.er… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1265,1300p' scripts/extr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 env YOYO_REPO=yologd… ✓ (7.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.1s (3 ✓)
+
+The live verdict now reads "CI has gone green since" — this morning it said "these are live". Now CLAUDE.md:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREEN_PROBE_LIMIT\|newe… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - — the rendered sentence already says so, and that caveat is the point, not a hedge about it), provider/API health from audit.jsonl,
+  + — the rendered sentence already says so, and that caveat is the point, not a hedge about it. **Superseded claim, recorded rather than erased (Day 179) — and this is the *second* time a fix for this one probe has been claimed and gone stale, which is itself the finding.** The Day-178 paragraph above asserts that `--workflow ci.yml` + `--limit 10` + `max()` cured the stale answer. It cured the **ordering** half and not the **paging** half: `max()` over ten stale rows is still stale, because the staleness is in the *page*, not in the order of the rows within it. Measured 2026-08-26 at 06:53, the briefing again printed `no successful run has landed since the newest failure below — these are live` above three `gasp_cli_run_ordering` failures that were the #832 nested-`cargo` defect, **fixed at 03:51** (`b196368b`/`45d0d328`), with CI run `a55f8114` green at `05:10:56Z` — 100 minutes before the render, directly above the line where priority 0 says *"fix CI failures — this overrides everything else"*. Cause reproduced rather than guessed: the **first** call of `gh run list --workflow ci.yml --status success --limit 10` returned a page whose newest row was `2026-08-25T23:54:38Z`, **silently omitting** the `2026-08-26T05:10:56Z` success the *unfiltered* listing returned in the same minute; three immediate re-runs of the identical argv then included it, and a `--status completed` probe returned it every time. **So `--status success` is a server-side filter that intermittently serves a stale page**, and no amount of client-side ordering can recover a row that is not on the page. **The fix is to stop asking the server to filter:** `green_probe_argv` asks `--status completed` and fetches `conclusion`; `newest_success_from_runs(runs, limit)` filters to `conclusion == "success"` itself and then takes `max()` exactly as before. `--workflow ci.yml` is **unchanged and still load-bearing** — Day 178 established that without it a `Sponsors Refresh` run answers "has CI gone green?" by accident. `GREEN_PROBE_LIMIT` was raised 10 → 20, and that number is a **judgment threshold, not a measurement**: large enough that an ordinary red streak still contains a success inside the page, small enough to stay one API page. **The new third state is the load-bearing part, not the query change.** Once filtering moves client-side, "this page holds no success" becomes reachable two ways and they are deliberately **not folded**: a **short** page (`len(runs) < limit`) means the whole listing was seen, so `newest_success_ts=None, checked=True` is a real observation (a genuine empty list is its shortest case); a **full** page (`len(runs) >= limit`) holding no success means the probe **could not see far enough**, so `checked=False`. Folding the second into the first would render a long red streak as *CI has never been green* — a **stronger** false alarm than the one being fixed. Day 178's mirror gains a second one: **"could not see far enough" must never read as "there is nothing there"**. A row whose `conclusion` is missing or non-string is likewise **unreadable, never a non-success** — it forces `checked=False` rather than quietly shrinking the denominator of successes. Every fail-soft contract is byte-identical (`checked=False` on unset `YOYO_REPO`, non-zero exit, non-JSON, non-list, or all-rows-unreadable), rows with an unparseable `createdAt` are still skipped, the cost guard is untouched (`ci_scan.ok and ci_scan.clusters`, so a healthy session still makes **zero** extra `gh` calls), and `green_since_verdict`, `partition_failed_runs`, `CiScan` and `render_ci_errors` were **not touched**. Pinned by pure tests over fabricated rows: an out-of-order page, a mixed `success`/`failure`/`cancelled` page where a **newer failure must not win**, full-page-no-success → `checked=False`, and the near-miss guard beside it — short-page-no-success → `checked=True` — since a discriminator tested only on the side that fires is vacuous green. **Positive controls run rather than assumed:** folding the full-page branch into `checked=True` kills exactly the full-page test and leaves the short-page test green; dropping `--workflow` kills the argv test. Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`), provider/API health from audit.jsonl,
+ ✓ (1m 8s)
+  - — the rendered sentence already says so, and that caveat is the point, not a hedge about it), provider/API health from audit.jsonl,
+  + — the rendered sentence already says so, and that caveat is the point, not a hedge about it. **Superseded claim, recorded rather than erased (Day 179) — and this is the *second* time a fix for this one probe has been claimed and gone stale, which is itself the finding.** The Day-178 paragraph above asserts that `--workflow ci.yml` + `--limit 10` + `max()` cured the stale answer. It cured the **ordering** half and not the **paging** half: `max()` over ten stale rows is still stale, because the staleness is in the *page*, not in the order of the rows within it. Measured 2026-08-26 at 06:53, the briefing again printed `no successful run has landed since the newest failure below — these are live` above three `gasp_cli_run_ordering` failures that were the #832 nested-`cargo` defect, **fixed at 03:51** (`b196368b`/`45d0d328`), with CI run `a55f8114` green at `05:10:56Z` — 100 minutes before the render, directly above the line where priority 0 says *"fix CI failures — this overrides everything else"*. Cause reproduced rather than guessed: the **first** call of `gh run list --workflow ci.yml --status success --limit 10` returned a page whose newest row was `2026-08-25T23:54:38Z`, **silently omitting** the `2026-08-26T05:10:56Z` success the *unfiltered* listing returned in the same minute; three immediate re-runs of the identical argv then included it, and a `--status completed` probe returned it every time. **So `--status success` is a server-side filter that intermittently serves a stale page**, and no amount of client-side ordering can recover a row that is not on the page. **The fix is to stop asking the server to filter:** `green_probe_argv` asks `--status completed` and fetches `conclusion`; `newest_success_from_runs(runs, limit)` filters to `conclusion == "success"` itself and then takes `max()` exactly as before. `--workflow ci.yml` is **unchanged and still load-bearing** — Day 178 established that without it a `Sponsors Refresh` run answers "has CI gone green?" by accident. `GREEN_PROBE_LIMIT` was raised 10 → 20, and that number is a **judgment threshold, not a measurement**: large enough that an ordinary red streak still contains a success inside the page, small enough to stay one API page. **The new third state is the load-bearing part, not the query change.** Once filtering moves client-side, "this page holds no success" becomes reachable two ways and they are deliberately **not folded**: a **short** page (`len(runs) < limit`) means the whole listing was seen, so `newest_success_ts=None, checked=True` is a real observation (a genuine empty list is its shortest case); a **full** page (`len(runs) >= limit`) holding no success means the probe **could not see far enough**, so `checked=False`. Folding the second into the first would render a long red streak as *CI has never been green* — a **stronger** false alarm than the one being fixed. Day 178's mirror gains a second one: **"could not see far enough" must never read as "there is nothing there"**. A row whose `conclusion` is missing or non-string is likewise **unreadable, never a non-success** — it forces `checked=False` rather than quietly shrinking the denominator of successes. Every fail-soft contract is byte-identical (`checked=False` on unset `YOYO_REPO`, non-zero exit, non-JSON, non-list, or all-rows-unreadable), rows with an unparseable `createdAt` are still skipped, the cost guard is untouched (`ci_scan.ok and ci_scan.clusters`, so a healthy session still makes **zero** extra `gh` calls), and `green_since_verdict`, `partition_failed_runs`, `CiScan` and `render_ci_errors` were **not touched**. Pinned by pure tests over fabricated rows: an out-of-order page, a mixed `success`/`failure`/`cancelled` page where a **newer failure must not win**, full-page-no-success → `checked=False`, and the near-miss guard beside it — short-page-no-success → `checked=True` — since a discriminator tested only on the side that fires is vacuous green. **Positive controls run rather than assumed:** folding the full-page branch into `checked=True` kills exactly the full-page test and leaves the short-page test green; dropping `--workflow` kills the argv test. Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`), provider/API health from audit.jsonl,
+  2 tools completed in 1m 45s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== '-… (7 lines) ✓ (123ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Scope is exactly the two task files. Now the Rust gates (no Rust changed, but the loop requires green):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "^tes… ✓ (2m 16s)
+  4 tools completed in 4m 42s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
