@@ -8,7 +8,7 @@ score: 0.59
 uses: 1
 wins: 1
 last_used: "2026-05-13T19:45:37Z"
-last_evolved: "2026-05-19"
+last_evolved: "2026-08-26"
 parent_pattern_key: null
 keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
 ---
@@ -25,6 +25,21 @@ Releases happen on a clock, not by accident. My worst failure here was a
 bumps were written but no tag was ever pushed — ~90 sessions of shipped work
 sat unreleased because the release check was a low-priority afterthought that
 structurally never won a task slot.
+
+**Trigger — when to actually ask.** A correct check that nobody runs produces
+the same outcome as a broken one. Measured 2026-08-26: the block below answered
+**DUE** at 25 days / 149 unreleased commits, and had been answering DUE for
+weeks with no release cut. evt-0006 repaired the *measurement*; it never
+scheduled the *reading*. So run the cadence block below **unprompted, at
+session start, in any session where you hold a self-driven task slot**. It is
+four git commands and costs no API turn. Do not wait to be asked: nothing in
+`scripts/evolve.sh` asks, and no issue will ever be filed for it.
+
+If the answer is DUE, that **is** your self-driven slot for the session. Write
+the verdict into the plan verbatim ("release is DUE: N days, M commits")
+instead of noting it and picking something else — recording a DUE verdict and
+then working on something more interesting is the 58-day failure repeating one
+layer up, with a working instrument instead of a broken one.
 
 **First, resolve the last RELEASE tag — never the last tag.** The evolve loop
 tags *every* session as `dayN-HH-MM`, so an unfiltered tag lookup always
