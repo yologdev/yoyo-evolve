@@ -258,16 +258,43 @@ pub(crate) fn gasp_usage() -> String {
     )
 }
 
-/// The impure half: open the recorder and call the matching ported arm.
+/// Does this arm chain to a run some **earlier process** opened?
+///
+/// `session-start` opens the run, so there is nothing to resume; every other
+/// arm records into a run a previous `yoyo gasp` invocation started, and the
+/// open-run marker is in-memory only — so it has to be restored from the
+/// store's own event log or the fact lands uncorrelated. Byte-identical to the
+/// sidecar's `if cmd != "session-start" { state.resume_open_run().await? }`
+/// (`tools/gasp-emit/src/main.rs:115`).
+///
+/// Pure, so it is table-tested in a **plain** build even though the arm that
+/// consumes it only compiles under `--features gasp`.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
+    !matches!(cmd, GaspCommand::SessionStart { .. })
+}
+
+/// The impure half: open the store and call the matching ported arm.
 ///
 /// Returns the boundary sha for `session-end` (which *returns* rather than
 /// prints — that was a deliberate in-process choice, so the CLI arm is the
 /// caller that decides) and `None` for the other three.
 ///
-/// The recorder is opened the same way [`crate::gasp::open_recorder_from_env`]
-/// does — by handing a [`crate::gasp::RecorderPlan`] to
-/// [`crate::gasp::open_recorder`] — rather than by constructing a second
-/// `GaspRecorder::open` call that could drift from it.
+/// **Superseded claim, recorded rather than erased (#831).** This doc used to
+/// read: *"The recorder is opened the same way `open_recorder_from_env` does —
+/// by handing a `RecorderPlan` to `open_recorder` — rather than by
+/// constructing a second `GaspRecorder::open` call that could drift from it."*
+/// Sharing the opener with the in-process path was exactly the defect: the
+/// shim emits **one event per process**, and `GaspRecorder::with_store` closes
+/// any run a previous process left open as `"interrupted"` on **every** open,
+/// so call 2 killed the run call 1 started and `session-end` made no boundary
+/// commit — while every call exited 0. The two tiers want opposite things from
+/// an open, so they no longer share one.
+///
+/// The store is now opened directly ([`crate::gasp::open_graph_session`]), as
+/// `tools/gasp-emit` always did. What *is* still shared with the in-process
+/// path, and deliberately so, is the [`crate::gasp::RecorderPlan`] decision —
+/// one statement of "what do the two env values ask for".
 #[cfg(feature = "gasp")]
 pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>, String> {
     use crate::gasp;
@@ -293,7 +320,9 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
         .clone()
         .unwrap_or_else(|| gasp::DEFAULT_GOAL.to_string());
     let plan = gasp::plan_from_env_values(Some(&common.state_dir), Some(&goal_id));
-    let recorder = gasp::open_recorder(plan)
+    // Directly, not via `open_recorder`: the recorder would close this
+    // session's own open run as "interrupted" (#831).
+    let session = gasp::open_graph_session(plan, needs_open_run(&cmd))
         .await
         .ok_or_else(|| format!("could not open a GASP store at {}", common.state_dir))?;
 
@@ -309,7 +338,7 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
             ..
         } => {
             gasp::session_start(
-                &recorder,
+                &session,
                 run_id,
                 goal,
                 goal_title.as_deref(),
@@ -325,7 +354,7 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
             num, title, kind, ..
         } => {
             // `task_planned` applies the `--kind product` reroute itself.
-            gasp::task_planned(&recorder, run_id, num, title, kind, goal)
+            gasp::task_planned(&session, run_id, num, title, kind, goal)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(None)
@@ -349,7 +378,7 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
             // result that skipped this would file under the wrong goal.
             let rerouted = gasp::goal_for_kind(kind, goal.unwrap_or(gasp::DEFAULT_GOAL));
             gasp::task_result(
-                &recorder,
+                &session,
                 run_id,
                 num,
                 title,
@@ -367,7 +396,7 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
             Ok(None)
         }
         GaspCommand::SessionEnd { outcome, extra, .. } => {
-            gasp::session_end(&recorder, run_id, outcome.as_deref(), goal, extra)
+            gasp::session_end(&session, run_id, outcome.as_deref(), goal, extra)
                 .await
                 .map_err(|e| e.to_string())
         }

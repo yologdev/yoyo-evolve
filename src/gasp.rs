@@ -100,8 +100,8 @@ use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use yoagent::gasp::{
     ActorRef, ArtifactRef, Decision, DecisionId, DecisionStatus, EvalId, EvalResult, EvalStatus,
-    EventStore, GaspGoal, GaspRecorder, GoalId, GoalRef, NodeId, PatchId, PatchStatus, ProjectRef,
-    RunId, StateError, StatePatch, Task, TaskId, TaskStatus, YoAgentState,
+    EventStore, GaspGoal, GaspRecorder, GitEventStore, GoalId, GoalRef, NodeId, PatchId,
+    PatchStatus, ProjectRef, RunId, StateError, StatePatch, Task, TaskId, TaskStatus, YoAgentState,
 };
 use yoagent::{Agent, AgentEvent, AgentMessage, Content, Message};
 
@@ -200,6 +200,132 @@ pub(crate) async fn open_recorder_from_env() -> Option<GaspRecorder> {
     let root = std::env::var(STATE_DIR_ENV).ok();
     let goal = std::env::var(GOAL_ID_ENV).ok();
     open_recorder(plan_from_env_values(root.as_deref(), goal.as_deref())).await
+}
+
+// ---------------------------------------------------------------------------
+// Graph-tier handle: the store, opened directly (#831)
+// ---------------------------------------------------------------------------
+
+/// A directly-opened handle onto a GASP agent repo for the **session-graph**
+/// tier (`session-start` / `task` / `task-result` / `session-end`).
+///
+/// Deliberately **not** a [`GaspRecorder`], and that is the whole of #831. The
+/// shim (`scripts/gasp_shim.sh`) emits **one event per process** — four
+/// short-lived `yoyo gasp` invocations per session — while
+/// `GaspRecorder::with_store` closes any run left open by a previous process
+/// as `"interrupted"` on **every** open. So call 2 interrupted the run call 1
+/// opened, call 3 emitted `run.finished`, every later fact landed under a
+/// finished run, and `session-end` failed with `no run is open`, making **no
+/// boundary commit** — with every call still exiting 0, which is why exit
+/// codes could not see it.
+///
+/// This is what `tools/gasp-emit` always did: `GitEventStore::open` plus
+/// `YoAgentState::load`, with `resume_open_run` on every arm *except*
+/// `session-start`, so an open run survives the process boundary instead of
+/// being closed by its own next event.
+///
+/// [`GaspRecorder`] remains the right handle for the **in-process** run /
+/// model / tool tier (#683 item (3)) — one process, one open, so the
+/// interrupt-on-open rule is correct there. That path ([`open_recorder`],
+/// [`install`], [`tee_prompt`]) is untouched by this type.
+pub(crate) struct GraphSession {
+    state: YoAgentState<GitEventStore>,
+    store: GitEventStore,
+    actor: ActorRef,
+    goal: String,
+}
+
+impl GraphSession {
+    /// The graph the arms record into.
+    pub(crate) fn state(&self) -> &YoAgentState<GitEventStore> {
+        &self.state
+    }
+
+    /// The underlying store — needed by [`session_end`], whose `commit_run` /
+    /// `release_lease` are `GitEventStore` *inherent* methods.
+    pub(crate) fn store(&self) -> &GitEventStore {
+        &self.store
+    }
+
+    /// Who recorded events are attributed to.
+    pub(crate) fn actor(&self) -> &ActorRef {
+        &self.actor
+    }
+
+    /// The configured standing goal, used as the fallback when an arm names
+    /// none. Same role `GaspRecorder::goal()` played for these arms.
+    pub(crate) fn goal(&self) -> &str {
+        &self.goal
+    }
+}
+
+/// Open the store for one graph-tier arm.
+///
+/// `resume` must be `false` for `session-start` (there is no prior run to
+/// chain to) and `true` for every other arm, mirroring the sidecar's
+/// `if cmd != "session-start" { state.resume_open_run().await? }`. Resuming is
+/// what makes a run survive four processes; note it *restores* the open-run
+/// marker rather than closing the run, which is precisely the difference from
+/// [`open_recorder`].
+///
+/// Handles the same three [`RecorderPlan`] states as [`open_recorder`] and
+/// never propagates, never panics: a session must not break because
+/// instrumentation did.
+///
+/// Unlike [`open_recorder`] this does **not** validate that the goal already
+/// exists — the arms create it on first reference (`session_start_in`,
+/// `ensure_goal`), exactly as the sidecar did. The recorder's redaction
+/// summarizer is likewise absent because it is never consulted on this tier:
+/// it wraps persisted tool-arg/output summaries in the event-stream path, and
+/// the graph arms call `record_*` directly.
+pub(crate) async fn open_graph_session(plan: RecorderPlan, resume: bool) -> Option<GraphSession> {
+    let (root, goal_id) = match plan {
+        RecorderPlan::Disabled => return None,
+        RecorderPlan::Misconfigured(reason) => {
+            eprintln!("gasp: recording disabled — {reason}");
+            return None;
+        }
+        RecorderPlan::Open { root, goal_id } => (root, goal_id),
+    };
+
+    if !root.is_dir() {
+        return None;
+    }
+
+    let store = match GitEventStore::open(root.clone(), WORKER_ID) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!(
+                "gasp: recording disabled — opening store at {} failed: {e}",
+                root.display()
+            );
+            return None;
+        }
+    };
+    let state = match YoAgentState::load(store.clone()).await {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!(
+                "gasp: recording disabled — loading state at {} failed: {e}",
+                root.display()
+            );
+            return None;
+        }
+    };
+    if resume {
+        // Failing to resume is worth saying out loud but not worth aborting:
+        // the arm still records, it just records without a correlated run.
+        if let Err(e) = state.resume_open_run().await {
+            eprintln!("gasp: could not resume the open run: {e}");
+        }
+    }
+
+    Some(GraphSession {
+        state,
+        store,
+        actor: ActorRef::agent(AGENT_ID),
+        goal: goal_id,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -422,7 +548,7 @@ async fn ensure_goal<S: EventStore>(
 /// collides with the recorder's rather than cooperating (measured Day 165, and
 /// the whole reason the sidecar cannot run alongside).
 pub(crate) async fn session_start(
-    recorder: &GaspRecorder,
+    session: &GraphSession,
     run_id: &str,
     goal: Option<&str>,
     goal_title: Option<&str>,
@@ -430,10 +556,10 @@ pub(crate) async fn session_start(
     day: &str,
     task: Option<&str>,
 ) -> Result<(), StateError> {
-    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    let goal = session_goal(goal, session.goal()).to_string();
     session_start_in(
-        recorder.state(),
-        recorder.actor(),
+        session.state(),
+        session.actor(),
         run_id,
         &goal,
         goal_title,
@@ -488,17 +614,17 @@ async fn session_start_in<S: EventStore>(
 
 /// Record a task planned inside a session, under the goal its `kind` selects.
 pub(crate) async fn task_planned(
-    recorder: &GaspRecorder,
+    session: &GraphSession,
     run_id: &str,
     num: &str,
     title: &str,
     kind: &str,
     goal: Option<&str>,
 ) -> Result<(), StateError> {
-    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    let goal = session_goal(goal, session.goal()).to_string();
     task_planned_in(
-        recorder.state(),
-        recorder.actor(),
+        session.state(),
+        session.actor(),
         run_id,
         num,
         title,
@@ -585,29 +711,29 @@ fn session_outcome(requested: Option<&str>) -> &str {
 /// single-writer behind that lease, so opening a second `GitEventStore` on the
 /// same root collides with the recorder's rather than cooperating.
 pub(crate) async fn session_end(
-    recorder: &GaspRecorder,
+    session: &GraphSession,
     run_id: &str,
     outcome: Option<&str>,
     goal: Option<&str>,
     extra: &str,
 ) -> Result<Option<String>, StateError> {
-    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    let goal = session_goal(goal, session.goal()).to_string();
     let outcome = session_outcome(outcome);
-    recorder
+    session
         .state()
         .record_run_finished(
-            recorder.actor().clone(),
+            session.actor().clone(),
             RunId::new(run_id),
             outcome.to_string(),
         )
         .await?;
-    let sha = recorder.store().commit_run(
+    let sha = session.store().commit_run(
         &RunId::new(run_id),
         &GoalId::new(goal.as_str()),
         outcome,
         &parse_extra_paths(extra),
     )?;
-    recorder.store().release_lease()?;
+    session.store().release_lease()?;
     Ok(sha)
 }
 
@@ -656,7 +782,7 @@ pub(crate) async fn session_end(
 /// byte-identical comparison and not a looser parse.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn task_result(
-    recorder: &GaspRecorder,
+    session: &GraphSession,
     run_id: &str,
     num: &str,
     title: &str,
@@ -669,10 +795,10 @@ pub(crate) async fn task_result(
     eval_command: Option<&str>,
     goal: Option<&str>,
 ) -> Result<(), StateError> {
-    let goal = session_goal(goal, recorder.goal().as_str()).to_string();
+    let goal = session_goal(goal, session.goal()).to_string();
     task_result_in(
-        recorder.state(),
-        recorder.actor(),
+        session.state(),
+        session.actor(),
         run_id,
         num,
         title,
