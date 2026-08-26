@@ -1,0 +1,308 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the mechanism before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "worker" src/gasp_cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p src/gasp_cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo-inproc\|open_graph… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,240p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,360p src/gasp.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,50p src/gasp_cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 260,400p src/gasp_cli.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (60 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "open_graph_session\|WO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,420p src/gasp_cli.rs … ✓ (4ms)
+ ✓ (16ms)
+  11 tools completed in 1m 7s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified. Now the change — starting with the pure decision half in gasp_cli.rs (plain-build compiled, so cargo test reaches it).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (9 → 12 lines)
+  - //! 2. **`--worker` is accepted and cannot be honoured.** [`crate::gasp`] opens
+  - //!    every recorder with the fixed worker id `yoyo-inproc`
+  - //!    (`gasp::open_recorder`), deliberately, so in-process runs stay tellable
+  - //!    apart from sidecar-written ones. The shim passes `--worker
+  + //! 2. **`--worker` is honoured for the graph tier only** (#828 item 2). It was
+  + //!    parsed-and-announced-as-ignored until Day 179; the shim passes `--worker
+    //!    evolve-shim-$$` precisely so that overlapping sessions cannot share a
+  - //!    *lease identity* — a property the sidecar has and this port does not. The
+  - //!    flag is therefore parsed (the shim's argv must not error) and its
+  - //!    non-effect is **announced on stderr**, never silently dropped. That gap is
+  - //!    real work for #683 step 3, not a cosmetic mismatch.
+  + //!    *lease identity* (a GASP repo is single-writer behind a 600s lease), so a
+  + //!    dropped `$$` is not a cosmetic mismatch — it is the one axis #683 item (7)
+  + //!    turns on. The value now reaches `GitEventStore::open` via
+  + //!    [`graph_worker_id`]. **Passing no flag is byte-identical to before**
+  + //!    ([`DEFAULT_GRAPH_WORKER_ID`]), and the **in-process** run/model/tool tier
+  + //!    (`gasp::open_recorder`, #683 item (3)) keeps its own fixed
+  + //!    `WORKER_ID` on purpose — mixed-writer history is exactly what that field
+  + //!    is for, so in-process events must stay tellable apart from ones a
+  + //!    shim-spawned process wrote. The two are deliberately **not** unified.
+ ✓ (1m 58s)
+  - //! 2. **`--worker` is accepted and cannot be honoured.** [`crate::gasp`] opens
+  - //!    every recorder with the fixed worker id `yoyo-inproc`
+  - //!    (`gasp::open_recorder`), deliberately, so in-process runs stay tellable
+  - //!    apart from sidecar-written ones. The shim passes `--worker
+  + //! 2. **`--worker` is honoured for the graph tier only** (#828 item 2). It was
+  + //!    parsed-and-announced-as-ignored until Day 179; the shim passes `--worker
+    //!    evolve-shim-$$` precisely so that overlapping sessions cannot share a
+  - //!    *lease identity* — a property the sidecar has and this port does not. The
+  ... (12 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (4 → 4 lines)
+  -     /// `--worker`: parsed for argv compatibility, **not honoured** — see the
+  -     /// module doc. Kept rather than dropped so the shim's invocation still
+  -     /// parses, and announced rather than ignored.
+  +     /// `--worker`: the lease identity the graph-tier store is opened under.
+  +     /// Honoured since #828 item 2; a blank value falls back to
+  +     /// [`DEFAULT_GRAPH_WORKER_ID`]. See [`graph_worker_id`].
+        pub worker: Option<String>,
+ ✓ (1m 58s)
+  -     /// `--worker`: parsed for argv compatibility, **not honoured** — see the
+  -     /// module doc. Kept rather than dropped so the shim's invocation still
+  -     /// parses, and announced rather than ignored.
+  +     /// `--worker`: the lease identity the graph-tier store is opened under.
+  +     /// Honoured since #828 item 2; a blank value falls back to
+  +     /// [`DEFAULT_GRAPH_WORKER_ID`]. See [`graph_worker_id`].
+        pub worker: Option<String>,
+  2 tools completed in 4m 6s (2 ✓)
+
+Now the pure decision half, placed beside needs_open_run:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs:255..280 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (3 → 53 lines)
+    pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
+        !matches!(cmd, GaspCommand::SessionStart { .. })
+  + }
+  + 
+  + /// The worker id the **graph-tier** store is opened under when `--worker` names
+  + /// none.
+  + ///
+  + /// Byte-identical to the id `gasp::open_graph_session` hardcoded before #828
+  + /// item 2, so an invocation that passes no flag is unchanged. It shares its
+  + /// spelling with the in-process tier's own `gasp::WORKER_ID` and is
+  + /// deliberately a **separate statement**: the two answer different questions
+  + /// (who holds this process's lease, vs. who recorded an in-process event), and
+  + /// only this one is caller-supplied.
+  + pub(crate) const DEFAULT_GRAPH_WORKER_ID: &str = "yoyo-inproc";
+  + 
+  + /// Pure decision: which worker id does the graph-tier store open under?
+  + ///
+  + /// A GASP repo is single-writer behind a 600s lease, so this string *is* the
+  + /// lease identity — `scripts/gasp_shim.sh` passes `--worker evolve-shim-$$`
+  + /// exactly so overlapping sessions cannot collide on it.
+  ... (33 more lines)
+ ✓ (2m 0s)
+    pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
+        !matches!(cmd, GaspCommand::SessionStart { .. })
+  + }
+  + 
+  + /// The worker id the **graph-tier** store is opened under when `--worker` names
+  + /// none.
+  + ///
+  + /// Byte-identical to the id `gasp::open_graph_session` hardcoded before #828
+  ... (13 more lines)
+  2 tools completed in 2m 19s (2 ✓)
+
+Now the I/O half — replace the "ignored" lie in run_gasp_command and thread the id through:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (8 → 7 lines)
+  -     // An invisible non-effect is a bug even when it is the right non-effect.
+  -     if let Some(worker) = &common.worker {
+  -         eprintln!(
+  -             "gasp: --worker {worker} ignored — in-process runs are recorded under a \
+  -              fixed worker id so they stay tellable apart from sidecar-written ones. \
+  -              Per-session lease identity is not yet portable (#683 step 3)."
+  -         );
+  +     // An honoured flag is silent (the caller asked for it); a rejected one is
+  +     // not, because a shared lease identity is exactly what --worker exists to
+  +     // prevent.
+  +     if let Some(note) = worker_fallback_note(common.worker.as_deref()) {
+  +         eprintln!("{note}");
+        }
+  +     let worker = graph_worker_id(common.worker.as_deref());
+ ✓ (1m 58s)
+  -     // An invisible non-effect is a bug even when it is the right non-effect.
+  -     if let Some(worker) = &common.worker {
+  -         eprintln!(
+  -             "gasp: --worker {worker} ignored — in-process runs are recorded under a \
+  -              fixed worker id so they stay tellable apart from sidecar-written ones. \
+  -              Per-session lease identity is not yet portable (#683 step 3)."
+  -         );
+  +     // An honoured flag is silent (the caller asked for it); a rejected one is
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (1 → 1 lines)
+  -     let session = gasp::open_graph_session(plan, needs_open_run(&cmd))
+  +     let session = gasp::open_graph_session(plan, needs_open_run(&cmd), &worker)
+ ✓ (1m 58s)
+  -     let session = gasp::open_graph_session(plan, needs_open_run(&cmd))
+  +     let session = gasp::open_graph_session(plan, needs_open_run(&cmd), &worker)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now src/gasp.rs — the parameter and the comment guarding the in-process id:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (4 → 12 lines)
+  - /// Worker id, deliberately distinct from the retiring sidecar's — mixed-writer
+  - /// history is exactly what that field is for, so in-process runs must be
+  - /// tellable apart from sidecar-written ones after the fact.
+  + /// Worker id for the **in-process** run/model/tool tier only, deliberately
+  + /// distinct from the retiring sidecar's — mixed-writer history is exactly what
+  + /// that field is for, so in-process runs must be tellable apart from ones a
+  + /// shim-spawned process wrote after the fact.
+  + ///
+  + /// **Do not unify this with the graph tier's id.** Since #828 item 2 the
+  + /// `yoyo gasp` door takes its worker id from `--worker`
+  + /// (`gasp_cli::graph_worker_id`), because that string is the 600s *lease*
+  + /// identity and overlapping sessions must not share one. This one is not
+  + /// caller-supplied and must not become so: an in-process event recorded under
+  + /// `evolve-shim-$$` would be indistinguishable from a sidecar-written one.
+    const WORKER_ID: &str = "yoyo-inproc";
+ ✓ (1m 30s)
+  - /// Worker id, deliberately distinct from the retiring sidecar's — mixed-writer
+  - /// history is exactly what that field is for, so in-process runs must be
+  - /// tellable apart from sidecar-written ones after the fact.
+  + /// Worker id for the **in-process** run/model/tool tier only, deliberately
+  + /// distinct from the retiring sidecar's — mixed-writer history is exactly what
+  + /// that field is for, so in-process runs must be tellable apart from ones a
+  + /// shim-spawned process wrote after the fact.
+  + ///
+  ... (7 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:288..310 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (2 → 12 lines)
+    /// the graph arms call `record_*` directly.
+  - pub(crate) async fn open_graph_session(plan: RecorderPlan, resume: bool) -> Option<GraphSession> {
+  + ///
+  + /// `worker` is the caller-supplied lease identity (#828 item 2): a GASP repo is
+  + /// single-writer behind a 600s lease, so overlapping sessions must open under
+  + /// distinct ids. It comes from `--worker` via `gasp_cli::graph_worker_id`,
+  + /// which supplies the historical default when the flag names none. This is
+  + /// **not** [`WORKER_ID`], and the two must not be merged — see that constant.
+  + pub(crate) async fn open_graph_session(
+  +     plan: RecorderPlan,
+  +     resume: bool,
+  +     worker: &str,
+  + ) -> Option<GraphSession> {
+ ✓ (1m 43s)
+    /// the graph arms call `record_*` directly.
+  - pub(crate) async fn open_graph_session(plan: RecorderPlan, resume: bool) -> Option<GraphSession> {
+  + ///
+  + /// `worker` is the caller-supplied lease identity (#828 item 2): a GASP repo is
+  + /// single-writer behind a 600s lease, so overlapping sessions must open under
+  + /// distinct ids. It comes from `--worker` via `gasp_cli::graph_worker_id`,
+  + /// which supplies the historical default when the flag names none. This is
+  + /// **not** [`WORKER_ID`], and the two must not be merged — see that constant.
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (1 → 1 lines)
+  -     let store = match GitEventStore::open(root.clone(), WORKER_ID) {
+  +     let store = match GitEventStore::open(root.clone(), worker) {
+ ✓ (1m 44s)
+  -     let store = match GitEventStore::open(root.clone(), WORKER_ID) {
+  +     let store = match GitEventStore::open(root.clone(), worker) {
+  4 tools completed in 5m 8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the table tests:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (3 → 46 lines)
+        fn argv(parts: &[&str]) -> Vec<String> {
+            parts.iter().map(|s| s.to_string()).collect()
+  +     }
+  + 
+  +     /// #828 item 2. The `None` row is the byte-identity check: every invocation
+  +     /// that passes no `--worker` must open under exactly the id
+  +     /// `open_graph_session` hardcoded before this landed.
+  +     #[test]
+  +     fn graph_worker_id_honours_the_flag_and_falls_back_on_blanks() {
+  +         let cases: &[(Option<&str>, &str)] = &[
+  +             (None, "yoyo-inproc"),
+  +             (Some("evolve-shim-4711"), "evolve-shim-4711"),
+  +             // An empty worker id is not an identity — refusing to open under
+  +             // one beats inventing a name.
+  +             (Some(""), "yoyo-inproc"),
+  +             (Some("   "), "yoyo-inproc"),
+  +             (Some("  evolve-shim-4711  "), "evolve-shim-4711"),
+  +         ];
+  +         for (flag, want) in cases {
+  +             assert_eq!(&graph_worker_id(*flag), want, "flag {flag:?}");
+  ... (26 more lines)
+ ✓ (2m 10s)
+        fn argv(parts: &[&str]) -> Vec<String> {
+            parts.iter().map(|s| s.to_string()).collect()
+  +     }
+  + 
+  +     /// #828 item 2. The `None` row is the byte-identity check: every invocation
+  +     /// that passes no `--worker` must open under exactly the id
+  +     /// `open_graph_session` hardcoded before this landed.
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (33.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 51s (2 ✓)
+
+Positive control — neuter graph_worker_id and confirm the test actually fails:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp_… (14 lines) ✓ (22.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo gasp_cli 2… ✓ (23.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 52.3s (2 ✓)
+
+Positive control confirmed — the Some("evolve-shim-4711") row is the one that fails. Now all six required checks:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 55s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plain path green. Now the featured path, where gasp.rs actually compiles:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (10.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets --fea… ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (1m 47s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (1m 13s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 39s (4 ✓)
+
+Is that mine or pre-existing? Checking against a clean tree:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash && cargo test --featur… ✓ (9.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "no GASP recorder" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 735,775p src/dispatch_sub… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (9.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 29.1s (3 ✓)
+
+Passes alone but failed in the full featured run — let me isolate whether that's my change or a build-artifact ordering effect:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build >/dev/null 2>&1 && e… ✓ (9.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "cargo" tests/ | head … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cargo" tests/integratio… ✓ (3ms)
+  3 tools completed in 16.1s (3 ✓)
+

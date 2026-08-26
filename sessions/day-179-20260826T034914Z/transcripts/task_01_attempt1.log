@@ -1,0 +1,331 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — the register fix — since that's the step most likely to get dropped.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '235,250p' tests/module_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (10ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/help.rs", 2698), // Day 174: +20 absorbed since Day 166.
+  +     ("src/help.rs", 2739), // Day 179: +41 paid off (was 2698 at Day 174).
+ ✓ (1m 32s)
+  -     ("src/help.rs", 2698), // Day 174: +20 absorbed since Day 166.
+  +     ("src/help.rs", 2739), // Day 179: +41 paid off (was 2698 at Day 174).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (183ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 41s (4 ✓)
+
+Step 0 done, no other drift warnings. Now the main task — let me read the existing precedence machinery.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,140p' src/config_paths…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_config_show\|fo… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,50p' src/commands.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_config_show" … ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_config_output…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1180,1215p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 11.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both doors reach the same renderer (commands::handle_config_show is a re-export; dispatch_sub.rs:389 calls it directly) — verified, one edit covers both. Now the pure decision half:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_loaded_config_pa… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) fn shadowin… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '84,97p' src/config_paths… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '78,84p' src/config_paths… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (1 → 40 lines)
+  + /// Every config file that **exists on disk and was not loaded**, because a
+  + /// higher rung of the precedence ladder won.
+  + ///
+  + /// This is the *read-side* twin of [`shadowing_config_file`] and
+  + /// [`demoted_config_file`]: both of those fire when a config file is
+  + /// **written**, and until Day 179 nothing anywhere answered the question a
+  + /// user actually asks when a setting silently does nothing — *which of my
+  + /// config files is yoyo reading, and which ones exist and were skipped?*
+  + ///
+  + /// `chain` is the ladder as [`existing_config_paths`] returns it (highest
+  + /// precedence first, existing files only); `loaded` is the file
+  + /// [`crate::config::load_config_file`] actually read. The ladder is **not
+  + /// restated here** — this compares by path equality against the chain the
+  + /// caller collected, so there is still exactly one statement of the search
+  + /// order.
+  + ///
+  + /// Returns the skipped rungs in ladder order. Empty when nothing was loaded
+  + /// (there is no "skipped" without a winner) and empty when the chain holds
+  + /// only the loaded file — which is the common case, and is what keeps
+  + /// `/config show` byte-identical for the ~everyone who has one config file.
+  ... (20 more lines)
+ ✓ (14.1s)
+  + /// Every config file that **exists on disk and was not loaded**, because a
+  + /// higher rung of the precedence ladder won.
+  + ///
+  + /// This is the *read-side* twin of [`shadowing_config_file`] and
+  + /// [`demoted_config_file`]: both of those fire when a config file is
+  + /// **written**, and until Day 179 nothing anywhere answered the question a
+  + /// user actually asks when a setting silently does nothing — *which of my
+  + /// config files is yoyo reading, and which ones exist and were skipped?*
+  ... (13 more lines)
+  5 tools completed in 31.8s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Right — my own rule: definition and consumer in the same edit. Wiring the renderer now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (3 → 3 lines)
+        demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
+  -     shadowed_write_warning, shadowing_config_file,
+  +     shadowed_write_warning, shadowing_config_file, skipped_config_sources,
+    };
+ ✓ (14.0s)
+        demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
+  -     shadowed_write_warning, shadowing_config_file,
+  +     shadowed_write_warning, shadowing_config_file, skipped_config_sources,
+    };
+
+Now the renderer and the composed emission point:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (2 → 1 lines)
+    /// Handler for `/config show`: prints which config file was loaded
+  - /// (if any) and the merged key-value pairs it contributed.
+ ✓ (13.9s)
+    /// Handler for `/config show`: prints which config file was loaded
+  - /// (if any) and the merged key-value pairs it contributed.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (1 → 64 lines)
+  + /// The read-side note for `/config show`: name the config files that exist and
+  + /// were **not** read, because a higher rung of the precedence ladder won.
+  + ///
+  + /// `None` for an empty slice. That is the whole regression guard: a user with
+  + /// one config file — essentially everyone — sees byte-identical `/config show`
+  + /// output. It is only when a second file exists that there is anything true to
+  + /// say.
+  + ///
+  + /// When non-empty, every skipped path is named **verbatim**: a user cannot act
+  + /// on a path they cannot see, and "there is another config somewhere" is the
+  + /// unhelpful half of this message. The reason clause states the mechanism
+  + /// (`first match wins, no merging`) so the note explains *why* the file is
+  + /// inert rather than merely that it is.
+  + ///
+  + /// Glyph-free under `plain` (bullets *and* em dashes), mirroring
+  + /// `project_permission_refusal_message`. The caller passes
+  + /// `format::is_plain_output()` so this stays pure.
+  + pub fn skipped_sources_note(
+  +     skipped: &[std::path::PathBuf],
+  +     loaded: &std::path::Path,
+  ... (44 more lines)
+ ✓ (14.0s)
+  + /// The read-side note for `/config show`: name the config files that exist and
+  + /// were **not** read, because a higher rung of the precedence ladder won.
+  + ///
+  + /// `None` for an empty slice. That is the whole regression guard: a user with
+  + /// one config file — essentially everyone — sees byte-identical `/config show`
+  + /// output. It is only when a second file exists that there is anything true to
+  + /// say.
+  + ///
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.3s (2 ✓)
+
+Now the final consumer — handle_config_show:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (18 → 28 lines)
+    pub fn handle_config_show() {
+  -     let path = detect_loaded_config_path();
+  +     // One filesystem scan, one statement of the ladder: the loaded file is the
+  +     // head of the chain by definition (`detect_loaded_config_path` is exactly
+  +     // `existing_config_paths().into_iter().next()`), so taking the head here
+  +     // cannot disagree with a second scan.
+  +     let chain = existing_config_paths();
+  +     let path = chain.first().cloned();
+        let config = match path.as_ref() {
+            Some(p) => match std::fs::read_to_string(p) {
+                Ok(content) => crate::cli::parse_config_file(&content),
+  ···
+            },
+            None => std::collections::HashMap::new(),
+        };
+  -     let output = format_config_output(&config, path.as_deref());
+  +     let output = config_show_output(
+  +         &config,
+  +         path.as_deref(),
+  +         &chain,
+  ... (4 more lines)
+ ✓ (1m 56s)
+    pub fn handle_config_show() {
+  -     let path = detect_loaded_config_path();
+  +     // One filesystem scan, one statement of the ladder: the loaded file is the
+  +     // head of the chain by definition (`detect_loaded_config_path` is exactly
+  +     // `existing_config_paths().into_iter().next()`), so taking the head here
+  +     // cannot disagree with a second scan.
+  +     let chain = existing_config_paths();
+  +     let path = chain.first().cloned();
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && gr… ✓ (163ms)
+  2 tools completed in 2m 2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build green. Now the tests — pure table in config_paths.rs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/config_p… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,516p' src/config_pat… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (4 → 63 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     // === skipped_config_sources: the read-side half of the ladder (Day 179) ===
+  +     //
+  +     // Fabricated paths only — this is the pure decision half, so no filesystem
+  +     // and no process-global CWD/env is touched (#780).
+  +     #[test]
+  +     fn skipped_config_sources_table() {
+  +         let project = std::path::PathBuf::from("/repo/.yoyo.toml");
+  +         let home = std::path::PathBuf::from("/home/me/.yoyo.toml");
+  +         let xdg = std::path::PathBuf::from("/home/me/.config/yoyo/config.toml");
+  + 
+  +         // Rule 1: nothing loaded (no config anywhere) → nothing was skipped.
+  +         // "Skipped" needs a winner; without one there is nothing true to say.
+  +         assert_eq!(
+  +             skipped_config_sources(&[], None),
+  +             Vec::<std::path::PathBuf>::new()
+  +         );
+  +         // ...and a non-empty chain with no winner is still empty, not "all of
+  ... (43 more lines)
+ ✓ (14.1s)
+    mod tests {
+        use super::*;
+  + 
+  +     // === skipped_config_sources: the read-side half of the ladder (Day 179) ===
+  +     //
+  +     // Fabricated paths only — this is the pure decision half, so no filesystem
+  +     // and no process-global CWD/env is touched (#780).
+  +     #[test]
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (1 → 1 lines)
+  -             skipped_config_sources(&[home.clone()], Some(&home)),
+  +             skipped_config_sources(std::slice::from_ref(&home), Some(&home)),
+ ✓ (1m 57s)
+  -             skipped_config_sources(&[home.clone()], Some(&home)),
+  +             skipped_config_sources(std::slice::from_ref(&home), Some(&home)),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 34s (4 ✓)
+
+Now the emission-point tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (3 → 2 lines)
+        #[test]
+        fn test_format_config_sorts_keys_deterministically() {
+  -         let mut config = HashMap::new();
+ ✓ (12.2s)
+        #[test]
+        fn test_format_config_sorts_keys_deterministically() {
+  -         let mut config = HashMap::new();
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I clipped a line — restoring it and inserting the new tests in one edit:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_config.rs (2 → 103 lines)
+  +     // === /config show: the read-side door of the precedence ladder (Day 179) ===
+  +     //
+  +     // Asserted at the EMISSION POINT — `config_show_output` is the exact string
+  +     // `handle_config_show` prints — not at `skipped_config_sources` one layer
+  +     // below. Fabricated paths only: no filesystem, no `set_current_dir` (#780),
+  +     // no env redirection, so these need no `#[serial]`.
+  + 
+  +     #[test]
+  +     fn config_show_names_the_config_file_it_skipped() {
+  +         let mut config = HashMap::new();
+  +         config.insert("model".to_string(), "claude-opus-5".to_string());
+  +         let project = PathBuf::from("/repo/.yoyo.toml");
+  +         let home = PathBuf::from("/home/me/.yoyo.toml");
+  +         let chain = vec![project.clone(), home.clone()];
+  + 
+  +         let out = config_show_output(&config, Some(&project), &chain, false);
+  + 
+  +         // The whole point: the path a user has to go edit is named verbatim.
+  +         assert!(
+  +             out.contains("/home/me/.yoyo.toml"),
+  ... (83 more lines)
+ ✓ (1m 58s)
+  +     // === /config show: the read-side door of the precedence ladder (Day 179) ===
+  +     //
+  +     // Asserted at the EMISSION POINT — `config_show_output` is the exact string
+  +     // `handle_config_show` prints — not at `skipped_config_sources` one layer
+  +     // below. Fabricated paths only: no filesystem, no `set_current_dir` (#780),
+  +     // no env redirection, so these need no `#[serial]`.
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo config_sho… ✓ (314ms)
+  2 tools completed in 2m 3s (2 ✓)
+
+Green. Now the positive control — neuter skipped_config_sources and confirm the tests actually fail:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (18 lines) ✓ (22.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed — test 1 fails when neutered, near-miss guards correctly stay green. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cp_backup.rs src/config_… ✓ (24.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 44s)
+  2 tools completed in 2m 13s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5193 tests). Live sanity check of the real command:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.yoyo.toml 2>/dev/null; ech… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Works exactly as designed — baseline unchanged, second config named verbatim. Now CLAUDE.md:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - (the file just written is the *new* top rung, so whatever config yoyo had been reading has gone dark).
+  + (the file just written is the *new* top rung, so whatever config yoyo had been reading has gone dark). Day 179 added the **read-side** door those two were missing: both of them fire only at *write* time (`/config set`, and the wizard since #816), so nothing anywhere answered the question a user actually asks when a setting silently does nothing — *which of my config files is yoyo reading, and which ones exist and were skipped?* `/config show` rendered the loaded config as though it were the only one, so a `~/.yoyo.toml` shadowed by a stray `./.yoyo.toml` produced a setting that did nothing and the one command you would go to in order to debug that did not mention the other file exists. Fifth instance of the "two doors, one policy, one deaf" shape (#745, #767, #769, #816) — here the write door worked and the read door was absent. The decision half is the pure, table-tested `skipped_config_sources(chain, loaded) -> Vec<PathBuf>`, which **does not restate the ladder**: it compares by path equality against the chain the caller collected from `existing_config_paths()`, so there is still exactly one statement of the search order. Five rules, each a test row — nothing loaded → **empty** (there is no "skipped" without a winner, and a non-empty chain with no winner must not invent a claim either); one entry which is the loaded one → **empty**; rung 0 loaded with rungs 1..n present → those rungs **in ladder order**; a lower rung winning drops exactly that entry; and a `loaded` path not in the chain at all → the **whole chain** rather than a panic, which says nothing false since every one of those files exists and none of them was read. The rendering half is the pure `skipped_sources_note(skipped, loaded, plain) -> Option<String>` in `commands_config.rs`, and **`None` for an empty slice is the whole regression guard** — a user with one config file, which is essentially everyone, sees `/config show` output that is byte-identical to before (pinned by an `assert_eq!` against `format_config_output`, not merely by the absence of the block). When non-empty it names every skipped path **verbatim** (a user cannot act on a path they cannot see) and states the mechanism — *first match wins and config files are not merged* — so the note explains *why* the file is inert rather than only that it is; glyph-free under `is_plain_output()` (bullets **and** em dashes), mirroring `project_permission_refusal_message`. **Both doors are wired by one edit, verified rather than assumed**: `/config show` is routed from `dispatch.rs:813` through `commands::handle_config_show`, which is a re-export of `commands_config::handle_config_show`, and the `yoyo config show` CLI arm at `dispatch_sub.rs:389` calls that same function directly — one renderer, no unwired entry point. `format_config_output` was deliberately left byte-identical for its other callers; the ladder question is composed on top of it by `config_show_output`, which **is** the emission point (the exact string `handle_config_show` prints) and is where the tests assert. `handle_config_show` now takes the chain head as the loaded path rather than calling `detect_loaded_config_path()` separately — one filesystem scan, and provably the same value, since `detect_loaded_config_path` *is* `existing_config_paths().into_iter().next()`. Tests use fabricated paths only, so they touch no filesystem, no process-global CWD (#780) and no env, and need no `#[serial]`; the positive control was **run rather than assumed** — neutering `skipped_config_sources` to return an empty vec fails `config_show_names_the_config_file_it_skipped` and leaves both near-miss guards green (they assert *absence*, which is exactly right). **Out of scope and named rather than implied: first-wins is unchanged.** This makes the ladder *legible*, it does not merge anything, adds no config key and no flag, and does not touch `/config edit` (`resolve_config_edit_path_from`, which already mirrors the loader's precedence on purpose) or the two write-side guards, which are correct — this is their missing twin.
+ ✓ (1m 33s)
+  - (the file just written is the *new* top rung, so whatever config yoyo had been reading has gone dark).
+  + (the file just written is the *new* top rung, so whatever config yoyo had been reading has gone dark). Day 179 added the **read-side** door those two were missing: both of them fire only at *write* time (`/config set`, and the wizard since #816), so nothing anywhere answered the question a user actually asks when a setting silently does nothing — *which of my config files is yoyo reading, and which ones exist and were skipped?* `/config show` rendered the loaded config as though it were the only one, so a `~/.yoyo.toml` shadowed by a stray `./.yoyo.toml` produced a setting that did nothing and the one command you would go to in order to debug that did not mention the other file exists. Fifth instance of the "two doors, one policy, one deaf" shape (#745, #767, #769, #816) — here the write door worked and the read door was absent. The decision half is the pure, table-tested `skipped_config_sources(chain, loaded) -> Vec<PathBuf>`, which **does not restate the ladder**: it compares by path equality against the chain the caller collected from `existing_config_paths()`, so there is still exactly one statement of the search order. Five rules, each a test row — nothing loaded → **empty** (there is no "skipped" without a winner, and a non-empty chain with no winner must not invent a claim either); one entry which is the loaded one → **empty**; rung 0 loaded with rungs 1..n present → those rungs **in ladder order**; a lower rung winning drops exactly that entry; and a `loaded` path not in the chain at all → the **whole chain** rather than a panic, which says nothing false since every one of those files exists and none of them was read. The rendering half is the pure `skipped_sources_note(skipped, loaded, plain) -> Option<String>` in `commands_config.rs`, and **`None` for an empty slice is the whole regression guard** — a user with one config file, which is essentially everyone, sees `/config show` output that is byte-identical to before (pinned by an `assert_eq!` against `format_config_output`, not merely by the absence of the block). When non-empty it names every skipped path **verbatim** (a user cannot act on a path they cannot see) and states the mechanism — *first match wins and config files are not merged* — so the note explains *why* the file is inert rather than only that it is; glyph-free under `is_plain_output()` (bullets **and** em dashes), mirroring `project_permission_refusal_message`. **Both doors are wired by one edit, verified rather than assumed**: `/config show` is routed from `dispatch.rs:813` through `commands::handle_config_show`, which is a re-export of `commands_config::handle_config_show`, and the `yoyo config show` CLI arm at `dispatch_sub.rs:389` calls that same function directly — one renderer, no unwired entry point. `format_config_output` was deliberately left byte-identical for its other callers; the ladder question is composed on top of it by `config_show_output`, which **is** the emission point (the exact string `handle_config_show` prints) and is where the tests assert. `handle_config_show` now takes the chain head as the loaded path rather than calling `detect_loaded_config_path()` separately — one filesystem scan, and provably the same value, since `detect_loaded_config_path` *is* `existing_config_paths().into_iter().next()`. Tests use fabricated paths only, so they touch no filesystem, no process-global CWD (#780) and no env, and need no `#[serial]`; the positive control was **run rather than assumed** — neutering `skipped_config_sources` to return an empty vec fails `config_show_names_the_config_file_it_skipped` and leaves both near-miss guards green (they assert *absence*, which is exactly right). **Out of scope and named rather than implied: first-wins is unchanged.** This makes the ladder *legible*, it does not merge anything, adds no config key and no flag, and does not touch `/config edit` (`resolve_config_edit_path_from`, which already mirrors the loader's precedence on purpose) or the two write-side guards, which are correct — this is their missing twin.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (191ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_config.rs src… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 42s (3 ✓)
+
+1991 lines — under the 2000 cap with 9 lines of headroom (worth noting, not fixing here). Final verification and commit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 34s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
