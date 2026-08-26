@@ -752,3 +752,283 @@ mod ungraded_round_tests {
         assert!(line.contains("11 (day 170, src/owed.rs)"), "{line}");
     }
 }
+
+/// #839 — a graded round that declares its own `scope_limit` must not buy
+/// whole-file credit.
+///
+/// Blind round 82 studied three named functions of `src/safety.rs` and moved
+/// that 3559-line file from the darkest tier to the lightest in one step. The
+/// round was complete and honest, so no half-written-state detector could see
+/// it; the bias runs toward **large** files, where a round covers least.
+#[cfg(test)]
+mod partial_study_tests {
+    use crate::commands_risk_epistemic::*;
+
+    /// The `scope_limit` field as round 82 actually wrote it (shape only).
+    fn scoped_line(target: &str, day: u32, graded: &str, scope: &str) -> String {
+        format!(
+            r#"{{"type":"experiment_result","target":"{target}","day":{day},"graded":"{graded}","scope_limit":"{scope}"}}"#
+        )
+    }
+
+    fn unscoped_line(target: &str, day: u32, graded: &str) -> String {
+        format!(
+            r#"{{"type":"experiment_result","target":"{target}","day":{day},"graded":"{graded}"}}"#
+        )
+    }
+
+    // ---- the ordering IS the fix -------------------------------------------
+
+    #[test]
+    fn tier_order_puts_partial_between_never_and_visited() {
+        // Pinned explicitly rather than left to declaration order: reordering
+        // these variants silently reorders the planner's exploration budget.
+        assert!(StudyTier::NeverStudied < StudyTier::PartiallyStudied);
+        assert!(StudyTier::PartiallyStudied < StudyTier::VisitedUngraded);
+        assert!(StudyTier::VisitedUngraded < StudyTier::Graded);
+        let mut v = vec![
+            StudyTier::Graded,
+            StudyTier::VisitedUngraded,
+            StudyTier::NeverStudied,
+            StudyTier::PartiallyStudied,
+        ];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                StudyTier::NeverStudied,
+                StudyTier::PartiallyStudied,
+                StudyTier::VisitedUngraded,
+                StudyTier::Graded,
+            ]
+        );
+    }
+
+    #[test]
+    fn study_tier_maps_the_partial_state() {
+        assert_eq!(
+            study_tier(Some(&StudyState::PartiallyGraded {
+                summary: "1 hit / 3 miss".to_string(),
+                scope: "three functions".to_string(),
+            })),
+            StudyTier::PartiallyStudied
+        );
+    }
+
+    #[test]
+    fn partial_weight_sits_between_its_two_siblings() {
+        const { assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED) };
+        const { assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED) };
+    }
+
+    // ---- parsing: None means UNSCOPED, never "partial" ---------------------
+
+    #[test]
+    fn a_graded_round_declaring_a_scope_parses_as_partial() {
+        let got = parse_experiment_visits(&scoped_line(
+            "src/safety.rs",
+            179,
+            "1 hit / 3 miss",
+            "three named surfaces only",
+        ));
+        assert_eq!(
+            got,
+            vec![ExperimentVisit {
+                path: "src/safety.rs".to_string(),
+                day: 179,
+                state: StudyState::PartiallyGraded {
+                    summary: "1 hit / 3 miss".to_string(),
+                    scope: "three named surfaces only".to_string(),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn near_miss_an_unscoped_graded_round_is_still_fully_graded() {
+        // THE regression surface: every ledger line written before #839 carries
+        // no `scope_limit` and must keep meaning exactly what it meant before.
+        // A discriminator tested only on the side that fires is vacuous green.
+        let got = parse_experiment_visits(&unscoped_line("src/docs.rs", 169, "3 hit / 1 miss"));
+        assert_eq!(
+            got,
+            vec![ExperimentVisit {
+                path: "src/docs.rs".to_string(),
+                day: 169,
+                state: StudyState::Graded("3 hit / 1 miss".to_string()),
+            }]
+        );
+        assert_eq!(study_tier(Some(&got[0].state)), StudyTier::Graded);
+    }
+
+    #[test]
+    fn near_miss_an_empty_or_null_scope_is_unscoped() {
+        // Missing / null / empty / whitespace-only / wrong-typed → None.
+        for line in [
+            r#"{"type":"experiment_result","target":"src/a.rs","day":1,"graded":"hit","scope_limit":""}"#,
+            r#"{"type":"experiment_result","target":"src/a.rs","day":1,"graded":"hit","scope_limit":"   "}"#,
+            r#"{"type":"experiment_result","target":"src/a.rs","day":1,"graded":"hit","scope_limit":null}"#,
+            r#"{"type":"experiment_result","target":"src/a.rs","day":1,"graded":"hit","scope_limit":42}"#,
+        ] {
+            let got = parse_experiment_visits(line);
+            assert_eq!(
+                got[0].state,
+                StudyState::Graded("hit".to_string()),
+                "not a real scope claim: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scope_on_an_ungraded_line_does_not_make_it_partial() {
+        // The round scored nothing, so its coverage claim credits nothing yet.
+        let line = r#"{"type":"experiment","target":"src/a.rs","day":5,"scope_limit":"one fn"}"#;
+        assert_eq!(
+            parse_experiment_visits(line)[0].state,
+            StudyState::VisitedUngraded
+        );
+    }
+
+    #[test]
+    fn per_hypothesis_grades_plus_a_scope_are_partial_too() {
+        // Grade evidence has two sources (#711); both must reach this state.
+        let line = r#"{"type":"experiment_result","target":"src/a.rs","day":9,"hypothesis_grades":[{"graded":"hit"},{"graded":"miss"}],"scope_limit":"one fn"}"#;
+        assert_eq!(
+            parse_experiment_visits(line)[0].state,
+            StudyState::PartiallyGraded {
+                summary: "2 hypotheses graded".to_string(),
+                scope: "one fn".to_string(),
+            }
+        );
+    }
+
+    // ---- precedence, one clause per row ------------------------------------
+
+    fn latest_state(visits: &[ExperimentVisit], path: &str) -> StudyState {
+        let map = latest_study_state_by_path(visits);
+        map.get(path)
+            .map(|(s, _)| (*s).clone())
+            .expect("path present")
+    }
+
+    fn partial(path: &str, day: u32, scope: &str) -> ExperimentVisit {
+        ExperimentVisit {
+            path: path.to_string(),
+            day,
+            state: StudyState::PartiallyGraded {
+                summary: "g".to_string(),
+                scope: scope.to_string(),
+            },
+        }
+    }
+
+    fn full(path: &str, day: u32) -> ExperimentVisit {
+        ExperimentVisit {
+            path: path.to_string(),
+            day,
+            state: StudyState::Graded("g".to_string()),
+        }
+    }
+
+    fn visit(path: &str, day: u32) -> ExperimentVisit {
+        ExperimentVisit {
+            path: path.to_string(),
+            day,
+            state: StudyState::VisitedUngraded,
+        }
+    }
+
+    #[test]
+    fn a_full_round_outranks_a_partial_regardless_of_day() {
+        // A whole-file study is not erased by a later narrow one — both orders.
+        let older_full = vec![full("src/a.rs", 100), partial("src/a.rs", 179, "narrow")];
+        assert_eq!(
+            latest_state(&older_full, "src/a.rs"),
+            StudyState::Graded("g".to_string())
+        );
+        let newer_full = vec![partial("src/a.rs", 100, "narrow"), full("src/a.rs", 179)];
+        assert_eq!(
+            latest_state(&newer_full, "src/a.rs"),
+            StudyState::Graded("g".to_string())
+        );
+    }
+
+    #[test]
+    fn a_partial_outranks_a_bare_visit_regardless_of_day() {
+        let older_partial = vec![partial("src/a.rs", 100, "narrow"), visit("src/a.rs", 179)];
+        assert_eq!(
+            study_tier(Some(&latest_state(&older_partial, "src/a.rs"))),
+            StudyTier::PartiallyStudied
+        );
+        let newer_partial = vec![visit("src/a.rs", 100), partial("src/a.rs", 179, "narrow")];
+        assert_eq!(
+            study_tier(Some(&latest_state(&newer_partial, "src/a.rs"))),
+            StudyTier::PartiallyStudied
+        );
+    }
+
+    #[test]
+    fn a_partial_is_not_erased_by_a_later_partial_the_latest_wins() {
+        let visits = vec![
+            partial("src/a.rs", 100, "old scope"),
+            partial("src/a.rs", 179, "new scope"),
+        ];
+        assert_eq!(
+            latest_state(&visits, "src/a.rs"),
+            StudyState::PartiallyGraded {
+                summary: "g".to_string(),
+                scope: "new scope".to_string(),
+            },
+            "same state → latest day wins, never a downgrade"
+        );
+    }
+
+    // ---- emission point: both consumers ------------------------------------
+
+    /// The exact substring `scripts/extract_trajectory.py`'s
+    /// `EPISTEMIC_STUDIED_RE` searches for. A partial reason carrying it would
+    /// be compacted for the planner as a *full* study — dropping the word
+    /// "partial" and the scope, i.e. the over-crediting this state exists to
+    /// name.
+    const FULL_STUDY_PHRASE: &str = "studied by graded experiment (day ";
+
+    #[test]
+    fn ranked_half_names_the_partial_group_and_the_scope() {
+        use crate::commands_risk_snapshots::ParsedSnapshot;
+        let snapshots: Vec<ParsedSnapshot> = (1..=6)
+            .map(|d| ParsedSnapshot {
+                day: d,
+                git_hash: format!("h{d}"),
+                ts: format!("2026-08-{:02}T00:00:00Z", d),
+                predicted: vec!["src/safety.rs".to_string()],
+                emerging: Vec::new(),
+            })
+            .collect();
+        let scores = vec![("src/safety.rs".to_string(), 1.1_f64)];
+        let visits = vec![partial("src/safety.rs", 179, "three named surfaces only")];
+        let ranking = compute_epistemic_ranking(&snapshots, &[], &scores, &visits);
+        let e = ranking
+            .iter()
+            .find(|e| e.path == "src/safety.rs")
+            .expect("scored");
+        assert_eq!(e.tier, StudyTier::PartiallyStudied);
+        let reason = e
+            .reasons
+            .iter()
+            .find(|r| r.starts_with("partial study"))
+            .expect("partial reason present");
+        assert!(reason.contains("day 179"), "{reason}");
+        assert!(reason.contains("three named surfaces only"), "{reason}");
+        assert!(
+            !reason.contains(FULL_STUDY_PHRASE),
+            "must not compact as a full study: {reason}"
+        );
+
+        // Group header: no `never forecast` substring (that string hard-stops
+        // the planner's entry collection), and it says "partially".
+        let header = study_tier_header(StudyTier::PartiallyStudied);
+        assert!(!header.contains("never forecast"), "{header}");
+        assert!(header.contains("partially studied"), "{header}");
+        assert!(!header.contains(FULL_STUDY_PHRASE), "{header}");
+    }
+}

@@ -120,6 +120,19 @@ pub(crate) const W_RECENTLY_STUDIED: f64 = -1.0;
 /// rounds stop happening, the const stops mattering on its own.
 pub(crate) const W_VISITED_UNGRADED: f64 = -0.5;
 
+/// Negative weight applied when a graded round **declared its own scope** —
+/// the round says in the ledger (`scope_limit`) that it studied only part of
+/// the file.
+///
+/// A **judgment threshold, not a measurement**: nothing measured says a
+/// self-declared partial round is worth exactly three quarters of a full one.
+/// It sits between [`W_VISITED_UNGRADED`] (-0.5) and [`W_RECENTLY_STUDIED`]
+/// (-1.0) because a partial round *did* grade something — more than a visit
+/// that scored nothing — while leaving named regions of the file unread.
+/// The steering is done by [`StudyTier::PartiallyStudied`]; this weight only
+/// orders files *within* that group, exactly as its two siblings do.
+pub(crate) const W_PARTIALLY_STUDIED: f64 = -0.75;
+
 /// Two epistemic scores within this distance count as tied and fall through
 /// to the tie-break: current risk score (higher first), then path.
 pub(crate) const SCORE_EPSILON: f64 = 1e-6;
@@ -141,6 +154,26 @@ pub(crate) enum StudyState {
     /// payload is the grade summary — verbatim when the summary field held
     /// one, derived from the per-hypothesis records when it did not.
     Graded(String),
+    /// The round has grade evidence **and** declared its own `scope_limit` in
+    /// the ledger: it says out loud that it studied only part of the file.
+    ///
+    /// #839: blind round 82 studied three named functions of `src/safety.rs`
+    /// and moved that 3559-line file from the darkest tier to the lightest in
+    /// one step — ~3400 unread lines bought credit. The round was complete and
+    /// honest (it passes `tests/blind_round_grades.rs` exactly as a whole-file
+    /// study would), so there is no half-written state to detect; the bias is
+    /// simply that the bigger the file, the less of it a round covers.
+    ///
+    /// **A declared scope is a claim the round made about itself, not a
+    /// measurement of coverage.** A round that declares no scope is still
+    /// credited whole-file, so this makes the over-crediting *nameable*, not
+    /// impossible.
+    PartiallyGraded {
+        /// Grade summary, same derivation as [`StudyState::Graded`].
+        summary: String,
+        /// The round's own `scope_limit` text, verbatim.
+        scope: String,
+    },
     /// A round named this file but recorded no grade anywhere. The expedition
     /// happened; it produced nothing falsifiable.
     VisitedUngraded,
@@ -164,6 +197,19 @@ pub(crate) enum StudyState {
 pub(crate) enum StudyTier {
     /// No experiment round has ever named this file.
     NeverStudied,
+    /// A graded round named it and **declared its own scope**: it says in the
+    /// ledger that it covered only part of the file.
+    ///
+    /// Ordered **darker than [`StudyTier::VisitedUngraded`]**, which is the
+    /// load-bearing judgment here and is deliberate rather than incidental: a
+    /// partial round has *proved* the file contains regions nobody entered,
+    /// while an ungraded visit at least aimed at the whole file and merely
+    /// failed to score anything. The partial round therefore leaves a *known*
+    /// dark remainder; the visit leaves an unknown one that may be empty.
+    /// (The opposite ordering is arguable — a graded partial did learn
+    /// something measurable where a visit did not — but that argument is about
+    /// what the round *taught*, and this tier ranks by what is still *unread*.)
+    PartiallyStudied,
     /// A round named it but recorded no grade — the expedition happened and
     /// produced nothing falsifiable, so it is darker than a graded round but
     /// lighter than never having looked.
@@ -180,6 +226,7 @@ pub(crate) fn study_tier(state: Option<&StudyState>) -> StudyTier {
     match state {
         None => StudyTier::NeverStudied,
         Some(StudyState::VisitedUngraded) => StudyTier::VisitedUngraded,
+        Some(StudyState::PartiallyGraded { .. }) => StudyTier::PartiallyStudied,
         Some(StudyState::Graded(_)) => StudyTier::Graded,
     }
 }
@@ -192,6 +239,9 @@ pub(crate) fn study_tier(state: Option<&StudyState>) -> StudyTier {
 pub(crate) fn study_tier_header(tier: StudyTier) -> &'static str {
     match tier {
         StudyTier::NeverStudied => "dark — no deliberate study on record",
+        StudyTier::PartiallyStudied => {
+            "partially studied — a graded round covered only part of the file"
+        }
         StudyTier::VisitedUngraded => "visited by an ungraded round",
         StudyTier::Graded => {
             "already studied by a graded round (shown for completeness, ranked last)"
@@ -270,12 +320,28 @@ pub(crate) fn parse_experiment_visits(contents: &str) -> Vec<ExperimentVisit> {
             _ => continue,
         };
         let day = val["day"].as_u64().unwrap_or(0) as u32;
-        let state = match val["graded"].as_str() {
-            Some(g) if !g.trim().is_empty() => StudyState::Graded(g.trim().to_string()),
+        // A round's own declared scope. **`None` means UNSCOPED, never
+        // "partial"**: every ledger line written before #839 carries no
+        // `scope_limit`, and those lines must keep meaning exactly what they
+        // meant before — credited whole-file. The ledger is never back-filled.
+        let scope = match val["scope_limit"].as_str() {
+            Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        };
+        let summary = match val["graded"].as_str() {
+            Some(g) if !g.trim().is_empty() => Some(g.trim().to_string()),
             _ => match graded_hypothesis_count(&val) {
-                0 => StudyState::VisitedUngraded,
-                n => StudyState::Graded(format!("{n} hypotheses graded")),
+                0 => None,
+                n => Some(format!("{n} hypotheses graded")),
             },
+        };
+        // Grade evidence with no declared scope stays `Graded`, byte-identical
+        // to before. A scope on an *ungraded* line is deliberately dropped:
+        // the round scored nothing, so its coverage claim credits nothing yet.
+        let state = match (summary, scope) {
+            (Some(summary), Some(scope)) => StudyState::PartiallyGraded { summary, scope },
+            (Some(summary), None) => StudyState::Graded(summary),
+            (None, _) => StudyState::VisitedUngraded,
         };
         out.push(ExperimentVisit { path, day, state });
     }
@@ -375,6 +441,35 @@ struct FileStats {
 /// Extracted Day 166 (#744) so the ranked half and the never-forecast half can
 /// never disagree about what "already studied" means — one statement of the
 /// rule, two consumers.
+/// Rank a study state for the precedence rule in
+/// [`latest_study_state_by_path`]. Higher wins outright, regardless of day.
+///
+/// The order is the one argued at [`StudyTier`], read the other way up: a
+/// **full** (unscoped) graded round is the strongest evidence and is never
+/// erased by a later narrow one; a **partial** graded round outranks a bare
+/// visit because it scored something; a visit is the weakest.
+fn study_state_rank(state: &StudyState) -> u8 {
+    match state {
+        StudyState::VisitedUngraded => 0,
+        StudyState::PartiallyGraded { .. } => 1,
+        StudyState::Graded(_) => 2,
+    }
+}
+
+/// Latest experiment visit per file, by the one precedence rule both halves of
+/// this view share:
+///
+/// - a **full** (unscoped) graded round outranks a **partial** one whatever
+///   the days say — a whole-file study is not erased by a later narrow one;
+/// - a **partial** graded round outranks a bare visit whatever the days say;
+/// - within the *same* state the latest day wins, so a partial round is
+///   replaced by a later partial rather than being downgraded;
+/// - a grade once earned is not erased by a later expedition that recorded
+///   nothing.
+///
+/// Extracted Day 166 (#744) so the ranked half and the never-forecast half can
+/// never disagree about what "already studied" means — one statement of the
+/// rule, two consumers. Do not re-derive it in `never_forecast_files`.
 pub(crate) fn latest_study_state_by_path(
     experiments: &[ExperimentVisit],
 ) -> std::collections::HashMap<&str, (&StudyState, u32)> {
@@ -387,12 +482,10 @@ pub(crate) fn latest_study_state_by_path(
                 studied.insert(visit.path.as_str(), candidate);
             }
             Some((state, day)) => {
-                let held_is_graded = matches!(state, StudyState::Graded(_));
-                let new_is_graded = matches!(visit.state, StudyState::Graded(_));
-                let replace = match (held_is_graded, new_is_graded) {
-                    (false, true) => true,
-                    (true, false) => false,
-                    _ => visit.day >= *day,
+                let replace = match study_state_rank(&visit.state).cmp(&study_state_rank(state)) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => visit.day >= *day,
                 };
                 if replace {
                     studied.insert(visit.path.as_str(), candidate);
@@ -512,6 +605,23 @@ pub(crate) fn compute_epistemic_ranking(
                 StudyState::VisitedUngraded => {
                     score += W_VISITED_UNGRADED;
                     reasons.push(format!("visited by ungraded experiment (day {day})"));
+                }
+                // Deliberately worded so it does NOT contain the substring
+                // `studied by graded experiment (day N, …)`:
+                // `EPISTEMIC_STUDIED_RE` in `scripts/extract_trajectory.py`
+                // uses `.search()`, so a reason carrying that phrase would be
+                // compacted for the planner as a *full* study — dropping the
+                // word "partial" and the scope, i.e. the exact over-crediting
+                // this whole state exists to name. It falls through to that
+                // script's `reason[:60]` raw path instead; giving it a proper
+                // compaction prefix is a separate task (#839 leaves it
+                // uncompacted on purpose). Day and grade are front-loaded so
+                // they survive that 60-char cut.
+                StudyState::PartiallyGraded { summary, scope } => {
+                    score += W_PARTIALLY_STUDIED;
+                    reasons.push(format!(
+                        "partial study (day {day}, {summary}) — scope: {scope}"
+                    ));
                 }
             }
         }

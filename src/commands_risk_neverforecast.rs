@@ -426,6 +426,13 @@ fn study_note(state: &StudyState, day: u32) -> String {
     let text = match state {
         StudyState::Graded(grade) => format!("studied by graded experiment (day {day}, {grade})"),
         StudyState::VisitedUngraded => format!("visited by ungraded experiment (day {day})"),
+        // Must not wear the word "graded" unqualified, exactly as
+        // `VisitedUngraded` must not. A partial round still counts as "not
+        // dark" for the never-forecast split — the file was forecast-less for
+        // other reasons — it just doesn't get to claim whole-file coverage.
+        StudyState::PartiallyGraded { summary, scope } => {
+            format!("partial study (day {day}, {summary}) — scope: {scope}")
+        }
     };
     // Char-boundary-safe, and the ellipsis marks the cut in-band.
     crate::commands_risk_epistemic::truncate_reason(&text, STUDY_NOTE_MAX_CHARS).0
@@ -876,6 +883,39 @@ mod tests {
         assert_eq!(
             never.age_unobservable, 0,
             "the age question was never asked for this file"
+        );
+    }
+
+    #[test]
+    fn test_partially_studied_file_is_annotated_not_called_graded() {
+        // #839, second consumer. `latest_study_state_by_path` has two readers
+        // and wiring one is the "two doors, one policy, one deaf" shape.
+        // A partial round still counts as "not dark" here — the file was
+        // forecast-less for other reasons — it just must not wear the word
+        // "graded" unqualified, exactly as `VisitedUngraded` must not.
+        let snapshots = vec![snap(1, &["src/seen.rs"], &[])];
+        let visits = vec![crate::commands_risk_epistemic::ExperimentVisit {
+            path: "src/safety.rs".to_string(),
+            day: 179,
+            state: StudyState::PartiallyGraded {
+                summary: "1 hit / 3 miss".to_string(),
+                scope: "three named surfaces only".to_string(),
+            },
+        }];
+        let never = never_forecast_files(
+            &snapshots,
+            &scores(&[("src/safety.rs", 4.0)]),
+            &visits,
+            &|_| None,
+        );
+        assert_eq!(never.studied.len(), 1, "not dark: a round did name it");
+        assert!(never.dark.is_empty());
+        let note = &never.studied[0].note;
+        assert!(note.starts_with("partial study"), "{note}");
+        assert!(note.contains("day 179"), "{note}");
+        assert!(
+            !note.contains("studied by graded experiment (day "),
+            "must not read as a whole-file study: {note}"
         );
     }
 
