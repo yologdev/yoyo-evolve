@@ -1,0 +1,201 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the defect and finding the exact code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,270p' src/format/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "color_enabled" src/ --… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Only one consumer — clean seam. Let me verify the defect empirically first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "COLOR_DISABLED" src/for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && NO_COLOR=1 cargo test --bin yoyo… ✓ (3ms)
+ ✓ (57.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 3s (2 ✓)
+
+Confirmed: 20 failures. Let me capture the definitive list and check for any test asserting the disabled branch.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && NO_COLOR=1 cargo test --bin yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "disable_color" src/ --… ✓ (8ms)
+ ✓ (57.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 0s (2 ✓)
+
+disable_color() has no test callers — nothing asserts the disabled branch. Now the fix, at the single seam:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs:226..244 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (5 → 48 lines)
+  + /// The decision half of [`color_enabled`], with the environment read lifted out
+  + /// (the same pure-core-plus-thin-wrapper split used by `apply_effort_hint_with`,
+  + /// `usage_print_line` and `context_budget_warning_with`).
+  + ///
+  + /// `no_color_set` is whether the `NO_COLOR` environment variable is present at
+  + /// all — per <https://no-color.org/> its *value* is irrelevant, presence is the
+  + /// signal.
+  + pub(crate) fn color_enabled_from_env(no_color_set: bool) -> bool {
+  +     !no_color_set
+  + }
+  + 
+    /// Check if color output is enabled. Cached after first call.
+    /// Respects the NO_COLOR environment variable (https://no-color.org/).
+  + ///
+  + /// This is the only reader of the process-global `COLOR_DISABLED` state; the
+  + /// decision itself lives in [`color_enabled_from_env`].
+  + ///
+  + /// Under `cfg(test)` this is pinned to `true`. `COLOR_DISABLED` is a write-once
+  + /// `OnceLock` seeded from the ambient `NO_COLOR`, with no setter that can force
+  + /// it either way, so without the pin ~20 tests across 8 modules assert whichever
+  ... (29 more lines)
+ ✓ (15.1s)
+  + /// The decision half of [`color_enabled`], with the environment read lifted out
+  + /// (the same pure-core-plus-thin-wrapper split used by `apply_effort_hint_with`,
+  + /// `usage_print_line` and `context_budget_warning_with`).
+  + ///
+  + /// `no_color_set` is whether the `NO_COLOR` environment variable is present at
+  + /// all — per <https://no-color.org/> its *value* is irrelevant, presence is the
+  + /// signal.
+  + pub(crate) fn color_enabled_from_env(no_color_set: bool) -> bool {
+  ... (13 more lines)
+  2 tools completed in 28.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: clippy flagged color_enabled_from_env as dead under cfg(test) — its only call site is in the cfg(not(test)) branch. The table test is its cfg(test) consumer, so it lands in the same edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '235,290p' src/format/mod… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The pin is in place. Now the table test — which is also the cfg(test) consumer that resolves the dead-code error:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1011,1020p' src/format/m… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/mod.rs (5 → 23 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// The decision half of `color_enabled`, driven in **both** directions —
+  +     /// a discriminator tested only on the side that fires is vacuous green.
+  +     ///
+  +     /// This is what replaces the coverage the `cfg(test)` pin in
+  +     /// `color_enabled` appears to remove. Nothing was actually lost: the
+  +     /// disabled branch was never observable from a test in the first place
+  +     /// (`COLOR_DISABLED` is a write-once `OnceLock` seeded from the ambient
+  +     /// environment, with no setter), so what looked like coverage was the
+  +     /// runner's environment, not an assertion. Here the rule itself is pinned.
+  +     #[test]
+  +     fn color_enabled_from_env_table() {
+  +         // NO_COLOR present (any value, per no-color.org) -> colour off.
+  +         assert!(!color_enabled_from_env(true));
+  +         // NO_COLOR absent -> colour on. This is the value the `cfg(test)` pin
+  +         // hardcodes, which is why `cargo test` is byte-identical to before.
+  +         assert!(color_enabled_from_env(false));
+  ... (2 more lines)
+ ✓ (1m 53s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// The decision half of `color_enabled`, driven in **both** directions —
+  +     /// a discriminator tested only on the side that fires is vacuous green.
+  +     ///
+  +     /// This is what replaces the coverage the `cfg(test)` pin in
+  ... (13 more lines)
+  2 tools completed in 2m 1s (2 ✓)
+
+Now the acceptance check — both sides, since one alone is the defect:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Now both test runs — the whole point is that these must agree:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && NO_COLOR=1 cargo test 2>&1 | gre… ✓ (1m 10s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+NO_COLOR=1 cargo test: 5198 passed, 0 failed — was 20 failed. Now the other side plus fmt:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both sides green at 5198 passed — identical counts, confirming the byte-identical claim. Now the docs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "see the shared-global g… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - see the shared-global gate paragraph above.
+  + see the shared-global gate paragraph above. Day 179 (#836): `color_enabled()` is **pinned to `true` under `cfg(test)`**, with its decision half extracted beside it as the pure, table-tested `color_enabled_from_env(no_color_set) -> bool`. The measured defect: `COLOR_DISABLED` is a write-once `OnceLock` seeded from the ambient `NO_COLOR` with **no setter**, so **20 tests across 8 modules** (`git.rs` 5, `format/highlight.rs` 5, `format/markdown.rs` 2, `format/cost.rs` 2, `commands_search.rs` 2, `commands_git_review.rs` 2, `commands_retry.rs` 1, `commands_map.rs` 1) asserted whichever branch the *environment* chose — `cargo test` green, `NO_COLOR=1 cargo test` **20 failed** on tests that had not changed. That outranks its size because `scripts/evolve.sh` turns any `cargo test` failure into `git reset --hard`: an inherited `NO_COLOR` would revert a whole session's valid work while reading as "the task broke the build", the flattering-to-alarming misattribution shape. **`true` is the byte-identical value** — without `NO_COLOR` set (the state the suite passes in today) `color_enabled()` already returned `true` — so `cargo test` is unchanged and only the `NO_COLOR=1` run moves, from red to matching it; verified by running both, **5198 passed / 0 failed each**, against 5177/20 before. Fixed at the one seam rather than by editing 20 tests in 8 files, and production is untouched (`cfg(test)` code never ships; the release body is unchanged). **The tradeoff, named rather than smuggled:** no test observes the colour-*disabled* branch through the global — but none could before either (write-once, env-seeded, no setter), so that was ambient luck, not coverage; what replaces it is the `color_enabled_from_env` table asserting the *decision* in **both** directions, since a discriminator tested only on the side that fires is vacuous green. A doc comment at the pin says all of this so a later reader does not delete it as dead weight. **`is_plain_output()` (`--screen-reader`) is a different switch** — an `AtomicBool` with a real setter — and was deliberately left alone; every `plain` parameter and glyph-free path is unaffected.
+ ✓ (1m 12s)
+  - see the shared-global gate paragraph above.
+  + see the shared-global gate paragraph above. Day 179 (#836): `color_enabled()` is **pinned to `true` under `cfg(test)`**, with its decision half extracted beside it as the pure, table-tested `color_enabled_from_env(no_color_set) -> bool`. The measured defect: `COLOR_DISABLED` is a write-once `OnceLock` seeded from the ambient `NO_COLOR` with **no setter**, so **20 tests across 8 modules** (`git.rs` 5, `format/highlight.rs` 5, `format/markdown.rs` 2, `format/cost.rs` 2, `commands_search.rs` 2, `commands_git_review.rs` 2, `commands_retry.rs` 1, `commands_map.rs` 1) asserted whichever branch the *environment* chose — `cargo test` green, `NO_COLOR=1 cargo test` **20 failed** on tests that had not changed. That outranks its size because `scripts/evolve.sh` turns any `cargo test` failure into `git reset --hard`: an inherited `NO_COLOR` would revert a whole session's valid work while reading as "the task broke the build", the flattering-to-alarming misattribution shape. **`true` is the byte-identical value** — without `NO_COLOR` set (the state the suite passes in today) `color_enabled()` already returned `true` — so `cargo test` is unchanged and only the `NO_COLOR=1` run moves, from red to matching it; verified by running both, **5198 passed / 0 failed each**, against 5177/20 before. Fixed at the one seam rather than by editing 20 tests in 8 files, and production is untouched (`cfg(test)` code never ships; the release body is unchanged). **The tradeoff, named rather than smuggled:** no test observes the colour-*disabled* branch through the global — but none could before either (write-once, env-seeded, no setter), so that was ambient luck, not coverage; what replaces it is the `color_enabled_from_env` table asserting the *decision* in **both** directions, since a discriminator tested only on the side that fires is vacuous green. A doc comment at the pin says all of this so a later reader does not delete it as dead weight. **`is_plain_output()` (`--screen-reader`) is a different switch** — an `AtomicBool` with a real setter — and was deliberately left alone; every `plain` parameter and glyph-free path is unaffected.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 29s (3 ✓)
+
+Committed. Final state check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head -5… ✓ (13ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task complete — working tree clean, commit 6a2304bf landed.
+
+## What I did
+
+Fixed at the one seam the environment enters, not across 20 tests in 8 files.
+
+`src/format/mod.rs` — two changes:
+
+1. `color_enabled_from_env(no_color_set) -> bool` — the pure decision half, lifted out of the environment read. Same pure-core/thin-wrapper split already used by apply_effort_hint_with, usage_print_line and context_budget_warning_with.
+2. `color_enabled()` pinned to `true` under `cfg(test)`; the cfg(not(test)) body is unchanged and remains the only global reader.
+
+## The measurement, both directions
+
+| | before | after |
+|---|---|---|
+| cargo test | 5177 passed / 0 failed | 5198 passed / 0 failed |
+| NO_COLOR=1 cargo test | 5177 passed / 20 failed | 5198 passed / 0 failed |
+
+Identical counts on both sides — that is the byte-identical claim, checked rather than asserted. cargo clippy --all-targets -- -D warnings and cargo fmt -- --check both clean.
+
+## Two things worth naming
+
+**Clippy caught me mid-edit**, and correctly: color_enabled_from_env was dead under cfg(test), because its only call site sits in the cfg(not(test)) branch. That's my own "never add a definition without its consumer in the same edit" rule firing — the fix wasn't #[allow], it was landing the table test, which is the cfg(test) consumer. It asserts both rows (true → false, false → true), since a discriminator tested only on the side that fires is vacuous green.
+
+**I checked the tradeoff instead of assuming it.* `grep -rn "disable_color" src/` returns zero test callers, so nothing asserted the colour-disabled* branch through the global. That branch was never observable from a test — write-once OnceLock, env-seeded, no setter — so what looked like coverage was the runner's environment. Pinning removes ambient luck and replaces it with a real assertion about the rule. A doc comment at the pin says so, so a later agent doesn't "helpfully" restore the flake.
+
+is_plain_output() (--screen-reader) is a separate AtomicBool with a real setter and I didn't touch it.
+
+## Why this outranked its size
+
+scripts/evolve.sh turns any cargo test failure into git reset --hard. If NO_COLOR ever leaked into the runner env, every session would revert all its valid work and the failure would read as "the task broke the build" when the environment did it. That's the flattering-to-alarming misattribution shape I've spent three sessions pulling out of other instruments — this time it was sitting inside the one judgment every day of my self-model calibration is graded by.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

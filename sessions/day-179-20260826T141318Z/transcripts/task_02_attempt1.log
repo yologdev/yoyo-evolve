@@ -1,0 +1,230 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/commands_project.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "STOP_WORDS\|tokenize_qu… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs:820..1040 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs:1180..1330 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct FileSymbols\|str… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '235,300p' src/symbols.rs ✓ (3ms)
+  5 tools completed in 11.3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,275p' src/symbols.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2709,2780p' src/commands… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.0s (2 ✓)
+
+Now I have what I need. Step 1 — extend STOP_WORDS:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (5 → 33 lines)
+    /// Common stop words filtered out of queries.
+  + ///
+  + /// Keywords are matched as **substrings** against path components and symbol names, so a
+  + /// noise word is not merely useless — it is actively harmful: every file it happens to
+  + /// touch gains points, and per-keyword scoring caps each real keyword's contribution, so
+  + /// enough noise hits can outrank a file matching fewer but genuinely relevant terms
+  + /// (#837, measured: `"does"` hit 5 of the top 8 files for `"how does the web search tool
+  + /// work in this project"`, pushing `src/commands_web.rs` — the canonical implementation —
+  + /// out of the top 3).
+  + ///
+  + /// The list therefore covers the whole scaffolding of a natural-language *question*:
+  + /// articles, prepositions, pronouns, and — added in #837 — the auxiliary-verb and
+  + /// interrogative families a question is built from.
+  + ///
+  + /// `work`/`works`/`working` is a **judgment call, not a measurement**, and it is
+  + /// deliberately included. In "how does the watch loop work" it reads as a content word,
+  + /// but it discriminates nothing (every file "works"), while as a substring it matches the
+  + /// entire `worker` / `workflow` / `workspace` / `worktree` family. Its expected
+  + /// contribution is noise under both readings. A user who actually wants worker code
+  + /// writes `worker`/`worktree`/`workflow`, which are separate tokens and unaffected.
+  ... (15 more lines)
+ ✓ (1m 48s)
+    /// Common stop words filtered out of queries.
+  + ///
+  + /// Keywords are matched as **substrings** against path components and symbol names, so a
+  + /// noise word is not merely useless — it is actively harmful: every file it happens to
+  + /// touch gains points, and per-keyword scoring caps each real keyword's contribution, so
+  + /// enough noise hits can outrank a file matching fewer but genuinely relevant terms
+  + /// (#837, measured: `"does"` hit 5 of the top 8 files for `"how does the web search tool
+  + /// work in this project"`, pushing `src/commands_web.rs` — the canonical implementation —
+  ... (13 more lines)
+
+Step 2 — take test symbols out of the scoring universe:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (8 → 42 lines)
+  + /// Does this symbol name look like a test item?
+  + ///
+  + /// **Scoring only.** `/outline`, `/def`, `/index` and every other display path still see
+  + /// every symbol; this decides only what gets *ranked* by [`score_files`], never what gets
+  + /// *shown*.
+  + ///
+  + /// Why it exists (#837, measured): `src/commands_project.rs` earned its `web` and `search`
+  + /// points for the query "how does the web search tool work in this project" from its own
+  + /// test's name, `test_auto_context_web_search_returns_relevant_files` — the test
+  + /// self-boosting the file it tests. Generally, `#[cfg(test)]` names are English prose, and
+  + /// English prose is exactly what a natural-language query matches, so it is a noise source
+  + /// that grows with every session that adds a test.
+  + ///
+  + /// **This is a name heuristic, not a real signal.** `crate::symbols::Symbol` carries no
+  + /// `#[cfg(test)]` information, and adding one would ripple into `/outline`, `/def` and
+  + /// `/index` — a different task. The known cost of the approximation, stated rather than
+  + /// left for the next reader to discover: a production symbol genuinely named
+  + /// `test_connection` is dropped from *scoring*. It is still displayed everywhere, and the
+  + /// only consequence is that one query ranks it slightly worse.
+  + ///
+  ... (22 more lines)
+ ✓ (15.2s)
+  + /// Does this symbol name look like a test item?
+  + ///
+  + /// **Scoring only.** `/outline`, `/def`, `/index` and every other display path still see
+  + /// every symbol; this decides only what gets *ranked* by [`score_files`], never what gets
+  + /// *shown*.
+  + ///
+  + /// Why it exists (#837, measured): `src/commands_project.rs` earned its `web` and `search`
+  + /// points for the query "how does the web search tool work in this project" from its own
+  ... (13 more lines)
+
+Now the call site (the definition needs its consumer in the same edit):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (4 → 10 lines)
+                // Symbol name matching (2x weight)
+  -             // Decompose camelCase/snake_case symbol names for better matching
+  +             // Decompose camelCase/snake_case symbol names for better matching.
+  +             // Test-named symbols are skipped: their names are English prose, which is
+  +             // exactly what a natural-language query matches (#837). Scoring only —
+  +             // display paths still see every symbol.
+                for sym in &file.symbols {
+  +                 if symbol_name_looks_like_test(&sym.name) {
+  +                     continue;
+  +                 }
+                    let sym_lower = sym.name.to_lowercase();
+ ✓ (1m 49s)
+                // Symbol name matching (2x weight)
+  -             // Decompose camelCase/snake_case symbol names for better matching
+  +             // Decompose camelCase/snake_case symbol names for better matching.
+  +             // Test-named symbols are skipped: their names are English prose, which is
+  +             // exactly what a natural-language query matches (#837). Scoring only —
+  +             // display paths still see every symbol.
+                for sym in &file.symbols {
+  +                 if symbol_name_looks_like_test(&sym.name) {
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (166ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me measure before/after ranks. First, capture "before" with the original file:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_project.rs /tmp/… ✓ (55.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That fell through to a prompt (a known door defect, not my task). Let me measure properly with a temporary probe instead:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (28 lines) ✓ (25.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_repo_map" -A 3… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (25.3s)
+  3 tools completed in 1m 14s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && which sg ast-grep; grep -n "MAX_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout… (26 lines) ✓ (26.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_\|take(\|_LIMIT\|cf… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 55.6s (3 ✓)
+
+Key finding: symbols.rs:780 already skips `#[cfg(test)] module contents — but tests/integration.rs (rank 3, matched ["does","tool","work"]`) has no such wrapper, so its test names *do* score. Let me measure "after":
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/fixed_cp.rs src/commands… ✓ (25.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|r.path == "src/command… ✓ (25.8s)
+  2 tools completed in 1m 1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured: tests/integration.rs went from rank 3 (score 6, pure noise) to not scored at all. Now step 3 — remove the probe and convert the live-repo test:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/fixed_cp.rs src/commands… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_project.rs (41 → 198 lines)
+  +     /// Smoke check only (#837).
+  +     ///
+  +     /// This test used to assert a *ranking* property of this repository as it exists right
+  +     /// now — which drifts with every session that adds a symbol, and whose recency boost
+  +     /// (`get_recent_git_files` → `git diff --name-only HEAD~5`) reads the working tree and
+  +     /// behaves differently on a shallow clone than on a deep one. That is why it was green
+  +     /// on CI and red on a full clone: the assertion's subject was the environment, not the
+  +     /// code. It is kept, not deleted, and reduced to what it can honestly assert about a
+  +     /// live repo — it runs, it does not panic, its shape invariants hold.
+  +     ///
+  +     /// The ranking claim it used to make is now pinned by the fixture tests below, which
+  +     /// score synthetic `FileSymbols` and so do not depend on the repo's state at all.
+        #[test]
+        fn test_auto_context_web_search_returns_relevant_files() {
+  -         // A prompt about "web search" should return web-related files from this repo.
+  -         // With recency boosting, recently-edited files with matching symbols (e.g.,
+  -         // tools.rs containing WebSearchTool) may rank higher than commands_web.rs.
+            let results = auto_context_for_prompt(
+                "how does the web search tool work in this project",
+                &[],
+  ... (202 more lines)
+ ✓ (1m 50s)
+  +     /// Smoke check only (#837).
+  +     ///
+  +     /// This test used to assert a *ranking* property of this repository as it exists right
+  +     /// now — which drifts with every session that adds a symbol, and whose recency boost
+  +     /// (`get_recent_git_files` → `git diff --name-only HEAD~5`) reads the working tree and
+  +     /// behaves differently on a shallow clone than on a deep one. That is why it was green
+  +     /// on CI and red on a full clone: the assertion's subject was the environment, not the
+  +     /// code. It is kept, not deleted, and reduced to what it can honestly assert about a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_p… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B3 -A18 … ✓ (1m 8s)
+  5 tools completed in 5m 55s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only the module-size register (branch 2 drift). One-line paste:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/commands_project.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '175s|("src/commands_proj… ✓ (486ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now the mandatory positive control — the fixture test must fail against pre-fix behaviour:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (10 lines) ✓ (25.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fires, reproducing the issue's exact numbers (11 / 7 / 6). Now the step-1 control:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/fina… (8 lines) ✓ (25.1s)
+
+Both controls fire. Now the docs — updating the commands_project.rs bullet in CLAUDE.md:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project.rs\` —… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
