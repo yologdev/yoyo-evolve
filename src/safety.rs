@@ -1629,6 +1629,207 @@ const WRITE_VERBS: &[&str] = &[
     "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod",
 ];
 
+/// Git subcommands that only ever read: they touch neither the repository,
+/// the index, the work tree, nor any config file.
+///
+/// This is an **allow** list, and the direction is the whole safety property:
+/// [`git_write_subcommand`] treats every subcommand it does not recognise as a
+/// **write**. A git subcommand nobody enumerated here is far more likely to
+/// write than to be a harmless reader, and this backs a user-facing safety mode
+/// (`/read`, `/plan`), so it must fail **closed**. Read-only is the enumerated
+/// set, never the fallback.
+///
+/// Deliberately *not* merged with `git::DESTRUCTIVE_GIT_COMMANDS`, which was
+/// compared rather than assumed: that list is `#[cfg(test)]`-only, answers a
+/// narrower property (*destructive*, not merely *writing* — it omits `tag` and
+/// `branch` on purpose), and defaults the opposite way (unlisted = allowed).
+/// Two different questions with two opposite failure directions; sharing one
+/// list would silently break whichever caller lost the argument.
+const READ_ONLY_GIT_SUBCOMMANDS: &[&str] = &[
+    "status",
+    "log",
+    "diff",
+    "show",
+    "describe",
+    "blame",
+    "annotate",
+    "grep",
+    "ls-files",
+    "ls-tree",
+    "ls-remote",
+    "rev-parse",
+    "rev-list",
+    "cat-file",
+    "shortlog",
+    "for-each-ref",
+    "check-ignore",
+    "check-attr",
+    "merge-base",
+    "name-rev",
+    "show-ref",
+    "show-branch",
+    "whatchanged",
+    "cherry",
+    "range-diff",
+    "diff-tree",
+    "diff-files",
+    "diff-index",
+    "count-objects",
+    "verify-commit",
+    "verify-tag",
+    "version",
+    "help",
+    "var",
+];
+
+/// Git *global* options that consume the following token as their value.
+/// Without this, `git -C . commit` reads its subcommand as `-C` and the
+/// commit slips through the classifier entirely.
+const GIT_GLOBAL_VALUE_OPTS: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--super-prefix",
+];
+
+/// Listing flags of `branch`/`tag` that take a value, so their argument is not
+/// mistaken for a positional (which would classify `git branch --merged main`
+/// — a read-only query — as a write).
+const GIT_LISTING_VALUE_FLAGS: &[&str] = &[
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+    "--sort",
+    "--format",
+    "-n",
+    "--count",
+];
+
+/// True when `rest` is a pure listing invocation: no positional argument and
+/// no flag from `write_flags`. Used by the subcommands whose direction depends
+/// on their arguments (`git tag` lists, `git tag v1` creates).
+fn is_git_listing_only(rest: &[&str], write_flags: &[&str]) -> bool {
+    let mut i = 0;
+    while i < rest.len() {
+        let t = rest[i];
+        if write_flags.contains(&t) {
+            return false;
+        }
+        if t.starts_with('-') {
+            // `--sort=x` carries its value inline; `--sort x` consumes the next.
+            if GIT_LISTING_VALUE_FLAGS.contains(&t) {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        // A positional argument means "operate on this ref", i.e. a write.
+        return false;
+    }
+    true
+}
+
+/// Which git subcommand an argv invokes, and whether it writes.
+///
+/// `args` is everything *after* the `git` token. Returns `Some(subcommand)`
+/// when the invocation writes and `None` when it only reads.
+///
+/// Unrecognised subcommands are **writes** — see [`READ_ONLY_GIT_SUBCOMMANDS`]
+/// for why the default runs that way.
+fn git_write_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
+    // Step past leading global options, consuming the value of the ones that
+    // take a separate token. Attached forms (`--git-dir=x`) are one token.
+    let mut i = 0;
+    while i < args.len() && args[i].starts_with('-') {
+        if GIT_GLOBAL_VALUE_OPTS.contains(&args[i]) {
+            i += 1;
+        }
+        i += 1;
+    }
+    // `git` with no subcommand prints usage and writes nothing.
+    let sub = *args.get(i)?;
+    let rest = args.get(i + 1..).unwrap_or(&[]);
+
+    let writes = match sub {
+        // Direction depends on the arguments. Each arm enumerates the READING
+        // forms; anything else falls through to a write, per the fail-closed
+        // default above.
+        "config" => !rest.iter().any(|t| {
+            matches!(
+                *t,
+                "--get" | "--get-all" | "--get-regexp" | "--get-urlmatch" | "--list" | "-l"
+            )
+        }),
+        "stash" => !matches!(rest.first(), Some(&"list") | Some(&"show")),
+        "worktree" => !matches!(rest.first(), Some(&"list")),
+        "submodule" => !matches!(rest.first(), Some(&"status") | Some(&"summary")),
+        "notes" => !matches!(rest.first(), Some(&"list") | Some(&"show")),
+        "bisect" => !matches!(rest.first(), Some(&"log") | Some(&"view")),
+        "remote" => {
+            !matches!(rest.first(), None | Some(&"show") | Some(&"get-url"))
+                && !rest
+                    .iter()
+                    .all(|t| matches!(*t, "-v" | "--verbose") || t.starts_with('-'))
+        }
+        // `reflog` alone (or `reflog show`) reads; `expire`/`delete` rewrite it.
+        "reflog" => !matches!(rest.first(), None | Some(&"show") | Some(&"exists")),
+        // `symbolic-ref HEAD` reads it; a second positional sets it.
+        "symbolic-ref" => {
+            let positionals = rest.iter().filter(|t| !t.starts_with('-')).count();
+            positionals > 1 || rest.iter().any(|t| matches!(*t, "-d" | "--delete"))
+        }
+        "branch" => !is_git_listing_only(
+            rest,
+            &[
+                "-d",
+                "-D",
+                "-m",
+                "-M",
+                "-c",
+                "-C",
+                "-f",
+                "-u",
+                "--delete",
+                "--move",
+                "--copy",
+                "--force",
+                "--set-upstream",
+                "--set-upstream-to",
+                "--unset-upstream",
+                "--edit-description",
+            ],
+        ),
+        "tag" => !is_git_listing_only(
+            rest,
+            &[
+                "-a",
+                "-s",
+                "-d",
+                "-f",
+                "-m",
+                "-F",
+                "-u",
+                "--annotate",
+                "--sign",
+                "--delete",
+                "--force",
+            ],
+        ),
+        other => !READ_ONLY_GIT_SUBCOMMANDS.contains(&other),
+    };
+
+    if writes {
+        Some(sub)
+    } else {
+        None
+    }
+}
+
 /// Wrapper tokens skipped when locating the actual command of a segment
 /// (`sudo touch x` is still a `touch`). `xargs` is included so piped
 /// fan-outs like `find | xargs touch` are caught too.
@@ -1801,6 +2002,18 @@ pub fn detect_write_command(cmd: &str) -> Option<String> {
         let base = cmd_token.rsplit('/').next().unwrap_or(cmd_token);
         if WRITE_VERBS.contains(&base) {
             return Some(format!("`{base}` writes to the filesystem"));
+        }
+        // Git writes through subcommands, not through its own name: `git` must
+        // never join WRITE_VERBS (that would flag `git status`). The verb the
+        // agent uses most was in neither this list nor the sibling
+        // destructive-pattern classifier, so `/read` mode let `git commit`
+        // through (#838). `tokens` is already positioned past the `git` token.
+        if base == "git" {
+            let args: Vec<&str> = tokens.collect();
+            if let Some(sub) = git_write_subcommand(&args) {
+                return Some(format!("`git {sub}` writes to the repository"));
+            }
+            continue;
         }
         if base == "sed"
             && segment
@@ -3264,6 +3477,144 @@ mod tests {
         // Multi-byte UTF-8 near operators must not panic (#250 class).
         assert!(detect_write_command("echo ✓ > données.txt").is_some());
         assert!(detect_write_command("grep '✓ > ok' fichier").is_none());
+    }
+
+    // === git write-subcommand classification (#838) ===
+
+    #[test]
+    fn test_read_mode_refuses_writing_git_subcommands() {
+        // The measured defect (blind round 82, Day 179): `/read` mode promised
+        // mechanical enforcement at the tool layer while the single most
+        // consequential write in a user's repository walked straight through.
+        // Asserted at the EMISSION POINT — the value `ReadModeGuardTool`'s Bash
+        // arm actually receives — not at the classifier one layer below.
+        let writes = [
+            "git commit -m 'x'",
+            "git checkout main",
+            "git reset --hard",
+            "git apply p.patch",
+            "git push",
+            "git stash",
+            "git -C sub commit -m x", // global option before subcommand
+            "git -c user.name=a commit -m x", // value-taking global option
+        ];
+        for cmd in &writes {
+            let what = detect_write_command(cmd)
+                .unwrap_or_else(|| panic!("must refuse writing git command: {cmd}"));
+            // The refusal names what matched, so the user can act on it.
+            assert!(
+                what.contains("git"),
+                "refusal must name git for {cmd}, got: {what}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_mode_still_allows_read_only_git() {
+        // The near-miss guard, and it is not a nicety: `/read` mode is useless
+        // if it blocks reading the repository. A discriminator tested only on
+        // the side that fires is vacuous green.
+        let reads = [
+            "git status",
+            "git log --oneline -5",
+            "git diff HEAD~1",
+            "git show abc",
+            "git --no-pager log",
+            "git stash list",
+            "git config --get user.name",
+            "git branch",
+            "git tag",
+            "git remote -v",
+            "git worktree list",
+            "git rev-parse HEAD",
+            "git -C sub status",
+            "git blame src/main.rs",
+        ];
+        for cmd in &reads {
+            assert_eq!(
+                detect_write_command(cmd),
+                None,
+                "read-only git command must pass through: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_git_classifier_leaves_non_git_commands_untouched() {
+        // The regression surface: everything that is not a git invocation must
+        // behave EXACTLY as before, in both directions.
+        assert_eq!(detect_write_command("ls -la"), None);
+        assert_eq!(detect_write_command("cargo test"), None);
+        assert!(detect_write_command("touch x").is_some());
+        // A path or argument merely containing "git" is not a git invocation.
+        assert_eq!(detect_write_command("grep -rn git src/"), None);
+        assert_eq!(detect_write_command("ls /opt/git"), None);
+    }
+
+    #[test]
+    fn git_write_subcommand_table() {
+        // Pure decision half: argv AFTER the `git` token -> Some(subcommand)
+        // when it writes, None when it only reads.
+        let cases: &[(&[&str], bool)] = &[
+            // Plain writers.
+            (&["commit", "-m", "x"], true),
+            (&["push"], true),
+            (&["reset", "--hard"], true),
+            (&["apply", "p.patch"], true),
+            (&["checkout", "main"], true),
+            (&["add", "."], true),
+            (&["rebase", "-i", "HEAD~2"], true),
+            (&["clean", "-fd"], true),
+            (&["fetch"], true),
+            (&["init"], true),
+            // Plain readers.
+            (&["status"], false),
+            (&["log", "--oneline"], false),
+            (&["diff", "HEAD~1"], false),
+            (&["show", "abc"], false),
+            (&["rev-parse", "HEAD"], false),
+            (&["merge-base", "a", "b"], false),
+            (&["check-ignore", "target"], false),
+            // Global options before the subcommand.
+            (&["-C", "sub", "commit"], true),
+            (&["-C", "sub", "status"], false),
+            (&["-c", "user.name=a", "commit"], true),
+            (&["--no-pager", "log"], false),
+            (&["--git-dir=/tmp/x", "status"], false),
+            // Direction depends on an argument.
+            (&["config", "--get", "user.name"], false),
+            (&["config", "user.name", "bob"], true),
+            (&["stash", "list"], false),
+            (&["stash"], true),
+            (&["tag"], false),
+            (&["tag", "v1"], true),
+            (&["tag", "-d", "v1"], true),
+            (&["branch"], false),
+            (&["branch", "-a"], false),
+            (&["branch", "--merged", "main"], false),
+            (&["branch", "feature"], true),
+            (&["branch", "-d", "old"], true),
+            (&["remote", "-v"], false),
+            (&["remote", "add", "o", "url"], true),
+            (&["worktree", "list"], false),
+            (&["worktree", "add", "wt"], true),
+            (&["reflog"], false),
+            (&["reflog", "expire", "--all"], true),
+            (&["symbolic-ref", "HEAD"], false),
+            (&["symbolic-ref", "HEAD", "refs/heads/x"], true),
+            // Fail-closed default: an unrecognised subcommand is a write.
+            (&["some-future-subcommand"], true),
+            // `git` with no subcommand runs nothing and writes nothing.
+            (&[], false),
+        ];
+        for (args, writes) in cases {
+            assert_eq!(
+                git_write_subcommand(args).is_some(),
+                *writes,
+                "git {args:?} should {} write",
+                if *writes { "" } else { "NOT" }
+            );
+        }
     }
 
     // === detect_git_redirection_escape (spawn worktree confinement) ===
