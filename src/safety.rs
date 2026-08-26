@@ -2034,7 +2034,27 @@ static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         // AWS access key ids.
         r"\bAKIA[A-Z0-9]{12,}",
         // KEY=/TOKEN=/SECRET=/PASSWORD= style assignments (also `: value`).
-        r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*[=:]\s*[^\s'\x22]+",
+        //
+        // The optional quotes on BOTH sides of the separator are load-bearing,
+        // not cosmetic (blind round 82, day 179). Without them the value run
+        // `[^\s'\x22]+` cannot start on a quote, so `API_KEY="hunter2"` and
+        // `API_KEY='hunter2'` matched nothing while the bare `API_KEY=hunter2`
+        // masked correctly — and quoting a secret is the *dominant* shell form,
+        // so the mask guarding the public `audit-log` branch was covering the
+        // rarer half. The leading `['\x22]?` covers a quoted NAME, which is how
+        // the same credential appears in JSON (`"api_token": "hunter2"`) — and
+        // tool arguments reaching `write_audit_entry` are routinely JSON.
+        // Quotes are consumed into the match and dropped from the output; this
+        // is a mask, not a faithful reproduction of the input.
+        //
+        // Deliberately NOT widened: the separator stays `[=:]`. A flag-style
+        // credential (`--password "hunter2"`, space-separated) is still missed,
+        // and accepting whitespace as a separator would mask the next word after
+        // any prose occurrence of "password"/"key"/"token" — text that flows
+        // through this same function on its way to the audit log. Trading a
+        // narrow miss for a broad false positive would make the redacted log
+        // unreadable, so that shape stays an honest gap.
+        r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))['\x22]?\s*[=:]\s*['\x22]?[^\s'\x22]+['\x22]?",
     ]
     .iter()
     .filter_map(|p| Regex::new(p).ok())
@@ -2119,6 +2139,55 @@ mod tests {
                 "{input:?} -> {out:?} missing {expected_substr:?}"
             );
         }
+    }
+
+    /// Blind round 82 (day 179). The pre-existing fixtures for the assignment
+    /// pattern used *only* unquoted values (`GITHUB_TOKEN=abc123def456`,
+    /// `password: hunter2hunter2`), so the discriminator was covered only on
+    /// the side that fires: a quoted value — the dominant shell form, and the
+    /// form a JSON tool argument always takes — reached the public `audit-log`
+    /// branch verbatim.
+    ///
+    /// Asserted at the **emission point**: the `String` a caller of
+    /// `redact_secrets` actually receives, never the regex one layer below.
+    #[test]
+    fn redact_secrets_masks_quoted_assignment_values() {
+        // (input, secret that must NOT survive)
+        let leaky: &[(&str, &str)] = &[
+            ("export API_KEY=\"hunter2secret\"", "hunter2secret"),
+            ("export API_KEY='hunter2secret'", "hunter2secret"),
+            ("{\"api_token\": \"hunter2secret\"}", "hunter2secret"),
+            ("DB_PASSWORD='hunter2secret' ./deploy.sh", "hunter2secret"),
+        ];
+        for (input, secret) in leaky {
+            let out = redact_secrets(input);
+            assert!(
+                !out.contains(secret),
+                "{input:?} leaked {secret:?} -> {out:?}"
+            );
+            assert!(out.contains(REDACTED), "{input:?} -> {out:?} not masked");
+        }
+
+        // NEAR-MISS GUARDS. A discriminator tested only on the side that fires
+        // is vacuous green, so pin that the branch this widened did not change:
+        // the bare form must still mask *byte-identically*, and innocent text
+        // must still pass through untouched.
+        assert_eq!(
+            redact_secrets("export API_KEY=hunter2secret"),
+            "export API_KEY=[redacted]",
+            "bare assignment must be byte-identical to before"
+        );
+        assert_eq!(
+            redact_secrets("GITHUB_TOKEN=abc123def456"),
+            "GITHUB_TOKEN=[redacted]",
+            "the pre-existing fixture must be byte-identical to before"
+        );
+        let innocent = "the sky is blue and cargo test passed in 0.42s";
+        assert_eq!(
+            redact_secrets(innocent),
+            innocent,
+            "innocent text untouched"
+        );
     }
 
     #[test]
