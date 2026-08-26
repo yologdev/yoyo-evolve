@@ -1371,8 +1371,51 @@ pub fn format_ci_runs(runs: &[CiRun]) -> Vec<String> {
         .collect()
 }
 
+/// Count this project's tests by shelling out to `cargo test -- --list`.
+///
+/// **This must never be reached from a `#[test]`.** A nested `cargo` inside the
+/// test binary re-builds the bin target and uplifts it over the *shared*
+/// `target/debug/<name>` path — a path that carries no feature suffix — so a
+/// feature-less nested build silently clobbers the featured binary that
+/// integration tests reach through `CARGO_BIN_EXE_yoyo` (#832). That is why
+/// [`handle_evolution`] is only a thin wrapper: this closure is the one impure
+/// thing it injects, and the tests drive [`handle_evolution_with`] instead.
+fn count_tests_via_cargo() -> usize {
+    std::process::Command::new("cargo")
+        .args(["test", "--", "--list"])
+        .output()
+        .ok()
+        .and_then(|r| {
+            if r.status.success() {
+                let text = String::from_utf8_lossy(&r.stdout).to_string();
+                Some(text.lines().filter(|l| l.ends_with(": test")).count())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
 /// Handle the `/evolution` command — show evolution history and stats.
+///
+/// Thin wrapper over [`handle_evolution_with`]: it supplies the two resolvers
+/// that shell out to other processes (`cargo` for the test count, `gh` for the
+/// CI runs) and does nothing else, so the report logic is drivable from a test
+/// without spawning anything. Production output is unchanged.
 pub fn handle_evolution(input: &str) {
+    handle_evolution_with(input, &count_tests_via_cargo, &|| fetch_ci_runs(10));
+}
+
+/// The decision/rendering half of `/evolution`, with every subprocess injected.
+///
+/// `test_count` and `ci_runs` are resolved lazily and in the same order the
+/// inline versions were read in, so the emitted text is byte-identical to the
+/// pre-#832 behaviour.
+fn handle_evolution_with(
+    input: &str,
+    test_count: &dyn Fn() -> usize,
+    ci_runs: &dyn Fn() -> Vec<CiRun>,
+) {
     let count = parse_evolution_count(input);
 
     // Read DAY_COUNT
@@ -1411,19 +1454,7 @@ pub fn handle_evolution(input: &str) {
     }
 
     // Get test count
-    let test_count = std::process::Command::new("cargo")
-        .args(["test", "--", "--list"])
-        .output()
-        .ok()
-        .and_then(|r| {
-            if r.status.success() {
-                let text = String::from_utf8_lossy(&r.stdout).to_string();
-                Some(text.lines().filter(|l| l.ends_with(": test")).count())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    let test_count = test_count();
 
     let total_sessions = sessions.len();
 
@@ -1486,7 +1517,7 @@ pub fn handle_evolution(input: &str) {
     println!();
 
     // --- Recent CI runs ---
-    let ci_runs = fetch_ci_runs(10);
+    let ci_runs = ci_runs();
     if !ci_runs.is_empty() {
         println!("  {BOLD}Recent CI runs:{RESET}");
         for line in format_ci_runs(&ci_runs) {
@@ -2030,9 +2061,81 @@ More text.
 
     #[test]
     fn test_handle_evolution_no_panic() {
-        // Should not panic regardless of environment
-        handle_evolution("/evolution");
-        handle_evolution("/evolution 5");
+        // Should not panic regardless of environment.
+        //
+        // Driven through `handle_evolution_with` with stub resolvers, never
+        // through `handle_evolution` — that wrapper's only job is to inject a
+        // closure that shells out to `cargo test -- --list`, and a nested
+        // `cargo` inside the test binary re-builds the bin target and uplifts
+        // it over the shared, feature-suffix-less `target/debug/yoyo` path,
+        // clobbering the featured binary the integration tests reach through
+        // `CARGO_BIN_EXE_yoyo` (#832). It also cost ~12s for this one test.
+        let test_count_calls = std::cell::Cell::new(0usize);
+        let ci_calls = std::cell::Cell::new(0usize);
+        let count = || {
+            test_count_calls.set(test_count_calls.get() + 1);
+            42
+        };
+        let runs = || {
+            ci_calls.set(ci_calls.get() + 1);
+            Vec::new()
+        };
+
+        handle_evolution_with("/evolution", &count, &runs);
+        handle_evolution_with("/evolution 5", &count, &runs);
+
+        // Each resolver is consulted at most once per call — a re-entered
+        // resolver would mean the expensive half runs more than the output
+        // needs, which is how the 12s cost accrued in the first place.
+        assert!(
+            test_count_calls.get() <= 2,
+            "test-count resolver called {} times across 2 invocations",
+            test_count_calls.get()
+        );
+        assert!(
+            ci_calls.get() <= 2,
+            "CI-runs resolver called {} times across 2 invocations",
+            ci_calls.get()
+        );
+    }
+
+    /// Deliberately weak source-level guard: the `cargo` shell-out must stay in
+    /// `count_tests_via_cargo`, which nothing under `#[cfg(test)]` calls.
+    ///
+    /// It proves the spawn is *not present* on the test-driven path; it does not
+    /// prove the rest of the report is right. Needle is built at runtime so this
+    /// test's own source cannot satisfy it.
+    #[test]
+    fn test_evolution_report_path_never_spawns_cargo() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands_info.rs"),
+        )
+        .expect("read own source");
+        let needle = format!("Command::new({}cargo{})", '"', '"');
+
+        // The only occurrence in the whole module is inside the impure resolver.
+        assert_eq!(
+            src.matches(needle.as_str()).count(),
+            1,
+            "expected exactly one cargo spawn in commands_info.rs (inside count_tests_via_cargo)"
+        );
+
+        // And the function tests drive must not name it.
+        let with_start = src
+            .find("fn handle_evolution_with")
+            .expect("handle_evolution_with still exists");
+        let with_body = src[with_start..]
+            .split("\n}\n")
+            .next()
+            .expect("handle_evolution_with has a body");
+        assert!(
+            !with_body.contains(needle.as_str()),
+            "handle_evolution_with must never spawn cargo directly"
+        );
+        assert!(
+            with_body.contains("test_count()"),
+            "handle_evolution_with must resolve the count through its injected closure"
+        );
     }
 
     // === CI run tests ===
