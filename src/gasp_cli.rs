@@ -28,15 +28,18 @@
 //!    run is recorded under an empty id. Empty *values* are still accepted
 //!    (`--kind ""` is exactly how the shim spells "unset"); it is the missing
 //!    value token that is refused.
-//! 2. **`--worker` is accepted and cannot be honoured.** [`crate::gasp`] opens
-//!    every recorder with the fixed worker id `yoyo-inproc`
-//!    (`gasp::open_recorder`), deliberately, so in-process runs stay tellable
-//!    apart from sidecar-written ones. The shim passes `--worker
+//! 2. **`--worker` is honoured for the graph tier only** (#828 item 2). It was
+//!    parsed-and-announced-as-ignored until Day 179; the shim passes `--worker
 //!    evolve-shim-$$` precisely so that overlapping sessions cannot share a
-//!    *lease identity* — a property the sidecar has and this port does not. The
-//!    flag is therefore parsed (the shim's argv must not error) and its
-//!    non-effect is **announced on stderr**, never silently dropped. That gap is
-//!    real work for #683 step 3, not a cosmetic mismatch.
+//!    *lease identity* (a GASP repo is single-writer behind a 600s lease), so a
+//!    dropped `$$` is not a cosmetic mismatch — it is the one axis #683 item (7)
+//!    turns on. The value now reaches `GitEventStore::open` via
+//!    [`graph_worker_id`]. **Passing no flag is byte-identical to before**
+//!    ([`DEFAULT_GRAPH_WORKER_ID`]), and the **in-process** run/model/tool tier
+//!    (`gasp::open_recorder`, #683 item (3)) keeps its own fixed
+//!    `WORKER_ID` on purpose — mixed-writer history is exactly what that field
+//!    is for, so in-process events must stay tellable apart from ones a
+//!    shim-spawned process wrote. The two are deliberately **not** unified.
 
 /// Flags every arm carries. The shim passes all four to all four arms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,9 +52,9 @@ pub(crate) struct GaspCommon {
     /// `--goal`: the standing goal. Empty means "unset" (the shim spells it that
     /// way), so it normalises to `None` and the arm falls back to `DEFAULT_GOAL`.
     pub goal: Option<String>,
-    /// `--worker`: parsed for argv compatibility, **not honoured** — see the
-    /// module doc. Kept rather than dropped so the shim's invocation still
-    /// parses, and announced rather than ignored.
+    /// `--worker`: the lease identity the graph-tier store is opened under.
+    /// Honoured since #828 item 2; a blank value falls back to
+    /// [`DEFAULT_GRAPH_WORKER_ID`]. See [`graph_worker_id`].
     pub worker: Option<String>,
 }
 
@@ -274,6 +277,56 @@ pub(crate) fn needs_open_run(cmd: &GaspCommand) -> bool {
     !matches!(cmd, GaspCommand::SessionStart { .. })
 }
 
+/// The worker id the **graph-tier** store is opened under when `--worker` names
+/// none.
+///
+/// Byte-identical to the id `gasp::open_graph_session` hardcoded before #828
+/// item 2, so an invocation that passes no flag is unchanged. It shares its
+/// spelling with the in-process tier's own `gasp::WORKER_ID` and is
+/// deliberately a **separate statement**: the two answer different questions
+/// (who holds this process's lease, vs. who recorded an in-process event), and
+/// only this one is caller-supplied.
+pub(crate) const DEFAULT_GRAPH_WORKER_ID: &str = "yoyo-inproc";
+
+/// Pure decision: which worker id does the graph-tier store open under?
+///
+/// A GASP repo is single-writer behind a 600s lease, so this string *is* the
+/// lease identity — `scripts/gasp_shim.sh` passes `--worker evolve-shim-$$`
+/// exactly so overlapping sessions cannot collide on it.
+///
+/// A blank value falls back to the default rather than opening under an empty
+/// id: an empty string is not an identity, and refusing to invent one beats
+/// recording a session under a name nobody chose. The fallback is announced by
+/// [`worker_fallback_note`], never silent.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn graph_worker_id(flag: Option<&str>) -> String {
+    flag.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_GRAPH_WORKER_ID)
+        .to_string()
+}
+
+/// The one case worth a word on stderr: a `--worker` was typed and **not**
+/// used.
+///
+/// An honoured flag says nothing — the caller asked for it and got it, so a
+/// line per invocation would be noise in the shim's log. A *rejected* one is a
+/// surprise (the caller asked for a distinct lease identity and is sharing the
+/// default), and this repo announces refusals rather than dropping them
+/// silently.
+#[cfg_attr(not(feature = "gasp"), allow(dead_code))]
+pub(crate) fn worker_fallback_note(flag: Option<&str>) -> Option<String> {
+    let raw = flag?;
+    if !raw.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "gasp: --worker was empty — opening under the default worker id \
+         {DEFAULT_GRAPH_WORKER_ID} instead. Overlapping sessions sharing a \
+         worker id share a lease identity."
+    ))
+}
+
 /// The impure half: open the store and call the matching ported arm.
 ///
 /// Returns the boundary sha for `session-end` (which *returns* rather than
@@ -306,14 +359,13 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
         | GaspCommand::SessionEnd { common, .. } => common.clone(),
     };
 
-    // An invisible non-effect is a bug even when it is the right non-effect.
-    if let Some(worker) = &common.worker {
-        eprintln!(
-            "gasp: --worker {worker} ignored — in-process runs are recorded under a \
-             fixed worker id so they stay tellable apart from sidecar-written ones. \
-             Per-session lease identity is not yet portable (#683 step 3)."
-        );
+    // An honoured flag is silent (the caller asked for it); a rejected one is
+    // not, because a shared lease identity is exactly what --worker exists to
+    // prevent.
+    if let Some(note) = worker_fallback_note(common.worker.as_deref()) {
+        eprintln!("{note}");
     }
+    let worker = graph_worker_id(common.worker.as_deref());
 
     let goal_id = common
         .goal
@@ -322,7 +374,7 @@ pub(crate) async fn run_gasp_command(cmd: GaspCommand) -> Result<Option<String>,
     let plan = gasp::plan_from_env_values(Some(&common.state_dir), Some(&goal_id));
     // Directly, not via `open_recorder`: the recorder would close this
     // session's own open run as "interrupted" (#831).
-    let session = gasp::open_graph_session(plan, needs_open_run(&cmd))
+    let session = gasp::open_graph_session(plan, needs_open_run(&cmd), &worker)
         .await
         .ok_or_else(|| format!("could not open a GASP store at {}", common.state_dir))?;
 
@@ -409,6 +461,52 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// #828 item 2. The `None` row is the byte-identity check: every invocation
+    /// that passes no `--worker` must open under exactly the id
+    /// `open_graph_session` hardcoded before this landed.
+    #[test]
+    fn graph_worker_id_honours_the_flag_and_falls_back_on_blanks() {
+        let cases: &[(Option<&str>, &str)] = &[
+            (None, "yoyo-inproc"),
+            (Some("evolve-shim-4711"), "evolve-shim-4711"),
+            // An empty worker id is not an identity — refusing to open under
+            // one beats inventing a name.
+            (Some(""), "yoyo-inproc"),
+            (Some("   "), "yoyo-inproc"),
+            (Some("  evolve-shim-4711  "), "evolve-shim-4711"),
+        ];
+        for (flag, want) in cases {
+            assert_eq!(&graph_worker_id(*flag), want, "flag {flag:?}");
+        }
+        assert_eq!(graph_worker_id(None), DEFAULT_GRAPH_WORKER_ID);
+    }
+
+    /// Only a *rejected* flag speaks. Both directions, because a discriminator
+    /// tested on the side that fires alone is vacuous green.
+    #[test]
+    fn worker_fallback_note_speaks_only_when_the_flag_was_dropped() {
+        let note = worker_fallback_note(Some("  ")).expect("a blank flag was dropped, so say so");
+        assert!(note.contains("--worker"), "{note}");
+        assert!(note.contains(DEFAULT_GRAPH_WORKER_ID), "{note}");
+        assert!(note.contains("lease identity"), "{note}");
+
+        assert_eq!(worker_fallback_note(None), None);
+        assert_eq!(worker_fallback_note(Some("evolve-shim-4711")), None);
+    }
+
+    /// The note that used to be printed asserted the flag had **no effect**.
+    /// That claim is false as of #828 item 2, and a stale "impossible" in this
+    /// exact module is what cost #683 eight empty-diff sessions.
+    #[test]
+    fn no_surface_still_claims_worker_is_ignored() {
+        let src = include_str!("gasp_cli.rs");
+        let stale = format!("--worker {{worker}} {}", "ignored");
+        assert!(
+            !src.contains(&stale),
+            "the ignored-worker note is still here"
+        );
     }
 
     /// The exact argv `scripts/gasp_shim.sh:132` passes, minus the binary name.

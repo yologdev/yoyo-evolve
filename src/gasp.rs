@@ -134,9 +134,17 @@ pub(crate) const GOAL_ID_ENV: &str = "YOYO_GASP_GOAL_ID";
 
 /// The agent id stamped into recorded events.
 const AGENT_ID: &str = "yoyo";
-/// Worker id, deliberately distinct from the retiring sidecar's — mixed-writer
-/// history is exactly what that field is for, so in-process runs must be
-/// tellable apart from sidecar-written ones after the fact.
+/// Worker id for the **in-process** run/model/tool tier only, deliberately
+/// distinct from the retiring sidecar's — mixed-writer history is exactly what
+/// that field is for, so in-process runs must be tellable apart from ones a
+/// shim-spawned process wrote after the fact.
+///
+/// **Do not unify this with the graph tier's id.** Since #828 item 2 the
+/// `yoyo gasp` door takes its worker id from `--worker`
+/// (`gasp_cli::graph_worker_id`), because that string is the 600s *lease*
+/// identity and overlapping sessions must not share one. This one is not
+/// caller-supplied and must not become so: an in-process event recorded under
+/// `evolve-shim-$$` would be indistinguishable from a sidecar-written one.
 const WORKER_ID: &str = "yoyo-inproc";
 
 /// What the two env vars ask for. Three explicit values, because "not asked
@@ -296,7 +304,17 @@ impl GraphSession {
 /// summarizer is likewise absent because it is never consulted on this tier:
 /// it wraps persisted tool-arg/output summaries in the event-stream path, and
 /// the graph arms call `record_*` directly.
-pub(crate) async fn open_graph_session(plan: RecorderPlan, resume: bool) -> Option<GraphSession> {
+///
+/// `worker` is the caller-supplied lease identity (#828 item 2): a GASP repo is
+/// single-writer behind a 600s lease, so overlapping sessions must open under
+/// distinct ids. It comes from `--worker` via `gasp_cli::graph_worker_id`,
+/// which supplies the historical default when the flag names none. This is
+/// **not** [`WORKER_ID`], and the two must not be merged — see that constant.
+pub(crate) async fn open_graph_session(
+    plan: RecorderPlan,
+    resume: bool,
+    worker: &str,
+) -> Option<GraphSession> {
     let (root, goal_id) = match plan {
         RecorderPlan::Disabled => return None,
         RecorderPlan::Misconfigured(reason) => {
@@ -310,7 +328,7 @@ pub(crate) async fn open_graph_session(plan: RecorderPlan, resume: bool) -> Opti
         return None;
     }
 
-    let store = match GitEventStore::open(root.clone(), WORKER_ID) {
+    let store = match GitEventStore::open(root.clone(), worker) {
         Ok(store) => store,
         Err(e) => {
             eprintln!(
