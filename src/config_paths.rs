@@ -80,6 +80,45 @@ pub(crate) fn existing_config_paths_in(project_dir: &std::path::Path) -> Vec<std
     found
 }
 
+/// Every config file that **exists on disk and was not loaded**, because a
+/// higher rung of the precedence ladder won.
+///
+/// This is the *read-side* twin of [`shadowing_config_file`] and
+/// [`demoted_config_file`]: both of those fire when a config file is
+/// **written**, and until Day 179 nothing anywhere answered the question a
+/// user actually asks when a setting silently does nothing — *which of my
+/// config files is yoyo reading, and which ones exist and were skipped?*
+///
+/// `chain` is the ladder as [`existing_config_paths`] returns it (highest
+/// precedence first, existing files only); `loaded` is the file
+/// [`crate::config::load_config_file`] actually read. The ladder is **not
+/// restated here** — this compares by path equality against the chain the
+/// caller collected, so there is still exactly one statement of the search
+/// order.
+///
+/// Returns the skipped rungs in ladder order. Empty when nothing was loaded
+/// (there is no "skipped" without a winner) and empty when the chain holds
+/// only the loaded file — which is the common case, and is what keeps
+/// `/config show` byte-identical for the ~everyone who has one config file.
+///
+/// Defensive branch: a `loaded` path that is not in `chain` at all should not
+/// happen, but if it does the whole chain is returned rather than panicking.
+/// That says nothing false — every one of those files exists and none of them
+/// was the file that was read.
+pub(crate) fn skipped_config_sources(
+    chain: &[std::path::PathBuf],
+    loaded: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
+    let Some(loaded) = loaded else {
+        return Vec::new();
+    };
+    chain
+        .iter()
+        .filter(|candidate| candidate.as_path() != loaded)
+        .cloned()
+        .collect()
+}
+
 /// Decide whether a config file that was just written will actually be read.
 ///
 /// Because loading is first-existing-file-wins (never a merge), writing to a
@@ -466,6 +505,65 @@ permissions.allow and shell hooks.\n  Pass --trust-project to allow them for one
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === skipped_config_sources: the read-side half of the ladder (Day 179) ===
+    //
+    // Fabricated paths only — this is the pure decision half, so no filesystem
+    // and no process-global CWD/env is touched (#780).
+    #[test]
+    fn skipped_config_sources_table() {
+        let project = std::path::PathBuf::from("/repo/.yoyo.toml");
+        let home = std::path::PathBuf::from("/home/me/.yoyo.toml");
+        let xdg = std::path::PathBuf::from("/home/me/.config/yoyo/config.toml");
+
+        // Rule 1: nothing loaded (no config anywhere) → nothing was skipped.
+        // "Skipped" needs a winner; without one there is nothing true to say.
+        assert_eq!(
+            skipped_config_sources(&[], None),
+            Vec::<std::path::PathBuf>::new()
+        );
+        // ...and a non-empty chain with no winner is still empty, not "all of
+        // them" — that combination is nonsense, so it must not invent a claim.
+        assert_eq!(
+            skipped_config_sources(&[project.clone(), home.clone()], None),
+            Vec::<std::path::PathBuf>::new()
+        );
+
+        // Rule 2: one entry and it is the loaded one → empty. THE common case,
+        // and the reason `/config show` stays byte-identical for ~everyone.
+        assert_eq!(
+            skipped_config_sources(std::slice::from_ref(&home), Some(&home)),
+            Vec::<std::path::PathBuf>::new()
+        );
+
+        // Rule 3: rung 0 loaded, rungs 1..n exist → those rungs, in LADDER ORDER.
+        assert_eq!(
+            skipped_config_sources(
+                &[project.clone(), home.clone(), xdg.clone()],
+                Some(&project)
+            ),
+            vec![home.clone(), xdg.clone()],
+            "skipped rungs must keep the ladder's own order"
+        );
+
+        // Rule 4: comparison is by path equality against the chain entry — a
+        // lower rung winning (defensive; the loader is first-wins) drops
+        // exactly that entry and keeps the higher one.
+        assert_eq!(
+            skipped_config_sources(&[project.clone(), home.clone()], Some(&home)),
+            vec![project.clone()]
+        );
+
+        // Rule 5: a loaded path that is not in the chain at all should not
+        // happen. Return the whole chain rather than panicking — every one of
+        // those files exists and none of them was read, which says nothing
+        // false.
+        let stray = std::path::PathBuf::from("/tmp/elsewhere.toml");
+        assert_eq!(
+            skipped_config_sources(&[project.clone(), home.clone()], Some(&stray)),
+            vec![project, home]
+        );
+    }
 
     // === /config set --global shadowing (Day 151) ===
     //
