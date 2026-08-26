@@ -825,4 +825,101 @@ mod tests {
             assert!(usage.contains(arm), "usage must name `{arm}`: {usage}");
         }
     }
+
+    /// The `resume` table for every arm, built by parsing a real argv rather
+    /// than by hand-constructing the variant — so a future field addition
+    /// cannot make the table stop describing what the CLI actually builds.
+    ///
+    /// Exhaustive over `GASP_ARMS` on purpose, and in **both** directions: a
+    /// predicate covered only where it fires is vacuous green, and the whole
+    /// of #831 is that `session-start` must open a run while the other three
+    /// must chain to the one an earlier process opened.
+    #[test]
+    fn needs_open_run_table() {
+        let cases: &[(&str, Vec<String>, bool)] = &[
+            (
+                "session-start",
+                argv(&[
+                    "session-start",
+                    "--state-dir",
+                    "d",
+                    "--run-id",
+                    "r",
+                    "--day",
+                    "178",
+                ]),
+                false,
+            ),
+            (
+                "task",
+                argv(&[
+                    "task",
+                    "--state-dir",
+                    "d",
+                    "--run-id",
+                    "r",
+                    "--num",
+                    "1",
+                    "--title",
+                    "t",
+                ]),
+                true,
+            ),
+            (
+                "task-result",
+                argv(&[
+                    "task-result",
+                    "--state-dir",
+                    "d",
+                    "--run-id",
+                    "r",
+                    "--num",
+                    "1",
+                    "--title",
+                    "t",
+                    "--verdict",
+                    "success",
+                    "--pre-sha",
+                    "a",
+                    "--post-sha",
+                    "b",
+                    "--repo",
+                    "o/r",
+                ]),
+                true,
+            ),
+            (
+                "session-end",
+                argv(&[
+                    "session-end",
+                    "--state-dir",
+                    "d",
+                    "--run-id",
+                    "r",
+                    "--outcome",
+                    "done",
+                ]),
+                true,
+            ),
+        ];
+
+        // The table must describe every arm the CLI routes, or an arm could be
+        // added without anyone deciding which side of #831 it falls on.
+        assert_eq!(cases.len(), GASP_ARMS.len());
+        for arm in GASP_ARMS {
+            assert!(
+                cases.iter().any(|(name, _, _)| name == arm),
+                "no resume-table row for arm `{arm}`"
+            );
+        }
+
+        for (name, args, expected) in cases {
+            let cmd = parse_gasp_args(args).unwrap_or_else(|e| panic!("`{name}` must parse: {e}"));
+            assert_eq!(
+                needs_open_run(&cmd),
+                *expected,
+                "`{name}` resume expectation"
+            );
+        }
+    }
 }
