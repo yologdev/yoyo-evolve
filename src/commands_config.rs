@@ -7,7 +7,7 @@ use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD};
 use crate::commands::thinking_level_name;
 use crate::config_paths::{
     demoted_config_file, demoted_write_warning, detect_loaded_config_path, existing_config_paths,
-    shadowed_write_warning, shadowing_config_file,
+    shadowed_write_warning, shadowing_config_file, skipped_config_sources,
 };
 use crate::format::{
     format_token_count, truncate_with_ellipsis, BOLD, DIM, GREEN, RED, RESET, YELLOW,
@@ -422,6 +422,68 @@ pub fn format_config_output(
     out
 }
 
+/// The read-side note for `/config show`: name the config files that exist and
+/// were **not** read, because a higher rung of the precedence ladder won.
+///
+/// `None` for an empty slice. That is the whole regression guard: a user with
+/// one config file — essentially everyone — sees byte-identical `/config show`
+/// output. It is only when a second file exists that there is anything true to
+/// say.
+///
+/// When non-empty, every skipped path is named **verbatim**: a user cannot act
+/// on a path they cannot see, and "there is another config somewhere" is the
+/// unhelpful half of this message. The reason clause states the mechanism
+/// (`first match wins, no merging`) so the note explains *why* the file is
+/// inert rather than merely that it is.
+///
+/// Glyph-free under `plain` (bullets *and* em dashes), mirroring
+/// `project_permission_refusal_message`. The caller passes
+/// `format::is_plain_output()` so this stays pure.
+pub fn skipped_sources_note(
+    skipped: &[std::path::PathBuf],
+    loaded: &std::path::Path,
+    plain: bool,
+) -> Option<String> {
+    if skipped.is_empty() {
+        return None;
+    }
+    let bullet = if plain { "-" } else { "•" };
+    let dash = if plain { "," } else { " —" };
+    let mut out = String::from("\n  Also present, not read:\n");
+    for path in skipped {
+        out.push_str(&format!("    {bullet} {}\n", path.display()));
+    }
+    out.push_str(&format!(
+        "  First match wins and config files are not merged{dash} yoyo reads only {} here, \
+so nothing in the file(s) above takes effect.\n",
+        loaded.display()
+    ));
+    Some(out)
+}
+
+/// The full `/config show` body: the loaded config, plus the read-side
+/// skipped-sources note when a second config file exists.
+///
+/// This is the **emission point** — the string `handle_config_show` prints —
+/// and it is where the tests assert. `format_config_output` is deliberately
+/// left byte-identical for its other callers; the ladder question is composed
+/// on top of it rather than threaded through it.
+pub fn config_show_output(
+    config: &std::collections::HashMap<String, String>,
+    loaded: Option<&std::path::Path>,
+    chain: &[std::path::PathBuf],
+    plain: bool,
+) -> String {
+    let mut out = format_config_output(config, loaded);
+    if let Some(loaded) = loaded {
+        let skipped = skipped_config_sources(chain, Some(loaded));
+        if let Some(note) = skipped_sources_note(&skipped, loaded, plain) {
+            out.push_str(&note);
+        }
+    }
+    out
+}
+
 /// Handler for `/config show`: prints which config file was loaded
 /// (if any) and the merged key-value pairs it contributed.
 ///
@@ -432,7 +494,12 @@ pub fn format_config_output(
 /// helper, and (3) println the result inside the dim block the rest
 /// of the `/config` family uses.
 pub fn handle_config_show() {
-    let path = detect_loaded_config_path();
+    // One filesystem scan, one statement of the ladder: the loaded file is the
+    // head of the chain by definition (`detect_loaded_config_path` is exactly
+    // `existing_config_paths().into_iter().next()`), so taking the head here
+    // cannot disagree with a second scan.
+    let chain = existing_config_paths();
+    let path = chain.first().cloned();
     let config = match path.as_ref() {
         Some(p) => match std::fs::read_to_string(p) {
             Ok(content) => crate::cli::parse_config_file(&content),
@@ -446,7 +513,12 @@ pub fn handle_config_show() {
         },
         None => std::collections::HashMap::new(),
     };
-    let output = format_config_output(&config, path.as_deref());
+    let output = config_show_output(
+        &config,
+        path.as_deref(),
+        &chain,
+        crate::format::is_plain_output(),
+    );
     print!("{DIM}{output}{RESET}");
 }
 
@@ -1186,6 +1258,106 @@ mod tests {
         assert!(!is_secret_key("provider"));
         assert!(!is_secret_key("thinking"));
         assert!(!is_secret_key("temperature"));
+    }
+
+    // === /config show: the read-side door of the precedence ladder (Day 179) ===
+    //
+    // Asserted at the EMISSION POINT — `config_show_output` is the exact string
+    // `handle_config_show` prints — not at `skipped_config_sources` one layer
+    // below. Fabricated paths only: no filesystem, no `set_current_dir` (#780),
+    // no env redirection, so these need no `#[serial]`.
+
+    #[test]
+    fn config_show_names_the_config_file_it_skipped() {
+        let mut config = HashMap::new();
+        config.insert("model".to_string(), "claude-opus-5".to_string());
+        let project = PathBuf::from("/repo/.yoyo.toml");
+        let home = PathBuf::from("/home/me/.yoyo.toml");
+        let chain = vec![project.clone(), home.clone()];
+
+        let out = config_show_output(&config, Some(&project), &chain, false);
+
+        // The whole point: the path a user has to go edit is named verbatim.
+        assert!(
+            out.contains("/home/me/.yoyo.toml"),
+            "the skipped config file must be named verbatim:\n{out}"
+        );
+        // ...and it must say the file is not read, with the mechanism, so the
+        // user learns WHY their setting does nothing.
+        assert!(
+            out.contains("not read"),
+            "the block must say the file was not read:\n{out}"
+        );
+        assert!(
+            out.contains("First match wins") && out.contains("not merged"),
+            "the note must state the first-wins/no-merging mechanism:\n{out}"
+        );
+        // The loaded file is still named, unchanged.
+        assert!(
+            out.contains("Loaded config: /repo/.yoyo.toml"),
+            "the loaded file must still be reported:\n{out}"
+        );
+    }
+
+    #[test]
+    fn config_show_with_one_config_file_prints_no_skipped_block() {
+        // Near-miss guard: a discriminator tested only on the side that fires
+        // is vacuous green. This is ~every user, and it is the regression risk.
+        let mut config = HashMap::new();
+        config.insert("model".to_string(), "claude-opus-5".to_string());
+        let home = PathBuf::from("/home/me/.yoyo.toml");
+        let chain = vec![home.clone()];
+
+        let with_chain = config_show_output(&config, Some(&home), &chain, false);
+        assert!(
+            !with_chain.contains("Also present"),
+            "one config file must produce no skipped-sources block:\n{with_chain}"
+        );
+        // Stronger than "no block": byte-identical to the pre-Day-179 output.
+        assert_eq!(
+            with_chain,
+            format_config_output(&config, Some(&home)),
+            "single-config output must be byte-identical to the old renderer"
+        );
+    }
+
+    #[test]
+    fn config_show_with_no_config_loaded_prints_no_skipped_block() {
+        // No winner → nothing was skipped, and nothing panics on the empty chain.
+        let config: HashMap<String, String> = HashMap::new();
+        let out = config_show_output(&config, None, &[], false);
+        assert!(
+            !out.contains("Also present"),
+            "no loaded config must produce no skipped-sources block:\n{out}"
+        );
+        assert_eq!(out, format_config_output(&config, None));
+    }
+
+    #[test]
+    fn skipped_sources_note_is_glyph_free_under_plain_output() {
+        let home = PathBuf::from("/home/me/.yoyo.toml");
+        let project = PathBuf::from("/repo/.yoyo.toml");
+        let skipped = vec![home];
+
+        let plain = skipped_sources_note(&skipped, &project, true)
+            .expect("a non-empty skipped list must produce a note");
+        assert!(
+            !plain.contains('•') && !plain.contains('—'),
+            "plain output must carry neither bullets nor em dashes:\n{plain}"
+        );
+        assert!(
+            plain.contains("/home/me/.yoyo.toml"),
+            "plain output must still name the path:\n{plain}"
+        );
+
+        let fancy = skipped_sources_note(&skipped, &project, false)
+            .expect("a non-empty skipped list must produce a note");
+        assert!(fancy.contains('•'), "non-plain output keeps its bullet");
+
+        // Empty slice → None, in both modes. This is what `config_show_output`
+        // relies on to stay byte-identical for single-config users.
+        assert!(skipped_sources_note(&[], &project, false).is_none());
+        assert!(skipped_sources_note(&[], &project, true).is_none());
     }
 
     #[test]
