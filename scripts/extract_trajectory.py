@@ -684,10 +684,30 @@ class GreenScan:
     render as green: collapsing could-not-check into either is precisely the
     defect this whole probe exists to prevent ("was red" must not read as "is
     red", and its mirror, "could not check" must not read as "checked; clean").
+
+    The three trailing fields are OBSERVATION, not decision: nothing reads them
+    to choose a branch, they exist so `green_probe_receipt` can record what the
+    page actually held. `rows is None` means no page was ever inspected (the
+    payload was not a list, or the caller never asked) and is deliberately kept
+    apart from `rows == 0`, which is a real empty listing.
     """
 
     newest_success_ts: str | None = None
     checked: bool = False
+    rows: int | None = None
+    successes: int = 0
+    unreadable: int = 0
+
+
+# Branch names for the green-since decision. These are the receipt's payload.
+# The Day-179 21:30 render preserved the SENTENCE and not which branch produced
+# it, so the single fact needed to grade the verdict afterwards was the one fact
+# nothing recorded. Named constants rather than literals so the decision, the
+# rendered sentence and the audit line cannot drift into three vocabularies.
+GREEN_BRANCH_NO_FAILURES = "no-in-window-failures"
+GREEN_BRANCH_COULD_NOT_CHECK = "could-not-check"
+GREEN_BRANCH_GONE_GREEN = "gone-green"
+GREEN_BRANCH_STILL_LIVE = "still-live"
 
 
 def green_probe_argv(repo: str) -> list[str]:
@@ -745,42 +765,47 @@ def newest_success_from_runs(runs, limit: int) -> GreenScan:
         return GreenScan(checked=False)
     best_ts: str | None = None
     best_age: float | None = None
-    unreadable = False
+    unreadable = 0
+    successes = 0
     # One shared `now` so every row is measured against the same instant, and
     # `run_age_days` is reused rather than a second ISO-8601 parser written —
     # smallest age == newest, exactly as the failure side already does it.
     now = datetime.now(timezone.utc)
     for record in runs:
         if not isinstance(record, dict):
-            unreadable = True
+            unreadable += 1
             continue
         conclusion = record.get("conclusion")
         if not isinstance(conclusion, str):
             # A row that cannot be classified is not a non-success. Calling it
             # one would be "could not check" reading as "checked; clean".
-            unreadable = True
+            unreadable += 1
             continue
         if conclusion != "success":
             continue
+        successes += 1
         age = run_age_days(record.get("createdAt"), now)
         if age is None:
-            unreadable = True
+            unreadable += 1
             continue
         if best_age is None or age < best_age:
             best_age, best_ts = age, record["createdAt"]
+    seen = GreenScan(rows=len(runs), successes=successes, unreadable=unreadable)
     if best_ts is not None:
-        return GreenScan(newest_success_ts=best_ts, checked=True)
+        seen.newest_success_ts, seen.checked = best_ts, True
+        return seen
     if unreadable:
         # Rows came back but the ones that mattered were not readable. "Could
         # not check" must not read as "checked; no successes".
-        return GreenScan(checked=False)
+        return seen
     if len(runs) >= limit:
         # A full page of non-successes: the newest success may simply be one row
         # past the horizon. That is an unknown, not an absence.
-        return GreenScan(checked=False)
+        return seen
     # Short page: the entire listing was seen and it holds no success. A real
     # observation, NOT a failure to check.
-    return GreenScan(newest_success_ts=None, checked=True)
+    seen.checked = True
+    return seen
 
 
 def newest_successful_run(repo: str) -> GreenScan:
@@ -807,21 +832,19 @@ def newest_successful_run(repo: str) -> GreenScan:
     return newest_success_from_runs(runs, GREEN_PROBE_LIMIT)
 
 
-def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
-    """One sentence: has CI passed since the newest failure below? Pure.
+def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
+                         now: datetime) -> str:
+    """Which branch of the green-since decision fires. Pure.
 
-    Returns None ONLY when there is no in-window failure to qualify — that
-    world already prints its own honest line and stays byte-identical.
-
-    The comparison is STRICT: a success stamped exactly at the newest failure
-    is NOT green-since. Ties go to "still live", the conservative direction."""
+    THE decision, stated once. `green_since_verdict` maps this to a sentence and
+    `green_probe_receipt` names it verbatim, so the line the planner reads and
+    the line the audit stream keeps can never disagree about what happened. A
+    second copy of these conditions would be exactly the drift that makes a
+    receipt worthless."""
     if not newest_failure_ts:
-        return None
+        return GREEN_BRANCH_NO_FAILURES
     if green is None or not green.checked:
-        return (
-            "green-since check could not run — this claims neither that the "
-            "failures below are live nor that they are cured"
-        )
+        return GREEN_BRANCH_COULD_NOT_CHECK
     fail_age = run_age_days(newest_failure_ts, now)
     success_age = (
         run_age_days(green.newest_success_ts, now) if green.newest_success_ts else None
@@ -829,11 +852,34 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
     if fail_age is None or (green.newest_success_ts and success_age is None):
         # An unparseable stamp on either side is an unknown, and an unknown
         # must not be promoted into either confident answer.
-        return (
-            "green-since check could not run — this claims neither that the "
-            "failures below are live nor that they are cured"
-        )
+        return GREEN_BRANCH_COULD_NOT_CHECK
+    # STRICT: a success stamped exactly at the newest failure is NOT green-since.
+    # Ties go to "still live", the conservative direction. Written on ages, so
+    # strictly-newer reads as strictly-SMALLER here.
     if success_age is not None and success_age < fail_age:
+        return GREEN_BRANCH_GONE_GREEN
+    return GREEN_BRANCH_STILL_LIVE
+
+
+GREEN_COULD_NOT_RUN_SENTENCE = (
+    "green-since check could not run — this claims neither that the "
+    "failures below are live nor that they are cured"
+)
+
+
+def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
+    """One sentence: has CI passed since the newest failure below? Pure.
+
+    A thin map from `green_verdict_branch` to prose — the decision lives there
+    and nowhere else. Returns None ONLY on the no-in-window-failure branch, the
+    world that already prints its own honest line and stays byte-identical."""
+    branch = green_verdict_branch(newest_failure_ts, green, now)
+    if branch == GREEN_BRANCH_NO_FAILURES:
+        return None
+    if branch == GREEN_BRANCH_COULD_NOT_CHECK:
+        return GREEN_COULD_NOT_RUN_SENTENCE
+    if branch == GREEN_BRANCH_GONE_GREEN:
+        success_age = run_age_days(green.newest_success_ts, now)
         return (
             f"CI has gone green since ({format_run_age(success_age)}): every failure "
             "below predates it. Not proof the causes are fixed — a flaky test passes "
@@ -841,6 +887,61 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
         )
     return (
         "no successful run has landed since the newest failure below — these are live"
+    )
+
+
+def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
+                        branch: str, limit: int) -> str:
+    """One line recording what the green-since probe actually SAW. Pure.
+
+    This is a grader, not a fifth correctness fix. The probe has been declared
+    fixed four times (Day 178: workflow-blindness, then max() over rows; Day 179:
+    --status completed, then the short/full page split), and every one of those
+    was verified by hand-running it in the session that wrote it — which verifies
+    the CHANNEL, not the consumer. Nothing in the loop has ever graded a live
+    answer. On Day 179 at 21:30 the block rendered "these are live" over cured
+    failures while a hand-run three minutes later said green, and WHICH BRANCH
+    fired is unrecoverable because the probe recorded nothing.
+
+    So it names, verbatim, every input the verdict was computed from:
+      * branch      — the one fact the 21:30 render did not preserve
+      * green_rows  — page size returned ("not-asked" when the cost guard skipped
+                      the call, "unknown" when the payload was not a list)
+      * successes / unreadable / page=short|full — short means the listing was
+                      exhausted, full means the probe could not see far enough;
+                      folding those two is the strongest false alarm available
+      * newest_success / newest_failure — the two stamps that were compared
+      * in_window / too_old / undated   — the failure side's own partition
+    """
+    if green is None:
+        rows = "not-asked"
+        page = "n/a"
+        successes = "n/a"
+        unreadable = "n/a"
+        success_ts = "not-asked"
+        checked = "n/a"
+    else:
+        rows = "unknown" if green.rows is None else str(green.rows)
+        # `page` answers the short/full question from the same `limit` the query
+        # asked for, so the receipt cannot claim a horizon the probe never had.
+        page = "n/a" if green.rows is None else ("full" if green.rows >= limit else "short")
+        successes = str(green.successes)
+        unreadable = str(green.unreadable)
+        success_ts = green.newest_success_ts or "none"
+        checked = "true" if green.checked else "false"
+    if scan is None:
+        fail_ts, in_window, too_old, undated = "n/a", "n/a", "n/a", "n/a"
+    else:
+        fail_ts = scan.newest_failure_ts or "none"
+        in_window, too_old, undated = (
+            str(scan.in_window), str(scan.excluded_old), str(scan.undated)
+        )
+    return (
+        f"extract_trajectory: green-probe: branch={branch} "
+        f"green_rows={rows} page={page} limit={limit} successes={successes} "
+        f"unreadable={unreadable} checked={checked} newest_success={success_ts} "
+        f"newest_failure={fail_ts} "
+        f"failures_in_window={in_window} too_old={too_old} undated={undated}"
     )
 
 
@@ -1301,6 +1402,9 @@ def main() -> int:
     tasks, reverts = collect_task_commits()
     sessions_audited, provider_hits = collect_provider_errors(audit_dir)
     ci_scan = collect_failed_ci_fingerprints(repo)
+    # One shared instant for the CI section, so the rendered verdict and the
+    # stderr receipt are provably about the same moment rather than two clocks.
+    ci_now = datetime.now(timezone.utc)
     # Cost guard: only ask "has CI gone green since?" when there is actually a
     # failure to qualify. Gated on `clusters` rather than `in_window` because
     # the clusters branch is the ONLY one that renders the verdict — a healthy
@@ -1337,7 +1441,24 @@ def main() -> int:
         s = render_subsystem_concentration(sub_counts, sub_total)
         if s:
             sections.append(s)
-    s = render_ci_errors(ci_scan, green_scan)
+    s = render_ci_errors(ci_scan, green_scan, ci_now)
+    # The receipt, emitted UNCONDITIONALLY — including when the verdict is
+    # correct. This must NOT be "optimised" to fire only on the suspicious
+    # branch: a record that appears only when the answer is already wrong gives
+    # no baseline to compare against, which is the wrong direction. stderr is
+    # the seam that already works — scripts/evolve.sh (protected) captures it to
+    # $SESSION_STAGING/trajectory.stderr.log and surfaces head -20 in the cron,
+    # so the consumer exists and needs no harness change. ONE line, so it cannot
+    # crowd the existing warn() diagnostics out of that head -20.
+    print(
+        green_probe_receipt(
+            ci_scan,
+            green_scan,
+            green_verdict_branch(ci_scan.newest_failure_ts, green_scan, ci_now),
+            GREEN_PROBE_LIMIT,
+        ),
+        file=sys.stderr,
+    )
     # A "could not check" CI note is honest, but it is not trajectory DATA —
     # it must not suppress the global "(no trajectory data yet)" state below.
     ci_unknown = bool(s) and not ci_scan.ok
@@ -2629,6 +2750,200 @@ src/commands_config.rs
     assert_true(
         "both queries still name the repo they were handed",
         "owner/repo" in probe_argv and "owner/repo" in fail_argv,
+    )
+
+    # 13. The RECEIPT. This probe has been declared fixed four times and graded
+    #     zero times: every fix was verified by hand-running it in the session
+    #     that wrote it, which verifies the CHANNEL and not the consumer. On Day
+    #     179 at 21:30 the block said "these are live" over cured failures while
+    #     a hand-run three minutes later said green — and which branch fired is
+    #     unrecoverable, because nothing recorded it. These tests pin the one
+    #     fact that was missing.
+    print("\n=== green_probe_receipt self-tests ===\n")
+    rnow = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    rscan = CiScan(
+        ok=True,
+        clusters=[("boom", ["1", "2"], 0.5)],
+        in_window=3,
+        excluded_old=2,
+        undated=1,
+        newest_failure_ts="2026-08-26T06:00:00Z",
+    )
+    # Each named branch, driven through the SAME function the renderer consults,
+    # so a receipt can never disagree with the sentence beside it.
+    branch_cases = [
+        (
+            GREEN_BRANCH_GONE_GREEN,
+            rscan.newest_failure_ts,
+            GreenScan(newest_success_ts="2026-08-26T09:00:00Z", checked=True),
+        ),
+        (
+            GREEN_BRANCH_STILL_LIVE,
+            rscan.newest_failure_ts,
+            GreenScan(newest_success_ts="2026-08-25T09:00:00Z", checked=True),
+        ),
+        (GREEN_BRANCH_COULD_NOT_CHECK, rscan.newest_failure_ts, GreenScan(checked=False)),
+        (GREEN_BRANCH_COULD_NOT_CHECK, rscan.newest_failure_ts, None),
+        (GREEN_BRANCH_NO_FAILURES, None, GreenScan(checked=True)),
+    ]
+    for want_branch, fail_ts, gscan in branch_cases:
+        got_branch = green_verdict_branch(fail_ts, gscan, rnow)
+        assert_eq(f"branch fires: {want_branch}", got_branch, want_branch)
+        line = green_probe_receipt(rscan, gscan, got_branch, GREEN_PROBE_LIMIT)
+        assert_true(
+            f"receipt names branch={want_branch} verbatim",
+            f"branch={want_branch} " in line,
+        )
+    # A tie goes to still-live (strict comparison), the conservative direction.
+    assert_eq(
+        "success stamped exactly at the newest failure is NOT green-since",
+        green_verdict_branch(
+            "2026-08-26T06:00:00Z",
+            GreenScan(newest_success_ts="2026-08-26T06:00:00Z", checked=True),
+            rnow,
+        ),
+        GREEN_BRANCH_STILL_LIVE,
+    )
+    # The branch decision and the rendered sentence must stay welded: every
+    # branch except no-in-window-failures produces prose, and that one alone
+    # produces None.
+    for want_branch, fail_ts, gscan in branch_cases:
+        sentence = green_since_verdict(fail_ts, gscan, rnow)
+        assert_true(
+            f"verdict prose matches branch {want_branch}",
+            (sentence is None) == (want_branch == GREEN_BRANCH_NO_FAILURES),
+        )
+
+    # short vs full page, IN THE RECEIPT — a discriminator tested only on the
+    # side that fires is vacuous green, and folding these two is the strongest
+    # false alarm this probe can produce ("could not see far enough" reading as
+    # "there is nothing there").
+    full_scan = newest_success_from_runs(
+        [{"createdAt": f"2026-08-2{i}T00:00:00Z", "conclusion": "failure"} for i in range(4)],
+        4,
+    )
+    short_scan = newest_success_from_runs(
+        [{"createdAt": "2026-08-20T00:00:00Z", "conclusion": "failure"}], 4
+    )
+    assert_true(
+        "receipt reports page=full when the probe could not see far enough",
+        "page=full " in green_probe_receipt(rscan, full_scan, GREEN_BRANCH_COULD_NOT_CHECK, 4)
+        and "green_rows=4 " in green_probe_receipt(
+            rscan, full_scan, GREEN_BRANCH_COULD_NOT_CHECK, 4
+        ),
+    )
+    assert_true(
+        "receipt reports page=short when the whole listing was seen",
+        "page=short " in green_probe_receipt(rscan, short_scan, GREEN_BRANCH_STILL_LIVE, 4)
+        and "green_rows=1 " in green_probe_receipt(
+            rscan, short_scan, GREEN_BRANCH_STILL_LIVE, 4
+        ),
+    )
+    # rows=None (payload was not a list) must NOT read as a short page: nobody
+    # looked is not "the listing was exhausted".
+    assert_true(
+        "a non-list payload reports green_rows=unknown page=n/a, never short",
+        "green_rows=unknown " in green_probe_receipt(
+            rscan, newest_success_from_runs({"a": 1}, 4), GREEN_BRANCH_COULD_NOT_CHECK, 4
+        )
+        and "page=n/a " in green_probe_receipt(
+            rscan, newest_success_from_runs({"a": 1}, 4), GREEN_BRANCH_COULD_NOT_CHECK, 4
+        ),
+    )
+    # The cost guard (`ci_scan.ok and ci_scan.clusters`) means green is None on a
+    # healthy session. That is "not asked", which is not "no successes".
+    not_asked = green_probe_receipt(rscan, None, GREEN_BRANCH_COULD_NOT_CHECK, 20)
+    assert_true(
+        "green=None reports not-asked rather than fabricating a zero",
+        "green_rows=not-asked " in not_asked and "newest_success=not-asked " in not_asked,
+    )
+    counted = newest_success_from_runs(
+        [
+            {"createdAt": "2026-08-26T05:00:00Z", "conclusion": "success"},
+            {"createdAt": "2026-08-25T05:00:00Z", "conclusion": "success"},
+            {"createdAt": "2026-08-24T05:00:00Z", "conclusion": "failure"},
+            {"conclusion": None},
+        ],
+        20,
+    )
+    assert_true(
+        "receipt counts successes and unreadable rows separately",
+        "successes=2 " in green_probe_receipt(rscan, counted, GREEN_BRANCH_GONE_GREEN, 20)
+        and "unreadable=1 " in green_probe_receipt(
+            rscan, counted, GREEN_BRANCH_GONE_GREEN, 20
+        ),
+    )
+    assert_true(
+        "receipt is exactly ONE line — it shares head -20 with warn() diagnostics",
+        all(
+            len(green_probe_receipt(rscan, g, b, 20).splitlines()) == 1
+            for b, _f, g in branch_cases
+        ),
+    )
+    assert_true(
+        "receipt carries the failure side's own partition, not just the green side",
+        "newest_failure=2026-08-26T06:00:00Z " in not_asked
+        and "failures_in_window=3 " in not_asked
+        and "too_old=2 " in not_asked
+        and "undated=1" in not_asked,
+    )
+
+    # 14. The rendered block must not move by ONE BYTE. TOTAL_LINE_CAP /
+    #     TOTAL_BYTE_CAP are tight and the epistemic section renders last (it has
+    #     already been truncated away once, Day 142), so the receipt belongs in
+    #     the audit stream and never in the planner's budget. These five strings
+    #     were captured by running the PRE-change code.
+    print("\n=== rendered block is byte-identical (receipt is stderr-only) ===\n")
+    hdr = (
+        "## Recurring CI errors (failed runs, last 14 days) (2 older failure(s) "
+        "outside the window, not shown; 1 undated run(s) excluded)"
+    )
+    rows = "[2×, last <1d ago] boom\n[1×, last 1d ago] bang"
+    bscan = CiScan(
+        ok=True,
+        clusters=[("boom", ["1", "2"], 0.5), ("bang", ["3"], 1.2)],
+        in_window=3,
+        excluded_old=2,
+        undated=1,
+        newest_failure_ts="2026-08-26T06:00:00Z",
+    )
+    assert_eq(
+        "gone-green render unchanged",
+        render_ci_errors(
+            bscan, GreenScan(newest_success_ts="2026-08-26T09:00:00Z", checked=True), rnow
+        ),
+        f"{hdr}\nCI has gone green since (last <1d ago): every failure below predates "
+        "it. Not proof the causes are fixed — a flaky test passes sometimes — only "
+        f"that CI is not red on these patterns now.\n{rows}",
+    )
+    assert_eq(
+        "still-live render unchanged",
+        render_ci_errors(
+            bscan, GreenScan(newest_success_ts="2026-08-25T09:00:00Z", checked=True), rnow
+        ),
+        f"{hdr}\nno successful run has landed since the newest failure below — "
+        f"these are live\n{rows}",
+    )
+    could_not = (
+        f"{hdr}\ngreen-since check could not run — this claims neither that the "
+        f"failures below are live nor that they are cured\n{rows}"
+    )
+    assert_eq(
+        "could-not-check render unchanged",
+        render_ci_errors(bscan, GreenScan(checked=False), rnow),
+        could_not,
+    )
+    assert_eq(
+        "green=None render unchanged",
+        render_ci_errors(bscan, None, rnow),
+        could_not,
+    )
+    assert_eq(
+        "no-in-window-failure render unchanged (no verdict line at all)",
+        render_ci_errors(
+            CiScan(ok=True, clusters=[("boom", ["1"], 0.5)], in_window=1), None, rnow
+        ),
+        "## Recurring CI errors (failed runs, last 14 days)\n[1×, last <1d ago] boom",
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
