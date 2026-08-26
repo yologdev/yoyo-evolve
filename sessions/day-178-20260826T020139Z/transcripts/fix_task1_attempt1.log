@@ -1,0 +1,163 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the diff and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && echo "---" && grep … ✓ (10ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/gasp_cli.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/gasp.rs ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,340p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 255,330p src/gasp_cli.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=255 && NR<=300' src/gas… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && …  ▶ $ ls ~/.cargo/registry/src/*/ 2>/dev/null | grep -i "yoagent" | head ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.6 && ls src/ && echo "--- gasp re-export…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && ls src/ && grep -rn "pub fn op… ✓ (5ms)
+ ✓ (5ms)
+  11 tools completed in 33.1s (11 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && sed -n '60,190p' src/git_store…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && grep -n "pub fn \|pub async fn… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && grep -n "DEFAULT_EVENTS_PATH\|…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && grep -n "run.finished\|run.sta… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && grep -rn "run.finished" src/ |…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && sed -n '1,80p' src/event.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "gasp" src/dispatch_sub… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '505,545p' src/dispatch_s… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && sed -n '270,340p' src/git_stor…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0 && sed -n '40,100p' src/state.rs … ✓ (4ms)
+ ✓ (5ms)
+  10 tools completed in 28.3s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^name\|^\[package\]\|^\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct GaspCommon" -A 2… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,255p' src/gasp_cli.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" src/gasp_cli… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '406,470p' src/gasp_cli.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 18.0s (5 ✓)
+
+Now let me add the table test that makes the needs_open_run doc claim true:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/gasp_cli.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (8 → 105 lines)
+            let usage = gasp_usage();
+            for arm in GASP_ARMS {
+                assert!(usage.contains(arm), "usage must name `{arm}`: {usage}");
+  +         }
+  +     }
+  + 
+  +     /// The `resume` table for every arm, built by parsing a real argv rather
+  +     /// than by hand-constructing the variant — so a future field addition
+  +     /// cannot make the table stop describing what the CLI actually builds.
+  +     ///
+  +     /// Exhaustive over `GASP_ARMS` on purpose, and in **both** directions: a
+  +     /// predicate covered only where it fires is vacuous green, and the whole
+  +     /// of #831 is that `session-start` must open a run while the other three
+  +     /// must chain to the one an earlier process opened.
+  +     #[test]
+  +     fn needs_open_run_table() {
+  +         let cases: &[(&str, Vec<String>, bool)] = &[
+  +             (
+  +                 "session-start",
+  +                 argv(&[
+  ... (83 more lines)
+ ✓ (1m 57s)
+            let usage = gasp_usage();
+            for arm in GASP_ARMS {
+                assert!(usage.contains(arm), "usage must name `{arm}`: {usage}");
+  +         }
+  +     }
+  + 
+  +     /// The `resume` table for every arm, built by parsing a real argv rather
+  +     /// than by hand-constructing the variant — so a future field addition
+  ... (13 more lines)
+  2 tools completed in 2m 10s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo needs_open… ✓ (172ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/    !matches!(cmd, Gas… ✓ (23.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "needs_open_run_table" s… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 34.3s (3 ✓)
+
+The positive control passed (flipping the predicate fails the test), but git checkout also reverted my new test. Re-applying it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp_cli.rs (8 → 105 lines)
+            let usage = gasp_usage();
+            for arm in GASP_ARMS {
+                assert!(usage.contains(arm), "usage must name `{arm}`: {usage}");
+  +         }
+  +     }
+  + 
+  +     /// The `resume` table for every arm, built by parsing a real argv rather
+  +     /// than by hand-constructing the variant — so a future field addition
+  +     /// cannot make the table stop describing what the CLI actually builds.
+  +     ///
+  +     /// Exhaustive over `GASP_ARMS` on purpose, and in **both** directions: a
+  +     /// predicate covered only where it fires is vacuous green, and the whole
+  +     /// of #831 is that `session-start` must open a run while the other three
+  +     /// must chain to the one an earlier process opened.
+  +     #[test]
+  +     fn needs_open_run_table() {
+  +         let cases: &[(&str, Vec<String>, bool)] = &[
+  +             (
+  +                 "session-start",
+  +                 argv(&[
+  ... (83 more lines)
+ ✓ (2m 0s)
+            let usage = gasp_usage();
+            for arm in GASP_ARMS {
+                assert!(usage.contains(arm), "usage must name `{arm}`: {usage}");
+  +         }
+  +     }
+  + 
+  +     /// The `resume` table for every arm, built by parsing a real argv rather
+  +     /// than by hand-constructing the variant — so a future field addition
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo needs_open… ✓ (169ms)
+  2 tools completed in 2m 5s (2 ✓)
+
+Now the ordering test. Let me first verify the four-call flow actually works end-to-end against a scratch repo:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (10.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf gasptest && mkdir gasptest && cd gasptest … (13 lines) ✓ (84ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.6 && grep -n "pub async fn open\|pub asy… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AGENT_ID\|WORKER_ID" sr… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 26.5s (3 ✓)
+
+Now the positive control — reproduce the exact upstream interrupt mechanism temporarily:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.… (17 lines) ✓ (10.1s)
+  ▶ $ cd /tmp && rm -rf gasptest2 && mkdir gasptest2 && cd gasptes… (14 lines) ✓ (84ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.1s (2 ✓)
+
+Positive control reproduces #831 exactly. Restoring:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gasp.rs.bak src/gasp.rs … ✓ (10.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^\[dependencies\]/,/^$/… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ordering test:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (234 lines)

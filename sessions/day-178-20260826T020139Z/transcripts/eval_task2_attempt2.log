@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,260p src/git_commit_m… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf q829 && mkdir q829 && cd q829 && git init -q . && git config u… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (174ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 30s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 55s (4 ✓)
+
+Verdict: PASS
+
+Evidence I actually gathered:
+
+1. Real-git fixture check — reproduced the rename in a scratch repo; git show --format= emits diff --git "a/n\303\244me.txt" "b/n\303\240me2.txt" with no ---/+++ lines, byte-identical to the test fixture. The fixtures were not hand-typed guesses.
+2. Implementation read — quoted branch runs before the unquoted `strip_prefix("diff --git a/"); octal escapes accumulate into Vec<u8> and go through String::from_utf8 once (refuses on invalid UTF-8); split_first_quoted walks char_indices` so no byte index can land inside a multi-byte char (#250); unknown escape / short octal / unterminated token / empty path all return None.
+3. Hunk-line half — the task named one site; the diff correctly found two, since a quoted +++ "b/…" would otherwise fall into the /dev/null arm and drop a modified non-ASCII file. Both arms use .or_else, so every unquoted shape stays on its original path.
+4. Tests — cargo test --bin yoyo git_commit_msg → 37 passed. Near-miss guards pin the spaced unquoted path, ordinary modify, add, delete, and #830's ambiguous-separator refusal.
+5. Docs — CLAUDE.md bullet updated in the same commit, records the superseded claim, names the escape set, and states #830 stays open.
+
+Minor cleanup note (not a fail): the diff includes two unrelated cargo fmt reflows in tests/gasp_cli_run_ordering.rs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

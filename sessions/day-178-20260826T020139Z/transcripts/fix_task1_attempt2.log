@@ -1,0 +1,176 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing CLAUDE.md documentation update. Let me first look at the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GaspRecorder" CLAUDE.md… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+The code is done; only the CLAUDE.md update is missing. Let me read the actual change so the docs are accurate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff af29a50d..HEAD -- src/g… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,340p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff af29a50d..HEAD -- src/g… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,245p' src/gasp.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' tests/gasp_cli_ru… ✓ (3ms)
+ ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:205..235  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:262..284 ✓ (0ms)
+ ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (50 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,234p' tests/gasp_cli_… ✓ (1ms)
+ ✓ (5ms)
+  9 tools completed in 15.4s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture of the code change. Let me verify a few remaining claims in the CLAUDE.md bullet before editing, so the correction is accurate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== allow(dead_code) in ga…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MemoryEventStore\|yoage… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "gasp_cli mentions: $(grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dead_code\|ship dormant… ✓ (3ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.1s (4 ✓)
+
+Two stale claims, not one. Let me verify the second before correcting it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_gasp_command\|pars…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 -- src/gasp… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.2s (2 ✓)
+
+Confirmed two stale claims in that bullet — the one the evaluator named (broken by this task) and the dormancy claim (broken by #827 yesterday, which never updated CLAUDE.md). Both verified against the code. Fixing both:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - They take the `&GaspRecorder` and read `recorder.state()` / `recorder.actor()` / `recorder.goal()` — a second `GitEventStore` on the same root is **never** opened, because a GASP repo is single-writer behind a 600s lease and a second store collides with the recorder's rather than cooperating (measured Day 165; it is the whole reason the sidecar cannot run alongside).
+  + They take a `&GraphSession` — a **directly-opened** `GitEventStore` plus `YoAgentState::load`, built by `open_graph_session(plan, resume)` — and read `session.state()` / `session.store()` / `session.actor()` / `session.goal()`. **Superseded claim, recorded rather than erased (Day 178, #831).** This sentence used to read: *"They take the `&GaspRecorder` and read `recorder.state()` / `recorder.actor()` / `recorder.goal()` — a second `GitEventStore` on the same root is **never** opened, because a GASP repo is single-writer behind a 600s lease and a second store collides with the recorder's rather than cooperating (measured Day 165; it is the whole reason the sidecar cannot run alongside)."* The lease fact it cites is still true and is **not** what was wrong; the conclusion drawn from it was, because it answered a question nobody was asking. Two *concurrent* stores do collide — but `scripts/gasp_shim.sh` emits **one event per process**, four short-lived `yoyo gasp` invocations per session, which are **sequential and never concurrent**, so there is no second live store to collide with. What there is instead is the opposite hazard: yoagent 0.16.6's `GaspRecorder::with_store` closes any run a *previous* process left open as `"interrupted"` on **every** open, so call 2 interrupted the run call 1 opened. Measured in #831: call 3 emitted `run.finished`, `task.created` landed **into a finished run**, and `session-end` failed with `cannot finish <run>: no run is open` — **no boundary commit**, so the session's state was never pushed, **with every call still exiting 0**. That last clause is why it survived the door landing and why the test pins *ordering*, not success. The fix is what `tools/gasp-emit` always did and is confined to how the arms acquire their handle: open the store directly, and `resume_open_run()` on every arm **except** `session-start` (`gasp_cli::needs_open_run`, table-tested), so an open run survives the process boundary instead of being closed by its own next event. **`GaspRecorder` remains the correct handle for the in-process run/model/tool tier (#683 item (3)) and that path is byte-identical** — `open_recorder`, `open_recorder_from_env`, `install`, `tee_prompt` / `tee_prompt_messages` and `prompt.rs`'s `start_prompt` seam were not touched: there it is one process and one open, so interrupt-on-open is the right rule. Pinned by `tests/gasp_cli_run_ordering.rs`, which spawns **four real `CARGO_BIN_EXE_yoyo` processes** (the defect does not exist inside one process — the interrupt happens *at open* — so a single-process test calling all four arms against one handle passes on the broken code) against a scratch git repo and asserts **position**: `run.finished` is the **last** domain event, there is **exactly one** of them (two means a run was reaped mid-session), `run.started < task.created < run.finished`, and `session-end` reports a boundary commit. Ordering rather than presence is load-bearing — both columns of #831's measured table emit all the same event kinds, so an exit-code or presence-set check **passes on the broken behaviour**; the presence set is kept only as the anti-vacuous guard, so a log that recorded nothing cannot satisfy "`run.finished` is last" by having nothing to order. Verified against the defect and not only in the passing direction: reintroducing `GaspRecorder::with_store` into `open_graph_session` produced `[goal.created, run.started, run.finished, task.created, …]` with `session-end` failing and committing no boundary.
+ ✓ (1m 37s)
+  - They take the `&GaspRecorder` and read `recorder.state()` / `recorder.actor()` / `recorder.goal()` — a second `GitEventStore` on the same root is **never** opened, because a GASP repo is single-writer behind a 600s lease and a second store collides with the recorder's rather than cooperating (measured Day 165; it is the whole reason the sidecar cannot run alongside).
+  + They take a `&GraphSession` — a **directly-opened** `GitEventStore` plus `YoAgentState::load`, built by `open_graph_session(plan, resume)` — and read `session.state()` / `session.store()` / `session.actor()` / `session.goal()`. **Superseded claim, recorded rather than erased (Day 178, #831).** This sentence used to read: *"They take the `&GaspRecorder` and read `recorder.state()` / `recorder.actor()` / `recorder.goal()` — a second `GitEventStore` on the same root is **never** opened, because a GASP repo is single-writer behind a 600s lease and a second store collides with the recorder's rather than cooperating (measured Day 165; it is the whole reason the sidecar cannot run alongside)."* The lease fact it cites is still true and is **not** what was wrong; the conclusion drawn from it was, because it answered a question nobody was asking. Two *concurrent* stores do collide — but `scripts/gasp_shim.sh` emits **one event per process**, four short-lived `yoyo gasp` invocations per session, which are **sequential and never concurrent**, so there is no second live store to collide with. What there is instead is the opposite hazard: yoagent 0.16.6's `GaspRecorder::with_store` closes any run a *previous* process left open as `"interrupted"` on **every** open, so call 2 interrupted the run call 1 opened. Measured in #831: call 3 emitted `run.finished`, `task.created` landed **into a finished run**, and `session-end` failed with `cannot finish <run>: no run is open` — **no boundary commit**, so the session's state was never pushed, **with every call still exiting 0**. That last clause is why it survived the door landing and why the test pins *ordering*, not success. The fix is what `tools/gasp-emit` always did and is confined to how the arms acquire their handle: open the store directly, and `resume_open_run()` on every arm **except** `session-start` (`gasp_cli::needs_open_run`, table-tested), so an open run survives the process boundary instead of being closed by its own next event. **`GaspRecorder` remains the correct handle for the in-process run/model/tool tier (#683 item (3)) and that path is byte-identical** — `open_recorder`, `open_recorder_from_env`, `install`, `tee_prompt` / `tee_prompt_messages` and `prompt.rs`'s `start_prompt` seam were not touched: there it is one process and one open, so interrupt-on-open is the right rule. Pinned by `tests/gasp_cli_run_ordering.rs`, which spawns **four real `CARGO_BIN_EXE_yoyo` processes** (the defect does not exist inside one process — the interrupt happens *at open* — so a single-process test calling all four arms against one handle passes on the broken code) against a scratch git repo and asserts **position**: `run.finished` is the **last** domain event, there is **exactly one** of them (two means a run was reaped mid-session), `run.started < task.created < run.finished`, and `session-end` reports a boundary commit. Ordering rather than presence is load-bearing — both columns of #831's measured table emit all the same event kinds, so an exit-code or presence-set check **passes on the broken behaviour**; the presence set is kept only as the anti-vacuous guard, so a log that recorded nothing cannot satisfy "`run.finished` is last" by having nothing to order. Verified against the defect and not only in the passing direction: reintroducing `GaspRecorder::with_store` into `open_graph_session` produced `[goal.created, run.started, run.finished, task.created, …]` with `session-end` failing and committing no boundary.
+
+Now the second stale claim in the same bullet — the dormancy sentence, broken by #827:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - All four **ship dormant and that is the correct outcome**: they compile, they unit-test, they record nothing, because their only consumers are #683 items (3)+(7) (the operator-lane env bridge) and wiring the env vars here would destroy the sidecar's session record — every path still lands in `RecorderPlan::Disabled`. `session_start`, `task_planned`, `session_end` and `task_result` are therefore the only items carrying `#[allow(dead_code)]`, each narrowly scoped with a comment naming (3)+(7) as the pending consumer; the pure helpers are genuinely called by `ensure_goal` / `session_start_in` / `task_planned_in` / `session_end`, so they need no allow.
+  + **Superseded claim, recorded rather than erased (Day 178, #827 — and it went stale silently, which is the point).** This bullet used to read: *"All four **ship dormant and that is the correct outcome**: they compile, they unit-test, they record nothing, because their only consumers are #683 items (3)+(7) (the operator-lane env bridge) and wiring the env vars here would destroy the sidecar's session record — every path still lands in `RecorderPlan::Disabled`. `session_start`, `task_planned`, `session_end` and `task_result` are therefore the only items carrying `#[allow(dead_code)]`, each narrowly scoped with a comment naming (3)+(7) as the pending consumer."* True until `0aec6cf5` (Day 178, 21:24), when #827 gave all four a **CLI door** — `yoyo gasp <arm>`, parsed by `gasp_cli::parse_gasp_args` and run by `run_gasp_command`, routed from `dispatch_sub.rs:747` — and **that task did not update CLAUDE.md**, so this file asserted "dormant, records nothing" for a day about arms that had a live door. Checked at correction time rather than assumed: `grep -n 'allow(dead_code)' src/gasp.rs` returns **nothing** (the three remaining ones are in `gasp_cli.rs`, on the plain-build path), and `run_gasp_command` builds its plan from the `--state-dir` flag via `plan_from_env_values`, so it lands in `RecorderPlan::Open`, not `Disabled`. What is **still** true and is the part worth keeping: `scripts/gasp_shim.sh` still invokes the `tools/gasp-emit` sidecar, so the **operator lane has not been swapped** — that atomic swap is #683 item (7) and the env bridge is item (3), both still pending, and both were blocked behind #831 rather than behind anything upstream. The pure helpers are genuinely called by `ensure_goal` / `session_start_in` / `task_planned_in` / `session_end`, so they need no allow.
+ ✓ (1m 34s)
+  - All four **ship dormant and that is the correct outcome**: they compile, they unit-test, they record nothing, because their only consumers are #683 items (3)+(7) (the operator-lane env bridge) and wiring the env vars here would destroy the sidecar's session record — every path still lands in `RecorderPlan::Disabled`. `session_start`, `task_planned`, `session_end` and `task_result` are therefore the only items carrying `#[allow(dead_code)]`, each narrowly scoped with a comment naming (3)+(7) as the pending consumer; the pure helpers are genuinely called by `ensure_goal` / `session_start_in` / `task_planned_in` / `session_end`, so they need no allow.
+  + **Superseded claim, recorded rather than erased (Day 178, #827 — and it went stale silently, which is the point).** This bullet used to read: *"All four **ship dormant and that is the correct outcome**: they compile, they unit-test, they record nothing, because their only consumers are #683 items (3)+(7) (the operator-lane env bridge) and wiring the env vars here would destroy the sidecar's session record — every path still lands in `RecorderPlan::Disabled`. `session_start`, `task_planned`, `session_end` and `task_result` are therefore the only items carrying `#[allow(dead_code)]`, each narrowly scoped with a comment naming (3)+(7) as the pending consumer."* True until `0aec6cf5` (Day 178, 21:24), when #827 gave all four a **CLI door** — `yoyo gasp <arm>`, parsed by `gasp_cli::parse_gasp_args` and run by `run_gasp_command`, routed from `dispatch_sub.rs:747` — and **that task did not update CLAUDE.md**, so this file asserted "dormant, records nothing" for a day about arms that had a live door. Checked at correction time rather than assumed: `grep -n 'allow(dead_code)' src/gasp.rs` returns **nothing** (the three remaining ones are in `gasp_cli.rs`, on the plain-build path), and `run_gasp_command` builds its plan from the `--state-dir` flag via `plan_from_env_values`, so it lands in `RecorderPlan::Open`, not `Disabled`. What is **still** true and is the part worth keeping: `scripts/gasp_shim.sh` still invokes the `tools/gasp-emit` sidecar, so the **operator lane has not been swapped** — that atomic swap is #683 item (7) and the env bridge is item (3), both still pending, and both were blocked behind #831 rather than behind anything upstream. The pure helpers are genuinely called by `ensure_goal` / `session_start_in` / `task_planned_in` / `session_end`, so they need no allow.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check for other now-false instances of the same phrase in the bullet and in the module doc.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== gasp.rs source ===" &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "Like its three siblings… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two more instances of the now-false "dormant" claim — one in CLAUDE.md, one in src/gasp.rs's own module doc (the exact file/defect class that cost eight sessions on #683). Let me see both.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:70..86  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "Naming the half is the … ✓ (1ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.0s (2 ✓)
+
+Critically, my new test does drive the *_in bodies end-to-end — so "Zero tests drive any *_in body" is now false too. Let me check that claim's marker region before correcting.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs:755..781 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the corrections. First src/gasp.rs's module doc — the file agents actually open:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (6 → 24 lines)
+  - //! All four ship **dormant**: nothing calls any of them, since their consumer
+  - //! is #683 items (3)+(7) (the operator-lane env bridge). They compile, their
+  - //! pure halves unit-test, and they record nothing. **Zero tests drive any
+  - //! `*_in` body** — see [`task_result`]'s doc for the measured reason
+  - //! (`MemoryEventStore` is not reachable from this crate's dependency set), so
+  - //! "store-generic" here means the right *shape*, never an exercised one.
+  + //! **Superseded claim, recorded rather than erased (#827, then #831).** This
+  + //! doc read: *"All four ship **dormant**: nothing calls any of them, since
+  + //! their consumer is #683 items (3)+(7) (the operator-lane env bridge). They
+  + //! compile, their pure halves unit-test, and they record nothing."* #827 gave
+  + //! all four a CLI door (`yoyo gasp <arm>`, routed from `dispatch_sub.rs`) and
+  + //! #831 made that door open the store directly, so they are wired, they run,
+  + //! and they record; the `#[allow(dead_code)]` attributes that sentence names
+  + //! are gone from this file. Still true and worth keeping:
+  + //! `scripts/gasp_shim.sh` still invokes the `tools/gasp-emit` sidecar, so the
+  + //! **operator lane has not been swapped** — that is #683 item (7), with the
+  + //! env bridge item (3), both still pending.
+  + //!
+  + //! **Behavioural coverage, stated precisely rather than generously.**
+  + //! `tests/gasp_cli_run_ordering.rs` drives a four-process session through the
+  ... (10 more lines)
+ ✓ (1m 45s)
+  - //! All four ship **dormant**: nothing calls any of them, since their consumer
+  - //! is #683 items (3)+(7) (the operator-lane env bridge). They compile, their
+  - //! pure halves unit-test, and they record nothing. **Zero tests drive any
+  - //! `*_in` body** — see [`task_result`]'s doc for the measured reason
+  - //! (`MemoryEventStore` is not reachable from this crate's dependency set), so
+  - //! "store-generic" here means the right *shape*, never an exercised one.
+  + //! **Superseded claim, recorded rather than erased (#827, then #831).** This
+  + //! doc read: *"All four ship **dormant**: nothing calls any of them, since
+  ... (13 more lines)
+
+Now the same false claim in task_result's doc — keeping the MemoryEventStore claim the version marker pins:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (6 → 13 lines)
+  - /// not resolve. So zero tests drive any `*_in` body, this one included — the
+  - /// split is kept because it is the right shape and becomes testable the moment
+  - /// upstream re-exports the store, not because it is exercised now. What IS
+  - /// tested here is the pure decision half ([`eval_command_or_default`]) and the
+  - /// node-id shapes, which is the same coverage the three siblings actually
+  - /// have.
+  + /// not resolve. So no test drives any `*_in` body against a **scratch** store,
+  + /// this one included; the split is kept because it is the right shape and
+  + /// becomes scratch-testable the moment upstream re-exports the store.
+  + /// **Superseded claim, recorded rather than erased (#831):** this paragraph
+  + /// used to conclude *"So zero tests drive any `*_in` body, this one included
+  + /// — the split is kept … not because it is exercised now."* That stopped
+  + /// being true when `tests/gasp_cli_run_ordering.rs` landed: it drives a
+  + /// four-process session through the real binary against a real
+  + /// `GitEventStore` on a tempdir, so this body **is** exercised end-to-end —
+  + /// just never against a scratch store, which is the narrower claim the
+  + /// `MemoryEventStore` fact above actually supports. What IS also tested here
+  + /// is the pure decision half ([`eval_command_or_default`]) and the node-id
+  + /// shapes.
+ ✓ (1m 46s)
+  - /// not resolve. So zero tests drive any `*_in` body, this one included — the
+  - /// split is kept because it is the right shape and becomes testable the moment
+  - /// upstream re-exports the store, not because it is exercised now. What IS
+  - /// tested here is the pure decision half ([`eval_command_or_default`]) and the
+  - /// node-id shapes, which is the same coverage the three siblings actually
+  - /// have.
+  + /// not resolve. So no test drives any `*_in` body against a **scratch** store,
+  + /// this one included; the split is kept because it is the right shape and
+  ... (11 more lines)
+
+Now the two remaining stale phrases in CLAUDE.md's bullet:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Like its three siblings it ships **dormant** (`#[allow(dead_code)]`, consumer is #683 items (3)+(7)).
+  + Like its three siblings it shipped **dormant** at port time (`#[allow(dead_code)]`, consumer named as #683 items (3)+(7)) — no longer true as of #827/#831; see the correction below.

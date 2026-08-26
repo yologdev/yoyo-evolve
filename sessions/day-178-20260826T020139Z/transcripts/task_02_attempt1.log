@@ -1,0 +1,337 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the issue and the current implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 829 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "diff_header_path" src/g… ✓ (3ms)
+ ✓ (352ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,240p src/git_commit_ms…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,960p src/git_commit_m… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 5.4s (4 ✓)
+
+Now let me capture real fixtures from a scratch git repo rather than hand-typing them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf q829 && mkdir q829 && cd q829 && git init … (12 lines) ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real git output captured. Note something important: the +++/--- lines are quoted too. Let me capture the full shape set.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/q829 && printf 'hello\nworld\nmore\n' > 'nàme2.txt' … (4 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: a quoted +++/--- line also fails its prefix — so a modify and a delete of a non-ASCII path are dropped too, by the same defect one line over. Let me capture the remaining shapes, then write the fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/q829 && printf '\x00\x01binary\x00' > 'bïn.dat' && g… (5 lines) ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All shapes captured — note a quoted path with a space carries a trailing tab separator. Now the implementation:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs:100..145 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, fixtures captured. Now the implementation:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (10 → 32 lines)
+  - /// Deliberately narrow, and both gaps are filed rather than implied. A path containing
+  - /// a literal `" b/"` is genuinely ambiguous, so this returns `None` whenever the
+  - /// separator does not occur exactly once — degrading to the pre-round-81 behaviour (the
+  - /// file is dropped) instead of inventing a path that is not in the diff (#830). And git
+  - /// *quotes* both paths when they contain special characters
+  - /// (`diff --git "a/n\303\244me\"q.txt" "b/..."`), which this prefix does not match, so
+  - /// such a file still vanishes (#829). A path with a plain space is unquoted by git and
+  - /// *is* handled, because the separator still occurs exactly once.
+  + /// Two forms are read. Git *quotes both* paths, or neither: when the path carries a
+  + /// non-ASCII byte, a `"`, or a control character it renders
+  + /// `diff --git "a/n\303\244me\"q.txt" "b/..."` (#829). The quoted form is parsed first
+  + /// and is the unambiguous one — the closing quote terminates the first path, so the
+  + /// separator problem below cannot arise there.
+  + ///
+  + /// Deliberately narrow, and the remaining gap is named rather than implied. In the
+  + /// *unquoted* form a path containing a literal `" b/"` is genuinely ambiguous, so this
+  + /// returns `None` whenever the separator does not occur exactly once — degrading to the
+  + /// pre-round-81 behaviour (the file is dropped) instead of inventing a path that is not
+  + /// in the diff. **#830 is still open**: nothing here resolves that ambiguity, it only
+  + /// refuses it. A path with a plain space is unquoted by git and *is* handled, because
+  ... (20 more lines)
+ ✓ (12.4s)
+  - /// Deliberately narrow, and both gaps are filed rather than implied. A path containing
+  - /// a literal `" b/"` is genuinely ambiguous, so this returns `None` whenever the
+  - /// separator does not occur exactly once — degrading to the pre-round-81 behaviour (the
+  - /// file is dropped) instead of inventing a path that is not in the diff (#830). And git
+  - /// *quotes* both paths when they contain special characters
+  - /// (`diff --git "a/n\303\244me\"q.txt" "b/..."`), which this prefix does not match, so
+  - /// such a file still vanishes (#829). A path with a plain space is unquoted by git and
+  - /// *is* handled, because the separator still occurs exactly once.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A pre-existing unquote_git_path already lives in commands_risk.rs — let me read it before writing a second one.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1580,1650p src/commands_r… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two decoders with opposite failure contracts: the risk model's is deliberately lossy (from_utf8_lossy, unknown escapes kept literal) because a slightly-wrong churn path costs a slightly-wrong score. #829 requires the opposite — refuse rather than invent, since this string lands in git history forever. I'll write a distinct refusing decoder and name the contrast so nobody "de-duplicates" them.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (1 → 1 lines)
+  -             let new_path = unquote_git_path(new_token)?;
+  +             let new_path = unquote_diff_path(new_token)?;
+ ✓ (12.6s)
+  -             let new_path = unquote_git_path(new_token)?;
+  +             let new_path = unquote_diff_path(new_token)?;
+
+Now the two helpers, added directly above diff_header_path:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (1 → 100 lines)
+  + /// Split a git-quoted token off the front of `s`, returning `(token_including_quotes,
+  + /// rest)`.
+  + ///
+  + /// The closing quote is the first unescaped `"`, so a `\"` inside the path does not
+  + /// terminate it. Returns `None` when `s` does not start with a quote or the token is
+  + /// never closed. Every index handed to a slice comes from `char_indices`, so this can
+  + /// never split inside a multi-byte character.
+  + fn split_first_quoted(s: &str) -> Option<(&str, &str)> {
+  +     if !s.starts_with('"') {
+  +         return None;
+  +     }
+  +     let mut escaped = false;
+  +     for (i, c) in s.char_indices().skip(1) {
+  +         if escaped {
+  +             escaped = false;
+  +             continue;
+  +         }
+  +         match c {
+  +             '\\' => escaped = true,
+  +             '"' => {
+  ... (80 more lines)
+ ✓ (14.2s)
+  + /// Split a git-quoted token off the front of `s`, returning `(token_including_quotes,
+  + /// rest)`.
+  + ///
+  + /// The closing quote is the first unescaped `"`, so a `\"` inside the path does not
+  + /// terminate it. Returns `None` when `s` does not start with a quote or the token is
+  + /// never closed. Every index handed to a slice comes from `char_indices`, so this can
+  + /// never split inside a multi-byte character.
+  + fn split_first_quoted(s: &str) -> Option<(&str, &str)> {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The header parse compiles; now I need to wire quoted_hunk_path into the walker (its consumer, in the same edit).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '+++ b/\|strip_prefix("-… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs:288..328 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (5 → 13 lines)
+  -         } else if let Some(path) = line.strip_prefix("+++ b/") {
+  +         } else if let Some(path) = line
+  +             .strip_prefix("+++ b/")
+  +             .map(str::to_string)
+  +             .or_else(|| quoted_hunk_path(line, "+++ ", "b/"))
+  +         {
+                // The hunk names the file itself, so the header mention is redundant.
+  +             // A quoted path (`+++ "b/n\303\244me.txt"`) does not match the plain
+  +             // prefix, so it is read by `quoted_hunk_path` — without which a *modify*
+  +             // of a non-ASCII path falls into the `/dev/null` arm below, which clears
+  +             // the pending header and drops the file (#829).
+                pending_header_path = None;
+                pending_old_path = None;
+  -             files_changed.push(path.to_string());
+  +             files_changed.push(path);
+ ✓ (2m 0s)
+  -         } else if let Some(path) = line.strip_prefix("+++ b/") {
+  +         } else if let Some(path) = line
+  +             .strip_prefix("+++ b/")
+  +             .map(str::to_string)
+  +             .or_else(|| quoted_hunk_path(line, "+++ ", "b/"))
+  +         {
+                // The hunk names the file itself, so the header mention is redundant.
+  +             // A quoted path (`+++ "b/n\303\244me.txt"`) does not match the plain
+  ... (7 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (6 → 11 lines)
+  -         } else if let Some(path) = line.strip_prefix("--- a/") {
+  -             // An *added* file renders `--- /dev/null`, which does not match this
+  -             // prefix, so `pending_old_path` stays `None` and the add path is
+  -             // byte-identical to before.
+  -             pending_old_path = Some(path.to_string());
+  +         } else if let Some(path) = line
+  +             .strip_prefix("--- a/")
+  +             .map(str::to_string)
+  +             .or_else(|| quoted_hunk_path(line, "--- ", "a/"))
+  +         {
+  +             // An *added* file renders `--- /dev/null`, which matches neither form, so
+  +             // `pending_old_path` stays `None` and the add path is byte-identical to
+  +             // before. The quoted form is what lets a *deleted* non-ASCII path still
+  +             // reach the `+++ /dev/null` arm with a name to attribute to (#829).
+  +             pending_old_path = Some(path);
+            } else if line.starts_with('+') {
+ ✓ (2m 1s)
+  -         } else if let Some(path) = line.strip_prefix("--- a/") {
+  -             // An *added* file renders `--- /dev/null`, which does not match this
+  -             // prefix, so `pending_old_path` stays `None` and the add path is
+  -             // byte-identical to before.
+  -             pending_old_path = Some(path.to_string());
+  +         } else if let Some(path) = line
+  +             .strip_prefix("--- a/")
+  +             .map(str::to_string)
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (172ms)
+  5 tools completed in 4m 23s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The only failure is the row that pinned the defect — the quoted header returning None (#829). It decodes correctly now (näme.txt). Replacing that row deliberately, with the reason in-band:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "829\|830\|Ambiguous" sr… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs:1052..1080 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (11 → 44 lines)
+                // Ambiguous: a path containing the separator. Refuse rather than guess a
+                // path that is not in the diff — this degrades to the pre-round-81
+  -             // behaviour (file dropped), which is wrong but honest (#830).
+  +             // behaviour (file dropped), which is wrong but honest. **#830 is still
+  +             // open**: this row pins the refusal, not a fix.
+  +             ("diff --git a/has b/dir/f b/has b/dir/f", None),
+  +             // Quoted headers (#829). This row used to assert `None` — it pinned the
+  +             // defect, not a decision, and is replaced deliberately rather than
+  +             // deleted quietly: git quotes *both* paths when either contains a
+  +             // non-ASCII byte, a `"`, a `\` or a control char, and the decoded path is
+  +             // what belongs in the message.
+                (
+                    "diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\244me.txt\"",
+  -                 None,
+  -             ), // quoted: #829
+  -             ("diff --git a/has b/dir/f b/has b/dir/f", None),
+  +                 Some("näme.txt"),
+  +             ),
+  +             // A rename: the *new* path wins, exactly as in the unquoted form.
+  +             (
+  ... (28 more lines)
+ ✓ (2m 11s)
+                // Ambiguous: a path containing the separator. Refuse rather than guess a
+                // path that is not in the diff — this degrades to the pre-round-81
+  -             // behaviour (file dropped), which is wrong but honest (#830).
+  +             // behaviour (file dropped), which is wrong but honest. **#830 is still
+  +             // open**: this row pins the refusal, not a fix.
+  +             ("diff --git a/has b/dir/f b/has b/dir/f", None),
+  +             // Quoted headers (#829). This row used to assert `None` — it pinned the
+  +             // defect, not a decision, and is replaced deliberately rather than
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (171ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 45s (4 ✓)
+
+Table green. Now the emission-point tests, with fixtures captured verbatim from real git show. Let me check the verb logic first so I predict rather than rubber-stamp:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 360,400p src/git_commit_m… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,435p src/git_commit_m… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Predictions confirmed against the code. Now the emission-point tests, fixtures verbatim from the scratch repo:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (3 → 3 lines)
+        /// The header parse itself, including the case it deliberately refuses.
+        #[test]
+  -     fn diff_header_path_table_PLACEHOLDER() {
+  +     fn diff_header_path_table() {
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git_commit_msg.rs (3 → 168 lines)
+  +     // ---- #829: git-quoted `diff --git` headers ------------------------------------
+  +     //
+  +     // Every fixture below is verbatim `git show --format=` output captured from a
+  +     // scratch repo, not hand-typed — round 81 lost a hypothesis by guessing at an
+  +     // external tool's output format when one `git show` would have settled it.
+  +     // Asserted at the emission point (the string a caller of `generate_commit_message`
+  +     // receives), never on `diff_header_path` one layer below.
+  + 
+  +     /// A content-identical rename of a non-ASCII path: the quoted header is the *only*
+  +     /// line naming the file, so before #829 this rendered the literal `feat(): update
+  +     /// code` — round 81's symptom arriving from a fourth direction.
+  +     #[test]
+  +     fn quoted_header_rename_of_a_non_ascii_path_names_the_file() {
+  +         let diff = "\
+  + diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\240me2.txt\"
+  + similarity index 100%
+  + rename from \"n\\303\\244me.txt\"
+  + rename to \"n\\303\\240me2.txt\"
+  + ";
+  +         let msg = generate_commit_message(diff);
+  ... (148 more lines)
+ ✓ (2m 10s)
+  +     // ---- #829: git-quoted `diff --git` headers ------------------------------------
+  +     //
+  +     // Every fixture below is verbatim `git show --format=` output captured from a
+  +     // scratch repo, not hand-typed — round 81 lost a hypothesis by guessing at an
+  +     // external tool's output format when one `git show` would have settled it.
+  +     // Asserted at the emission point (the string a caller of `generate_commit_message`
+  +     // receives), never on `diff_header_path` one layer below.
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (171ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 44s (2 ✓, 1 ✗)
+
+All 37 pass, and every expected string was predicted from reading the code before running. Now the positive control — a new branch that changes nothing under test is the vacuous-green shape:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/git_c… (12 lines) ✓ (23.5s)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (151ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git_commit… ✓ (146ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.0s (3 ✓)
+
+Control 1 is exactly right: the 6 quoted tests + the table fail, both near-miss guards and all 22 pre-existing tests stay green. Now control 2 — neuter only the +++/--- wiring, isolating the second half:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gcm.… (10 lines) ✓ (23.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both halves are independently load-bearing — control 2 fails exactly the 3 hunk-line tests while the 3 header-only tests stay green. Restoring and running full verification:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gcm.bak src/git_commit_m… ✓ (25.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "open_recorder\|GaspReco… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/gasp_cli_run_ordering.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/gasp.rs |… ✓ (6ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "boundary commit" src/ …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo check --featur… ✓ (9ms)
+ ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 cargo test --feature… ✓ (10.2s)
+  ▶ $ cd /tmp && rm -rf gaspchk && mkdir gaspchk && cd gaspchk && … (6 lines) ✓ (67ms)
+  8 tools completed in 48.8s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 32s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS
+
+The diff does what #831 asked, and I verified it behaviourally rather than by reading:
+
+• The fix is real. All four graph-tier arms (session_start, task_planned, task_result, session_end) now take &GraphSession — a directly-opened GitEventStore + YoAgentState::load, with `resume_open_run on every arm except session-start (decided by the pure, table-tested needs_open_run). grep confirms no GaspRecorder construction survives in src/gasp_cli.rs`.
+• The in-process path is untouched, as the task required — the diff spans only src/gasp.rs, src/gasp_cli.rs, the new test and CLAUDE.md, so open_recorder/install/`tee_prompt/prompt.rs` are byte-identical.
+• Verified end-to-end by hand, not just by the test: a real multi-process yoyo gasp session against a scratch repo emitted `goal.created, run.started, task.created, run.finished with run.finished **last** and printed gasp boundary commit: ed98ca4b…`. That is exactly the inversion #831 measured, now correct.
+• cargo test --features gasp --test gasp_cli_run_ordering passes; cargo check --features gasp --all-targets is clean, so no definition landed without its consumer.
+• Docs: the CLAUDE.md bullet, the module doc and run_gasp_command's doc all record the superseded claims rather than erasing them, including the now-false "zero tests drive any *_in body" line.
+
+Nothing behind the default-off gasp feature touches product surface, so #448 doesn't apply. Verdict written to session_plan/eval_task_1.md.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp.rs" CLAUDE.md | he… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff af29a50d..HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff af29a50d..HEAD -- CLAUD… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gasp_cli\|yoyo gasp\|op…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 --name-only… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WORKER_ID\|AGENT_ID" sr… ✓ (3ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 20s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 2m 9s (8 ✓)
+
+Verdict: FAIL — on doc_sync only.
+
+The implementation itself is good work:
+• src/gasp_cli.rs:323 swaps `gasp::open_recorder for gasp::open_graph_session(plan, needs_open_run(&cmd)); all four graph-tier arms now take &GraphSession backed by a directly-opened GitEventStore + YoAgentState, with resume_open_run() on every arm except session-start` — mirroring the sidecar.
+• The in-process tier (open_recorder, open_recorder_from_env, install, tee_prompt) is untouched, as #831 required.
+• The ordering test spawns four real processes (the defect only exists across opens) and asserts position — run.finished last, exactly one of them, run.started < task.created < run.finished — plus a presence set so it can't pass vacuously, plus the boundary-commit payload. That's the load-bearing shape the task asked for, and the module doc records that it was verified against the reintroduced defect.
+• needs_open_run is pure, exhaustive over GASP_ARMS in both directions, and table-tested in a plain build.
+
+What sinks it: the fourth Definition-of-Done item wasn't done. git diff af29a50d..HEAD --stat shows only src/gasp.rs, src/gasp_cli.rs and the new test — no CLAUDE.md. The gasp.rs bullet still says verbatim "They take the `&GaspRecorder` and read `recorder.state()` / `recorder.actor()` / `recorder.goal()` — a second `GitEventStore` on the same root is **never** opened", which this diff makes flatly false. The superseded-claim record landed in src/gasp_cli.rs's doc comment but not in the file that gets re-injected as authoritative context every session — the exact stale-prose failure mode this repo documents as having cost eight sessions on #683.
+
+Cheap to fix in a fix attempt: one CLAUDE.md hunk correcting the bullet and recording the superseded sentence.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
