@@ -890,9 +890,37 @@ fn decompose_identifier(ident: &str) -> Vec<String> {
 }
 
 /// Common stop words filtered out of queries.
+///
+/// Keywords are matched as **substrings** against path components and symbol names, so a
+/// noise word is not merely useless — it is actively harmful: every file it happens to
+/// touch gains points, and per-keyword scoring caps each real keyword's contribution, so
+/// enough noise hits can outrank a file matching fewer but genuinely relevant terms
+/// (#837, measured: `"does"` hit 5 of the top 8 files for `"how does the web search tool
+/// work in this project"`, pushing `src/commands_web.rs` — the canonical implementation —
+/// out of the top 3).
+///
+/// The list therefore covers the whole scaffolding of a natural-language *question*:
+/// articles, prepositions, pronouns, and — added in #837 — the auxiliary-verb and
+/// interrogative families a question is built from.
+///
+/// `work`/`works`/`working` is a **judgment call, not a measurement**, and it is
+/// deliberately included. In "how does the watch loop work" it reads as a content word,
+/// but it discriminates nothing (every file "works"), while as a substring it matches the
+/// entire `worker` / `workflow` / `workspace` / `worktree` family. Its expected
+/// contribution is noise under both readings. A user who actually wants worker code
+/// writes `worker`/`worktree`/`workflow`, which are separate tokens and unaffected.
 const STOP_WORDS: &[&str] = &[
-    "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it",
-    "this", "that", "my", "do", "how",
+    // articles, prepositions, conjunctions
+    "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it", "at",
+    "as", "by", "from", "about", "into", // demonstratives / pronouns
+    "this", "that", "these", "those", "my", "me", "i", "we", "you", "your", "its", "there",
+    // auxiliary / modal verbs (#837)
+    "do", "does", "did", "done", "be", "been", "being", "am", "was", "were", "has", "have", "had",
+    "can", "could", "should", "would", "will", "shall", "may", "might", "must",
+    // interrogatives (#837)
+    "how", "what", "where", "when", "why", "who", "whom", "which",
+    // generic verbs of operation — see the doc comment above for the `work` decision (#837)
+    "work", "works", "working",
 ];
 
 /// Tokenize a natural-language query into keywords.
@@ -929,11 +957,45 @@ struct RelevanceResult {
     matched_keywords: Vec<String>,
 }
 
+/// Does this symbol name look like a test item?
+///
+/// **Scoring only.** `/outline`, `/def`, `/index` and every other display path still see
+/// every symbol; this decides only what gets *ranked* by [`score_files`], never what gets
+/// *shown*.
+///
+/// Why it exists (#837, measured): `src/commands_project.rs` earned its `web` and `search`
+/// points for the query "how does the web search tool work in this project" from its own
+/// test's name, `test_auto_context_web_search_returns_relevant_files` — the test
+/// self-boosting the file it tests. Generally, `#[cfg(test)]` names are English prose, and
+/// English prose is exactly what a natural-language query matches, so it is a noise source
+/// that grows with every session that adds a test.
+///
+/// **This is a name heuristic, not a real signal.** `crate::symbols::Symbol` carries no
+/// `#[cfg(test)]` information, and adding one would ripple into `/outline`, `/def` and
+/// `/index` — a different task. The known cost of the approximation, stated rather than
+/// left for the next reader to discover: a production symbol genuinely named
+/// `test_connection` is dropped from *scoring*. It is still displayed everywhere, and the
+/// only consequence is that one query ranks it slightly worse.
+///
+/// Matched shapes: a `test_` prefix, a `_test`/`_tests` suffix, and the bare names `test`
+/// and `tests` (Rust's `mod tests` yields a Module symbol named exactly that).
+fn symbol_name_looks_like_test(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "test"
+        || lower == "tests"
+        || lower.starts_with("test_")
+        || lower.ends_with("_test")
+        || lower.ends_with("_tests")
+}
+
 /// Score files from a repo map against a set of keywords.
 ///
 /// Scoring:
 ///   - Filename component match (split by `/`, `_`, `.`): 3 points per keyword
 ///   - Symbol name match (function/struct/enum names): 2 points per keyword
+///
+/// Symbols whose names look like tests are excluded from the symbol half — see
+/// [`symbol_name_looks_like_test`]. This is scoring only; display paths are untouched.
 ///
 /// Matches are case-insensitive substring matches.
 fn score_files(files: &[FileSymbols], keywords: &[String]) -> Vec<RelevanceResult> {
@@ -960,8 +1022,14 @@ fn score_files(files: &[FileSymbols], keywords: &[String]) -> Vec<RelevanceResul
             }
 
             // Symbol name matching (2x weight)
-            // Decompose camelCase/snake_case symbol names for better matching
+            // Decompose camelCase/snake_case symbol names for better matching.
+            // Test-named symbols are skipped: their names are English prose, which is
+            // exactly what a natural-language query matches (#837). Scoring only —
+            // display paths still see every symbol.
             for sym in &file.symbols {
+                if symbol_name_looks_like_test(&sym.name) {
+                    continue;
+                }
                 let sym_lower = sym.name.to_lowercase();
                 let sym_parts = decompose_identifier(&sym.name);
                 let matched_via_decomposed = sym_parts.iter().any(|p| p == kw.as_str());
@@ -2779,46 +2847,203 @@ mod tests {
 
     // --- auto_context_for_prompt tests ---
 
+    /// Smoke check only (#837).
+    ///
+    /// This test used to assert a *ranking* property of this repository as it exists right
+    /// now — which drifts with every session that adds a symbol, and whose recency boost
+    /// (`get_recent_git_files` → `git diff --name-only HEAD~5`) reads the working tree and
+    /// behaves differently on a shallow clone than on a deep one. That is why it was green
+    /// on CI and red on a full clone: the assertion's subject was the environment, not the
+    /// code. It is kept, not deleted, and reduced to what it can honestly assert about a
+    /// live repo — it runs, it does not panic, its shape invariants hold.
+    ///
+    /// The ranking claim it used to make is now pinned by the fixture tests below, which
+    /// score synthetic `FileSymbols` and so do not depend on the repo's state at all.
     #[test]
     fn test_auto_context_web_search_returns_relevant_files() {
-        // A prompt about "web search" should return web-related files from this repo.
-        // With recency boosting, recently-edited files with matching symbols (e.g.,
-        // tools.rs containing WebSearchTool) may rank higher than commands_web.rs.
         let results = auto_context_for_prompt(
             "how does the web search tool work in this project",
             &[],
             &no_restrictions(),
         );
-        // Should return at least one file, and it should be web-related
-        assert!(
-            !results.is_empty(),
-            "web search query should return relevant files"
-        );
-        let paths: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
-        let has_web_path = paths.iter().any(|p| p.contains("web"));
-        // Also check the signature block for web-related symbols (e.g. WebSearchTool
-        // in tools.rs), since recency boosting may promote files whose path doesn't
-        // contain "web" but whose symbols do.
-        let sig_has_web = results
-            .iter()
-            .find(|(p, _)| p == SIGNATURE_SENTINEL)
-            .is_some_and(|(_, content)| content.to_lowercase().contains("web"));
-        assert!(
-            has_web_path || sig_has_web,
-            "results should include a web-related file or web symbols in signatures, got: {:?}",
-            paths
-        );
-        // Should return at most MAX_FILES file entries (plus optional signature block)
+        // Shape invariants that hold whatever this repo currently contains: at most
+        // MAX_FILES file entries (plus an optional signature block), and no empty entries.
         let file_count = results
             .iter()
             .filter(|(p, _)| p != SIGNATURE_SENTINEL)
             .count();
         assert!(file_count <= AUTO_CONTEXT_MAX_FILES);
-        // Each result should have non-empty content
         for (path, content) in &results {
             assert!(!path.is_empty());
             assert!(!content.is_empty());
         }
+    }
+
+    /// Fixture-scored version of the ranking claim the smoke test above gave up (#837).
+    ///
+    /// Two synthetic files shaped like the real ones the reporter measured: a
+    /// `commands_web.rs`-shaped file (path carries `web`, a dozen web-named production
+    /// symbols) and a `commands_project.rs`-shaped file that matches four keywords of the
+    /// raw query — two of them noise (`does`, `work`) and one of the real ones coming from
+    /// a test-named symbol. Before this fix the second file outscored the first (11 vs 7 in
+    /// the reporter's instrumented run) and `AUTO_CONTEXT_MAX_FILES = 3` cut the canonical
+    /// implementation out of the injected set entirely.
+    #[test]
+    fn test_score_files_web_query_ranks_canonical_file_first() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        fn sym(name: &str) -> Symbol {
+            Symbol {
+                name: name.into(),
+                kind: SymbolKind::Function,
+                is_public: true,
+                line: 1,
+            }
+        }
+
+        let files = vec![
+            FileSymbols {
+                path: "src/commands_web.rs".into(),
+                lines: 1400,
+                symbols: vec![
+                    sym("web_search"),
+                    sym("web_search_and_read"),
+                    sym("web_fetch"),
+                    sym("ddg_search"),
+                    sym("exa_search"),
+                    sym("format_web_results"),
+                    sym("WebSearchResult"),
+                    sym("handle_web"),
+                    sym("web_read_url"),
+                    sym("search_provider"),
+                    sym("parse_search_response"),
+                    sym("web_cache_key"),
+                ],
+            },
+            FileSymbols {
+                // Matches "project" honestly, and would match "web"/"search"/"tool" only
+                // through the name of its own test — the self-boost #837 removes.
+                path: "src/commands_project.rs".into(),
+                lines: 3300,
+                symbols: vec![
+                    sym("auto_context_for_prompt"),
+                    sym("detect_project_type"),
+                    sym("test_auto_context_web_search_returns_relevant_files"),
+                    sym("test_web_search_tool_ranking"),
+                ],
+            },
+            FileSymbols {
+                // A `tests/*.rs` integration file: its `#[test] fn`s are NOT inside a
+                // `#[cfg(test)]` module, so `symbols::extract_symbols` does extract them
+                // and they used to score as pure noise.
+                path: "tests/integration.rs".into(),
+                lines: 900,
+                symbols: vec![
+                    sym("test_tool_does_work"),
+                    sym("test_search_does_work"),
+                    sym("test_web_flow_works"),
+                ],
+            },
+        ];
+
+        let keywords = tokenize_query("how does the web search tool work in this project");
+        let results = score_files(&files, &keywords);
+
+        assert!(!results.is_empty(), "query should match something");
+        assert_eq!(
+            results[0].path, "src/commands_web.rs",
+            "the canonical implementation must rank first, got: {:?}",
+            results
+                .iter()
+                .map(|r| (r.path.as_str(), r.score))
+                .collect::<Vec<_>>()
+        );
+
+        // The integration-test file matched only through test-function names and noise
+        // keywords, so it must not be scored at all.
+        assert!(
+            !results.iter().any(|r| r.path == "tests/integration.rs"),
+            "a file matching only test-fn names and noise words must not score"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_query_drops_auxiliaries_and_interrogatives() {
+        // The #837 query verbatim: "does" and "work" must not survive.
+        let tokens = tokenize_query("how does the web search tool work in this project");
+        assert_eq!(tokens, vec!["web", "search", "tool", "project"]);
+        assert!(!tokens.iter().any(|t| t == "does"));
+
+        // The `work`/`works`/`working` decision, pinned either way (see STOP_WORDS docs).
+        assert!(tokenize_query("how the watch loop works")
+            .iter()
+            .all(|t| t != "works"));
+        // ...but the genuinely specific worker/worktree family is untouched.
+        let wt = tokenize_query("how do spawn worktrees work");
+        assert!(wt.contains(&"worktrees".to_string()), "got {wt:?}");
+    }
+
+    #[test]
+    fn test_symbol_name_looks_like_test_covers_shapes_and_near_misses() {
+        // Test shapes — excluded from scoring.
+        assert!(symbol_name_looks_like_test("test_auto_context"));
+        assert!(symbol_name_looks_like_test("tests"));
+        assert!(symbol_name_looks_like_test("test"));
+        assert!(symbol_name_looks_like_test("roundtrip_test"));
+        assert!(symbol_name_looks_like_test("parser_tests"));
+
+        // Near-miss guard: real production symbols must still score. A discriminator
+        // tested only on the side that fires is vacuous green.
+        assert!(!symbol_name_looks_like_test("latest_snapshot"));
+        assert!(!symbol_name_looks_like_test("attestation"));
+        assert!(!symbol_name_looks_like_test("handle_web_search"));
+        assert!(!symbol_name_looks_like_test("contest"));
+        // The stated cost of the heuristic: this one IS a production name and IS dropped
+        // from scoring (still displayed by /outline, /def, /index).
+        assert!(symbol_name_looks_like_test("test_connection"));
+    }
+
+    #[test]
+    fn test_score_files_skips_test_named_symbols() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        let files = vec![FileSymbols {
+            path: "src/thing.rs".into(),
+            lines: 10,
+            symbols: vec![
+                Symbol {
+                    name: "test_web_search_helper".into(),
+                    kind: SymbolKind::Function,
+                    is_public: false,
+                    line: 1,
+                },
+                Symbol {
+                    name: "unrelated".into(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 2,
+                },
+            ],
+        }];
+
+        let kws = vec!["web".to_string()];
+        assert!(
+            score_files(&files, &kws).is_empty(),
+            "a keyword matching only a test-named symbol must not score"
+        );
+
+        // Near-miss: the same keyword against a production symbol still scores.
+        let files2 = vec![FileSymbols {
+            path: "src/thing.rs".into(),
+            lines: 10,
+            symbols: vec![Symbol {
+                name: "web_helper".into(),
+                kind: SymbolKind::Function,
+                is_public: true,
+                line: 1,
+            }],
+        }];
+        assert_eq!(score_files(&files2, &kws).len(), 1);
     }
 
     #[test]
