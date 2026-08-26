@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff focused on the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/format/diff.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,200p src/format/diff.… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (149ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (53.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 18s (4 ✓)
+
+Verdict: PASS
+
+The diff does what the task asked, and the parts that were most likely to go wrong are the parts that were done right:
+
+• Decision half is pure and correct. truncate_diff_line returns None at-or-under budget (caller emits verbatim), and the over-budget path walks b back to is_char_boundary before slicing — no raw byte index, so the multi-byte case can't panic. The dropped-byte count is computed against the walked-back boundary, so a straddling char is counted whole.
+• **Ordering is right and documented.** Truncation happens on the raw `line` before any `Color::` wrapping, with the load-bearing comment at the call site explaining why (cutting inside an escape / dropping the trailing RESET).
+• Scope held. Only the three content-line arms; MAX_DIFF_LINES, hunk headers, the ··· separator and truncate_diff_preview untouched, with the non-sweep named in CLAUDE.md rather than smuggled.
+• Tests at the emission point, both directions. Ran `cargo test --bin yoyo format::diff → 24 passed. The near-miss guard uses a whole-string assert_eq!` on an ordinary diff, which is the assertion that actually proves normal diffs are unchanged; boundary is pinned at the cap and one past.
+• Touchpoints: both new definitions have their consumer in this same diff; the combined Keep|Delete|Insert pattern with an inner three-arm match stays exhaustive.
+
+No cleanup feedback — the diff is two files, no stray artifacts.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

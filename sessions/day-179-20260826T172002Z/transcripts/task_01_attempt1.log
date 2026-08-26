@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 0 — verify the reading before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'MAX_DIFF_LINES\|truncat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/diff.rs && grep… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Step 0 confirms the reading: only MAX_DIFF_LINES (a Vec::truncate on line count), no width bound, no is_char_boundary anywhere. Let me read the full file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs:1..181 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'elided' src/commands_ru…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '180,356p' src/format/dif… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,140p' src/commands_ru… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 40.5s (4 ✓)
+
+Reading confirmed — three content-line emission points (lines 130–139) wrap the raw line in colour, and nothing bounds its width. Writing the tests first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs (2 → 112 lines)
+  +     // --- per-line width bound -------------------------------------------------
+  +     //
+  +     // The decision half is asserted directly, and every consequence is asserted
+  +     // at the emission point — the string a caller of `format_edit_diff`
+  +     // receives, never the helper one layer below it.
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_line_under_budget_returns_none() {
+  +         // `None` means "emit the line verbatim". This is essentially every line
+  +         // of every hand-sized diff, and so the whole regression surface.
+  +         assert_eq!(truncate_diff_line("short line", MAX_DIFF_LINE_WIDTH), None);
+  +         assert_eq!(truncate_diff_line("", MAX_DIFF_LINE_WIDTH), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_line_boundary_in_both_directions() {
+  +         // Exactly at the cap is NOT truncated; one byte past is. A discriminator
+  +         // tested only on the side that fires is vacuous green.
+  +         let at_cap = "a".repeat(MAX_DIFF_LINE_WIDTH);
+  +         assert_eq!(truncate_diff_line(&at_cap, MAX_DIFF_LINE_WIDTH), None);
+  ... (92 more lines)
+ ✓ (10.7s)
+  +     // --- per-line width bound -------------------------------------------------
+  +     //
+  +     // The decision half is asserted directly, and every consequence is asserted
+  +     // at the emission point — the string a caller of `format_edit_diff`
+  +     // receives, never the helper one layer below it.
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_line_under_budget_returns_none() {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests are in and failing for the expected reason (helper + const don't exist yet). Now the production half.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && sed -n '1,… ✓ (7ms)
+
+Now the const and the pure decision half:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs (2 → 44 lines)
+    /// Number of context lines to show around each change hunk.
+    const DIFF_CONTEXT_LINES: usize = 3;
+  + 
+  + /// Maximum bytes of a *single* diff line to render before truncating it.
+  + ///
+  + /// This is a **judgment threshold, not a measurement** — nothing measured says
+  + /// 500 is right; it is the point past which a diff line stops being readable
+  + /// and starts being a terminal hazard. `MAX_DIFF_LINES` bounds how many lines
+  + /// render; this bounds how wide one of them may be, which is a different
+  + /// property: a diff touching a base64 blob, a minified JS bundle, a one-line
+  + /// JSON or a lockfile hash is *one* line and so passes the line-count bound
+  + /// untouched, then renders whole through ANSI colouring into the terminal.
+  + ///
+  + /// Measured in bytes rather than display columns, matching `CappedCapture` in
+  + /// `commands_run.rs`. For the shapes this exists for — base64, hashes, minified
+  + /// source — those are the same number.
+  + const MAX_DIFF_LINE_WIDTH: usize = 500;
+  + 
+  + /// Bound one diff line's width, marking the cut in band.
+  + ///
+  ... (24 more lines)
+ ✓ (10.3s)
+    /// Number of context lines to show around each change hunk.
+    const DIFF_CONTEXT_LINES: usize = 3;
+  + 
+  + /// Maximum bytes of a *single* diff line to render before truncating it.
+  + ///
+  + /// This is a **judgment threshold, not a measurement** — nothing measured says
+  + /// 500 is right; it is the point past which a diff line stops being readable
+  + /// and starts being a terminal hazard. `MAX_DIFF_LINES` bounds how many lines
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — definition without consumer. Wiring the call site now (and RESET is a Color newtype, so the test needs .0).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs (11 → 17 lines)
+            match op {
+  -             DiffOp::Keep(line) => {
+  -                 output.push(format!("{DIM}    {line}{RESET}"));
+  -             }
+  -             DiffOp::Delete(line) => {
+  -                 output.push(format!("{RED}  - {line}{RESET}"));
+  -             }
+  -             DiffOp::Insert(line) => {
+  -                 output.push(format!("{GREEN}  + {line}{RESET}"));
+  +             DiffOp::Keep(line) | DiffOp::Delete(line) | DiffOp::Insert(line) => {
+  +                 // Bound the RAW text, then colour it. The ordering is
+  +                 // load-bearing, not stylistic: truncating a string that already
+  +                 // carries ANSI escapes can cut *inside* an escape sequence and
+  +                 // leave the user's terminal stuck in a colour, and it would drop
+  +                 // the trailing RESET entirely. Bounding the content first keeps
+  +                 // every escape this function emits balanced.
+  +                 let bounded = truncate_diff_line(line, MAX_DIFF_LINE_WIDTH);
+  +                 let line = bounded.as_deref().unwrap_or(line);
+  +                 match op {
+  +                     DiffOp::Keep(_) => output.push(format!("{DIM}    {line}{RESET}")),
+  ... (5 more lines)
+ ✓ (10.3s)
+            match op {
+  -             DiffOp::Keep(line) => {
+  -                 output.push(format!("{DIM}    {line}{RESET}"));
+  -             }
+  -             DiffOp::Delete(line) => {
+  -                 output.push(format!("{RED}  - {line}{RESET}"));
+  -             }
+  -             DiffOp::Insert(line) => {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs (1 → 1 lines)
+  -                 line.ends_with(RESET),
+  +                 line.ends_with(RESET.0),
+ ✓ (1m 25s)
+  -                 line.ends_with(RESET),
+  +                 line.ends_with(RESET.0),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::di… ✓ (140ms)
+  3 tools completed in 1m 44s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+24/24 green. Now the positive control the task demands — neuter the helper to always return None and check which tests fail.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (14 lines) ✓ (19.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::di… ✓ (118ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::di… ✓ (118ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 26.5s (3 ✓)
+
+The tool's own output elision is hiding the list — writing it to a file to read the exact five.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo format::di… ✓ (119ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**Positive control passes. Exactly 5 tests fail — all five new truncation tests — while 19 stay green**, including both near-miss guards (`..._ordinary_widths_are_byte_identical and ..._under_budget_returns_none`) and all 13 pre-existing diff tests. Restoring:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/diff_real.rs src/format/… ✓ (19.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored and green. Now the full check suite.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 20s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 37s (2 ✓)
+
+All green — 5209 passed, 0 failed. Confirming no gate anywhere went red:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'FAILE… ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green (11 test binaries ok, zero failures). Now the docs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering
+  + - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering. Day 179 (self-discovered; transferred bug class — Claude Code v2.1.246 shipped the same fix: *"a severe transcript slowdown when a diff contained a very long single line (e.g. a base64 string); such lines now render truncated with a marker"*): a diff is bounded on **two independent properties**, and only one of them existed. `MAX_DIFF_LINES = 20` bounds how **many** lines render; `MAX_DIFF_LINE_WIDTH = 500` bounds how **wide** one of them may be. The second is the one that was missing, and a single line is exactly the shape that walks past the first: a diff touching a base64 blob, a minified JS bundle, a one-line JSON or a lockfile hash is *one* line, so it passed the line-count bound untouched and rendered whole, through ANSI colouring, into the user's terminal. This is on the display path for **every `edit_file` result**, which is why it is `Kind: product` — my own diffs are hand-sized Rust, so the defect is invisible from where I sit, and it is the silent half of the two-audience rule (a wrong default draws complaints; a missing capability draws nothing, forever). It was also the one place the in-band-elision rule was not applied — `/run`, `/ast`, `/bg output` and `never_forecast_clause` all mark their cuts — because the cut did not exist. **`MAX_DIFF_LINE_WIDTH` is a judgment threshold, not a measurement**, and the const's doc comment says so: nothing measured says 500 is right; it is the point past which a diff line stops being readable and starts being a terminal hazard. Measured in **bytes**, matching `CappedCapture` in `commands_run.rs` rather than inventing a second unit — for the shapes it exists for (base64, hashes, minified source) bytes and columns are the same number. The decision half is the pure, table-tested `truncate_diff_line(line, max) -> Option<String>`: **`None` means at-or-under budget and the caller emits the line verbatim**, which is every line of every hand-sized diff and so the whole regression surface, and `Some(_)` is the kept prefix plus a marker in the vocabulary the codebase already uses (`… [yoyo: N more bytes elided — diff lines are capped at N bytes]`) — a silent elision is the bug. It never indexes by a raw byte offset: the prefix walks back to an `is_char_boundary` first, so a multi-byte char straddling the cut is dropped **whole** rather than split (rule #250, and a base64 blob is exactly where a multi-byte neighbour sits). **The truncate-before-colour ordering is load-bearing, not stylistic, and a comment at the call site says so** so a later reader does not "simplify" it: cutting a string that already carries ANSI escapes can land *inside* an escape sequence and leave the terminal stuck in a colour, and would drop the trailing `RESET` entirely — bounding the raw content first keeps every escape the function emits balanced. Applied at the three **content-line** emission points only (`Keep`/`Delete`/`Insert`, now sharing one truncation site); hunk headers and the `···` separator are short by construction and were deliberately left alone rather than blanket-wrapping every write. Pinned at the **emission point** — the string a caller of `format_edit_diff` receives, never the helper one layer below — in both directions: a 5000-char blob renders truncated with the marker and does not reach the terminal whole, a long *context* line is bounded too (same display path), every rendered line still ends with a colour reset, and the **near-miss guard** asserts an ordinary diff renders **byte-identically** via a whole-string `assert_eq!` rather than a `contains` — a discriminator tested only on the side that fires is vacuous green. The boundary is pinned on both sides (exactly at the cap → not truncated; one byte past → truncated). **Positive control run rather than assumed:** neutering the helper to always return `None` fails exactly the five truncation tests and leaves all 19 others green, including both near-miss guards and every pre-existing diff test. **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in.
+ ✓ (53.3s)
+  - - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering
+  + - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering. Day 179 (self-discovered; transferred bug class — Claude Code v2.1.246 shipped the same fix: *"a severe transcript slowdown when a diff contained a very long single line (e.g. a base64 string); such lines now render truncated with a marker"*): a diff is bounded on **two independent properties**, and only one of them existed. `MAX_DIFF_LINES = 20` bounds how **many** lines render; `MAX_DIFF_LINE_WIDTH = 500` bounds how **wide** one of them may be. The second is the one that was missing, and a single line is exactly the shape that walks past the first: a diff touching a base64 blob, a minified JS bundle, a one-line JSON or a lockfile hash is *one* line, so it passed the line-count bound untouched and rendered whole, through ANSI colouring, into the user's terminal. This is on the display path for **every `edit_file` result**, which is why it is `Kind: product` — my own diffs are hand-sized Rust, so the defect is invisible from where I sit, and it is the silent half of the two-audience rule (a wrong default draws complaints; a missing capability draws nothing, forever). It was also the one place the in-band-elision rule was not applied — `/run`, `/ast`, `/bg output` and `never_forecast_clause` all mark their cuts — because the cut did not exist. **`MAX_DIFF_LINE_WIDTH` is a judgment threshold, not a measurement**, and the const's doc comment says so: nothing measured says 500 is right; it is the point past which a diff line stops being readable and starts being a terminal hazard. Measured in **bytes**, matching `CappedCapture` in `commands_run.rs` rather than inventing a second unit — for the shapes it exists for (base64, hashes, minified source) bytes and columns are the same number. The decision half is the pure, table-tested `truncate_diff_line(line, max) -> Option<String>`: **`None` means at-or-under budget and the caller emits the line verbatim**, which is every line of every hand-sized diff and so the whole regression surface, and `Some(_)` is the kept prefix plus a marker in the vocabulary the codebase already uses (`… [yoyo: N more bytes elided — diff lines are capped at N bytes]`) — a silent elision is the bug. It never indexes by a raw byte offset: the prefix walks back to an `is_char_boundary` first, so a multi-byte char straddling the cut is dropped **whole** rather than split (rule #250, and a base64 blob is exactly where a multi-byte neighbour sits). **The truncate-before-colour ordering is load-bearing, not stylistic, and a comment at the call site says so** so a later reader does not "simplify" it: cutting a string that already carries ANSI escapes can land *inside* an escape sequence and leave the terminal stuck in a colour, and would drop the trailing `RESET` entirely — bounding the raw content first keeps every escape the function emits balanced. Applied at the three **content-line** emission points only (`Keep`/`Delete`/`Insert`, now sharing one truncation site); hunk headers and the `···` separator are short by construction and were deliberately left alone rather than blanket-wrapping every write. Pinned at the **emission point** — the string a caller of `format_edit_diff` receives, never the helper one layer below — in both directions: a 5000-char blob renders truncated with the marker and does not reach the terminal whole, a long *context* line is bounded too (same display path), every rendered line still ends with a colour reset, and the **near-miss guard** asserts an ordinary diff renders **byte-identically** via a whole-string `assert_eq!` rather than a `contains` — a discriminator tested only on the side that fires is vacuous green. The boundary is pinned on both sides (exactly at the cap → not truncated; one byte past → truncated). **Positive control run rather than assumed:** neutering the helper to always return `None` fails exactly the five truncation tests and leaves all 19 others green, including both near-miss guards and every pre-existing diff test. **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the production change reads correctly and demonstrate it live:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/format/diff.rs | gr… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/diff.rs && carg… ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.2s (2 ✓)
+
+All four checks green. Committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Done. Committed clean, two files, exactly the stated scope.
+
+## What happened
+
+Step 0 confirmed the reading before I wrote a line. grep returned only MAX_DIFF_LINES = 20 and three truncate calls that are Vec::truncate on line count — no is_char_boundary, no width bound, nothing. The defect was real, so I proceeded. (Had it been false, the deliverable was a note saying so.)
+
+The shape of the hole: a diff is bounded on two independent properties and only one existed. MAX_DIFF_LINES bounds how many lines render. Nothing bounded how wide one is — and a base64 blob, a minified bundle, a one-line JSON is one line, so it sailed past the line-count bound and rendered whole, through ANSI colouring, on the display path for every edit_file result.
+
+What landed:
+• MAX_DIFF_LINE_WIDTH = 500, documented in the const as a judgment threshold, not a measurement.
+• Pure `truncate_diff_line(line, max) -> Option<String>. None = under budget = emit verbatim (the whole regression surface). Some(_) = prefix + in-band marker in CappedCapture`'s existing vocabulary — I copied the shape rather than inventing a second elision dialect.
+• Char-boundary walk-back, never a raw byte index. Rule #250, and base64 is exactly where a multi-byte neighbour sits.
+• Truncate raw, then colour — the three emission points now share one truncation site, with the reason as a comment so nobody "simplifies" it: cutting a string that already carries escapes can land inside one and strand the terminal in a colour.
+
+The verification I actually trust: the positive control. Neutering the helper to always return None failed exactly the 5 truncation tests and left 19 green, including both near-miss guards — the whole-string assert_eq! proving an ordinary diff is byte-identical, and the under-budget None. A new parameter that changes nothing under test is the vacuous-green shape; this one isn't.
+
+Full suite: 5209 passed, 0 failed, clippy clean, fmt clean.
+
+Two things I deliberately did not do, named rather than smuggled: I didn't sweep truncate_diff_preview or the other renderers, and I didn't touch hunk headers. A sweep transfers the fix and silently drops the burden of proof — my archive is explicit about that, and the second door is written into CLAUDE.md instead.
+
+The part worth saying plainly: this was invisible to me for 179 days because my own diffs are hand-sized Rust. It's the silent half of my two-audience rule — a wrong default draws complaints, a missing capability draws nothing, forever.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
