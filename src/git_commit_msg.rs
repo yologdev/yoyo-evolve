@@ -107,6 +107,105 @@ fn file_stem_of(path: &str) -> String {
     name.split('.').next().unwrap_or(name).to_string()
 }
 
+/// Split a git-quoted token off the front of `s`, returning `(token_including_quotes,
+/// rest)`.
+///
+/// The closing quote is the first unescaped `"`, so a `\"` inside the path does not
+/// terminate it. Returns `None` when `s` does not start with a quote or the token is
+/// never closed. Every index handed to a slice comes from `char_indices`, so this can
+/// never split inside a multi-byte character.
+fn split_first_quoted(s: &str) -> Option<(&str, &str)> {
+    if !s.starts_with('"') {
+        return None;
+    }
+    let mut escaped = false;
+    for (i, c) in s.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '"' => {
+                let end = i + c.len_utf8();
+                return Some((&s[..end], &s[end..]));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Decode a git-quoted path token (quotes included) into the real path, or `None`.
+///
+/// Git renders a path in double quotes with C-style escapes whenever it contains a
+/// non-ASCII byte, a `"`, a `\` or a control character. The escape set it emits and
+/// this decodes: three-digit **octal byte** escapes (`\303\244`), `\"`, `\\`, `\t`,
+/// `\n`, `\r`. Octal escapes are *bytes*, not characters, so they are accumulated into
+/// a byte buffer and the whole buffer is interpreted as UTF-8 exactly once at the end.
+///
+/// **It refuses rather than guesses**, and that is the whole difference from its
+/// sibling `commands_risk::unquote_git_path` — do not "de-duplicate" them without
+/// reading this paragraph. That one is deliberately *lossy* (`from_utf8_lossy`, unknown
+/// escapes kept as literals) because it collects churn paths for a risk score, where a
+/// slightly-wrong path costs a slightly-wrong number. This string goes into a commit
+/// message and then into git history forever, so a byte sequence that is not valid
+/// UTF-8, an unknown escape, a short octal run or a lone trailing backslash all return
+/// `None` — the file is dropped, which is wrong but honest, rather than a path being
+/// invented that is not in the diff (round 81's refusal branch, same reasoning).
+fn unquote_diff_path(quoted: &str) -> Option<String> {
+    let inner = quoted.strip_prefix('"')?.strip_suffix('"')?;
+    let mut bytes: Vec<u8> = Vec::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        // A lone trailing backslash has no escape to read: refuse.
+        match chars.next()? {
+            '"' => bytes.push(b'"'),
+            '\\' => bytes.push(b'\\'),
+            't' => bytes.push(b'\t'),
+            'n' => bytes.push(b'\n'),
+            'r' => bytes.push(b'\r'),
+            d @ '0'..='7' => {
+                // Exactly three octal digits, which is what git emits. A shorter run
+                // is a shape we have not seen, so refuse rather than mis-decode.
+                let mut val = d.to_digit(8)?;
+                for _ in 0..2 {
+                    val = val * 8 + chars.next()?.to_digit(8)?;
+                }
+                bytes.push(u8::try_from(val).ok()?);
+            }
+            // An escape git is not known to emit: refuse rather than invent a byte.
+            _ => return None,
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// The path named by a *quoted* `--- "a/<path>"` / `+++ "b/<path>"` hunk line.
+///
+/// The unquoted forms are read by plain `strip_prefix` at the call site and are
+/// untouched by this. Git appends a tab separator after a quoted path that contains a
+/// space, so one trailing tab is tolerated and dropped — it is a separator, not part of
+/// the path.
+fn quoted_hunk_path(line: &str, marker: &str, side: &str) -> Option<String> {
+    let rest = line.strip_prefix(marker)?;
+    let (token, trailing) = split_first_quoted(rest)?;
+    if !trailing.is_empty() && trailing != "\t" {
+        return None;
+    }
+    let path = unquote_diff_path(token)?;
+    let path = path.strip_prefix(side)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path.to_string())
+}
+
 /// The *new* path named by a `diff --git a/<old> b/<new>` header line, if it can be
 /// read unambiguously.
 ///
@@ -116,15 +215,37 @@ fn file_stem_of(path: &str) -> String {
 /// Without it those files vanish from `files_changed` entirely and the scope renders as
 /// the literal empty parens `()`, the same visible symptom as commit `26defce9`.
 ///
-/// Deliberately narrow, and both gaps are filed rather than implied. A path containing
-/// a literal `" b/"` is genuinely ambiguous, so this returns `None` whenever the
-/// separator does not occur exactly once — degrading to the pre-round-81 behaviour (the
-/// file is dropped) instead of inventing a path that is not in the diff (#830). And git
-/// *quotes* both paths when they contain special characters
-/// (`diff --git "a/n\303\244me\"q.txt" "b/..."`), which this prefix does not match, so
-/// such a file still vanishes (#829). A path with a plain space is unquoted by git and
-/// *is* handled, because the separator still occurs exactly once.
+/// Two forms are read. Git *quotes both* paths, or neither: when the path carries a
+/// non-ASCII byte, a `"`, or a control character it renders
+/// `diff --git "a/n\303\244me\"q.txt" "b/..."` (#829). The quoted form is parsed first
+/// and is the unambiguous one — the closing quote terminates the first path, so the
+/// separator problem below cannot arise there.
+///
+/// Deliberately narrow, and the remaining gap is named rather than implied. In the
+/// *unquoted* form a path containing a literal `" b/"` is genuinely ambiguous, so this
+/// returns `None` whenever the separator does not occur exactly once — degrading to the
+/// pre-round-81 behaviour (the file is dropped) instead of inventing a path that is not
+/// in the diff. **#830 is still open**: nothing here resolves that ambiguity, it only
+/// refuses it. A path with a plain space is unquoted by git and *is* handled, because
+/// the separator still occurs exactly once.
 fn diff_header_path(line: &str) -> Option<String> {
+    if let Some(rest) = line.strip_prefix("diff --git ") {
+        if rest.starts_with('"') {
+            // Quoted form: `"a/<old>" "b/<new>"`. The closing quote of the first token
+            // is the separator, so there is nothing to guess.
+            let (_old, tail) = split_first_quoted(rest)?;
+            let (new_token, trailing) = split_first_quoted(tail.strip_prefix(' ')?)?;
+            if !trailing.is_empty() {
+                return None;
+            }
+            let new_path = unquote_diff_path(new_token)?;
+            let new_path = new_path.strip_prefix("b/")?;
+            if new_path.is_empty() {
+                return None;
+            }
+            return Some(new_path.to_string());
+        }
+    }
     let rest = line.strip_prefix("diff --git a/")?;
     let mut parts = rest.match_indices(" b/");
     let (at, _) = parts.next()?;
@@ -175,11 +296,19 @@ pub fn generate_commit_message(diff: &str) -> String {
                 current = None;
             }
             pending_header_path = Some(path);
-        } else if let Some(path) = line.strip_prefix("+++ b/") {
+        } else if let Some(path) = line
+            .strip_prefix("+++ b/")
+            .map(str::to_string)
+            .or_else(|| quoted_hunk_path(line, "+++ ", "b/"))
+        {
             // The hunk names the file itself, so the header mention is redundant.
+            // A quoted path (`+++ "b/n\303\244me.txt"`) does not match the plain
+            // prefix, so it is read by `quoted_hunk_path` — without which a *modify*
+            // of a non-ASCII path falls into the `/dev/null` arm below, which clears
+            // the pending header and drops the file (#829).
             pending_header_path = None;
             pending_old_path = None;
-            files_changed.push(path.to_string());
+            files_changed.push(path);
             per_file_lines.push(0);
             current = Some(files_changed.len() - 1);
         } else if line.starts_with("+++") {
@@ -196,11 +325,16 @@ pub fn generate_commit_message(diff: &str) -> String {
                 // No `---` path to fall back on: nothing to attribute to.
                 None => current = None,
             }
-        } else if let Some(path) = line.strip_prefix("--- a/") {
-            // An *added* file renders `--- /dev/null`, which does not match this
-            // prefix, so `pending_old_path` stays `None` and the add path is
-            // byte-identical to before.
-            pending_old_path = Some(path.to_string());
+        } else if let Some(path) = line
+            .strip_prefix("--- a/")
+            .map(str::to_string)
+            .or_else(|| quoted_hunk_path(line, "--- ", "a/"))
+        {
+            // An *added* file renders `--- /dev/null`, which matches neither form, so
+            // `pending_old_path` stays `None` and the add path is byte-identical to
+            // before. The quoted form is what lets a *deleted* non-ASCII path still
+            // reach the `+++ /dev/null` arm with a name to attribute to (#829).
+            pending_old_path = Some(path);
         } else if line.starts_with('+') {
             insertions += 1;
             if let Some(i) = current {
@@ -913,6 +1047,177 @@ index 94954ab..8b14c4f 100644
         assert_eq!(msg, "feat(renamed2): add changes");
     }
 
+    // ---- #829: git-quoted `diff --git` headers ------------------------------------
+    //
+    // Every fixture below is verbatim `git show --format=` output captured from a
+    // scratch repo, not hand-typed — round 81 lost a hypothesis by guessing at an
+    // external tool's output format when one `git show` would have settled it.
+    // Asserted at the emission point (the string a caller of `generate_commit_message`
+    // receives), never on `diff_header_path` one layer below.
+
+    /// A content-identical rename of a non-ASCII path: the quoted header is the *only*
+    /// line naming the file, so before #829 this rendered the literal `feat(): update
+    /// code` — round 81's symptom arriving from a fourth direction.
+    #[test]
+    fn quoted_header_rename_of_a_non_ascii_path_names_the_file() {
+        let diff = "\
+diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\240me2.txt\"
+similarity index 100%
+rename from \"n\\303\\244me.txt\"
+rename to \"n\\303\\240me2.txt\"
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(nàme2): update code");
+        assert!(!msg.contains("()"), "empty scope regressed: {msg}");
+    }
+
+    /// A `\"` inside the path decodes to a literal quote and does not terminate the
+    /// quoted token early.
+    #[test]
+    fn quoted_header_decodes_an_escaped_quote_in_the_filename() {
+        let diff = "\
+diff --git \"a/has\\\"quote.txt\" \"b/has\\\"quote2.txt\"
+similarity index 100%
+rename from \"has\\\"quote.txt\"
+rename to \"has\\\"quote2.txt\"
+";
+        assert_eq!(
+            generate_commit_message(diff),
+            "feat(has\"quote2): update code"
+        );
+    }
+
+    /// An ordinary *modification* of a non-ASCII path. This is the shape the header
+    /// fix alone does not save: git quotes the `+++` line too, which does not match
+    /// the plain `+++ b/` prefix and so used to fall into the `/dev/null` arm, clear
+    /// the pending header, and drop the file.
+    #[test]
+    fn quoted_hunk_lines_keep_a_modified_non_ascii_path() {
+        let diff = "\
+diff --git \"a/n\\303\\240me2.txt\" \"b/n\\303\\240me2.txt\"
+index 94954ab..8b14c4f 100644
+--- \"a/n\\303\\240me2.txt\"
++++ \"b/n\\303\\240me2.txt\"
+@@ -1,2 +1,3 @@
+ hello
+ world
++more
+";
+        assert_eq!(generate_commit_message(diff), "feat(nàme2): add changes");
+    }
+
+    /// A whole-file *deletion* of a non-ASCII path: the quoted `---` line is the only
+    /// mention of the name (the `+++` side is `/dev/null`), so the quoted form is what
+    /// gives the `/dev/null` arm something to attribute to.
+    #[test]
+    fn quoted_hunk_lines_keep_a_deleted_non_ascii_path() {
+        let diff = "\
+diff --git \"a/n\\303\\240me2.txt\" \"b/n\\303\\240me2.txt\"
+deleted file mode 100644
+index 8b14c4f..0000000
+--- \"a/n\\303\\240me2.txt\"
++++ /dev/null
+@@ -1,3 +0,0 @@
+-hello
+-world
+-more
+";
+        assert_eq!(
+            generate_commit_message(diff),
+            "refactor(nàme2): remove code"
+        );
+    }
+
+    /// A binary change to a non-ASCII path — no `---`/`+++` lines at all.
+    #[test]
+    fn quoted_header_binary_change_names_the_file() {
+        let diff = "\
+diff --git \"a/b\\303\\257n.dat\" \"b/b\\303\\257n.dat\"
+index 57ac8df..5355707 100644
+Binary files \"a/b\\303\\257n.dat\" and \"b/b\\303\\257n.dat\" differ
+";
+        assert_eq!(generate_commit_message(diff), "feat(bïn): update code");
+    }
+
+    /// A quoted path that also contains a space: git appends a tab separator after the
+    /// closing quote on the `---`/`+++` lines. The tab is a separator, not part of the
+    /// path, so it is dropped rather than becoming a character the diff never named.
+    #[test]
+    fn quoted_hunk_path_tolerates_gits_trailing_tab_separator() {
+        let diff = "\
+diff --git \"a/sp \\303\\244ce.txt\" \"b/sp \\303\\244ce.txt\"
+index 587be6b..b77b4eb 100644
+--- \"a/sp \\303\\244ce.txt\"\t
++++ \"b/sp \\303\\244ce.txt\"\t
+@@ -1 +1,2 @@
+ x
++y
+";
+        assert_eq!(generate_commit_message(diff), "feat(sp äce): add changes");
+    }
+
+    /// Near-miss guard: a path with a plain **space** is rendered *unquoted* by git,
+    /// works today, and must keep working byte-identically — the quoted branch must
+    /// not capture it. (Its recorded path keeps git's trailing tab, exactly as before;
+    /// the stem cuts at the first dot, so the scope is unaffected.)
+    #[test]
+    fn unquoted_spaced_path_is_byte_identical_to_before() {
+        let diff = "\
+diff --git a/we ird.txt b/we ird.txt
+index b9bca01..e8df071 100644
+--- a/we ird.txt\t
++++ b/we ird.txt\t
+@@ -1 +1,2 @@
+ plain
++x
+";
+        assert_eq!(generate_commit_message(diff), "feat(we ird): add changes");
+    }
+
+    /// Near-miss guard: the three unquoted shapes fixed on Day 178 (ordinary modify,
+    /// added file, whole-file deletion) are untouched by the quoted branch. A
+    /// discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn unquoted_shapes_are_untouched_by_the_quoted_branch() {
+        let modify = "\
+diff --git a/src/main.rs b/src/main.rs
+index 111..222 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,2 @@
+-old
++new
+";
+        assert_eq!(generate_commit_message(modify), "feat(main): update code");
+
+        let added = "\
+diff --git a/new.txt b/new.txt
+new file mode 100644
+index 0000000..94954ab
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++hello
++world
+";
+        assert_eq!(generate_commit_message(added), "feat(new): add changes");
+
+        let deleted = "\
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+index 94954ab..0000000
+--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-hello
+-world
+";
+        assert_eq!(
+            generate_commit_message(deleted),
+            "refactor(gone): remove code"
+        );
+    }
+
     /// The header parse itself, including the case it deliberately refuses.
     #[test]
     fn diff_header_path_table() {
@@ -934,12 +1239,45 @@ index 94954ab..8b14c4f 100644
             ("", None),
             // Ambiguous: a path containing the separator. Refuse rather than guess a
             // path that is not in the diff — this degrades to the pre-round-81
-            // behaviour (file dropped), which is wrong but honest (#830).
+            // behaviour (file dropped), which is wrong but honest. **#830 is still
+            // open**: this row pins the refusal, not a fix.
+            ("diff --git a/has b/dir/f b/has b/dir/f", None),
+            // Quoted headers (#829). This row used to assert `None` — it pinned the
+            // defect, not a decision, and is replaced deliberately rather than
+            // deleted quietly: git quotes *both* paths when either contains a
+            // non-ASCII byte, a `"`, a `\` or a control char, and the decoded path is
+            // what belongs in the message.
             (
                 "diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\244me.txt\"",
-                None,
-            ), // quoted: #829
-            ("diff --git a/has b/dir/f b/has b/dir/f", None),
+                Some("näme.txt"),
+            ),
+            // A rename: the *new* path wins, exactly as in the unquoted form.
+            (
+                "diff --git \"a/n\\303\\244me.txt\" \"b/n\\303\\240me2.txt\"",
+                Some("nàme2.txt"),
+            ),
+            // `\"` decodes to a literal quote without terminating the token early.
+            (
+                "diff --git \"a/has\\\"quote.txt\" \"b/has\\\"quote2.txt\"",
+                Some("has\"quote2.txt"),
+            ),
+            // The escapes git emits beside octal, and a `\\` that must not eat the
+            // closing quote.
+            (
+                "diff --git \"a/t\\tb.txt\" \"b/back\\\\slash.txt\"",
+                Some("back\\slash.txt"),
+            ),
+            // Refusals, all of which drop the file rather than invent a path:
+            // a byte run that is not valid UTF-8 (a lone 0xFF)…
+            ("diff --git \"a/x\" \"b/\\377bad.txt\"", None),
+            // …an escape git is not known to emit…
+            ("diff --git \"a/x\" \"b/\\qbad.txt\"", None),
+            // …a short octal run…
+            ("diff --git \"a/x\" \"b/\\30\"", None),
+            // …a token that is never closed…
+            ("diff --git \"a/x\" \"b/unterminated", None),
+            // …and a quoted path that is empty after `b/`.
+            ("diff --git \"a/x\" \"b/\"", None),
             // Empty new path.
             ("diff --git a/x b/", None),
         ];

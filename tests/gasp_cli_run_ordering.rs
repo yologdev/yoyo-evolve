@@ -102,8 +102,8 @@ fn domain_event_kinds(state_dir: &Path) -> Vec<String> {
     raw.lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
-            let v: serde_json::Value = serde_json::from_str(l)
-                .unwrap_or_else(|e| panic!("corrupt event line {l:?}: {e}"));
+            let v: serde_json::Value =
+                serde_json::from_str(l).unwrap_or_else(|e| panic!("corrupt event line {l:?}: {e}"));
             v.get("kind")
                 .and_then(|k| k.as_str())
                 .unwrap_or_else(|| panic!("event with no kind: {l}"))
@@ -179,7 +179,10 @@ fn four_call_session_finishes_its_own_run_last() {
         String::from_utf8_lossy(&result.stderr)
     );
 
-    let end = gasp_call(dir, &["session-end", "--run-id", run_id, "--outcome", "done"]);
+    let end = gasp_call(
+        dir,
+        &["session-end", "--run-id", run_id, "--outcome", "done"],
+    );
     assert!(
         end.status.success(),
         "session-end failed: {}",
