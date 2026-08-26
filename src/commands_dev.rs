@@ -696,26 +696,69 @@ pub fn health_checks_for_project(
     }
 }
 
+/// The outcome of one health-check command, in a portable shape.
+///
+/// Deliberately **not** `std::process::Output`: constructing one in a test
+/// needs `ExitStatusExt`, which is platform-specific, and this crate ships
+/// Windows builds. Carrying `success`/`stdout`/`stderr` keeps the decision
+/// half drivable from a test on every target.
+struct CheckOutcome {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// The impure half: actually spawn one health-check command.
+///
+/// This is the only thing the two wrappers below inject, and it is why no
+/// `#[test]` in this module spawns `cargo` any more (#832). A test that shells
+/// `cargo build` rebuilds the bin with whatever feature set the nested
+/// invocation defaults to and uplifts it over the **shared** path
+/// `target/debug/yoyo`, so the featured binary the integration tests reach
+/// through `CARGO_BIN_EXE_yoyo` silently becomes the plain one.
+fn run_check_command(args: &[&str]) -> Result<CheckOutcome, String> {
+    match std::process::Command::new(args[0])
+        .args(&args[1..])
+        .output()
+    {
+        Ok(o) => Ok(CheckOutcome {
+            success: o.status.success(),
+            stdout: String::from_utf8_lossy(&o.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&o.stderr).to_string(),
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Run health checks for a specific project type. Returns (name, passed, detail) tuples.
+///
+/// Thin wrapper over [`run_health_check_for_project_with`], supplying the real
+/// subprocess runner. Output is unchanged.
 pub fn run_health_check_for_project(
     project_type: &ProjectType,
+) -> Vec<(&'static str, bool, String)> {
+    run_health_check_for_project_with(project_type, &run_check_command)
+}
+
+/// Decision/rendering half of [`run_health_check_for_project`], with the
+/// subprocess injected. Same checks, same order, same strings.
+fn run_health_check_for_project_with(
+    project_type: &ProjectType,
+    run: &dyn Fn(&[&str]) -> Result<CheckOutcome, String>,
 ) -> Vec<(&'static str, bool, String)> {
     let checks = health_checks_for_project(project_type);
 
     let mut results = Vec::new();
     for (name, args) in checks {
         let start = std::time::Instant::now();
-        let output = std::process::Command::new(args[0])
-            .args(&args[1..])
-            .output();
+        let output = run(&args);
         let elapsed = format_duration(start.elapsed());
         match output {
-            Ok(o) if o.status.success() => {
+            Ok(o) if o.success => {
                 results.push((name, true, format!("ok ({elapsed})")));
             }
             Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                let first_line = stderr.lines().next().unwrap_or("(unknown error)");
+                let first_line = o.stderr.lines().next().unwrap_or("(unknown error)");
                 results.push((
                     name,
                     false,
@@ -734,32 +777,39 @@ pub fn run_health_check_for_project(
 }
 
 /// Run health checks and capture full error output for failures.
+///
+/// Thin wrapper over [`run_health_checks_full_output_with`], supplying the real
+/// subprocess runner. Output is unchanged.
 pub fn run_health_checks_full_output(
     project_type: &ProjectType,
+) -> Vec<(&'static str, bool, String)> {
+    run_health_checks_full_output_with(project_type, &run_check_command)
+}
+
+/// Decision/rendering half of [`run_health_checks_full_output`], with the
+/// subprocess injected. Same checks, same order, same strings.
+fn run_health_checks_full_output_with(
+    project_type: &ProjectType,
+    run: &dyn Fn(&[&str]) -> Result<CheckOutcome, String>,
 ) -> Vec<(&'static str, bool, String)> {
     let checks = health_checks_for_project(project_type);
 
     let mut results = Vec::new();
     for (name, args) in checks {
-        let output = std::process::Command::new(args[0])
-            .args(&args[1..])
-            .output();
-        match output {
-            Ok(o) if o.status.success() => {
+        match run(&args) {
+            Ok(o) if o.success => {
                 results.push((name, true, String::new()));
             }
             Ok(o) => {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                let stderr = String::from_utf8_lossy(&o.stderr);
                 let mut full_output = String::new();
-                if !stdout.is_empty() {
-                    full_output.push_str(&stdout);
+                if !o.stdout.is_empty() {
+                    full_output.push_str(&o.stdout);
                 }
-                if !stderr.is_empty() {
+                if !o.stderr.is_empty() {
                     if !full_output.is_empty() {
                         full_output.push('\n');
                     }
-                    full_output.push_str(&stderr);
+                    full_output.push_str(&o.stderr);
                 }
                 results.push((name, false, full_output));
             }
@@ -1084,10 +1134,27 @@ mod tests {
 
     #[test]
     fn test_health_check_function() {
-        // run_health_check_for_project skips "cargo test" under #[cfg(test)] to avoid recursion
+        // Driven through `run_health_check_for_project_with` with a stub
+        // runner, never the real one. The pre-#832 version called
+        // `run_health_check_for_project`, which shells a nested, feature-less
+        // `cargo build`; that uplifts the plain binary over the SHARED path
+        // `target/debug/yoyo`, so the featured binary the integration tests
+        // reach through `CARGO_BIN_EXE_yoyo` silently became the plain one.
+        // It also cost ~14s for this one test.
+        // "cargo test" is still skipped under #[cfg(test)] to avoid recursion.
         let project_type = detect_project_type(&std::env::current_dir().unwrap());
         assert_eq!(project_type, ProjectType::Rust);
-        let results = run_health_check_for_project(&project_type);
+
+        let seen = std::cell::RefCell::new(Vec::new());
+        let run = |args: &[&str]| -> Result<CheckOutcome, String> {
+            seen.borrow_mut().push(args.join(" "));
+            Ok(CheckOutcome {
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        };
+        let results = run_health_check_for_project_with(&project_type, &run);
         assert!(
             !results.is_empty(),
             "Health check should return at least one result"
@@ -1102,6 +1169,17 @@ mod tests {
         assert!(
             !results.iter().any(|(name, _, _)| *name == "test"),
             "cargo test check should be skipped to avoid recursion"
+        );
+        // The build check is still literally `cargo build` — pinned here
+        // without ever spawning it.
+        let seen = seen.into_inner();
+        assert!(
+            seen.iter().any(|c| c == "cargo build"),
+            "expected a `cargo build` check, got {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|c| c == "cargo test"),
+            "no `cargo test` check under cfg(test), got {seen:?}"
         );
     }
 
@@ -1166,10 +1244,28 @@ mod tests {
 
     #[test]
     fn test_run_health_checks_full_output_returns_results() {
-        // In a Rust project, should return results with full error output
+        // Driven through `run_health_checks_full_output_with` with a stub
+        // runner — see `test_health_check_function` for why no test in this
+        // module may spawn cargo (#832).
         let project_type = detect_project_type(&std::env::current_dir().unwrap());
         assert_eq!(project_type, ProjectType::Rust);
-        let results = run_health_checks_full_output(&project_type);
+
+        let run = |args: &[&str]| -> Result<CheckOutcome, String> {
+            if args.first() == Some(&"cargo") && args.get(1) == Some(&"build") {
+                Ok(CheckOutcome {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            } else {
+                Ok(CheckOutcome {
+                    success: false,
+                    stdout: "out".to_string(),
+                    stderr: "err".to_string(),
+                })
+            }
+        };
+        let results = run_health_checks_full_output_with(&project_type, &run);
         assert!(
             !results.is_empty(),
             "Should return at least one check result"
@@ -1180,6 +1276,20 @@ mod tests {
                 assert!(passed, "cargo build should pass in test environment");
             }
         }
+        // A failing check reports stdout and stderr joined by a newline — the
+        // branch the pre-#832 test could never reach, since a real `cargo
+        // build` in this repo succeeds.
+        let failed = results
+            .iter()
+            .find(|(_, passed, _)| !*passed)
+            .expect("stub fails every non-build check");
+        assert_eq!(failed.2, "out\nerr");
+        // A passing check carries no captured output.
+        let built = results
+            .iter()
+            .find(|(name, _, _)| *name == "build")
+            .expect("build check present");
+        assert_eq!(built.2, "");
     }
 
     #[test]
