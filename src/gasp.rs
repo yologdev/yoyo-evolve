@@ -70,12 +70,30 @@
 //! against a generic store at all and is compile-tested only (its two pure
 //! halves are table-tested).
 //!
-//! All four ship **dormant**: nothing calls any of them, since their consumer
-//! is #683 items (3)+(7) (the operator-lane env bridge). They compile, their
-//! pure halves unit-test, and they record nothing. **Zero tests drive any
-//! `*_in` body** — see [`task_result`]'s doc for the measured reason
-//! (`MemoryEventStore` is not reachable from this crate's dependency set), so
-//! "store-generic" here means the right *shape*, never an exercised one.
+//! **Superseded claim, recorded rather than erased (#827, then #831).** This
+//! doc read: *"All four ship **dormant**: nothing calls any of them, since
+//! their consumer is #683 items (3)+(7) (the operator-lane env bridge). They
+//! compile, their pure halves unit-test, and they record nothing."* #827 gave
+//! all four a CLI door (`yoyo gasp <arm>`, routed from `dispatch_sub.rs`) and
+//! #831 made that door open the store directly, so they are wired, they run,
+//! and they record; the `#[allow(dead_code)]` attributes that sentence names
+//! are gone from this file. Still true and worth keeping:
+//! `scripts/gasp_shim.sh` still invokes the `tools/gasp-emit` sidecar, so the
+//! **operator lane has not been swapped** — that is #683 item (7), with the
+//! env bridge item (3), both still pending.
+//!
+//! **Behavioural coverage, stated precisely rather than generously.**
+//! `tests/gasp_cli_run_ordering.rs` drives a four-process session through the
+//! real binary against a real `GitEventStore` on a tempdir, so
+//! `session_start_in`, `task_planned_in` and `task_result_in` *are* now
+//! exercised end-to-end — which this module's older "**Zero tests drive any
+//! `*_in` body**" claim denied (it is quoted and corrected in
+//! [`task_result`]'s doc too). What that does **not** license: it is one
+//! happy path, under `--features gasp` only — a plain `cargo test` compiles
+//! this module to nothing — and no test drives an `*_in` body against a
+//! *scratch* store, because `MemoryEventStore` is still not reachable from
+//! this crate's dependency set (see [`task_result`]). "Store-generic" still
+//! means the right *shape*, exercised against exactly one store.
 //!
 //! Redaction is not optional here: recorded summaries land in a *shareable*
 //! git repo, so the recorder is opened with `with_summarizer(redact_secrets)`
@@ -762,12 +780,19 @@ pub(crate) async fn session_end(
 /// lives in `yoagent-state`, which is deliberately *not* a direct dependency
 /// (see Cargo.toml: a default build must never pull it in), and
 /// `yoagent::gasp` does not re-export it. Probed and confirmed: the name does
-/// not resolve. So zero tests drive any `*_in` body, this one included — the
-/// split is kept because it is the right shape and becomes testable the moment
-/// upstream re-exports the store, not because it is exercised now. What IS
-/// tested here is the pure decision half ([`eval_command_or_default`]) and the
-/// node-id shapes, which is the same coverage the three siblings actually
-/// have.
+/// not resolve. So no test drives any `*_in` body against a **scratch** store,
+/// this one included; the split is kept because it is the right shape and
+/// becomes scratch-testable the moment upstream re-exports the store.
+/// **Superseded claim, recorded rather than erased (#831):** this paragraph
+/// used to conclude *"So zero tests drive any `*_in` body, this one included
+/// — the split is kept … not because it is exercised now."* That stopped
+/// being true when `tests/gasp_cli_run_ordering.rs` landed: it drives a
+/// four-process session through the real binary against a real
+/// `GitEventStore` on a tempdir, so this body **is** exercised end-to-end —
+/// just never against a scratch store, which is the narrower claim the
+/// `MemoryEventStore` fact above actually supports. What IS also tested here
+/// is the pure decision half ([`eval_command_or_default`]) and the node-id
+/// shapes.
 ///
 /// That last paragraph is a claim about what an external dependency *cannot*
 /// do — exactly the genre that went stale above and cost eight sessions — so
