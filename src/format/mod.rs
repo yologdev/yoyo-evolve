@@ -232,10 +232,53 @@ pub fn disable_color() {
     let _ = COLOR_DISABLED.set(true);
 }
 
+/// The decision half of [`color_enabled`], with the environment read lifted out
+/// (the same pure-core-plus-thin-wrapper split used by `apply_effort_hint_with`,
+/// `usage_print_line` and `context_budget_warning_with`).
+///
+/// `no_color_set` is whether the `NO_COLOR` environment variable is present at
+/// all — per <https://no-color.org/> its *value* is irrelevant, presence is the
+/// signal.
+pub(crate) fn color_enabled_from_env(no_color_set: bool) -> bool {
+    !no_color_set
+}
+
 /// Check if color output is enabled. Cached after first call.
 /// Respects the NO_COLOR environment variable (https://no-color.org/).
+///
+/// This is the only reader of the process-global `COLOR_DISABLED` state; the
+/// decision itself lives in [`color_enabled_from_env`].
+///
+/// Under `cfg(test)` this is pinned to `true`. `COLOR_DISABLED` is a write-once
+/// `OnceLock` seeded from the ambient `NO_COLOR`, with no setter that can force
+/// it either way, so without the pin ~20 tests across 8 modules assert whichever
+/// branch the *environment* happened to choose: `cargo test` is green and
+/// `NO_COLOR=1 cargo test` fails 20 tests that never changed. In this loop a
+/// `cargo test` failure means `git reset --hard`, so an inherited `NO_COLOR`
+/// would revert a whole session's valid work and read as "the task broke the
+/// build".
+///
+/// `true` is the byte-identical value: without `NO_COLOR` set — the state in
+/// which the suite passes today — this already returns `true`, so the pin
+/// changes nothing about `cargo test` and only makes the `NO_COLOR=1` run match
+/// it. Production is untouched (`cfg(test)` code never ships).
+///
+/// Do not "helpfully" delete the pin to restore coverage of the disabled
+/// branch: no test could observe that branch before either (write-once,
+/// env-seeded, no setter) — it was ambient luck, not coverage. The decision is
+/// covered instead by `color_enabled_from_env`'s table test, in both
+/// directions. Note this is a *different* switch from `is_plain_output()`
+/// (`--screen-reader`), which is an `AtomicBool` with a real setter and is
+/// deliberately left alone.
 fn color_enabled() -> bool {
-    !*COLOR_DISABLED.get_or_init(|| std::env::var("NO_COLOR").is_ok())
+    #[cfg(test)]
+    {
+        true
+    }
+    #[cfg(not(test))]
+    {
+        color_enabled_from_env(*COLOR_DISABLED.get_or_init(|| std::env::var("NO_COLOR").is_ok()))
+    }
 }
 
 // --- Stderr TTY detection (cached) ---
@@ -969,6 +1012,24 @@ pub fn truncate(s: &str, max: usize) -> &str {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    /// The decision half of `color_enabled`, driven in **both** directions —
+    /// a discriminator tested only on the side that fires is vacuous green.
+    ///
+    /// This is what replaces the coverage the `cfg(test)` pin in
+    /// `color_enabled` appears to remove. Nothing was actually lost: the
+    /// disabled branch was never observable from a test in the first place
+    /// (`COLOR_DISABLED` is a write-once `OnceLock` seeded from the ambient
+    /// environment, with no setter), so what looked like coverage was the
+    /// runner's environment, not an assertion. Here the rule itself is pinned.
+    #[test]
+    fn color_enabled_from_env_table() {
+        // NO_COLOR present (any value, per no-color.org) -> colour off.
+        assert!(!color_enabled_from_env(true));
+        // NO_COLOR absent -> colour on. This is the value the `cfg(test)` pin
+        // hardcodes, which is why `cargo test` is byte-identical to before.
+        assert!(color_enabled_from_env(false));
+    }
 
     /// Serializes tests that touch the process-wide `LAST_WARNED_THRESHOLD`
     /// static. `cargo test` runs tests in parallel threads by default, so
