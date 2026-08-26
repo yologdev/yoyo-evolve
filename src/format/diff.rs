@@ -8,6 +8,48 @@ const MAX_DIFF_LINES: usize = 20;
 /// Number of context lines to show around each change hunk.
 const DIFF_CONTEXT_LINES: usize = 3;
 
+/// Maximum bytes of a *single* diff line to render before truncating it.
+///
+/// This is a **judgment threshold, not a measurement** — nothing measured says
+/// 500 is right; it is the point past which a diff line stops being readable
+/// and starts being a terminal hazard. `MAX_DIFF_LINES` bounds how many lines
+/// render; this bounds how wide one of them may be, which is a different
+/// property: a diff touching a base64 blob, a minified JS bundle, a one-line
+/// JSON or a lockfile hash is *one* line and so passes the line-count bound
+/// untouched, then renders whole through ANSI colouring into the terminal.
+///
+/// Measured in bytes rather than display columns, matching `CappedCapture` in
+/// `commands_run.rs`. For the shapes this exists for — base64, hashes, minified
+/// source — those are the same number.
+const MAX_DIFF_LINE_WIDTH: usize = 500;
+
+/// Bound one diff line's width, marking the cut in band.
+///
+/// `None` means the line is at or under budget and the caller must emit it
+/// **verbatim** — that is every line of every hand-sized diff, i.e. the whole
+/// regression surface. `Some(_)` is the kept prefix plus a marker naming what
+/// was dropped, in the vocabulary `CappedCapture` and `cap_ast_output` already
+/// use; a silent elision is the bug this closes.
+///
+/// Never indexes by a raw byte offset — the kept prefix walks back to a
+/// `is_char_boundary` first, so a multi-byte character straddling the cut is
+/// dropped whole rather than split (CLAUDE.md rule #250; a base64 blob is
+/// exactly where a multi-byte neighbour sits).
+fn truncate_diff_line(line: &str, max: usize) -> Option<String> {
+    if line.len() <= max {
+        return None;
+    }
+    let mut b = max;
+    while b > 0 && !line.is_char_boundary(b) {
+        b -= 1;
+    }
+    let dropped = line.len() - b;
+    Some(format!(
+        "{}… [yoyo: {dropped} more bytes elided — diff lines are capped at {max} bytes]",
+        &line[..b]
+    ))
+}
+
 /// Operations produced by the LCS diff algorithm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DiffOp<'a> {
@@ -127,14 +169,20 @@ pub fn format_edit_diff(old_text: &str, new_text: &str) -> String {
         last_visible = Some(idx);
 
         match op {
-            DiffOp::Keep(line) => {
-                output.push(format!("{DIM}    {line}{RESET}"));
-            }
-            DiffOp::Delete(line) => {
-                output.push(format!("{RED}  - {line}{RESET}"));
-            }
-            DiffOp::Insert(line) => {
-                output.push(format!("{GREEN}  + {line}{RESET}"));
+            DiffOp::Keep(line) | DiffOp::Delete(line) | DiffOp::Insert(line) => {
+                // Bound the RAW text, then colour it. The ordering is
+                // load-bearing, not stylistic: truncating a string that already
+                // carries ANSI escapes can cut *inside* an escape sequence and
+                // leave the user's terminal stuck in a colour, and it would drop
+                // the trailing RESET entirely. Bounding the content first keeps
+                // every escape this function emits balanced.
+                let bounded = truncate_diff_line(line, MAX_DIFF_LINE_WIDTH);
+                let line = bounded.as_deref().unwrap_or(line);
+                match op {
+                    DiffOp::Keep(_) => output.push(format!("{DIM}    {line}{RESET}")),
+                    DiffOp::Delete(_) => output.push(format!("{RED}  - {line}{RESET}")),
+                    DiffOp::Insert(_) => output.push(format!("{GREEN}  + {line}{RESET}")),
+                }
             }
         }
     }
@@ -318,6 +366,125 @@ mod tests {
     fn test_format_edit_diff_identical_texts() {
         let diff = format_edit_diff("same\ncontent\nhere", "same\ncontent\nhere");
         assert!(diff.is_empty());
+    }
+
+    // --- per-line width bound -------------------------------------------------
+    //
+    // The decision half is asserted directly, and every consequence is asserted
+    // at the emission point — the string a caller of `format_edit_diff`
+    // receives, never the helper one layer below it.
+
+    #[test]
+    fn test_truncate_diff_line_under_budget_returns_none() {
+        // `None` means "emit the line verbatim". This is essentially every line
+        // of every hand-sized diff, and so the whole regression surface.
+        assert_eq!(truncate_diff_line("short line", MAX_DIFF_LINE_WIDTH), None);
+        assert_eq!(truncate_diff_line("", MAX_DIFF_LINE_WIDTH), None);
+    }
+
+    #[test]
+    fn test_truncate_diff_line_boundary_in_both_directions() {
+        // Exactly at the cap is NOT truncated; one byte past is. A discriminator
+        // tested only on the side that fires is vacuous green.
+        let at_cap = "a".repeat(MAX_DIFF_LINE_WIDTH);
+        assert_eq!(truncate_diff_line(&at_cap, MAX_DIFF_LINE_WIDTH), None);
+
+        let one_past = "a".repeat(MAX_DIFF_LINE_WIDTH + 1);
+        let cut = truncate_diff_line(&one_past, MAX_DIFF_LINE_WIDTH)
+            .expect("one byte past the cap must truncate");
+        assert!(cut.starts_with(&at_cap), "kept prefix must be the budget");
+        assert!(
+            cut.contains("1 more bytes elided"),
+            "marker names the cut: {cut}"
+        );
+    }
+
+    #[test]
+    fn test_truncate_diff_line_never_splits_a_multibyte_char() {
+        // 499 ASCII bytes then a 3-byte char: the cut at 500 lands *inside* the
+        // char, so it must walk back to the boundary and drop the char whole.
+        // A raw byte index here would panic (CLAUDE.md rule #250).
+        let line = format!("{}✓", "a".repeat(MAX_DIFF_LINE_WIDTH - 1));
+        let cut = truncate_diff_line(&line, MAX_DIFF_LINE_WIDTH)
+            .expect("502 bytes must truncate at a 500-byte cap");
+        assert!(
+            cut.starts_with(&"a".repeat(MAX_DIFF_LINE_WIDTH - 1)),
+            "prefix preserved"
+        );
+        assert!(
+            !cut.contains('✓'),
+            "the straddling char is dropped, not split"
+        );
+        assert!(
+            cut.contains("3 more bytes elided"),
+            "all three bytes of the dropped char are counted: {cut}"
+        );
+    }
+
+    #[test]
+    fn test_format_edit_diff_bounds_one_enormous_line() {
+        // The Claude-Code-v2.1.246 case: a base64-shaped blob on one line.
+        let blob = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo".repeat(200);
+        assert!(blob.len() > 5000, "fixture must exceed the cap by a lot");
+        let diff = format_edit_diff("small", &blob);
+
+        assert!(
+            diff.contains("more bytes elided"),
+            "the cut is marked in band"
+        );
+        assert!(
+            !diff.contains(&blob),
+            "the whole blob must not reach the terminal"
+        );
+        // Bounded by the cap plus prefix/marker/escapes — not by the input size.
+        assert!(
+            diff.len() < MAX_DIFF_LINE_WIDTH * 2,
+            "rendered diff stayed bounded, got {} bytes",
+            diff.len()
+        );
+    }
+
+    #[test]
+    fn test_format_edit_diff_truncated_line_still_resets_color() {
+        // Truncation happens on the RAW text, before colouring — so the closing
+        // RESET is still emitted and the terminal is not left stuck in a colour.
+        let diff = format_edit_diff("small", &"z".repeat(5000));
+        for line in diff.lines() {
+            assert!(
+                line.ends_with(RESET.0),
+                "every rendered line ends with a reset: {line:?}"
+            );
+        }
+        assert!(diff.contains("more bytes elided"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_ordinary_widths_are_byte_identical() {
+        // NEAR-MISS GUARD. The exact string an ordinary diff renders, asserted
+        // whole rather than by `contains` — this is what proves the width bound
+        // did not change any normal diff.
+        let diff = format_edit_diff("old line", "new line");
+        assert_eq!(
+            diff,
+            format!("{RED}  - old line{RESET}\n{GREEN}  + new line{RESET}")
+        );
+        assert!(!diff.contains("elided"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_context_lines_are_also_bounded() {
+        // A long *unchanged* line rendered as context is on the same display
+        // path as a +/- line, so it takes the same bound.
+        let long = "c".repeat(5000);
+        let old = format!("{long}\ntarget");
+        let new = format!("{long}\nreplacement");
+        let diff = format_edit_diff(&old, &new);
+        assert!(diff.contains("- target"));
+        assert!(
+            !diff.contains(&long),
+            "the long context line must not render whole"
+        );
+        assert!(diff.contains("more bytes elided"));
     }
 
     #[test]
