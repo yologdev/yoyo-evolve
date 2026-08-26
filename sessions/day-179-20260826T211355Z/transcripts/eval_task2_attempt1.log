@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "StudyState::\|StudyTie… ✓ (8ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "scope_limit" dreams/exp… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/extra… ✓ (50ms)
+ ✓ (597ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && strings target/debug/yoyo 2>/dev… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 ./target/debug/yoyo … ✓ (593ms)
+  8 tools completed in 25.2s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "made study history \*\*… ✓ (5ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+What's good (and it's most of the task): steps 1–4 are implemented cleanly and only option 4 was built.
+• scope_limit parsed defensively — empty/whitespace/null/wrong-typed → None, with None meaning unscoped, and a scope on an ungraded line correctly dropped.
+• StudyTier::PartiallyStudied ordered NeverStudied < PartiallyStudied < VisitedUngraded < Graded, argued in a comment (including the counter-argument) and pinned by an explicit assert! chain and a sort() round-trip — the variant order is the fix, and it's not left to declaration order.
+• Precedence stated once in study_state_rank, with a table row per clause including both near-misses (full-outranks-partial in both day orders; later-partial replaces, never downgrades).
+• Both consumers wired in the same diff — the ranked half's reason plus study_note in commands_risk_neverforecast.rs — so this avoids the "two doors, one deaf" shape.
+• The reason string is deliberately worded to not contain `studied by graded experiment (day  so EPISTEMIC_STUDIED_RE can't compact it as a full study. I ran python3 scripts/extract_trajectory.py --test` → `ALL PASSED`.
+• No StudyState/StudyTier match exists outside the three touched files, so no orphaned arm.
+
+Why it fails: CLAUDE.md is not in the commit. The task listed it in Files and gave it a dedicated ## Docs section with five specific items. The bullet still says "made study history **three explicit states** instead of two" with a 1/2/3 enumeration, and `grep for scope_limit|PartiallyGraded|PartiallyStudied` in CLAUDE.md returns 0. That file is re-injected as authoritative context every session and now asserts something false about the very meter this task changed — the same stale-doc mechanism recorded as costing eight sessions on the gasp.rs "unreachable" claim.
+
+Two pieces of feedback that are not the fail reason:
+• The ./target/debug/yoyo risk epistemic deliverable is unverified: the binary on disk predates the commit (strings finds no partially studied header), and src/safety.rs isn't in the current scored universe at all, so the "did it move out of the studied group" claim in the issue remains un-run either way.
+• Fixing this is small: it's a CLAUDE.md edit, not a code change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

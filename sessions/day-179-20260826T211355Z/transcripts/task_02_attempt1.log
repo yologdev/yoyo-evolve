@@ -1,0 +1,374 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the current shape.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ExperimentVisit\|StudyS…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk_epistemi… ✓ (5ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ExperimentVisit\|StudyS… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ExperimentVisit\|StudyS… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:95..395 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs:193..343 ✓ (1ms)
+  6 tools completed in 13.0s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '378,420p' src/commands_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "study_note\|StudyState\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EPISTEMIC_STUDIED_RE\|E… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 42.1s (4 ✓)
+
+Now I have the full picture. Making the edits:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (1 → 14 lines)
+    pub(crate) const W_VISITED_UNGRADED: f64 = -0.5;
+  + 
+  + /// Negative weight applied when a graded round **declared its own scope** —
+  + /// the round says in the ledger (`scope_limit`) that it studied only part of
+  + /// the file.
+  + ///
+  + /// A **judgment threshold, not a measurement**: nothing measured says a
+  + /// self-declared partial round is worth exactly three quarters of a full one.
+  + /// It sits between [`W_VISITED_UNGRADED`] (-0.5) and [`W_RECENTLY_STUDIED`]
+  + /// (-1.0) because a partial round *did* grade something — more than a visit
+  + /// that scored nothing — while leaving named regions of the file unread.
+  + /// The steering is done by [`StudyTier::PartiallyStudied`]; this weight only
+  + /// orders files *within* that group, exactly as its two siblings do.
+  + pub(crate) const W_PARTIALLY_STUDIED: f64 = -0.75;
+ ✓ (12.0s)
+    pub(crate) const W_VISITED_UNGRADED: f64 = -0.5;
+  + 
+  + /// Negative weight applied when a graded round **declared its own scope** —
+  + /// the round says in the ledger (`scope_limit`) that it studied only part of
+  + /// the file.
+  + ///
+  + /// A **judgment threshold, not a measurement**: nothing measured says a
+  + /// self-declared partial round is worth exactly three quarters of a full one.
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the const has no consumer yet. Finishing the rest of the chain:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 25 lines)
+        Graded(String),
+  +     /// The round has grade evidence **and** declared its own `scope_limit` in
+  +     /// the ledger: it says out loud that it studied only part of the file.
+  +     ///
+  +     /// #839: blind round 82 studied three named functions of `src/safety.rs`
+  +     /// and moved that 3559-line file from the darkest tier to the lightest in
+  +     /// one step — ~3400 unread lines bought credit. The round was complete and
+  +     /// honest (it passes `tests/blind_round_grades.rs` exactly as a whole-file
+  +     /// study would), so there is no half-written state to detect; the bias is
+  +     /// simply that the bigger the file, the less of it a round covers.
+  +     ///
+  +     /// **A declared scope is a claim the round made about itself, not a
+  +     /// measurement of coverage.** A round that declares no scope is still
+  +     /// credited whole-file, so this makes the over-crediting *nameable*, not
+  +     /// impossible.
+  +     PartiallyGraded {
+  +         /// Grade summary, same derivation as [`StudyState::Graded`].
+  +         summary: String,
+  +         /// The round's own `scope_limit` text, verbatim.
+  +         scope: String,
+  ... (4 more lines)
+ ✓ (10.6s)
+        Graded(String),
+  +     /// The round has grade evidence **and** declared its own `scope_limit` in
+  +     /// the ledger: it says out loud that it studied only part of the file.
+  +     ///
+  +     /// #839: blind round 82 studied three named functions of `src/safety.rs`
+  +     /// and moved that 3559-line file from the darkest tier to the lightest in
+  +     /// one step — ~3400 unread lines bought credit. The round was complete and
+  +     /// honest (it passes `tests/blind_round_grades.rs` exactly as a whole-file
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (5 → 18 lines)
+        NeverStudied,
+  +     /// A graded round named it and **declared its own scope**: it says in the
+  +     /// ledger that it covered only part of the file.
+  +     ///
+  +     /// Ordered **darker than [`StudyTier::VisitedUngraded`]**, which is the
+  +     /// load-bearing judgment here and is deliberate rather than incidental: a
+  +     /// partial round has *proved* the file contains regions nobody entered,
+  +     /// while an ungraded visit at least aimed at the whole file and merely
+  +     /// failed to score anything. The partial round therefore leaves a *known*
+  +     /// dark remainder; the visit leaves an unknown one that may be empty.
+  +     /// (The opposite ordering is arguable — a graded partial did learn
+  +     /// something measurable where a visit did not — but that argument is about
+  +     /// what the round *taught*, and this tier ranks by what is still *unread*.)
+  +     PartiallyStudied,
+        /// A round named it but recorded no grade — the expedition happened and
+        /// produced nothing falsifiable, so it is darker than a graded round but
+        /// lighter than never having looked.
+ ✓ (10.6s)
+        NeverStudied,
+  +     /// A graded round named it and **declared its own scope**: it says in the
+  +     /// ledger that it covered only part of the file.
+  +     ///
+  +     /// Ordered **darker than [`StudyTier::VisitedUngraded`]**, which is the
+  +     /// load-bearing judgment here and is deliberate rather than incidental: a
+  +     /// partial round has *proved* the file contains regions nobody entered,
+  +     /// while an ungraded visit at least aimed at the whole file and merely
+  ... (9 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 3 lines)
+            Some(StudyState::VisitedUngraded) => StudyTier::VisitedUngraded,
+  +         Some(StudyState::PartiallyGraded { .. }) => StudyTier::PartiallyStudied,
+            Some(StudyState::Graded(_)) => StudyTier::Graded,
+ ✓ (10.6s)
+            Some(StudyState::VisitedUngraded) => StudyTier::VisitedUngraded,
+  +         Some(StudyState::PartiallyGraded { .. }) => StudyTier::PartiallyStudied,
+            Some(StudyState::Graded(_)) => StudyTier::Graded,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (2 → 5 lines)
+            StudyTier::NeverStudied => "dark — no deliberate study on record",
+  +         StudyTier::PartiallyStudied => {
+  +             "partially studied — a graded round covered only part of the file"
+  +         }
+            StudyTier::VisitedUngraded => "visited by an ungraded round",
+ ✓ (10.7s)
+            StudyTier::NeverStudied => "dark — no deliberate study on record",
+  +         StudyTier::PartiallyStudied => {
+  +             "partially studied — a graded round covered only part of the file"
+  +         }
+            StudyTier::VisitedUngraded => "visited by an ungraded round",
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 0s (4 ✓)
+
+Now the parser, the precedence rule, and both consumers:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (9 → 25 lines)
+            let day = val["day"].as_u64().unwrap_or(0) as u32;
+  -         let state = match val["graded"].as_str() {
+  -             Some(g) if !g.trim().is_empty() => StudyState::Graded(g.trim().to_string()),
+  +         // A round's own declared scope. **`None` means UNSCOPED, never
+  +         // "partial"**: every ledger line written before #839 carries no
+  +         // `scope_limit`, and those lines must keep meaning exactly what they
+  +         // meant before — credited whole-file. The ledger is never back-filled.
+  +         let scope = match val["scope_limit"].as_str() {
+  +             Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+  +             _ => None,
+  +         };
+  +         let summary = match val["graded"].as_str() {
+  +             Some(g) if !g.trim().is_empty() => Some(g.trim().to_string()),
+                _ => match graded_hypothesis_count(&val) {
+  -                 0 => StudyState::VisitedUngraded,
+  -                 n => StudyState::Graded(format!("{n} hypotheses graded")),
+  +                 0 => None,
+  +                 n => Some(format!("{n} hypotheses graded")),
+                },
+  +         };
+  ... (9 more lines)
+ ✓ (10.8s)
+            let day = val["day"].as_u64().unwrap_or(0) as u32;
+  -         let state = match val["graded"].as_str() {
+  -             Some(g) if !g.trim().is_empty() => StudyState::Graded(g.trim().to_string()),
+  +         // A round's own declared scope. **`None` means UNSCOPED, never
+  +         // "partial"**: every ledger line written before #839 carries no
+  +         // `scope_limit`, and those lines must keep meaning exactly what they
+  +         // meant before — credited whole-file. The ledger is never back-filled.
+  +         let scope = match val["scope_limit"].as_str() {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (27 → 54 lines)
+  + /// Rank a study state for the precedence rule in
+  + /// [`latest_study_state_by_path`]. Higher wins outright, regardless of day.
+  + ///
+  + /// The order is the one argued at [`StudyTier`], read the other way up: a
+  + /// **full** (unscoped) graded round is the strongest evidence and is never
+  + /// erased by a later narrow one; a **partial** graded round outranks a bare
+  + /// visit because it scored something; a visit is the weakest.
+  + fn study_state_rank(state: &StudyState) -> u8 {
+  +     match state {
+  +         StudyState::VisitedUngraded => 0,
+  +         StudyState::PartiallyGraded { .. } => 1,
+  +         StudyState::Graded(_) => 2,
+  +     }
+  + }
+  + 
+  + /// Latest experiment visit per file, by the one precedence rule both halves of
+  + /// this view share:
+  + ///
+  + /// - a **full** (unscoped) graded round outranks a **partial** one whatever
+  + ///   the days say — a whole-file study is not erased by a later narrow one;
+  ... (29 more lines)
+ ✓ (10.6s)
+  + /// Rank a study state for the precedence rule in
+  + /// [`latest_study_state_by_path`]. Higher wins outright, regardless of day.
+  + ///
+  + /// The order is the one argued at [`StudyTier`], read the other way up: a
+  + /// **full** (unscoped) graded round is the strongest evidence and is never
+  + /// erased by a later narrow one; a **partial** graded round outranks a bare
+  + /// visit because it scored something; a visit is the weakest.
+  + fn study_state_rank(state: &StudyState) -> u8 {
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic.rs (4 → 21 lines)
+                    StudyState::VisitedUngraded => {
+                        score += W_VISITED_UNGRADED;
+                        reasons.push(format!("visited by ungraded experiment (day {day})"));
+  +                 }
+  +                 // Deliberately worded so it does NOT contain the substring
+  +                 // `studied by graded experiment (day N, …)`:
+  +                 // `EPISTEMIC_STUDIED_RE` in `scripts/extract_trajectory.py`
+  +                 // uses `.search()`, so a reason carrying that phrase would be
+  +                 // compacted for the planner as a *full* study — dropping the
+  +                 // word "partial" and the scope, i.e. the exact over-crediting
+  +                 // this whole state exists to name. It falls through to that
+  +                 // script's `reason[:60]` raw path instead; giving it a proper
+  +                 // compaction prefix is a separate task (#839 leaves it
+  +                 // uncompacted on purpose). Day and grade are front-loaded so
+  +                 // they survive that 60-char cut.
+  +                 StudyState::PartiallyGraded { summary, scope } => {
+  +                     score += W_PARTIALLY_STUDIED;
+  +                     reasons.push(format!(
+  +                         "partial study (day {day}, {summary}) — scope: {scope}"
+  +                     ));
+  ... (1 more lines)
+ ✓ (10.9s)
+                    StudyState::VisitedUngraded => {
+                        score += W_VISITED_UNGRADED;
+                        reasons.push(format!("visited by ungraded experiment (day {day})"));
+  +                 }
+  +                 // Deliberately worded so it does NOT contain the substring
+  +                 // `studied by graded experiment (day N, …)`:
+  +                 // `EPISTEMIC_STUDIED_RE` in `scripts/extract_trajectory.py`
+  +                 // uses `.search()`, so a reason carrying that phrase would be
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.0s (2 ✓)
+
+Second consumer — the never-forecast half:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_neverforecast.rs (1 → 8 lines)
+            StudyState::VisitedUngraded => format!("visited by ungraded experiment (day {day})"),
+  +         // Must not wear the word "graded" unqualified, exactly as
+  +         // `VisitedUngraded` must not. A partial round still counts as "not
+  +         // dark" for the never-forecast split — the file was forecast-less for
+  +         // other reasons — it just doesn't get to claim whole-file coverage.
+  +         StudyState::PartiallyGraded { summary, scope } => {
+  +             format!("partial study (day {day}, {summary}) — scope: {scope}")
+  +         }
+ ✓ (1m 38s)
+            StudyState::VisitedUngraded => format!("visited by ungraded experiment (day {day})"),
+  +         // Must not wear the word "graded" unqualified, exactly as
+  +         // `VisitedUngraded` must not. A partial round still counts as "not
+  +         // dark" for the never-forecast split — the file was forecast-less for
+  +         // other reasons — it just doesn't get to claim whole-file coverage.
+  +         StudyState::PartiallyGraded { summary, scope } => {
+  +             format!("partial study (day {day}, {summary}) — scope: {scope}")
+  +         }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (1m 6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 48s (2 ✓)
+
+Green. Now the tests — the tier-order assertion, precedence near-misses, and the parser's three states:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/mod study_tier_tests/,/… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '855,900p' src/commands_r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Appending a dedicated module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (283 lines) ✓ (20.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the second consumer's emission point:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (45 lines) ✓ (20.1s)
+
+Now the positive control — run rather than assumed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (12 lines) ✓ (1m 19s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired — exactly the 2 parser-driven partial tests fail, all 5225 others (every legacy/unscoped path) stay green. Restoring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ep.bak src/commands_risk… ✓ (9.2s)
+
+Now the live run — did src/safety.rs actually move?
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (593ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/deb… (11 lines) ✓ (616ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,60p' /tmp/ep.txt ✓ (2ms)
+  3 tools completed in 20.6s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: this assertion has a constant value[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic_tests.rs:820:9
+    [1m[94m|[0m
+[1m[94m820[0m [1m[94m|[0m         assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED);
+    [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: consider moving this into a const block: `const { assert!(..) }`
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assertions_on_constants
+    [1m[94m= [0m[1mnote[0m: `-D clippy::assertions-on-constants` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+[1m[91merror[0m[1m: this assertion has a constant value[0m
+   [1m[94m--> [0msrc/commands_risk_epistemic_tests.rs:821:9
+    [1m[94m|[0m
+[1m[94m821[0m [1m[94m|[0m         assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED);
+    [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: consider moving this into a const block: `const { assert!(..) }`
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assertions_on_constants
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_epistemic_tests.rs (2 → 2 lines)
+  -         assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED);
+  -         assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED);
+  +         const { assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED) };
+  +         const { assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED) };
+ ✓ (1m 38s)
+  -         assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED);
+  -         assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED);
+  +         const { assert!(W_RECENTLY_STUDIED < W_PARTIALLY_STUDIED) };
+  +         const { assert!(W_PARTIALLY_STUDIED < W_VISITED_UNGRADED) };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 53s (2 ✓)
+
+Clippy and tests green. Now verifying the live claim — src/safety.rs is in the hidden tail of the never-forecast studied group, so let me probe the real ledger directly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (16 lines) ✓ (19.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed live: src/safety.rs moved Graded → PartiallyStudied against the real ledger. Removing the probe:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (968ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

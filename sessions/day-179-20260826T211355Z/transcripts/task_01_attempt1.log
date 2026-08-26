@@ -1,0 +1,324 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the consumers of detect_write_command — that's Step 0 and it decides whether this is a one-file or two-file change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_write_command" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1720p' src/safety.r… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+Only one non-test consumer (tool_wrappers.rs:1108); tools.rs:1203 is a comment. Let me confirm both.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1780,1900p' src/safety.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1190,1215p' src/tools.rs… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Step 0 confirmed: one non-test consumer. Let me reproduce the defect and check run_git's existing guard list before writing a second enumeration.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1093,1125p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DESTRUCTIVE\|destructiv… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/git.rs && ech…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1096 && NR<=1118' src/t… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 11.4s (4 ✓)
+
+DESTRUCTIVE_GIT_COMMANDS is #[cfg(test)]-gated, deliberately excludes tag/branch, and answers a narrower property (destructive, not writes). Let me see the guard's Bash arm in full.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:1096..1126  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1614..1634 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check what state the working tree is in before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, Step 0 findings in hand. Writing the tests first, then the classifier. Let me check existing negatives so I don't regress them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:3193..3238  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"git ' src/safety.rs |… ✓ (1ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+Existing negatives include git log --stat and git diff > /dev/null — both stay read-only under my set. Now the tests, first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:3260..3278 ✓ (0ms)
+
+Now the tests — written before the implementation, asserting at the emission point (detect_write_command, the value the guard actually receives).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (1 → 139 lines)
+  +     // === git write-subcommand classification (#838) ===
+  + 
+  +     #[test]
+  +     fn test_read_mode_refuses_writing_git_subcommands() {
+  +         // The measured defect (blind round 82, Day 179): `/read` mode promised
+  +         // mechanical enforcement at the tool layer while the single most
+  +         // consequential write in a user's repository walked straight through.
+  +         // Asserted at the EMISSION POINT — the value `ReadModeGuardTool`'s Bash
+  +         // arm actually receives — not at the classifier one layer below.
+  +         let writes = [
+  +             "git commit -m 'x'",
+  +             "git checkout main",
+  +             "git reset --hard",
+  +             "git apply p.patch",
+  +             "git push",
+  +             "git stash",
+  +             "git -C sub commit -m x",       // global option before subcommand
+  +             "git -c user.name=a commit -m x", // value-taking global option
+  +         ];
+  +         for cmd in &writes {
+  ... (119 more lines)
+ ✓ (10.6s)
+  +     // === git write-subcommand classification (#838) ===
+  + 
+  +     #[test]
+  +     fn test_read_mode_refuses_writing_git_subcommands() {
+  +         // The measured defect (blind round 82, Day 179): `/read` mode promised
+  +         // mechanical enforcement at the tool layer while the single most
+  +         // consequential write in a user's repository walked straight through.
+  +         // Asserted at the EMISSION POINT — the value `ReadModeGuardTool`'s Bash
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Red as expected. Now the classifier, placed beside WRITE_VERBS.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (1 → 1 lines) ✓ (10.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "g… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests are in and red. Now the implementation, inserted beside WRITE_VERBS.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (2 → 201 lines)
+  + /// Git subcommands that only ever read: they touch neither the repository,
+  + /// the index, the work tree, nor any config file.
+  + ///
+  + /// This is an **allow** list, and the direction is the whole safety property:
+  + /// [`git_write_subcommand`] treats every subcommand it does not recognise as a
+  + /// **write**. A git subcommand nobody enumerated here is far more likely to
+  + /// write than to be a harmless reader, and this backs a user-facing safety mode
+  + /// (`/read`, `/plan`), so it must fail **closed**. Read-only is the enumerated
+  + /// set, never the fallback.
+  + ///
+  + /// Deliberately *not* merged with `git::DESTRUCTIVE_GIT_COMMANDS`, which was
+  + /// compared rather than assumed: that list is `#[cfg(test)]`-only, answers a
+  + /// narrower property (*destructive*, not merely *writing* — it omits `tag` and
+  + /// `branch` on purpose), and defaults the opposite way (unlisted = allowed).
+  + /// Two different questions with two opposite failure directions; sharing one
+  + /// list would silently break whichever caller lost the argument.
+  + const READ_ONLY_GIT_SUBCOMMANDS: &[&str] = &[
+  +     "status",
+  +     "log",
+  +     "diff",
+  ... (181 more lines)
+ ✓ (12.2s)
+  + /// Git subcommands that only ever read: they touch neither the repository,
+  + /// the index, the work tree, nor any config file.
+  + ///
+  + /// This is an **allow** list, and the direction is the whole safety property:
+  + /// [`git_write_subcommand`] treats every subcommand it does not recognise as a
+  + /// **write**. A git subcommand nobody enumerated here is far more likely to
+  + /// write than to be a harmless reader, and this backs a user-facing safety mode
+  + /// (`/read`, `/plan`), so it must fail **closed**. Read-only is the enumerated
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Right — definition without consumer. Wiring it into detect_write_command now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (3 → 15 lines)
+            if WRITE_VERBS.contains(&base) {
+                return Some(format!("`{base}` writes to the filesystem"));
+  +         }
+  +         // Git writes through subcommands, not through its own name: `git` must
+  +         // never join WRITE_VERBS (that would flag `git status`). The verb the
+  +         // agent uses most was in neither this list nor the sibling
+  +         // destructive-pattern classifier, so `/read` mode let `git commit`
+  +         // through (#838). `tokens` is already positioned past the `git` token.
+  +         if base == "git" {
+  +             let args: Vec<&str> = tokens.collect();
+  +             if let Some(sub) = git_write_subcommand(&args) {
+  +                 return Some(format!("`git {sub}` writes to the repository"));
+  +             }
+  +             continue;
+            }
+ ✓ (1m 31s)
+            if WRITE_VERBS.contains(&base) {
+                return Some(format!("`{base}` writes to the filesystem"));
+  +         }
+  +         // Git writes through subcommands, not through its own name: `git` must
+  +         // never join WRITE_VERBS (that would flag `git status`). The verb the
+  +         // agent uses most was in neither this list nor the sibling
+  +         // destructive-pattern classifier, so `/read` mode let `git commit`
+  +         // through (#838). `tokens` is already positioned past the `git` token.
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo safety:: 2… ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 39s (2 ✓)
+
+Only symbolic-ref — my arm was needlessly convoluted. Direct form:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (5 → 5 lines)
+            // `symbolic-ref HEAD` reads it; a second positional sets it.
+  -         "symbolic-ref" => !is_git_listing_only(rest, &["-d", "--delete"]) || {
+  +         "symbolic-ref" => {
+                let positionals = rest.iter().filter(|t| !t.starts_with('-')).count();
+  -             positionals > 1
+  -         },
+  +             positionals > 1 || rest.iter().any(|t| matches!(*t, "-d" | "--delete"))
+  +         }
+ ✓ (1m 40s)
+            // `symbolic-ref HEAD` reads it; a second positional sets it.
+  -         "symbolic-ref" => !is_git_listing_only(rest, &["-d", "--delete"]) || {
+  +         "symbolic-ref" => {
+                let positionals = rest.iter().filter(|t| !t.starts_with('-')).count();
+  -             positionals > 1
+  -         },
+  +             positionals > 1 || rest.iter().any(|t| matches!(*t, "-d" | "--delete"))
+  +         }
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (1m 5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5214 unit tests pass. The module-size gate fired — safety.rs is in the register and I grew it. Let me read the remedy it prints.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (162ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
++418 (a 201-line classifier + 139 lines of tests, on top of 69 lines of pre-existing absorbed drift). The register is the named remedy — the classifier belongs beside its only consumer.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/safety.rs"' tests/… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/safety.rs", 3490),
+  +     ("src/safety.rs", 3908),
+ ✓ (1m 5s)
+  -     ("src/safety.rs", 3490),
+  +     ("src/safety.rs", 3908),
+  2 tools completed in 1m 9s (2 ✓)
+
+Now the positive control — neuter the classifier and confirm exactly the new refusals fail while every near-miss stays green.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/safet… (9 lines) ✓ (21.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly right: only the two write-detecting tests failed; both near-miss guards and all 85 other safety tests stayed green. Restoring.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/safety.bak src/safety.rs… ✓ (20.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored and green. Now the full check suite.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn active_blocking_mode… ✓ (3ms)
+ ✓ (22.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.1s (2 ✓)
+
+CLIPPY_RC=1 was grep-finding-nothing. active_blocking_mode confirms both untouched paths: no mode → guard skipped entirely; /plan apply → writes pass. Let me verify clippy properly and run the full suite.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "test… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 35s (1 ✓, 1 ✗)
+
+The full suite already showed all-ok with no FAILED. Let me confirm the gate and the new tests specifically, then do docs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 100 cargo test --test mo… ✓ (289ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green: module-size gate 24/24, the 4 new tests pass. Remaining work is Step 3 (CLAUDE.md) and the commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_write_command" C… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two edits: the tool_wrappers.rs bullet, and the round-82 finding that says "#838, recorded rather than fixed" — now false, so it gets the superseded-claim treatment rather than erasure.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass); the plan-mode block is a transparent pass-through while `/plan apply` is executing (`is_plan_apply_active()` — apply needs write access to carry out the plan); transparent pass-through when neither mode is on) and helper wrappers
+  + plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass); Day 179 (#838) taught that same detector **which git subcommands write**, because the verb an agent uses most was in neither enumeration — `git` is not in `WRITE_VERBS` (adding it would flag `git status`) and `git commit` is a *write*, not *destructive*, so it matched neither branch and `/read` mode — a mode whose whole promise is mechanical enforcement at the tool layer — let the si… [yoyo: 2882 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 5s)
+  - plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass); the plan-mode block is a transparent pass-through while `/plan apply` is executing (`is_plan_apply_active()` — apply needs write access to carry out the plan); transparent pass-through when neither mode is on) and helper wrappers
+  + plus `>`/`>>` redirection outside quoted regions; the refusal names what matched, read-only commands pass); Day 179 (#838) taught that same detector **which git subcommands write**, because the verb an agent uses most was in neither enumeration — `git` is not in `WRITE_VERBS` (adding it would flag `git status`) and `git commit` is a *write*, not *destructive*, so it matched neither branch and `/read` mode — a mode whose whole promise is mechanical enforcement at the tool layer — let the si… [yoyo: 2882 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the round-82 finding, which claimed this was recorded-not-fixed — superseded, recorded rather than erased.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - so both branches of `ReadModeGuardTool`'s bash check pass it through (measured, both `None`); filed as **#838**, because a finding recorded only in CLAUDE.md is a reader surface, not a scheduler surface.
+  + so both branches of `ReadModeGuardTool`'s bash check pass it through (measured, both `None`); filed as **#838**, because a finding recorded only in CLAUDE.md is a reader surface, not a scheduler surface. **Superseded the same day, recorded rather than erased — and the filing is why:** #838 was **fixed** by the next task (see the `tool_wrappers.rs` bullet for the classifier), so "recorded rather than fixed" is true of *round 82* and stays as the record of what that round did, not of the code. T… [yoyo: 227 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 5s)
+  - so both branches of `ReadModeGuardTool`'s bash check pass it through (measured, both `None`); filed as **#838**, because a finding recorded only in CLAUDE.md is a reader surface, not a scheduler surface.
+  + so both branches of `ReadModeGuardTool`'s bash check pass it through (measured, both `None`); filed as **#838**, because a finding recorded only in CLAUDE.md is a reader surface, not a scheduler surface. **Superseded the same day, recorded rather than erased — and the filing is why:** #838 was **fixed** by the next task (see the `tool_wrappers.rs` bullet for the classifier), so "recorded rather than fixed" is true of *round 82* and stays as the record of what that round did, not of the code. T… [yoyo: 227 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check whether docs/src/ documents what /read blocks, then do the final verification.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "read mode\|/read" doc… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No docs/src/ references to /read's blocking list. Let me check the in-app help text for a claim that's now different.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "read" src/help_data.rs… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

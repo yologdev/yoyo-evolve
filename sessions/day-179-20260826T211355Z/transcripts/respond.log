@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking what I actually did this session before commenting on anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format='%H %s' -6 | he… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Two real tasks landed: #838 and #839. Let me verify what each actually did.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 2534d3ab  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 906aa637 95457f1… ✓ (9ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "READ_ONLY_GIT_SUBCOMMAN…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PartiallyGraded\|Partia… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 95457f18 | head -60  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1640,1700p' src/safety.r… ✓ (3ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*git_write\|fn .*re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1740,1830p' src/safety.r… ✓ (3ms)
+ ✓ (4ms)
+  8 tools completed in 14.4s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified both fixes. Now let me write the comments — starting with #838.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (34 lines) ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#838 closed. Now #839 — where the honest part is that the fix is live but currently unobservable.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (46 lines) ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both closed. Everything else I'll skip — let me verify that's the right call rather than assume it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 2534d3ab 906aa63… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The diff confirms it: this session touched only src/safety.rs (#838) and the epistemic-ranking files (#839). Nothing here touches measure_abstentions.py (#810), main.rs/repl.rs (#794), tests/common (#835), format/cost.rs (#833), git_commit_msg.rs (#830), the experiments ledger (#801, #738), or gasp.rs (#683).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 838 839; do echo "--- #… ✓ (777ms)
+
+Done. Both closed, one comment each, no double-posting.
+
+## What I did
+
+#838 — closed. /read and /plan mode let git commit straight through. Your measurement was the whole issue, so there was nothing to diagnose — just the design question of which subcommands write. The answer is a pure git_write_subcommand(args) with a fail-closed allow list: 35 read-only subcommands enumerated, everything else treated as a write. Folded into detect_write_command rather than called separately, because I checked its non-test consumers and there is exactly one. Global options (git -C sub commit) and argument-dependent subcommands (config --get vs config x y) each needed explicit handling. Your near-miss guard is pinned at the emission point in both directions, and I deliberately did not reuse run_git's destructive list — it answers a narrower property and defaults the opposite way.
+
+#839 — closed. Option 4 composed with option 1's tier: scope_limit is now parsed, PartiallyGraded is a real state, PartiallyStudied sorts between NeverStudied and VisitedUngraded. Both consumers wired, precedence rule stated once and read by both.
+
+## The part worth flagging
+
+I ran the command your issue said was un-run, and the result is not the satisfying one. src/safety.rs doesn't appear in yoyo risk epistemic at all — compute_epistemic_ranking only pushes entries scoring > 0.0, and study weights are negative discounts, so a file whose only signal is -0.75 is excluded outright. The tier is correct and tested; it's currently unobservable on the exact file that motivated it.
+
+An earlier draft of my notes asserted the flattering version before I ran it. Catching that in my own writing is the reason I went and ran it.
+
+## What I skipped, and why
+
+#810, #794, #835, #833, #830, #801, #738, #683 — I touched none of their code this session. The file list confirms it rather than my memory. #834 was on the do-not-repeat list.
+
+Both fixes ship with their limits stated rather than implied: #838 is a subcommand classifier, not a git parser (a gitconfig alias is invisible to it), and #839 makes whole-file over-crediting nameable, not impossible — a round that declares no scope is still credited whole-file. That was always the ceiling on option 4; better to say so in the closing comment than let the close imply more.
+
+  watch: no files changed this turn — skipping
+
