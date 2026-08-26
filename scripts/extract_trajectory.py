@@ -40,7 +40,25 @@ MAX_FAILED_RUNS = 5            # cap on `gh run view --log-failed` calls
 # `--limit 1` row was correct again, i.e. the misordering is intermittent, which
 # is the worst kind to depend on.) With N rows the true newest is recoverable by
 # max() over the parsed stamps, so the probe stops depending on position 0.
-GREEN_PROBE_LIMIT = 10
+#
+# SUPERSEDED, recorded rather than erased (Day 179): the paragraph above claims
+# the `--limit 10` + max() pair CURED the stale answer. It cured the ORDERING
+# half and not the PAGING half — max() over ten stale rows is still stale.
+# Measured 2026-08-26: the first call of
+#   gh run list --workflow ci.yml --status success --limit 10
+# returned a page whose newest row was 2026-08-25T23:54:38Z, silently OMITTING
+# the 2026-08-26T05:10:56Z success the unfiltered listing returned in the same
+# minute; three immediate re-runs of the identical argv then included it, and a
+# `--status completed` probe returned it every time. So `--status success` is a
+# server-side filter that intermittently serves a stale page, and the probe now
+# asks for `completed` and filters client-side.
+#
+# 20 is a JUDGMENT THRESHOLD, not a measurement — nothing measured says 20 is
+# right. It is large enough that an ordinary red streak still contains a success
+# inside the page, and small enough to stay a single API page. When the page is
+# FULL and holds no success the probe reports `checked=False` rather than
+# guessing; see `newest_success_from_runs`.
+GREEN_PROBE_LIMIT = 20
 # The workflow whose runs are the payload of "has CI gone green?". Asking for
 # ANY workflow is a container check: `Sponsors Refresh` runs ~every 40 minutes
 # and would answer the question by accident. Only this file compiles Rust.
@@ -673,12 +691,19 @@ class GreenScan:
 
 
 def green_probe_argv(repo: str) -> list[str]:
-    """argv for the green-since probe. Pure, so a test can assert its shape."""
+    """argv for the green-since probe. Pure, so a test can assert its shape.
+
+    `--status completed`, NOT `--status success`: the server-side success filter
+    intermittently serves a stale page (see GREEN_PROBE_LIMIT for the measured
+    reading), so the success filter lives client-side in
+    `newest_success_from_runs` and `conclusion` is fetched to do it. The
+    `--workflow` filter is load-bearing and must not be dropped — without it a
+    `Sponsors Refresh` run answers "has CI gone green?" by accident."""
     return [
         "gh", "run", "list", "--repo", repo,
         "--workflow", CI_WORKFLOW_FILE,
-        "--status", "success", "--limit", str(GREEN_PROBE_LIMIT),
-        "--json", "createdAt,workflowName",
+        "--status", "completed", "--limit", str(GREEN_PROBE_LIMIT),
+        "--json", "createdAt,workflowName,conclusion",
     ]
 
 
@@ -692,45 +717,70 @@ def failed_runs_argv(repo: str) -> list[str]:
     ]
 
 
-def newest_success_from_runs(runs) -> GreenScan:
+def newest_success_from_runs(runs, limit: int) -> GreenScan:
     """Newest successful run from an already-parsed `gh run list` payload. Pure.
 
-    Takes the MAX over every parseable `createdAt` rather than trusting index 0
-    — see GREEN_PROBE_LIMIT for the measured reason. Rows with a missing or
-    unparseable stamp are SKIPPED: an unreadable row is neither the newest nor
-    evidence that no success exists.
+    The payload comes from `--status completed`, so this filters to
+    `conclusion == "success"` itself, then takes the MAX over every parseable
+    `createdAt` rather than trusting index 0 — see GREEN_PROBE_LIMIT for both
+    measured reasons. Rows with a missing or unparseable stamp are SKIPPED: an
+    unreadable row is neither the newest nor evidence that no success exists.
 
-    Three states, none folded into another:
-      * not a list                         -> checked=False  (cannot ask)
-      * empty list                         -> ts=None, checked=True (real answer)
-      * rows present, none parseable       -> checked=False  (NOT "no successes")
-      * ≥1 parseable row                   -> ts=max, checked=True
+    `limit` is the page size the caller asked `gh` for, and it is what separates
+    the two ways a page can hold no success. Folding them would make a long red
+    streak render as "CI has never been green" — a STRONGER false alarm than the
+    stale page this probe was fixed for. "Could not see far enough" must never
+    read as "there is nothing there".
+
+    States, none folded into another:
+      * not a list                          -> checked=False  (cannot ask)
+      * ≥1 parseable success row            -> ts=max, checked=True
+      * no success, but ≥1 UNREADABLE row   -> checked=False  (NOT "no successes")
+      * no success, page FULL  (len>=limit) -> checked=False  (cannot see far enough)
+      * no success, page SHORT (len<limit)  -> ts=None, checked=True (real answer;
+                                               the whole listing was seen, and an
+                                               empty list is its shortest case)
     """
     if not isinstance(runs, list):
         return GreenScan(checked=False)
-    if not runs:
-        # The query ran and honestly answered "no successful runs". That is a
-        # real observation, NOT a failure to check.
-        return GreenScan(newest_success_ts=None, checked=True)
     best_ts: str | None = None
     best_age: float | None = None
+    unreadable = False
     # One shared `now` so every row is measured against the same instant, and
     # `run_age_days` is reused rather than a second ISO-8601 parser written —
     # smallest age == newest, exactly as the failure side already does it.
     now = datetime.now(timezone.utc)
     for record in runs:
         if not isinstance(record, dict):
+            unreadable = True
+            continue
+        conclusion = record.get("conclusion")
+        if not isinstance(conclusion, str):
+            # A row that cannot be classified is not a non-success. Calling it
+            # one would be "could not check" reading as "checked; clean".
+            unreadable = True
+            continue
+        if conclusion != "success":
             continue
         age = run_age_days(record.get("createdAt"), now)
         if age is None:
+            unreadable = True
             continue
         if best_age is None or age < best_age:
             best_age, best_ts = age, record["createdAt"]
-    if best_ts is None:
-        # Rows came back but not one carried a readable stamp. "Could not check"
-        # must not read as "checked; no successes".
+    if best_ts is not None:
+        return GreenScan(newest_success_ts=best_ts, checked=True)
+    if unreadable:
+        # Rows came back but the ones that mattered were not readable. "Could
+        # not check" must not read as "checked; no successes".
         return GreenScan(checked=False)
-    return GreenScan(newest_success_ts=best_ts, checked=True)
+    if len(runs) >= limit:
+        # A full page of non-successes: the newest success may simply be one row
+        # past the horizon. That is an unknown, not an absence.
+        return GreenScan(checked=False)
+    # Short page: the entire listing was seen and it holds no success. A real
+    # observation, NOT a failure to check.
+    return GreenScan(newest_success_ts=None, checked=True)
 
 
 def newest_successful_run(repo: str) -> GreenScan:
@@ -747,14 +797,14 @@ def newest_successful_run(repo: str) -> GreenScan:
         return GreenScan(checked=False)
     rc, stdout, _stderr = run_cmd(green_probe_argv(repo), timeout=GH_RUN_LIST_TIMEOUT)
     if rc != 0:
-        warn(f"gh run list --status success rc={rc} — green-since check unavailable")
+        warn(f"gh run list --status completed rc={rc} — green-since check unavailable")
         return GreenScan(checked=False)
     try:
         runs = json.loads(stdout)
     except json.JSONDecodeError as e:
-        warn(f"gh run list --status success returned non-JSON: {e}")
+        warn(f"gh run list --status completed returned non-JSON: {e}")
         return GreenScan(checked=False)
-    return newest_success_from_runs(runs)
+    return newest_success_from_runs(runs, GREEN_PROBE_LIMIT)
 
 
 def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
@@ -2457,48 +2507,96 @@ src/commands_config.rs
     #     question entirely (any workflow, and position 0 of a `--limit 1`).
     #     Survivors follow the assertion; the assertion stopped at the function
     #     boundary I found convenient.
+    def _ok(ts):
+        return {"createdAt": ts, "conclusion": "success", "workflowName": "CI"}
+
     assert_eq(
         "newest is taken by max(), NOT position 0 — the `--limit 1` shape",
         newest_success_from_runs(
             [
-                {"createdAt": "2026-07-24T18:32:13Z"},   # stale row first
-                {"createdAt": "2026-08-25T14:43:20Z"},   # the real newest
-                {"createdAt": "2026-08-25T11:17:13Z"},
-            ]
+                _ok("2026-07-24T18:32:13Z"),   # stale row first
+                _ok("2026-08-25T14:43:20Z"),   # the real newest
+                _ok("2026-08-25T11:17:13Z"),
+            ],
+            10,
         ).newest_success_ts,
         "2026-08-25T14:43:20Z",
     )
-    skipped_missing = newest_success_from_runs(
-        [{"workflowName": "CI"}, {"createdAt": "2026-08-25T14:43:20Z"}]
+    # `--status completed` returns every conclusion, so the success filter moved
+    # client-side. A NEWER failure must not win: the filter is the whole point.
+    mixed = newest_success_from_runs(
+        [
+            {"createdAt": "2026-08-26T09:00:00Z", "conclusion": "failure"},
+            {"createdAt": "2026-08-26T08:00:00Z", "conclusion": "cancelled"},
+            _ok("2026-08-26T05:10:56Z"),
+            _ok("2026-08-25T23:54:38Z"),
+        ],
+        10,
     )
     assert_true(
-        "a row with no createdAt is skipped while a good row still wins",
+        "only conclusion=success rows count — a newer failure does not win",
+        mixed.checked and mixed.newest_success_ts == "2026-08-26T05:10:56Z",
+    )
+    # The new third state. A FULL page with no success means the probe could not
+    # see far enough — never "CI has never been green", which would be a
+    # STRONGER false alarm than the stale page this fix removes.
+    full_no_success = newest_success_from_runs(
+        [{"createdAt": f"2026-08-2{i}T00:00:00Z", "conclusion": "failure"} for i in range(4)],
+        4,
+    )
+    assert_true(
+        "FULL page with zero successes -> checked=False (cannot see far enough)",
+        full_no_success.checked is False and full_no_success.newest_success_ts is None,
+    )
+    # The near-miss guard: a discriminator tested only on the side that fires is
+    # vacuous green. A SHORT page means the whole listing was seen, so "no
+    # success exists" is a real observation.
+    short_no_success = newest_success_from_runs(
+        [{"createdAt": "2026-08-20T00:00:00Z", "conclusion": "failure"}],
+        4,
+    )
+    assert_true(
+        "SHORT page with zero successes -> checked=True, ts=None (genuinely none)",
+        short_no_success.checked is True and short_no_success.newest_success_ts is None,
+    )
+    skipped_missing = newest_success_from_runs(
+        [
+            {"conclusion": "success", "workflowName": "CI"},
+            _ok("2026-08-25T14:43:20Z"),
+        ],
+        10,
+    )
+    assert_true(
+        "a success row with no createdAt is skipped while a good row still wins",
         skipped_missing.checked
         and skipped_missing.newest_success_ts == "2026-08-25T14:43:20Z",
     )
     skipped_bad = newest_success_from_runs(
-        [{"createdAt": "not-a-date"}, {"createdAt": "2026-08-25T14:43:20Z"}]
+        [{"createdAt": "not-a-date", "conclusion": "success"}, _ok("2026-08-25T14:43:20Z")],
+        10,
     )
     assert_true(
         "an unparseable createdAt is skipped the same way",
         skipped_bad.checked
         and skipped_bad.newest_success_ts == "2026-08-25T14:43:20Z",
     )
-    all_bad = newest_success_from_runs([{"createdAt": "nope"}, {"x": 1}])
+    all_bad = newest_success_from_runs(
+        [{"createdAt": "nope", "conclusion": "success"}, {"x": 1}], 10
+    )
     assert_true(
         "rows present but NONE readable -> checked=False, not 'no successes'",
         all_bad.checked is False and all_bad.newest_success_ts is None,
     )
-    # The near-miss guard: a discriminator tested only on the side that fires is
-    # vacuous green. An empty list is a real answer, not a failure to check.
-    empty = newest_success_from_runs([])
+    # An empty list is a real answer, not a failure to check — and it is the
+    # shortest possible short page, so it lands in the same honest branch.
+    empty = newest_success_from_runs([], 10)
     assert_true(
         "genuine empty list -> ts=None, checked=True (real observation)",
         empty.checked is True and empty.newest_success_ts is None,
     )
     assert_true(
         "a non-list payload cannot be asked -> checked=False",
-        newest_success_from_runs({"createdAt": "2026-08-25T14:43:20Z"}).checked is False,
+        newest_success_from_runs({"createdAt": "2026-08-25T14:43:20Z"}, 10).checked is False,
     )
 
     # 12. argv shape. DELIBERATELY WEAK: this proves the workflow filter is
@@ -2516,6 +2614,12 @@ src/commands_config.rs
         "green probe does not depend on a single row (--limit is not 1)",
         probe_argv[probe_argv.index("--limit") + 1] != "1"
         and int(probe_argv[probe_argv.index("--limit") + 1]) == GREEN_PROBE_LIMIT,
+    )
+    assert_true(
+        "green probe asks for completed runs and filters success CLIENT-side",
+        probe_argv[probe_argv.index("--status") + 1] == "completed"
+        and "success" not in probe_argv
+        and "conclusion" in probe_argv[probe_argv.index("--json") + 1],
     )
     fail_argv = failed_runs_argv("owner/repo")
     assert_true(
