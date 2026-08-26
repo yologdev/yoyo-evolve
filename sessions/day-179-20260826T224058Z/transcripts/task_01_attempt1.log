@@ -1,0 +1,289 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in scripts/extract_trajectory.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green_since_verdict\|ne… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:640..840 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:839..999 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1290..1340 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1339,1400p' scripts/extr… ✓ (5ms)
+  5 tools completed in 10.9s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, and I have the full picture. Let me capture the pre-change rendered output first, so the byte-identity assertion is measured rather than assumed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-change output captured verbatim. Now the implementation — branch constants and the single statement of the decision:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (13 → 33 lines)
+        render as green: collapsing could-not-check into either is precisely the
+        defect this whole probe exists to prevent ("was red" must not read as "is
+        red", and its mirror, "could not check" must not read as "checked; clean").
+  + 
+  +     The three trailing fields are OBSERVATION, not decision: nothing reads them
+  +     to choose a branch, they exist so `green_probe_receipt` can record what the
+  +     page actually held. `rows is None` means no page was ever inspected (the
+  +     payload was not a list, or the caller never asked) and is deliberately kept
+  +     apart from `rows == 0`, which is a real empty listing.
+        """
+    
+        newest_success_ts: str | None = None
+        checked: bool = False
+  +     rows: int | None = None
+  +     successes: int = 0
+  +     unreadable: int = 0
+  + 
+  + 
+  + # Branch names for the green-since decision. These are the receipt's payload.
+  + # The Day-179 21:30 render preserved the SENTENCE and not which branch produced
+  ... (7 more lines)
+ ✓ (1m 39s)
+        render as green: collapsing could-not-check into either is precisely the
+        defect this whole probe exists to prevent ("was red" must not read as "is
+        red", and its mirror, "could not check" must not read as "checked; clean").
+  + 
+  +     The three trailing fields are OBSERVATION, not decision: nothing reads them
+  +     to choose a branch, they exist so `green_probe_receipt` can record what the
+  +     page actually held. `rows is None` means no page was ever inspected (the
+  +     payload was not a list, or the caller never asked) and is deliberately kept
+  ... (13 more lines)
+
+Now populate those observation fields in newest_success_from_runs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (40 → 45 lines)
+            return GreenScan(checked=False)
+        best_ts: str | None = None
+        best_age: float | None = None
+  -     unreadable = False
+  +     unreadable = 0
+  +     successes = 0
+        # One shared `now` so every row is measured against the same instant, and
+        # `run_age_days` is reused rather than a second ISO-8601 parser written —
+        # smallest age == newest, exactly as the failure side already does it.
+        now = datetime.now(timezone.utc)
+        for record in runs:
+            if not isinstance(record, dict):
+  -             unreadable = True
+  +             unreadable += 1
+                continue
+            conclusion = record.get("conclusion")
+            if not isinstance(conclusion, str):
+                # A row that cannot be classified is not a non-success. Calling it
+                # one would be "could not check" reading as "checked; clean".
+  -             unreadable = True
+  ... (32 more lines)
+ ✓ (1m 40s)
+            return GreenScan(checked=False)
+        best_ts: str | None = None
+        best_age: float | None = None
+  -     unreadable = False
+  +     unreadable = 0
+  +     successes = 0
+        # One shared `now` so every row is measured against the same instant, and
+        # `run_age_days` is reused rather than a second ISO-8601 parser written —
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the branch decision — one statement, mapped to the sentence rather than duplicated:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (35 → 111 lines)
+  - def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
+  -     """One sentence: has CI passed since the newest failure below? Pure.
+  - 
+  -     Returns None ONLY when there is no in-window failure to qualify — that
+  -     world already prints its own honest line and stays byte-identical.
+  + def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
+  +                          now: datetime) -> str:
+  +     """Which branch of the green-since decision fires. Pure.
+    
+  -     The comparison is STRICT: a success stamped exactly at the newest failure
+  -     is NOT green-since. Ties go to "still live", the conservative direction."""
+  +     THE decision, stated once. `green_since_verdict` maps this to a sentence and
+  +     `green_probe_receipt` names it verbatim, so the line the planner reads and
+  +     the line the audit stream keeps can never disagree about what happened. A
+  +     second copy of these conditions would be exactly the drift that makes a
+  +     receipt worthless."""
+        if not newest_failure_ts:
+  -         return None
+  +         return GREEN_BRANCH_NO_FAILURES
+        if green is None or not green.checked:
+  ... (107 more lines)
+ ✓ (1m 40s)
+  - def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datetime):
+  -     """One sentence: has CI passed since the newest failure below? Pure.
+  - 
+  -     Returns None ONLY when there is no in-window failure to qualify — that
+  -     world already prints its own honest line and stays byte-identical.
+  + def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
+  +                          now: datetime) -> str:
+  +     """Which branch of the green-since decision fires. Pure.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (61ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All five rendered branches byte-identical. Now the emission site in main():
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 18 lines)
+  -     s = render_ci_errors(ci_scan, green_scan)
+  +     s = render_ci_errors(ci_scan, green_scan, ci_now)
+  +     # The receipt, emitted UNCONDITIONALLY — including when the verdict is
+  +     # correct. This must NOT be "optimised" to fire only on the suspicious
+  +     # branch: a record that appears only when the answer is already wrong gives
+  +     # no baseline to compare against, which is the wrong direction. stderr is
+  +     # the seam that already works — scripts/evolve.sh (protected) captures it to
+  +     # $SESSION_STAGING/trajectory.stderr.log and surfaces head -20 in the cron,
+  +     # so the consumer exists and needs no harness change. ONE line, so it cannot
+  +     # crowd the existing warn() diagnostics out of that head -20.
+  +     print(
+  +         green_probe_receipt(
+  +             ci_scan,
+  +             green_scan,
+  +             green_verdict_branch(ci_scan.newest_failure_ts, green_scan, ci_now),
+  +             GREEN_PROBE_LIMIT,
+  +         ),
+  +         file=sys.stderr,
+  +     )
+ ✓ (1m 40s)
+  -     s = render_ci_errors(ci_scan, green_scan)
+  +     s = render_ci_errors(ci_scan, green_scan, ci_now)
+  +     # The receipt, emitted UNCONDITIONALLY — including when the verdict is
+  +     # correct. This must NOT be "optimised" to fire only on the suspicious
+  +     # branch: a record that appears only when the answer is already wrong gives
+  +     # no baseline to compare against, which is the wrong direction. stderr is
+  +     # the seam that already works — scripts/evolve.sh (protected) captures it to
+  +     # $SESSION_STAGING/trajectory.stderr.log and surfaces head -20 in the cron,
+  ... (11 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 4 lines)
+        ci_scan = collect_failed_ci_fingerprints(repo)
+  +     # One shared instant for the CI section, so the rendered verdict and the
+  +     # stderr receipt are provably about the same moment rather than two clocks.
+  +     ci_now = datetime.now(timezone.utc)
+ ✓ (1m 40s)
+        ci_scan = collect_failed_ci_fingerprints(repo)
+  +     # One shared instant for the CI section, so the rendered verdict and the
+  +     # stderr receipt are provably about the same moment rather than two clocks.
+  +     ci_now = datetime.now(timezone.utc)
+  2 tools completed in 3m 24s (2 ✓)
+
+Now the self-tests. Let me find where the existing green-probe tests end:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2640,2700p' scripts/extr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2700,2760p' scripts/extr… ✓ (3ms)
+  2 tools completed in 2.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (2 → 2 lines) ✓ (1m 39s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 201 lines)
+        assert_true(
+            "both queries still name the repo they were handed",
+            "owner/repo" in probe_argv and "owner/repo" in fail_argv,
+  +     )
+  + 
+  +     # 13. The RECEIPT. This probe has been declared fixed four times and graded
+  +     #     zero times: every fix was verified by hand-running it in the session
+  +     #     that wrote it, which verifies the CHANNEL and not the consumer. On Day
+  +     #     179 at 21:30 the block said "these are live" over cured failures while
+  +     #     a hand-run three minutes later said green — and which branch fired is
+  +     #     unrecoverable, because nothing recorded it. These tests pin the one
+  +     #     fact that was missing.
+  +     print("\n=== green_probe_receipt self-tests ===\n")
+  +     rnow = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+  +     rscan = CiScan(
+  +         ok=True,
+  +         clusters=[("boom", ["1", "2"], 0.5)],
+  +         in_window=3,
+  +         excluded_old=2,
+  +         undated=1,
+  ... (180 more lines)
+ ✓ (1m 38s)
+        assert_true(
+            "both queries still name the repo they were handed",
+            "owner/repo" in probe_argv and "owner/repo" in fail_argv,
+  +     )
+  + 
+  +     # 13. The RECEIPT. This probe has been declared fixed four times and graded
+  +     #     zero times: every fix was verified by hand-running it in the session
+  +     #     that wrote it, which verifies the CHANNEL and not the consumer. On Day
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (61ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 59s (3 ✓)
+
+All 30+ new assertions pass. Now the positive control — neuter the branch naming and confirm tests actually fail:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (87ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scri… (4 lines) ✓ (244ms)
+  2 tools completed in 3.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed: neutered → 24 FAILs, exit 1; restored → exit 0, ALL PASSED. Now run the extractor for real against this repo:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOYO_REPO=${YOYO_REPO:-<un… ✓ (159ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_REPO="yologdev/yoyo-evolve"… ✓ (127ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+Pre-existing crash unrelated to my change (/dev/null as audit dir when YOYO_AUDIT_DIR is unset — line 1102, collect_provider_errors, untouched). Let me confirm it's pre-existing and work around it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash -q… (2 lines) ✓ (145ms)
+
+Confirmed pre-existing (crashes identically on stashed HEAD). Running with a real audit dir set, as the harness does:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tmp/emptysessions && Y… ✓ (6.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real receipt captured. Let me confirm the rendered block agrees, then update CLAUDE.md:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 "Recurring CI errors" /… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "Verified live the day i… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+Found the anchor. Appending the receipt record:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`)
+  + Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`. **Day 179 (fifth session on this one probe) — and this one is deliberately NOT a fifth correctness fix.** The 21:27 briefing, computed `2026-08-26T21:30Z`, printed `no successful run has landed since the newest failure below — these are live` above **14 clusters** of the already-fixed `gasp_cli_run_ordering` / #832 failures; three minutes later the assessment … [yoyo: 4460 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 39s)
+  - Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`)
+  + Verified live the day it landed — the same command that had said *these are live* renders `CI has gone green since (last <1d ago)`. **Day 179 (fifth session on this one probe) — and this one is deliberately NOT a fifth correctness fix.** The 21:27 briefing, computed `2026-08-26T21:30Z`, printed `no successful run has landed since the newest failure below — these are live` above **14 clusters** of the already-fixed `gasp_cli_run_ordering` / #832 failures; three minutes later the assessment … [yoyo: 4460 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the full verification pass:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (2.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

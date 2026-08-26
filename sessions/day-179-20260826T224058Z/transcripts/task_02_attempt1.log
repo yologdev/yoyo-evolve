@@ -1,0 +1,392 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two files I need to change, focusing on the relevant parts.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/config.rs src/format/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "estimate_cost" src/ --… ✓ (8ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p src/format/cost.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,260p src/format/cost.… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn config_flag\|fn pars…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_continue_on_silen… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 730,830p src/config.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1360,1410p src/cli.rs && … ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_config_file\|file_… ✓ (4ms)
+  9 tools completed in 34.5s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Writing the reader in src/config.rs first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn strip_quotes\|fn st… ✓ (5ms)
+  ▶ edit src/config.rs (3 → 173 lines)
+  + /// A user-supplied price for one model, in USD per million tokens.
+  + ///
+  + /// Both halves are mandatory: a price with only one side is not a price, so
+  + /// `parse_model_pricing_from_config` drops a partial entry rather than letting
+  + /// `input` override while `output` falls back to the built-in table — that
+  + /// would produce a number belonging to no source at all.
+  + #[derive(Debug, Clone, Copy, PartialEq)]
+  + pub struct ModelPrice {
+  +     /// USD per million input tokens.
+  +     pub input_per_million: f64,
+  +     /// USD per million output tokens.
+  +     pub output_per_million: f64,
+  + }
+  + 
+  + /// User-supplied per-model prices, read from a `[model_pricing."<id>"]` table.
+  + ///
+  + /// Empty is the overwhelmingly common case (nobody has written the table) and
+  + /// is a byte-identical pass-through: `lookup` returns `None` and every caller
+  + /// falls back to exactly what it did before.
+  + #[derive(Debug, Clone, Default, PartialEq)]
+  ... (153 more lines)
+ ✓ (15.6s)
+  + /// A user-supplied price for one model, in USD per million tokens.
+  + ///
+  + /// Both halves are mandatory: a price with only one side is not a price, so
+  + /// `parse_model_pricing_from_config` drops a partial entry rather than letting
+  + /// `input` override while `output` falls back to the built-in table — that
+  + /// would produce a number belonging to no source at all.
+  + #[derive(Debug, Clone, Copy, PartialEq)]
+  + pub struct ModelPrice {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 49.1s (2 ✓)
+
+Expected — consumer lands next. Now the consult in src/format/cost.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (3 → 63 lines)
+    //! Pricing, cost display, token formatting, and context bar.
+  + 
+  + use crate::config::ModelPricingOverrides;
+  + 
+  + /// User-supplied per-model prices, set once from the loaded config file.
+  + ///
+  + /// Written exactly once, by `cli::parse_args`, before any agent is built.
+  + /// Tests never touch it — they drive the `*_with` functions directly, which is
+  + /// what `tests/global_state_races.rs` asks for ("pass the value explicitly,
+  + /// never `#[serial]`"), so this `OnceLock` is never poisoned by a test.
+  + static MODEL_PRICING_OVERRIDES: std::sync::OnceLock<ModelPricingOverrides> =
+  +     std::sync::OnceLock::new();
+  + 
+  + /// Record user-supplied model prices for this process.
+  + ///
+  + /// Idempotent by construction: a second call is ignored, because a session has
+  + /// exactly one loaded config and a mid-session re-price is a bug, not a
+  + /// reconfiguration.
+  + pub fn set_model_pricing_overrides(overrides: ModelPricingOverrides) {
+  +     let _ = MODEL_PRICING_OVERRIDES.set(overrides);
+  ... (43 more lines)
+ ✓ (15.2s)
+    //! Pricing, cost display, token formatting, and context bar.
+  + 
+  + use crate::config::ModelPricingOverrides;
+  + 
+  + /// User-supplied per-model prices, set once from the loaded config file.
+  + ///
+  + /// Written exactly once, by `cli::parse_args`, before any agent is built.
+  + /// Tests never touch it — they drive the `*_with` functions directly, which is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/format/cost.rs (11 → 35 lines)
+    /// Estimate cost in USD for a given usage and model.
+    /// Returns None if the model pricing is unknown.
+  + ///
+  + /// Thin wrapper over [`estimate_cost_with`] — the only global read — so its
+  + /// signature is unchanged and no call site moves.
+    pub fn estimate_cost(usage: &yoagent::Usage, model: &str) -> Option<f64> {
+  -     let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown(usage, model)?;
+  +     estimate_cost_with(model_pricing_overrides(), usage, model)
+  + }
+  + 
+  + /// Estimate cost in USD, consulting an explicit set of user overrides.
+  + ///
+  + /// Pure: this is the emission point tests assert against.
+  + pub fn estimate_cost_with(
+  +     overrides: &ModelPricingOverrides,
+  +     usage: &yoagent::Usage,
+  +     model: &str,
+  + ) -> Option<f64> {
+  +     let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown_with(overrides, usage, model)?;
+        Some(input_cost + cw_cost + cr_cost + output_cost)
+  ... (17 more lines)
+ ✓ (15.2s)
+    /// Estimate cost in USD for a given usage and model.
+    /// Returns None if the model pricing is unknown.
+  + ///
+  + /// Thin wrapper over [`estimate_cost_with`] — the only global read — so its
+  + /// signature is unchanged and no call site moves.
+    pub fn estimate_cost(usage: &yoagent::Usage, model: &str) -> Option<f64> {
+  -     let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown(usage, model)?;
+  +     estimate_cost_with(model_pricing_overrides(), usage, model)
+  ... (13 more lines)
+  ▶ edit src/format/cost.rs (6 → 1 lines)
+  - /// Thin wrapper: the **only** global read on the pricing path.
+  - fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+  -     model_pricing_with(model_pricing_overrides(), model)
+  - }
+  - 
+    /// Resolve a model's price
+ ✓ (13.9s)
+  - /// Thin wrapper: the **only** global read on the pricing path.
+  - fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+  -     model_pricing_with(model_pricing_overrides(), model)
+  - }
+  - 
+    /// Resolve a model's price
+  3 tools completed in 59.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model_pricing(" src/for… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 764,770p src/format/cost.… ✓ (3ms)
+  ▶ edit src/format/cost.rs (6 → 121 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// The built-in pricing lookup with no user overrides — i.e. exactly what
+  +     /// every pre-override caller saw. Kept so the ~20 table tests below assert
+  +     /// the same thing they always did, unchanged.
+  +     fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+  +         model_pricing_with(&ModelPricingOverrides::default(), model)
+  +     }
+  + 
+  +     /// A usage fixture with only input/output tokens (no cache traffic).
+  +     fn usage(input: u64, output: u64) -> yoagent::Usage {
+  +         yoagent::Usage {
+  +             input,
+  +             output,
+  +             cache_creation: 0,
+  +             cache_read: 0,
+  +         }
+  +     }
+  ... (101 more lines)
+ ✓ (13.2s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// The built-in pricing lookup with no user overrides — i.e. exactly what
+  +     /// every pre-override caller saw. Kept so the ~20 table tests below assert
+  +     /// the same thing they always did, unchanged.
+  +     fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1055,1075p src/format/cos… ✓ (3ms)
+  5 tools completed in 41.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1058,1075p src/format/cos… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1135,1145p src/format/cos… ✓ (3ms)
+  ▶ edit src/format/cost.rs (6 → 7 lines)
+            yoagent::Usage {
+                input,
+                output,
+  -             cache_creation: 0,
+                cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 0,
+            }
+ ✓ (15.2s)
+            yoagent::Usage {
+                input,
+                output,
+  -             cache_creation: 0,
+                cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 0,
+            }
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 23.1s (3 ✓)
+
+Only the wiring remains. Adding the parse_args call site:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 30 lines)
+  +     // [model_pricing."<id>"]: user-supplied per-model rates (issue #833).
+  +     // A wrong cost is worse than no cost, because it is actionable-looking —
+  +     // anyone on a negotiated contract, behind a re-pricing proxy, or running a
+  +     // self-hosted model has a real rate my built-in table cannot know.
+  +     //
+  +     // Deliberately NOT part of the project-config trust boundary
+  +     // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): this
+  +     // grants no privilege. The worst a hostile repo can do with it is print a
+  +     // wrong number on a display — same reasoning already written down for
+  +     // `continue_on_silence` and `wait_for_reset`. Do not add it there.
+  +     let model_prices = crate::config::parse_model_pricing_from_config(&raw_config_content);
+  +     if !model_prices.dropped.is_empty() && !is_quiet() {
+  +         // A dropped price is named, never silently swallowed: the user wrote
+  +         // a rate and is not getting it.
+  +         eprintln!(
+  +             "{YELLOW}⚠ model_pricing: ignored {} incomplete entr{} ({}) — each model needs both `input` and `output` as non-negative numbers{RESET}",
+  +             model_prices.dropped.len(),
+  +             if model_prices.dropped.len() == 1 {
+  +                 "y"
+  +             } else {
+  ... (10 more lines)
+ ✓ (13.3s)
+  +     // [model_pricing."<id>"]: user-supplied per-model rates (issue #833).
+  +     // A wrong cost is worse than no cost, because it is actionable-looking —
+  +     // anyone on a negotiated contract, behind a re-pricing proxy, or running a
+  +     // self-hosted model has a real rate my built-in table cannot know.
+  +     //
+  +     // Deliberately NOT part of the project-config trust boundary
+  +     // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): this
+  +     // grants no privilege. The worst a hostile repo can do with it is print a
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 324,332p src/format/mod.r… ✓ (4ms)
+  2 tools completed in 15.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/cli.rs (1 → 1 lines)
+  -         crate::format::cost::set_model_pricing_overrides(model_prices);
+  +         crate::format::set_model_pricing_overrides(model_prices);
+ ✓ (15.2s)
+  -         crate::format::cost::set_model_pricing_overrides(model_prices);
+  +         crate::format::set_model_pricing_overrides(model_prices);
+  ▶ edit src/config.rs (10 → 5 lines)
+        /// True when the user configured no prices at all — the common path.
+        pub fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+  -     }
+  - 
+  -     /// Number of accepted entries (dropped ones are not counted).
+  -     pub fn len(&self) -> usize {
+  -         self.entries.len()
+        }
+    }
+ ✓ (2m 2s)
+        /// True when the user configured no prices at all — the common path.
+        pub fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+  -     }
+  - 
+  -     /// Number of accepted entries (dropped ones are not counted).
+  -     pub fn len(&self) -> usize {
+  -         self.entries.len()
+        }
+    }
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 26s (2 ✓)
+
+Build and clippy pass. Now the parser tests in src/config.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo model_pric… ✓ (169ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn config_flag_true_val… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2228,2234p src/config.rs ✓ (3ms)
+  3 tools completed in 5.0s (3 ✓)
+
+  ▶ edit src/config.rs (3 → 120 lines)
+  +     #[test]
+  +     fn model_pricing_absent_table_is_empty() {
+  +         // The whole regression surface: essentially every existing user.
+  +         let o = parse_model_pricing_from_config("model = \"gpt-4o\"\nquiet = true\n");
+  +         assert_eq!(o, ModelPricingOverrides::default());
+  +         assert!(o.is_empty());
+  +         assert!(o.dropped.is_empty());
+  +         assert_eq!(o.lookup("gpt-4o"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn model_pricing_reads_a_complete_entry() {
+  +         let o = parse_model_pricing_from_config(
+  +             "[model_pricing.\"my-model-id\"]\ninput = 1.50    # USD per Mtok\noutput = 7.00\n",
+  +         );
+  +         assert!(o.dropped.is_empty());
+  +         assert_eq!(
+  +             o.lookup("my-model-id"),
+  +             Some(ModelPrice {
+  +                 input_per_million: 1.50,
+  ... (100 more lines)
+ ✓ (2m 1s)
+  +     #[test]
+  +     fn model_pricing_absent_table_is_empty() {
+  +         // The whole regression surface: essentially every existing user.
+  +         let o = parse_model_pricing_from_config("model = \"gpt-4o\"\nquiet = true\n");
+  +         assert_eq!(o, ModelPricingOverrides::default());
+  +         assert!(o.is_empty());
+  +         assert!(o.dropped.is_empty());
+  +         assert_eq!(o.lookup("gpt-4o"), None);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (25.9s)
+  2 tools completed in 2m 30s (2 ✓)
+
+All 11 pass. Now the positive control — neuter the override branch and confirm exactly the new tests fail:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (1m 38s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirmed: exactly the 3 consult tests fail, all near-miss guards stay green. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (22ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5240 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_stays_native ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register drift — exactly what the gate exists for. Updating both entries:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/config.rs"\|"src/f… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (20ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now the docs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -25 docs/src/features/cost-… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (51 lines) ✓ (20ms)
+  2 tools completed in 11.3s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 0/3 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/config.rs, src/format/cost.rs, src/cli.rs
+

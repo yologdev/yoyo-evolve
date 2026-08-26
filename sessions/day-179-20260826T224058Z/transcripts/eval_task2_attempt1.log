@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (5ms)
+  ▶ $ cd /tmp && rm -rf mp833 && mkdir mp833 && cd mp833 && cat > … (9 lines) ✓ (277ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%cI %h' && … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1320p' src/cli.rs ✓ (3ms)
+  5 tools completed in 22.1s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat --format='%s%n%n… ✓ (10ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 22s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 0s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Summary of what I judged:
+
+• Reader (src/config.rs): whole-entry drop on missing/non-numeric/negative rates with the id recorded in dropped, zero accepted with the judgment written as a comment, exact-match lookup. Test rows for each rule including the near-miss (gpt-4o must not match gpt-4o-mini, openai/gpt-4o, GPT-4O).
+• **Consult** (src/format/cost.rs): pure estimate_cost_with / cost_breakdown_with holding the decision; estimate_cost is the thin wrapper and the only global read, signature unchanged so no call site moved. Precedence override > preset > table is stated in the doc comment; the preset path survives untouched inside the renamed builtin_model_pricing, so `test_estimate_cost_sonnet_5_preset` still derives from the preset.
+• Wiring: one site in parse_args, after load_config_file, before agent build, with the "deliberately not in the trust boundary" reasoning written at the call site as asked.
+• Touchpoints: the rename has its consumer, the #[cfg(test)] model_pricing shim keeps the ~20 existing table tests unedited, dropped is read by the cli warning, and the global set→read chain is closed.
+• Sizing: both register entries updated in the same diff (3486→3769, 2211→2406), no absorbed drift.
+
+Two things I flagged as feedback rather than failure: the CLAUDE.md src/format/cost.rs bullet extension the task listed under Docs was not written (user-facing docs/src/features/cost-tracking.md was, thoroughly), and a harness-written `.yoyo/risk_validations.jsonl` line was swept into the commit.
+
+I also recorded honestly that I could not exercise the binary: target/debug/yoyo predates the commit by five minutes, and -p/non-tty forces enable_quiet(), which suppresses the dropped-entry warning by design — so my one runtime attempt proved nothing and is not reported as evidence in either direction.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
