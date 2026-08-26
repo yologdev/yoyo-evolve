@@ -1,0 +1,305 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the failure, then read the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1390,1440p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("cargo")'… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,640p' src/commands_l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1392p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "security_audit_command\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --locked … ✓ (3ms)
+ ✓ (1m 11s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 32s (6 ✓)
+
+Repro confirmed. Now the fix — let me read the whole function.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1374 && NR<=1560' src/c… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Repro confirmed (fails at four_call_session_finishes_its_own_run_last). Now the fix — injected-resolver seam.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (3 → 46 lines)
+  + /// Count this project's tests by shelling out to `cargo test -- --list`.
+  + ///
+  + /// **This must never be reached from a `#[test]`.** A nested `cargo` inside the
+  + /// test binary re-builds the bin target and uplifts it over the *shared*
+  + /// `target/debug/<name>` path — a path that carries no feature suffix — so a
+  + /// feature-less nested build silently clobbers the featured binary that
+  + /// integration tests reach through `CARGO_BIN_EXE_yoyo` (#832). That is why
+  + /// [`handle_evolution`] is only a thin wrapper: this closure is the one impure
+  + /// thing it injects, and the tests drive [`handle_evolution_with`] instead.
+  + fn count_tests_via_cargo() -> usize {
+  +     std::process::Command::new("cargo")
+  +         .args(["test", "--", "--list"])
+  +         .output()
+  +         .ok()
+  +         .and_then(|r| {
+  +             if r.status.success() {
+  +                 let text = String::from_utf8_lossy(&r.stdout).to_string();
+  +                 Some(text.lines().filter(|l| l.ends_with(": test")).count())
+  +             } else {
+  +                 None
+  ... (26 more lines)
+ ✓ (13.2s)
+  + /// Count this project's tests by shelling out to `cargo test -- --list`.
+  + ///
+  + /// **This must never be reached from a `#[test]`.** A nested `cargo` inside the
+  + /// test binary re-builds the bin target and uplifts it over the *shared*
+  + /// `target/debug/<name>` path — a path that carries no feature suffix — so a
+  + /// feature-less nested build silently clobbers the featured binary that
+  + /// integration tests reach through `CARGO_BIN_EXE_yoyo` (#832). That is why
+  + /// [`handle_evolution`] is only a thin wrapper: this closure is the one impure
+  ... (13 more lines)
+
+Now wire the two call sites in the body.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (16 → 4 lines)
+        // Get test count
+  -     let test_count = std::process::Command::new("cargo")
+  -         .args(["test", "--", "--list"])
+  -         .output()
+  -         .ok()
+  -         .and_then(|r| {
+  -             if r.status.success() {
+  -                 let text = String::from_utf8_lossy(&r.stdout).to_string();
+  -                 Some(text.lines().filter(|l| l.ends_with(": test")).count())
+  -             } else {
+  -                 None
+  -             }
+  -         })
+  -         .unwrap_or(0);
+  +     let test_count = test_count();
+    
+        let total_sessions = sessions.len();
+ ✓ (13.3s)
+        // Get test count
+  -     let test_count = std::process::Command::new("cargo")
+  -         .args(["test", "--", "--list"])
+  -         .output()
+  -         .ok()
+  -         .and_then(|r| {
+  -             if r.status.success() {
+  -                 let text = String::from_utf8_lossy(&r.stdout).to_string();
+  ... (9 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fetch_ci_runs(10)" src/… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1516,1530p' src/commands… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (3 → 3 lines)
+        // --- Recent CI runs ---
+  -     let ci_runs = fetch_ci_runs(10);
+  +     let ci_runs = ci_runs();
+        if !ci_runs.is_empty() {
+ ✓ (1m 39s)
+        // --- Recent CI runs ---
+  -     let ci_runs = fetch_ci_runs(10);
+  +     let ci_runs = ci_runs();
+        if !ci_runs.is_empty() {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CARGO_MANIFEST_DIR" src… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (6 → 84 lines)
+        #[test]
+        fn test_handle_evolution_no_panic() {
+  -         // Should not panic regardless of environment
+  -         handle_evolution("/evolution");
+  -         handle_evolution("/evolution 5");
+  +         // Should not panic regardless of environment.
+  +         //
+  +         // Driven through `handle_evolution_with` with stub resolvers, never
+  +         // through `handle_evolution` — that wrapper's only job is to inject a
+  +         // closure that shells out to `cargo test -- --list`, and a nested
+  +         // `cargo` inside the test binary re-builds the bin target and uplifts
+  +         // it over the shared, feature-suffix-less `target/debug/yoyo` path,
+  +         // clobbering the featured binary the integration tests reach through
+  +         // `CARGO_BIN_EXE_yoyo` (#832). It also cost ~12s for this one test.
+  +         let test_count_calls = std::cell::Cell::new(0usize);
+  +         let ci_calls = std::cell::Cell::new(0usize);
+  +         let count = || {
+  +             test_count_calls.set(test_count_calls.get() + 1);
+  +             42
+  +         };
+  ... (67 more lines)
+ ✓ (1m 34s)
+        #[test]
+        fn test_handle_evolution_no_panic() {
+  -         // Should not panic regardless of environment
+  -         handle_evolution("/evolution");
+  -         handle_evolution("/evolution 5");
+  +         // Should not panic regardless of environment.
+  +         //
+  +         // Driven through `handle_evolution_with` with stub resolvers, never
+  ... (13 more lines)
+  5 tools completed in 3m 51s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_i… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+That last assertion is convoluted and likely vacuous — let me replace it with a clean body slice.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (14 → 17 lines)
+            let with_start = src
+                .find("fn handle_evolution_with")
+                .expect("handle_evolution_with still exists");
+  +         let with_body = src[with_start..]
+  +             .split("\n}\n")
+  +             .next()
+  +             .expect("handle_evolution_with has a body");
+            assert!(
+  -             !src[with_start..].starts_with("fn handle_evolution_with")
+  -                 || !src[with_start..]
+  -                     .split("\n}\n")
+  -                     .next()
+  -                     .unwrap_or_default()
+  -                     .contains(needle.as_str()),
+  +             !with_body.contains(needle.as_str()),
+                "handle_evolution_with must never spawn cargo directly"
+  +         );
+  +         assert!(
+  +             with_body.contains("test_count()"),
+  +             "handle_evolution_with must resolve the count through its injected closure"
+  ... (2 more lines)
+ ✓ (1m 37s)
+            let with_start = src
+                .find("fn handle_evolution_with")
+                .expect("handle_evolution_with still exists");
+  +         let with_body = src[with_start..]
+  +             .split("\n}\n")
+  +             .next()
+  +             .expect("handle_evolution_with has a body");
+            assert!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 45s (2 ✓)
+
+Test now runs in 0.02s (was ~12s). Full verification:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (51.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B5 -A25 … ✓ (49.9s)
+  2 tools completed in 1m 44s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own module-size gate fired — the sanctioned remedy. Let me trim some verbosity first, then pay the register.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (62 → 53 lines)
+                src.matches(needle.as_str()).count(),
+                1,
+                "expected exactly one cargo spawn in commands_info.rs (inside count_tests_via_cargo)"
+  -         );
+  - 
+  -         let body_start = src
+  -             .find("fn count_tests_via_cargo")
+  -             .expect("count_tests_via_cargo still exists");
+  -         let spawn_at = src.find(needle.as_str()).expect("cargo spawn still exists");
+  -         assert!(
+  -             spawn_at > body_start,
+  -             "the cargo spawn moved out of count_tests_via_cargo"
+            );
+    
+            // And the function tests drive must not name it.
+ ✓ (1m 34s)
+                src.matches(needle.as_str()).count(),
+                1,
+                "expected exactly one cargo spawn in commands_info.rs (inside count_tests_via_cargo)"
+  -         );
+  - 
+  -         let body_start = src
+  -             .find("fn count_tests_via_cargo")
+  -             .expect("count_tests_via_cargo still exists");
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/commands_… ✓ (1.0s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 4 lines)
+  -     ("src/commands_info.rs", 3061),
+  +     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
+  +     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a
+  +     // source-level guard pinning that. Acknowledged, not absorbed.
+  +     ("src/commands_info.rs", 3164),
+ ✓ (1m 12s)
+  -     ("src/commands_info.rs", 3061),
+  +     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
+  +     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a
+  +     // source-level guard pinning that. Acknowledged, not absorbed.
+  +     ("src/commands_info.rs", 3164),
+  3 tools completed in 2m 55s (3 ✓)
+
+Now the positive control — confirm the guard actually fails if the spawn moves back:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (8 lines) ✓ (21.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passes (guard fails when the spawn returns). Now the full verification suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 29s)
+
+
+Plain cargo test green. Now the repro — the featured run:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test --locked… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Still failing — so there's a second clobber source. Let me hunt it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo gasp session… ✓ (149ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The binary IS featured now — so the clobber happens during the run. Let me instrument to catch the culprit.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p /tm… (6 lines) ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (50.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 4s (2 ✓)
+
+This run passed. Let me see the full call log — I suspect my own auto-check is racing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat /tmp/cargo_calls.log ✓ (53ms)
+
+  ▶ $ cat -A /tmp/cargo_calls.log | sed 's/\$$//' | cut -c1-120 ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && awk '{print NR": ["$0"]"}' cargo_calls.log | tr '\n' '~' | fold -w 40… ✓ (76ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+Found it — `cargo build`, `cargo clippy`, `cargo fmt`, `cargo audit` are all spawned from inside the test binary. My grep missed them. Let me find them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new' src/ | g… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The offenders are generic runners (Command::new(&argv[0])). Let me find which tests reach them.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,112p' src/commands_li… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_health_checks_full_… ✓ (3ms)
+  2 tools completed in 3.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

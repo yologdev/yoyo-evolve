@@ -1,0 +1,168 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing CLAUDE.md documentation. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("cargo")'… ✓ (7ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1370,1400p src/commands_i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 600,625p src/commands_lin… ✓ (5ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.5s (4 ✓)
+
+Code fix is in; the docs half is missing. Let me file the follow-up for the second offender first, so I can name the number.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (16 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_\|^- `src/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1401,1425p src/commands_i… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.6s (3 ✓)
+
+Now the CLAUDE.md bullet:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (43 lines) ✓ (22ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The CLAUDE.md bullet landed. Let me verify it's well-formed and in the right place.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_info.rs`' … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Bullet is in place at line 212, between commands_dev.rs and commands_file.rs. Only CLAUDE.md is modified (code was already committed). Running verification:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (50.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (43.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 47s (3 ✓)
+
+Still failing. Let me see the actual message — the earlier claim of green may not hold.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (970ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+In isolation it passes; in the full run it fails — the symptom is still live. Let me get the full panic and hunt for the remaining offender.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (43.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Same failure. My handle_evolution fix removed one offender but something else still clobbers the binary. Let me find it empirically rather than guess.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (419ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo gasp session… ✓ (44.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 59.1s (2 ✓)
+
+Confirmed: hash changed ee4cec1c → c6869f73 after unit tests. Something still rebuilds. Let me find every way a test could reach cargo.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new(' src/ | … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new(&argv\[0\]… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 85,115p src/commands_lint… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn health_checks_for_pr… ✓ (18ms)
+  4 tools completed in 13.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it. health_checks_for_project puts cargo build in the Rust list, and the #[cfg(not(test))] guard covers only the test entry — so a #[test] still spawns a feature-less cargo build.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1155,1195p src/commands_d… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me confirm empirically before touching anything — run just that test and watch the binary hash.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (715ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && TESTBIN=target/debug/deps/yoyo-2… ✓ (14.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 37.9s (2 ✓)
+
+Conclusively confirmed: that one test flipped the binary ee4cec1c (gasp) → c6869f73 (plain), in 13.96s. Same defect class, second instance. CI-red is Priority 0, so this must be fixed, not just filed. Let me check the full shape first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 736,775p src/commands_dev… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both functions have exactly one test caller each — two offending tests. Let me see the other one.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1105p src/commands_d… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both tests spawn a feature-less cargo build. Note the existing comment already spotted the recursion hazard for cargo test but left build in. Applying the same injected-resolver remedy.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 699,736p src/commands_dev… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=713 && NR<=730' src/com… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 28.6s (3 ✓)
+
+Now applying the same injected-resolver remedy. Replacing the two functions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (136 lines) ✓ (9.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Builds clean. Now retargeting the two offending tests at the pure cores:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_health_check_fu… ✓ (2ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (116 lines) ✓ (10.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.0s (2 ✓)
+
+Builds clean. Now the positive control — do these tests still clobber the binary?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --features gasp 2>&1… ✓ (33.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Hash unchanged, and the health-check tests now run in 0.00s (was 13.96s for one). Now the real repro:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 …

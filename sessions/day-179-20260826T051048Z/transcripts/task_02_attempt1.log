@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the closest sibling gate to match its shape exactly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && echo "---" && grep …  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/orphan_modules.rs ✓ (2ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/orphan_modules.rs:99..309 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' tests/gasp_cli_ru… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 44.8s (4 ✓)
+
+Confirmed the facts. Now writing the gate, modeled on tests/orphan_modules.rs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/feature_gated_tests.rs (493 lines) ✓ (1m 22s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test f… ✓ (1.5s)
+  2 tools completed in 1m 28s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes: 9 files scanned, 1 gated and registered. Now the positive controls — run, not assumed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp tests/fea… (11 lines) ✓ (370ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 ✅ — fatal, names file + feature, prints the pasteable line. Now control 2:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate… (10 lines) ✓ (737ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire and restore green. Full verification:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (14.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 32s (2 ✓)
+
+All four green (5197 tests). Now the CLAUDE.md paragraph, placed after the fifth gate:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scanner is pinned by it… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only the CLAUDE.md paragraph and the commit remain. Inserting between the fifth gate (line 78) and the mutation-testing section:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (39 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 24.1s (3 ✓)
+
+Committed. eafd3ac9.
+
+## What landed
+
+tests/feature_gated_tests.rs — the sixth deterministic gate, in the same shape as its five siblings: pure table-tested classifier with all filesystem walking at one call site, fatal on the unnamed case, a debt register, a ratchet, and the limits printed on every passing run through a raw std::io::stderr() handle.
+
+The finding it enumerates is not the red itself — it's why nobody noticed for three sessions. tests/gasp_cli_run_ordering.rs:46 carries #![cfg(feature = "gasp")], the feature is default-off, and scripts/evolve.sh:376 runs plain `cargo test`. That file compiles to zero tests there. So the harness gate wasn't lying — it was reporting a true green over a denominator that silently excluded the failing test. My own *"could not check" must never read as "checked; clean"* rule, failing inside the one instrument all 178 days of my calibration have been graded by.
+
+Two directions. Unregistered gated file → fatal, both remedies verbatim including the pasteable ("path", "feature", "<reason>"), line — the gate forbids an unnamed gated file, not a gated one. Registered file that lost its gate / changed feature / vanished → also fatal, the ratchet. A blank reason is fatal too: an unnamed debt wearing a name is not a name.
+
+Anti-vacuous both ways, since a scanner that finds nothing and passes is the failure shape: an empty walk returns EmptyScan (driven by a unit test with an empty file list), and a live test asserts the register is non-empty with a real reason on every entry.
+
+**Positive controls run, not assumed** — my most recent injury sets the direction I guard, so I checked the failing direction too:
+1. Deleted the one register entry → fatal, naming tests/gasp_cli_run_ordering.rs and gasp with the pasteable line. Restored → green.
+2. Bogus entry for a nonexistent file → fatal on the ratchet branch. Removed → green.
+
+One small pleasure: the gate scans tests/*.rs, which includes itself, so a compile-time literal for the attribute would have made it classify its own source as gated. The needle is assembled at runtime, and a test pins that.
+
+cargo test 5197 passed, gate 14 passed, clippy -D warnings clean, fmt --check clean.
+
+**The honest limit, printed on every passing run and written into CLAUDE.md: this makes the blindness named, not cured**. The harness still runs plain `cargo test`; those tests still don't run there. Only CI runs them. "Registered" means *acknowledged*, never *covered* — and saying that out loud is the whole point of the gate.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the key evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 832 --repo yologde… ✓ (7ms)
+ ✓ (512ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la ISSUES_TODAY.md 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/ && echo "--- ci status… ✓ (5ms)
+ ✓ (580ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln 'cfg(feature' tests/*.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,390p' scripts/evolve… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 826 814 813; do echo "=… ✓ (1.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 29s (7 ✓)
+
+Evidence gathered. CI is genuinely red (3 consecutive failures, green before), #832 has a complete diagnosis, and the assessment's structural finding is the sharper one. Writing the plan.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (127 lines) ✓ (1m 16s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+task_01.md is written. Now task_02 — the structural finding the CI red exposed.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (129 lines) ✓ (1m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (54 lines) ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add -f session_plan/ && git… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 7s (4 ✓)
+
+Plan is written. Both task files exist, plus issue_responses.md.
+
+Task 1 — #832, priority 0. main is CI-red on the last three runs; I confirmed that independently with gh run list before planning anything. test_handle_evolution_no_panic spawns a nested feature-less cargo test -- --list, which rebuilds the bin without gasp and uplifts it over the shared target/debug/yoyo path — so tests/gasp_cli_run_ordering.rs, reaching the binary through CARGO_BIN_EXE_yoyo, runs a de-featured program and gets an honest refusal. Fix is pure core + thin wrapper so no test spawns cargo. The task names the two things not to do (don't re-feature the nested call, don't touch the victim test) and requires the positive control in both directions, including the ~12s → sub-second timing drop as direct evidence.
+
+Task 2 — the reason nobody noticed. This is the part I think matters more than the fix. `tests/gasp_cli_run_ordering.rs is #![cfg(feature = "gasp")], and evolve.sh:376 runs plain cargo test, which compiles that file to **zero tests**. Three sessions in a row logged tasks 2/2 ✅ — build OK, tests OK while main` was red on exactly that test. The gate wasn't lying — it was reporting a true green over a denominator that silently excluded the failing test. That's my own "could not check" must never read as "checked; clean" rule failing inside the one instrument every day of my self-model calibration has been graded by. Since evolve.sh is protected, the remedy lives on my side: a sixth gate in the shape of the other five — pure classifier, fatal on the unnamed case, one honest register entry, a ratchet, limits printed on every passing run. Fatal, not a warning: a warning goes to the stderr of a passing test and the loop reads the exit code, which is the Day-174 lesson I'd otherwise repeat. And it says plainly that it makes the blindness named, not cured.
+
+Verified at plan time that exactly one tests/*.rs carries a file-level feature gate, so the register ships with one entry and the gate isn't vacuous.
+
+On the receipts: I closed nothing on age. #826's objection is specific (the re-measurement never landed) and I have no slot, so it stays open with the reason stated. #813/#814 have no objection at all — nobody looked — so Phase C does the small review the receipt asks for and closes on that, not on elapsed time.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
