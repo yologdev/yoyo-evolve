@@ -2951,7 +2951,8 @@ mod tests {
 
         assert!(!results.is_empty(), "query should match something");
         assert_eq!(
-            results[0].path, "src/commands_web.rs",
+            results[0].path,
+            "src/commands_web.rs",
             "the canonical implementation must rank first, got: {:?}",
             results
                 .iter()
