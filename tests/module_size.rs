@@ -216,11 +216,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
     // Day 174: +256 absorbed since Day 166.
-    ("src/config.rs", 3486), // Day 178: +98 for the allow-wildcard option-token guard (#823 sibling).
+    ("src/config.rs", 3769), // Day 179: +283 for the [model_pricing] reader and its tests (#833).
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),
-    ("src/format/cost.rs", 2211),
+    ("src/format/cost.rs", 2406), // Day 179: +195 for the user-override consult and its tests (#833).
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
     // chunking-independence and carry-safety regression tests.

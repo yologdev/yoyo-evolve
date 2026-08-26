@@ -879,8 +879,173 @@ pub fn parse_notify_command_from_config(
         .map(|v| v.to_string())
 }
 
+/// A user-supplied price for one model, in USD per million tokens.
+///
+/// Both halves are mandatory: a price with only one side is not a price, so
+/// `parse_model_pricing_from_config` drops a partial entry rather than letting
+/// `input` override while `output` falls back to the built-in table — that
+/// would produce a number belonging to no source at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelPrice {
+    /// USD per million input tokens.
+    pub input_per_million: f64,
+    /// USD per million output tokens.
+    pub output_per_million: f64,
+}
+
+/// User-supplied per-model prices, read from a `[model_pricing."<id>"]` table.
+///
+/// Empty is the overwhelmingly common case (nobody has written the table) and
+/// is a byte-identical pass-through: `lookup` returns `None` and every caller
+/// falls back to exactly what it did before.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelPricingOverrides {
+    entries: Vec<(String, ModelPrice)>,
+    /// Model ids whose entry was dropped (missing/negative/non-numeric rate),
+    /// kept so the refusal can be *named* rather than silently swallowed.
+    pub dropped: Vec<String>,
+}
+
+impl ModelPricingOverrides {
+    /// Look up a user-supplied price for `model`.
+    ///
+    /// Matching is **exact**, deliberately: a prefix or fuzzy match on a
+    /// pricing table would silently re-price models the user never named.
+    pub fn lookup(&self, model: &str) -> Option<ModelPrice> {
+        self.entries
+            .iter()
+            .find(|(id, _)| id == model)
+            .map(|(_, p)| *p)
+    }
+
+    /// True when the user configured no prices at all — the common path.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Parse `[model_pricing."<model-id>"]` tables out of raw config content.
+///
+/// ```toml
+/// [model_pricing."my-model-id"]
+/// input = 1.50    # USD per million input tokens
+/// output = 7.00   # USD per million output tokens
+/// ```
+///
+/// This reads the **raw** file rather than the flattened key→value map,
+/// because that map drops section headers, so two models' `input` keys would
+/// collide into one another.
+///
+/// Rules:
+/// - an entry missing either rate, or carrying a non-number, is **dropped**
+///   and its id recorded in `dropped` — never half-applied;
+/// - a negative rate is refused (there is no such price);
+/// - **zero is accepted deliberately**: a self-hosted or local model whose
+///   marginal cost per million tokens really is zero is the motivating case
+///   for this feature. Do not "fix" this into a refusal.
+pub fn parse_model_pricing_from_config(content: &str) -> ModelPricingOverrides {
+    let mut out = ModelPricingOverrides::default();
+    let mut current: Option<String> = None;
+    let mut input: Option<f64> = None;
+    let mut output: Option<f64> = None;
+    let mut saw_bad_value = false;
+
+    fn flush(
+        current: &mut Option<String>,
+        input: &mut Option<f64>,
+        output: &mut Option<f64>,
+        saw_bad_value: &mut bool,
+        out: &mut ModelPricingOverrides,
+    ) {
+        let name = match current.take() {
+            Some(n) => n,
+            None => {
+                *input = None;
+                *output = None;
+                *saw_bad_value = false;
+                return;
+            }
+        };
+        match (input.take(), output.take()) {
+            (Some(i), Some(o)) if !*saw_bad_value => {
+                out.entries.push((
+                    name,
+                    ModelPrice {
+                        input_per_million: i,
+                        output_per_million: o,
+                    },
+                ));
+            }
+            _ => out.dropped.push(name),
+        }
+        *saw_bad_value = false;
+    }
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            flush(
+                &mut current,
+                &mut input,
+                &mut output,
+                &mut saw_bad_value,
+                &mut out,
+            );
+            let section = &trimmed[1..trimmed.len() - 1];
+            if let Some(id) = section.strip_prefix("model_pricing.") {
+                let id = strip_quotes(id.trim());
+                if !id.is_empty() {
+                    current = Some(id);
+                }
+            }
+            continue;
+        }
+
+        if current.is_none() {
+            continue;
+        }
+
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            if key != "input" && key != "output" {
+                continue;
+            }
+            // Strip a trailing `# comment` before parsing the number.
+            let value = value.split('#').next().unwrap_or("").trim();
+            // A rate must be a real, non-negative number. Zero is allowed on
+            // purpose (see the doc comment); negative and NaN are not.
+            match value.parse::<f64>() {
+                Ok(v) if v.is_finite() && v >= 0.0 => {
+                    if key == "input" {
+                        input = Some(v);
+                    } else {
+                        output = Some(v);
+                    }
+                }
+                _ => saw_bad_value = true,
+            }
+        }
+    }
+    flush(
+        &mut current,
+        &mut input,
+        &mut output,
+        &mut saw_bad_value,
+        &mut out,
+    );
+    out
+}
+
 /// Keys that `/config set` understands. Each entry is a key name and a
 /// human-readable description used in error messages.
+///
+/// `model_pricing` is deliberately **absent**: it is a TOML *table*, and
+/// `/config set` sets scalars. A key `/config set` can name but not set is
+/// worse than one it does not list at all.
 pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ("model", "AI model name"),
     ("provider", "AI provider"),
@@ -2062,6 +2227,124 @@ env = { API_KEY = "secret" }
         // `value[1..value.len() - 1]` panicked on a one-char value.
         let parsed = parse_config_file("k = \"");
         assert_eq!(parsed.get("k").map(String::as_str), Some("\""));
+    }
+
+    #[test]
+    fn model_pricing_absent_table_is_empty() {
+        // The whole regression surface: essentially every existing user.
+        let o = parse_model_pricing_from_config("model = \"gpt-4o\"\nquiet = true\n");
+        assert_eq!(o, ModelPricingOverrides::default());
+        assert!(o.is_empty());
+        assert!(o.dropped.is_empty());
+        assert_eq!(o.lookup("gpt-4o"), None);
+    }
+
+    #[test]
+    fn model_pricing_reads_a_complete_entry() {
+        let o = parse_model_pricing_from_config(
+            "[model_pricing.\"my-model-id\"]\ninput = 1.50    # USD per Mtok\noutput = 7.00\n",
+        );
+        assert!(o.dropped.is_empty());
+        assert_eq!(
+            o.lookup("my-model-id"),
+            Some(ModelPrice {
+                input_per_million: 1.50,
+                output_per_million: 7.00
+            })
+        );
+    }
+
+    #[test]
+    fn model_pricing_reads_an_unquoted_id_and_multiple_models() {
+        let o = parse_model_pricing_from_config(
+            "[model_pricing.local-llama]\ninput = 0\noutput = 0\n\
+             [model_pricing.\"other\"]\ninput = 2\noutput = 4\n",
+        );
+        assert_eq!(
+            o.lookup("local-llama"),
+            Some(ModelPrice {
+                input_per_million: 0.0,
+                output_per_million: 0.0
+            })
+        );
+        assert_eq!(
+            o.lookup("other"),
+            Some(ModelPrice {
+                input_per_million: 2.0,
+                output_per_million: 4.0
+            })
+        );
+    }
+
+    #[test]
+    fn model_pricing_drops_partial_and_bad_entries_by_name() {
+        // A price with one side is not a price: `input` must never override
+        // while `output` silently falls back to the built-in table.
+        for (label, body) in [
+            ("no-output", "[model_pricing.\"m\"]\ninput = 1.0\n"),
+            ("no-input", "[model_pricing.\"m\"]\noutput = 1.0\n"),
+            (
+                "non-numeric",
+                "[model_pricing.\"m\"]\ninput = \"cheap\"\noutput = 1.0\n",
+            ),
+            (
+                "negative",
+                "[model_pricing.\"m\"]\ninput = -1.0\noutput = 1.0\n",
+            ),
+            (
+                "empty-entry",
+                "[model_pricing.\"m\"]\n[model_pricing.\"n\"]\ninput = 1\noutput = 2\n",
+            ),
+        ] {
+            let o = parse_model_pricing_from_config(body);
+            assert_eq!(o.lookup("m"), None, "{label}: must not be half-applied");
+            assert!(
+                o.dropped.iter().any(|d| d == "m"),
+                "{label}: drop must be named, not silently swallowed"
+            );
+        }
+    }
+
+    #[test]
+    fn model_pricing_accepts_zero_deliberately() {
+        // A self-hosted model whose marginal $/Mtok really is zero is the
+        // motivating case. Zero is a price; do not "fix" this into a refusal.
+        let o = parse_model_pricing_from_config("[model_pricing.\"m\"]\ninput = 0\noutput = 0.0\n");
+        assert!(o.dropped.is_empty());
+        assert_eq!(
+            o.lookup("m"),
+            Some(ModelPrice {
+                input_per_million: 0.0,
+                output_per_million: 0.0
+            })
+        );
+    }
+
+    #[test]
+    fn model_pricing_matches_exactly_never_by_prefix() {
+        let o =
+            parse_model_pricing_from_config("[model_pricing.\"gpt-4o\"]\ninput = 1\noutput = 2\n");
+        assert!(o.lookup("gpt-4o").is_some());
+        // Near-miss guard on both sides of the id.
+        assert_eq!(o.lookup("gpt-4o-mini"), None);
+        assert_eq!(o.lookup("openai/gpt-4o"), None);
+        assert_eq!(o.lookup("GPT-4O"), None);
+    }
+
+    #[test]
+    fn model_pricing_ignores_keys_from_other_sections() {
+        // `input`/`output` outside a model_pricing section must not leak in.
+        let o = parse_model_pricing_from_config(
+            "[permissions]\ninput = 5\n[model_pricing.\"m\"]\ninput = 1\noutput = 2\n[other]\noutput = 9\n",
+        );
+        assert_eq!(
+            o.lookup("m"),
+            Some(ModelPrice {
+                input_per_million: 1.0,
+                output_per_million: 2.0
+            })
+        );
+        assert!(o.dropped.is_empty());
     }
 
     #[test]

@@ -128,12 +128,50 @@ MTok = million tokens.
 
 Models accessed through OpenRouter (e.g., `anthropic/claude-sonnet-4-20250514`) are automatically recognized — the provider prefix is stripped before matching.
 
+## Custom pricing
+
+The built-in table is list price. If your real rate differs — a negotiated
+contract, a volume discount, a proxy or gateway that re-prices, a self-hosted
+model whose marginal cost is electricity, or any OpenAI-compatible endpoint
+yoyo has no entry for — you can say so in your config file:
+
+```toml
+[model_pricing."my-model-id"]
+input = 1.50    # USD per million input tokens
+output = 7.00   # USD per million output tokens
+```
+
+**Precedence: your override > the built-in preset > the built-in table.** Your
+number always wins for the model id you name.
+
+Rules:
+
+- **Model ids match exactly.** Pricing `gpt-4o` does not re-price
+  `gpt-4o-mini`, and does not re-price `openai/gpt-4o`. Write the id exactly as
+  yoyo reports it in `/model`.
+- **Both rates are required.** An entry missing `input` or `output`, or
+  carrying a non-number or a negative number, is ignored entirely and named on
+  startup — yoyo will not apply half a price, because the resulting number
+  would belong to no source at all.
+- **Zero is a valid price.** A self-hosted model whose marginal cost per
+  million tokens really is zero reports `$0.0000` rather than reporting
+  nothing.
+- **Overrides cover input and output only.** A model you price yourself is
+  costed with cache-write and cache-read rates of zero; cache-token rates are
+  not configurable today.
+
+This makes the number **correctable, not correct**: an override is a claim you
+made, and yoyo has no way to verify it against your actual invoice.
+
+`[model_pricing]` is a table, not a scalar, so it is not settable through
+`/config set` — edit your config file directly (`/config edit`).
+
 ## Limitations
 
 - Cost estimates are approximate — actual billing may differ slightly
 - For unrecognized models, no cost estimate is shown
 - Cache read/write costs only apply to Anthropic models; other providers show zero cache costs
-- Pricing may change — check your provider's pricing page for the latest rates
+- Pricing may change — check your provider's pricing page for the latest rates, or pin your own rate with `[model_pricing]` above
 
 ## Keeping costs down
 

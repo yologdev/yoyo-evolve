@@ -1,6 +1,61 @@
 //! Pricing, cost display, token formatting, and context bar.
 
-fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+use crate::config::ModelPricingOverrides;
+
+/// User-supplied per-model prices, set once from the loaded config file.
+///
+/// Written exactly once, by `cli::parse_args`, before any agent is built.
+/// Tests never touch it — they drive the `*_with` functions directly, which is
+/// what `tests/global_state_races.rs` asks for ("pass the value explicitly,
+/// never `#[serial]`"), so this `OnceLock` is never poisoned by a test.
+static MODEL_PRICING_OVERRIDES: std::sync::OnceLock<ModelPricingOverrides> =
+    std::sync::OnceLock::new();
+
+/// Record user-supplied model prices for this process.
+///
+/// Idempotent by construction: a second call is ignored, because a session has
+/// exactly one loaded config and a mid-session re-price is a bug, not a
+/// reconfiguration.
+pub fn set_model_pricing_overrides(overrides: ModelPricingOverrides) {
+    let _ = MODEL_PRICING_OVERRIDES.set(overrides);
+}
+
+/// The user-supplied prices for this process, or an empty set when none were
+/// configured (which is the byte-identical pre-override path).
+pub fn model_pricing_overrides() -> &'static ModelPricingOverrides {
+    static EMPTY: std::sync::OnceLock<ModelPricingOverrides> = std::sync::OnceLock::new();
+    MODEL_PRICING_OVERRIDES
+        .get()
+        .unwrap_or_else(|| EMPTY.get_or_init(ModelPricingOverrides::default))
+}
+
+/// Resolve a model's price, in USD per million tokens, as
+/// `(input, cache_write, cache_read, output)`.
+///
+/// **Precedence: explicit user override > yoagent preset > local table.**
+/// A user's own number always wins — it is the whole point of the override:
+/// anyone on a negotiated contract, behind a re-pricing proxy, or running a
+/// self-hosted model has a real rate my table cannot know.
+///
+/// Stated limit: an override supplies **input and output only**, so an
+/// overridden model is priced with cache-write and cache-read rates of `0.0`.
+/// Cache-token rates are not user-configurable today; mixing the user's
+/// input/output with my table's cache rates would produce a number belonging
+/// to no single source.
+pub fn model_pricing_with(
+    overrides: &ModelPricingOverrides,
+    model: &str,
+) -> Option<(f64, f64, f64, f64)> {
+    // Exact match, on the model id as given — before any prefix stripping, so
+    // a user who writes "anthropic/claude-sonnet-5" prices that id and nothing
+    // else. Fuzzy matching here would silently re-price models never named.
+    if let Some(price) = overrides.lookup(model) {
+        return Some((price.input_per_million, 0.0, 0.0, price.output_per_million));
+    }
+    builtin_model_pricing(model)
+}
+
+fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
     // For providers without caching, cache_write and cache_read are set to 0.0.
 
@@ -206,15 +261,39 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
 /// Estimate cost in USD for a given usage and model.
 /// Returns None if the model pricing is unknown.
+///
+/// Thin wrapper over [`estimate_cost_with`] — the only global read — so its
+/// signature is unchanged and no call site moves.
 pub fn estimate_cost(usage: &yoagent::Usage, model: &str) -> Option<f64> {
-    let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown(usage, model)?;
+    estimate_cost_with(model_pricing_overrides(), usage, model)
+}
+
+/// Estimate cost in USD, consulting an explicit set of user overrides.
+///
+/// Pure: this is the emission point tests assert against.
+pub fn estimate_cost_with(
+    overrides: &ModelPricingOverrides,
+    usage: &yoagent::Usage,
+    model: &str,
+) -> Option<f64> {
+    let (input_cost, cw_cost, cr_cost, output_cost) = cost_breakdown_with(overrides, usage, model)?;
     Some(input_cost + cw_cost + cr_cost + output_cost)
 }
 
 /// Get individual cost components for a usage and model.
 /// Returns (input_cost, cache_write_cost, cache_read_cost, output_cost) or None if model unknown.
 pub fn cost_breakdown(usage: &yoagent::Usage, model: &str) -> Option<(f64, f64, f64, f64)> {
-    let (input_per_m, cache_write_per_m, cache_read_per_m, output_per_m) = model_pricing(model)?;
+    cost_breakdown_with(model_pricing_overrides(), usage, model)
+}
+
+/// Cost components, consulting an explicit set of user overrides. Pure.
+pub fn cost_breakdown_with(
+    overrides: &ModelPricingOverrides,
+    usage: &yoagent::Usage,
+    model: &str,
+) -> Option<(f64, f64, f64, f64)> {
+    let (input_per_m, cache_write_per_m, cache_read_per_m, output_per_m) =
+        model_pricing_with(overrides, model)?;
 
     let input_cost = usage.input as f64 * input_per_m / 1_000_000.0;
     let cache_write_cost = usage.cache_write as f64 * cache_write_per_m / 1_000_000.0;
@@ -685,6 +764,122 @@ pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The built-in pricing lookup with no user overrides — i.e. exactly what
+    /// every pre-override caller saw. Kept so the ~20 table tests below assert
+    /// the same thing they always did, unchanged.
+    fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
+        model_pricing_with(&ModelPricingOverrides::default(), model)
+    }
+
+    /// A usage fixture with only input/output tokens (no cache traffic).
+    fn usage(input: u64, output: u64) -> yoagent::Usage {
+        yoagent::Usage {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        }
+    }
+
+    #[test]
+    fn model_pricing_override_wins_over_preset_and_table() {
+        let overrides = crate::config::parse_model_pricing_from_config(
+            "[model_pricing.\"claude-sonnet-5\"]\ninput = 1.0\noutput = 2.0\n",
+        );
+        // 1M input + 1M output at the user's rate = 1.0 + 2.0.
+        let cost = estimate_cost_with(&overrides, &usage(1_000_000, 1_000_000), "claude-sonnet-5")
+            .expect("override must price the model it names");
+        assert!(
+            (cost - 3.0).abs() < 1e-9,
+            "override did not win over the preset: got {cost}"
+        );
+    }
+
+    #[test]
+    fn model_pricing_override_leaves_every_other_model_byte_identical() {
+        // Near-miss guard: a config pricing exactly one model must not move
+        // any other model's number. A discriminator tested only on the side
+        // that fires is vacuous green.
+        let overrides = crate::config::parse_model_pricing_from_config(
+            "[model_pricing.\"my-proxy-model\"]\ninput = 99.0\noutput = 99.0\n",
+        );
+        let u = usage(1_000_000, 500_000);
+        for model in [
+            "claude-opus-4-6",
+            "claude-sonnet-5",
+            "gpt-4o",
+            "unknown-model-xyz",
+        ] {
+            assert_eq!(
+                estimate_cost_with(&overrides, &u, model),
+                estimate_cost_with(&ModelPricingOverrides::default(), &u, model),
+                "override for an unrelated model changed {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_overrides_are_byte_identical_to_the_builtin_table() {
+        // The whole regression surface: essentially every existing user has
+        // no [model_pricing] table at all. Asserted explicitly, not merely by
+        // the absence of a change.
+        let empty = ModelPricingOverrides::default();
+        let u = usage(1_234_567, 89_012);
+        for model in [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "gpt-4o",
+            "o3",
+            "grok-4",
+            "unknown-model-xyz",
+        ] {
+            assert_eq!(
+                estimate_cost_with(&empty, &u, model),
+                estimate_cost(&u, model),
+                "empty overrides diverged from the wrapper for {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_pricing_override_prices_an_otherwise_unknown_model() {
+        // The motivating case: an OpenAI-compatible endpoint with no table
+        // entry used to report *nothing*; now the user can say what it costs.
+        let empty = ModelPricingOverrides::default();
+        assert!(
+            estimate_cost_with(&empty, &usage(1_000_000, 0), "my-local-llama").is_none(),
+            "precondition: this model must be unknown to the built-in table"
+        );
+        let overrides = crate::config::parse_model_pricing_from_config(
+            "[model_pricing.\"my-local-llama\"]\ninput = 0\noutput = 0\n",
+        );
+        // Zero is accepted deliberately: a self-hosted model's marginal
+        // $/Mtok really can be zero, and Some(0.0) is a different (and more
+        // honest) answer than None.
+        assert_eq!(
+            estimate_cost_with(&overrides, &usage(1_000_000, 1_000_000), "my-local-llama"),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn model_pricing_override_matches_exactly_never_by_prefix() {
+        let overrides = crate::config::parse_model_pricing_from_config(
+            "[model_pricing.\"gpt-4o\"]\ninput = 10.0\noutput = 10.0\n",
+        );
+        let u = usage(1_000_000, 0);
+        assert_eq!(estimate_cost_with(&overrides, &u, "gpt-4o"), Some(10.0));
+        // "gpt-4o-mini" starts with the overridden id and must NOT be
+        // re-priced — a fuzzy match here would silently move models the user
+        // never named.
+        assert_eq!(
+            estimate_cost_with(&overrides, &u, "gpt-4o-mini"),
+            estimate_cost_with(&ModelPricingOverrides::default(), &u, "gpt-4o-mini")
+        );
+    }
 
     #[test]
     fn test_format_token_count() {

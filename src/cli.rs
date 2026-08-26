@@ -1400,6 +1400,35 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         set_wait_for_reset();
     }
 
+    // [model_pricing."<id>"]: user-supplied per-model rates (issue #833).
+    // A wrong cost is worse than no cost, because it is actionable-looking —
+    // anyone on a negotiated contract, behind a re-pricing proxy, or running a
+    // self-hosted model has a real rate my built-in table cannot know.
+    //
+    // Deliberately NOT part of the project-config trust boundary
+    // (gate_mcp_sources / gate_project_permissions / gate_project_hooks): this
+    // grants no privilege. The worst a hostile repo can do with it is print a
+    // wrong number on a display — same reasoning already written down for
+    // `continue_on_silence` and `wait_for_reset`. Do not add it there.
+    let model_prices = crate::config::parse_model_pricing_from_config(&raw_config_content);
+    if !model_prices.dropped.is_empty() && !is_quiet() {
+        // A dropped price is named, never silently swallowed: the user wrote
+        // a rate and is not getting it.
+        eprintln!(
+            "{YELLOW}⚠ model_pricing: ignored {} incomplete entr{} ({}) — each model needs both `input` and `output` as non-negative numbers{RESET}",
+            model_prices.dropped.len(),
+            if model_prices.dropped.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
+            model_prices.dropped.join(", ")
+        );
+    }
+    if !model_prices.is_empty() || !model_prices.dropped.is_empty() {
+        crate::format::set_model_pricing_overrides(model_prices);
+    }
+
     // --trust-project: opt-in (issue #748). Allow a project-local ./.yoyo.toml
     // to start the MCP servers it declares. Off by default — that file ships
     // with the repository, so starting the commands it names is execution the
