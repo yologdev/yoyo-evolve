@@ -1,0 +1,192 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual parser code before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/doc_version_claims.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-version-claim" … ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/doc_version_claims.rs:75..115 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/doc_version_claims.rs:190..225 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.0s (4 ✓)
+
+Now the failing test first — a sibling table, so the existing test stays untouched.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/doc_version_claims.rs (2 → 56 lines)
+  + #[test]
+  + fn marker_extraction_stops_at_the_closing_arrow_not_the_end_of_line() {
+  +     // Day 180 (#845): the extractor used `.trim_end_matches("-->")`, which only
+  +     // strips the arrow from the END of a line — so a marker sitting in the
+  +     // MIDDLE of one swallowed everything after it as part of the version. That
+  +     // is not a hypothetical shape: CLAUDE.md's bullets are single lines of ~10k
+  +     // characters, and the gate was green only by luck of the marker happening
+  +     // to sit last. It cost a whole finished, green task to a revert.
+  +     //
+  +     // Row 1 — the defect. Prose after the closing arrow must not be read as
+  +     // part of the claimed version.
+  +     assert_eq!(
+  +         markers_in(
+  +             "- `x.rs` — a long bullet <!-- yoagent-version-claim: 0.16.6 --> and then \
+  +              more prose about the decorator, with `code` and — dashes — after it."
+  +         ),
+  +         vec![(1, "0.16.6".to_string())]
+  +     );
+  + 
+  +     // Row 2 — near-miss guard: NO `-->` anywhere. `src/gasp.rs` carries its two
+  ... (36 more lines)
+ ✓ (46.4s)
+  + #[test]
+  + fn marker_extraction_stops_at_the_closing_arrow_not_the_end_of_line() {
+  +     // Day 180 (#845): the extractor used `.trim_end_matches("-->")`, which only
+  +     // strips the arrow from the END of a line — so a marker sitting in the
+  +     // MIDDLE of one swallowed everything after it as part of the version. That
+  +     // is not a hypothetical shape: CLAUDE.md's bullets are single lines of ~10k
+  +     // characters, and the gate was green only by luck of the marker happening
+  +     // to sit last. It cost a whole finished, green task to a revert.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (212ms)
+  2 tools completed in 49.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The positive control is already recorded in the "before" direction: row 1 fails with exactly the swallowed-line symptom (0.16.6 --> and then more prose…), rows 2–4 and the other 4 tests pass. Now the parser fix.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/doc_version_claims.rs (9 → 25 lines)
+            .map(|(lineno, rest)| {
+  -             let version = rest
+  +             // Read only as far as the first `-->` AFTER the marker. This used
+  +             // to be `.trim_end_matches("-->")`, which strips the arrow from the
+  +             // END of the line only — so a marker sitting mid-line swallowed
+  +             // every following character into the "claimed version" (Day 180,
+  +             // #845: CLAUDE.md's bullets are single ~10k-char lines, and the
+  +             // gate was green only because the marker happened to sit last).
+  +             //
+  +             // The `None` fallback is a near-miss guard, not a convenience:
+  +             // `src/gasp.rs` writes its markers in Rust `//` comments with no
+  +             // `-->` at all, so an extractor that REQUIRED the arrow would read
+  +             // zero markers repo-wide and fail the anti-vacuous invariant — the
+  +             // one failure this gate must never have.
+  +             let claimed = match rest.split_once("-->") {
+  +                 Some((before_arrow, _)) => before_arrow,
+  +                 None => rest,
+  +             };
+  +             let version = claimed
+                    .trim()
+  ... (2 more lines)
+ ✓ (53.7s)
+            .map(|(lineno, rest)| {
+  -             let version = rest
+  +             // Read only as far as the first `-->` AFTER the marker. This used
+  +             // to be `.trim_end_matches("-->")`, which strips the arrow from the
+  +             // END of the line only — so a marker sitting mid-line swallowed
+  +             // every following character into the "claimed version" (Day 180,
+  +             // #845: CLAUDE.md's bullets are single ~10k-char lines, and the
+  +             // gate was green only because the marker happened to sit last).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (179ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 11s (2 ✓)
+
+All 5 pass. Now the empirical check that matters — the fix against the real 10,573-char line 192, not just a fixture. Controlled, with an exact backup:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp CLAUDE.md /tmp/CLAUDE.md.bak … ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green against the real line with prose appended. Now the other half of the control — was that exact state red before the fix?
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp tests/doc_version_claims.rs /… ✓ (348ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control reproduces #845's receipt verbatim (claimed: yoagent 0.16.6 --> … vs resolves: 0.16.6) — red on the old parser, green on the new one, against the real line. CLAUDE.md is restored untouched. Now the docs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat CLAUDE.md && ech… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md is clean. Now let me get the exact text of the gate paragraph to edit surgically:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '68p' CLAUDE.md | tr '.' … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== live markers (grep, ex… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.2s (2 ✓)
+
+Confirmed: three live markers, not the two the doc claims — the Day-180 sub-agent-fallback task added one at CLAUDE.md:192 and never updated the count. That stale count is the marker that detonated. Both go in one edit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - There are currently **two** live markers, both in `src/gasp.rs`: the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test.
+  + There are currently **three** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and one in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet — this sentence read **two** for a day after the third landed, i.e. the stale-claim shape the gate exists to catch, sitting inside the gate's own description. **The extractor reads the claimed version up to the first `-->` after… [yoyo: 2390 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (53.6s)
+  - There are currently **two** live markers, both in `src/gasp.rs`: the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test.
+  + There are currently **three** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and one in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet — this sentence read **two** for a day after the third landed, i.e. the stale-claim shape the gate exists to catch, sitting inside the gate's own description. **The extractor reads the claimed version up to the first `-->` after… [yoyo: 2390 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the full check suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (2.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (53.4s)
+  2 tools completed in 58.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — fmt, clippy -D warnings, build, and the full suite (0 failed). Final check that line 192 was left alone, as instructed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== CLA… ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the scoped change: CLAUDE.md line 68 only, line 192 untouched. Committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (39 lines) ✓ (17ms)
+
+Committed. ✅
+
+## What happened
+
+My own gate ate a finished, green task — and there was no violation to eat. markers_in trimmed with `.trim_end_matches("-->")`, which only strips the arrow from the end of a line, so a marker sitting mid-line swallowed everything after it into the "claimed version".
+
+Two-line fix: read up to the first --> after the marker, fall back to the rest of the line when there is none.
+
+That fallback is the part I'd have got wrong if I'd rushed. src/gasp.rs writes both its markers in Rust // comments with no arrow at all — so a fix that required --> would silently read zero markers repo-wide and pass. An anti-vacuous gate that finds nothing is strictly worse than the bug it replaces.
+
+## The control, run in both directions
+
+Row 1 failed against the old parser, verbatim:
+```
+left:  [(1, "0.16.6 --> and then more prose about the decorator, with `code` and — dashes — after it.")]
+right: [(1, "0.16.6")]
+```
+Rows 2–4 stayed green. Then the check that actually convinced me — against the real 10,573-character CLAUDE.md line 192 plus one appended sentence: old parser red, reproducing #845's receipt verbatim; new parser green. CLAUDE.md restored byte-identical afterwards, line 192 never in the diff.
+
+## The finding worth more than the fix
+
+marker_extraction_reads_version_and_line_and_tolerates_comment_syntax was green the whole time. Not because it was weak — because every fixture it feeds puts the marker at end of line. My own archive already says this: unanimity across a guard's tests is evidence about the shape of its inputs, never about coverage. I had the lesson written down and shipped the gate anyway.
+
+One thing I found while writing the docs and fixed in the same pass: the gate's paragraph claimed "two live markers, both in src/gasp.rs". There are three. The third is at CLAUDE.md:192 — the one that detonated. A stale claim sitting inside the description of the gate built to catch stale claims. Corrected the count, recorded the superseded behaviour rather than erasing it.
+
+cargo fmt, clippy -D warnings, build, and 5268 tests: all green. Two files, as scoped.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

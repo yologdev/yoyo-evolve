@@ -1,0 +1,228 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the seam.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_fallback_targ…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_model_unavailable_er… ✓ (5ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:1160..1400  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1180..1360 ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:28..68  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:4180..4510 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "contains_status_code" -… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^yoagent" Cargo.toml; V…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn contains_… ✓ (2ms)
+ ✓ (6ms)
+  10 tools completed in 23.0s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Let me make the changes — starting with the shared shape lists + classifier in tool_wrappers.rs.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (50 → 146 lines)
+    pub(crate) fn is_model_unavailable_error(err: &str) -> bool {
+  +     matches!(
+  +         classify_sub_agent_error(err),
+  +         SubAgentErrorClass::ModelUnavailable
+  +     )
+  + }
+  + 
+  + // --- the shape lists, stated exactly once -----------------------------------
+  + //
+  + // These were inline arrays inside `is_model_unavailable_error` until Day 180.
+  + // They are consts now because a *second* reader arrived — the failure-report
+  + // composer below, which must tell the parent agent what class of failure it is
+  + // looking at. Two copies of "what counts as an auth error" would let the
+  + // fallback predicate and the diagnostic disagree about the same string: the
+  + // retry would decline while the report said "model unavailable", or worse the
+  + // reverse. One list, two readers, and the classifier is the only place that
+  + // reads them.
+  + 
+  + /// Auth / permission shapes. A different model on the same credential fails
+  + /// identically, so these never license a fallback.
+  ... (167 more lines)
+ ✓ (12.5s)
+    pub(crate) fn is_model_unavailable_error(err: &str) -> bool {
+  +     matches!(
+  +         classify_sub_agent_error(err),
+  +         SubAgentErrorClass::ModelUnavailable
+  +     )
+  + }
+  + 
+  + // --- the shape lists, stated exactly once -----------------------------------
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the consumers land in the same edit. Adding the composer, label and decorator now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (3 → 139 lines)
+  + // ---------------------------------------------------------------------------
+  + // DiagnosticSubAgentTool — the parent gets the error's class, status and model
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// The model label the failure report names, stated once so the wording cannot
+  + /// drift between the two shapes it has.
+  + ///
+  + /// **The honesty constraint is the whole function.** When a fallback is
+  + /// configured, this wrapper sits *outside* [`FallbackSubAgentTool`] and so sees
+  + /// only the error that survived — it cannot observe which of the two attempts
+  + /// produced it. Naming the wrong model is worse than naming both, so the label
+  + /// names the *configuration* and says outright that the attribution is not
+  + /// available. Threading the real answer out of the fallback decorator is a
+  + /// larger change and is deliberately not started here.
+  + pub(crate) fn sub_agent_model_label(primary: &str, fallback: Option<&str>) -> String {
+  +     match fallback {
+  +         None => format!("`{primary}`"),
+  +         Some(fb) => format!(
+  +             "`{primary}` with fallback `{fb}` (which of the two produced this error is not \
+  +              observable here)"
+  ... (119 more lines)
+ ✓ (12.5s)
+  + // ---------------------------------------------------------------------------
+  + // DiagnosticSubAgentTool — the parent gets the error's class, status and model
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// The model label the failure report names, stated once so the wording cannot
+  + /// drift between the two shapes it has.
+  + ///
+  + /// **The honesty constraint is the whole function.** When a fallback is
+  ... (13 more lines)
+
+Now the wiring in src/tools.rs — one site, outermost.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (32 → 47 lines)
+        // configured and differs. With none configured — every user who has not
+        // set one, and the whole regression surface — the un-decorated tool is
+        // returned byte-identically.
+  -     let Some((fb_provider, fb_model)) = sub_agent_fallback_target(
+  +     let fallback = sub_agent_fallback_target(
+            &config.provider,
+            &config.model,
+            config.fallback_provider.as_deref(),
+            config.fallback_model.as_deref(),
+  -     ) else {
+  -         return Box::new(primary);
+  -     };
+  -     let Some(fb_key) = sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+  -     else {
+  -         return Box::new(primary);
+  +     )
+  +     .and_then(|(fb_provider, fb_model)| {
+  +         sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+  +             .map(|fb_key| (fb_provider, fb_model, fb_key))
+  +     });
+  ... (46 more lines)
+ ✓ (10.9s)
+        // configured and differs. With none configured — every user who has not
+        // set one, and the whole regression surface — the un-decorated tool is
+        // returned byte-identically.
+  -     let Some((fb_provider, fb_model)) = sub_agent_fallback_target(
+  +     let fallback = sub_agent_fallback_target(
+            &config.provider,
+            &config.model,
+            config.fallback_provider.as_deref(),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers::" src/to… ✓ (3ms)
+  2 tools completed in 12.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:23..31 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (6 → 6 lines)
+    use crate::tool_wrappers::{
+  -     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  -     with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
+  -     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+  +     maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
+  +     with_lite_description, with_read_guard, with_read_guard_arc, with_read_guard_bash,
+  +     with_read_guard_bash_arc, with_recovery_hints, with_session_cap, with_truncation,
+  +     DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    };
+ ✓ (1m 27s)
+    use crate::tool_wrappers::{
+  -     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  -     with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
+  -     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+  +     maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
+  +     with_lite_description, with_read_guard, with_read_guard_arc, with_read_guard_bash,
+  +     with_read_guard_bash_arc, with_recovery_hints, with_session_cap, with_truncation,
+  +     DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (139ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 37s (3 ✓)
+
+Clippy green. Now the tests — first make the existing stubs reusable rather than writing a second one that could drift.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (22ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the test module, reusing those stubs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (227 lines) ✓ (13.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+The gate is doing exactly its job. Paying off the drift I caused.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tool_wrappers.rs"\… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/tool_wrappers.rs… ✓ (53.3s)
+  2 tools completed in 56.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (53.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5281 passing. Now the positive control: neuter the composer and see exactly which tests notice.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (19 lines) ✓ (19.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo diagnostic… ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 34s (2 ✓)
+
+Positive control confirmed — exactly 4 annotation tests fail, every pass-through and refusal guard stays green. Restoring.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw.bak src/tool_wrappers… ✓ (19.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored and green. Now the CLAUDE.md prose — and the constraint that killed the last attempt: before the version-claim marker.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==192' CLAUDE.md | tail -… ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (57 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (8.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 41.9s (3 ✓)
+
+The gate that killed the last attempt is green. Full verification now.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (1m 8s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

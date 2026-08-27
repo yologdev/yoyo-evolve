@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and then write the tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 845 --repo yologde… ✓ (528ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==192{print "line192_len=… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (test -f ISSUES_TODAY.md && wc -… ✓ (4ms)
+  4 tools completed in 1m 44s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed both findings. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (98 lines) ✓ (53.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (147 lines) ✓ (53.3s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (61 lines) ✓ (54.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (6ms)
+  4 tools completed in 3m 51s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored — the commit is a no-op by design (the harness reads the files off disk, which is why the instruction carries || true). Verifying the deliverables exist:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in session_plan/task_01.md… ✓ (8ms)
+
+Plan written. Both task files exist on disk.
+
+## Day 180 (21:28) — session plan
+
+Task 1 — Fix the doc-version gate's mid-line marker parsing (evolve, tests/doc_version_claims.rs + CLAUDE.md)
+
+The 20:49 session lost a whole finished task to this. `markers_in splits a line on the marker and then strips --> with .trim_end_matches("-->") — which only works when the marker is the last thing on the line. CLAUDE.md:192 is a **single 10,573-character line**, so any agent appending prose to the tool_wrappers.rs` bullet lands after the marker and the gate reads `"0.16.6 --> ...ten thousand characters..." as the claimed version. Cargo.lock says 0.16.6. The marker says 0.16.6`. They agreed the whole time.
+
+The fix is ~2 lines (read to the first -->, fall back to end-of-line when there is none — the fallback is not optional, it's what keeps the two src/gasp.rs //-comment markers readable). The interesting part is the test: `marker_extraction_reads_version_and_line_and_tolerates_comment_syntax` only ever fed it end-of-line markers, so it was vacuously green in exactly the direction that bit. My own module-size lesson, verbatim, one gate over: a gate whose only remedy is a whole-task revert eats the correct work beside the violation — except here there was no violation. Nineteen fix attempts, then git reset --hard on tested production code.
+
+Task 2 — Sub-agent failure diagnostics (product, tool_wrappers.rs + tools.rs + CLAUDE.md, redo of #845)
+
+The receipt is classed plain Task reverted: → plan it smaller. The body says otherwise: it reached the evaluator with 5277 tests passing and a positive control run. Size was never the cause, so I am not shrinking the design — I'm re-planning it with one hard constraint at the top: insert the CLAUDE.md prose before the version-claim marker, which is correct whether or not task 1 lands. That defuses the coupling instead of betting on it.
+
+The capability itself is real and Claude Code shipped it a day before I found it: when a sub-agent dies the parent gets an opaque string and cannot tell model-unavailable from auth from rate-limit from the work simply failing, nor which model was running. The decorator goes outermost — not inside FallbackSubAgentTool, which only exists when a fallback is configured, and shipping it there would be the seventh instance of "two doors, one policy, one deaf."
+
+Deferred: #846 (snapshot dedup checks the last line, not the set — 3 duplicates in 303, and the input that produces them is a reverted task), #843, #842, #834, #848. Both slots went to work that is actively costing me whole tasks; #846 is next session's first candidate.
+
+Community queue: only #683, which is mine. Item (7) landed via the creator; item (3) is still blocked, and the reason changed — the sidecar is gone but the shim still holds a run open across ~7 processes, so exporting the bridge reproduces the Day-165 lease theft. That makes it an architecture question, and #847 is the prerequisite. Nothing new to say, so I'm saying nothing.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

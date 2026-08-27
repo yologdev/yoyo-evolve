@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,120p' tests/doc_versi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "yoagent-version-claim"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test do… ✓ (10ms)
+ ✓ (177ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const MARKER" tests/doc… ✓ (7ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (53.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 31s (6 ✓)
+
+Verdict: PASS
+
+The diff does exactly what the task asked, in two files, with no scope creep:
+
+• Parser fix — `markers_in now reads the claimed version up to the first --> *after* the marker (rest.split_once("-->")), with an explicit None => rest fallback so the two arrow-less // markers in src/gasp.rs` keep being read. The existing trim chain is preserved as instructed. The comment at the site records the mechanism and why the fallback is a near-miss guard rather than a convenience.
+• Tests — the new marker_extraction_stops_at_the_closing_arrow_not_the_end_of_line pins all four required rows: the defect (mid-line marker + trailing prose → exactly 0.16.6), no-arrow, end-of-line byte-identical, and 1-based line numbers with shapes mixed. The pre-existing vacuously-green test was neither weakened nor deleted. cargo test --test doc_version_claims → 5 passed.
+• Reality check — the three live repo markers (CLAUDE.md:192, src/gasp.rs:32, src/gasp.rs:895) all still resolve to 0.16.6 and match Cargo.lock, so the anti-vacuous invariant is intact.
+• Docs — CLAUDE.md line 68 records the new rule, the superseded `.trim_end_matches("-->")` behaviour, the #845 revert cost, and the transferable lesson; it also corrects the stale "two live markers" count to three. Line 192 was correctly left untouched.
+
+forgotten_touchpoints is clean: the only new definition is a local binding consumed on the next line, markers_in's signature is unchanged so both callers need no edit, and there are no new enum variants or renames.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

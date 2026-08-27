@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==192' CLAUDE.md | grep -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DiagnosticSubAgentTool\… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test do… ✓ (210ms)
+ ✓ (261ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (53.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 18s (5 ✓)
+
+Verdict: PASS
+
+The diff implements the task as specified:
+
+• Seam is correct: DiagnosticSubAgentTool wraps the final returned value at the single site in src/tools.rs:1336, unconditionally — not inside FallbackSubAgentTool. The refactor of the fallback branch preserves the old semantics (target None or key None → bare primary inner).
+• The constraint that killed the last attempt is obeyed: the new CLAUDE.md prose sits before `<!-- yoagent-version-claim: 0.16.6 -->, which is still the last text on line 192. Verified by running tests/doc_version_claims.rs` — 5/5 pass.
+• Shape lists extracted once: AUTH_ERROR_SHAPES / RATE_LIMIT_ERROR_SHAPES / MODEL_UNAVAILABLE_SHAPES + status siblings, read only by `classify_sub_agent_error, with is_model_unavailable_error defined as matches!(..., ModelUnavailable)` — pinned by a test that asserts the two can't disagree.
+• Composer invents nothing: status via contains_status_code (402134-token row asserts no status), Unclassified always spelled out, no request-id field with a test asserting its absence, and the label refuses to attribute which fallback attempt failed.
+• Guard short-circuit + byte-identical `Ok` both pinned with assert_eq!.
+
+Ran the new module: 13 tests pass. Touchpoints all closed — every new const/fn/enum/type has a consumer in this diff, and the module-size register was updated for both grown files.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
