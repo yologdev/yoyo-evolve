@@ -21,10 +21,10 @@ use crate::hooks::{self, maybe_hook, AuditHook, HookRegistry};
 use crate::safety::analyze_bash_command;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
-    maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
-    with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
-    with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
-    ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
+    with_lite_description, with_read_guard, with_read_guard_arc, with_read_guard_bash,
+    with_read_guard_bash_arc, with_recovery_hints, with_session_cap, with_truncation,
+    DiagnosticSubAgentTool, FallbackSubAgentTool, ToolFailureTracker, SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
@@ -1295,32 +1295,47 @@ fn build_sub_agent_tool_at_depth(
     // configured and differs. With none configured — every user who has not
     // set one, and the whole regression surface — the un-decorated tool is
     // returned byte-identically.
-    let Some((fb_provider, fb_model)) = sub_agent_fallback_target(
+    let fallback = sub_agent_fallback_target(
         &config.provider,
         &config.model,
         config.fallback_provider.as_deref(),
         config.fallback_model.as_deref(),
-    ) else {
-        return Box::new(primary);
-    };
-    let Some(fb_key) = sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
-    else {
-        return Box::new(primary);
+    )
+    .and_then(|(fb_provider, fb_model)| {
+        sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+            .map(|fb_key| (fb_provider, fb_model, fb_key))
+    });
+
+    let inner: Box<dyn AgentTool> = match fallback.as_ref() {
+        None => Box::new(primary),
+        Some((fb_provider, fb_model, fb_key)) => {
+            let secondary = sub_agent_tool_for(
+                config,
+                fb_provider,
+                fb_model,
+                fb_key,
+                child_tools,
+                shared_state,
+            );
+            Box::new(FallbackSubAgentTool::new(
+                Box::new(primary),
+                Box::new(secondary),
+                &config.model,
+                fb_model,
+            ))
+        }
     };
 
-    let secondary = sub_agent_tool_for(
-        config,
-        &fb_provider,
-        &fb_model,
-        &fb_key,
-        child_tools,
-        shared_state,
-    );
-    Box::new(FallbackSubAgentTool::new(
-        Box::new(primary),
-        Box::new(secondary),
-        &config.model,
-        &fb_model,
+    // Failure diagnostics are the OUTERMOST wrapper and are applied at this
+    // single site — unconditionally, whether or not a fallback exists. Putting
+    // them inside `FallbackSubAgentTool` would reach only users who configured
+    // a fallback model and leave everyone else with yoagent's opaque summary
+    // string: the "two doors, one policy, one deaf" shape this repo has already
+    // shipped six times. Outermost also means it annotates the error that
+    // actually *survives* the fallback attempt rather than an intermediate one.
+    Box::new(DiagnosticSubAgentTool::new(
+        inner,
+        sub_agent_model_label(&config.model, fallback.as_ref().map(|(_, m, _)| m.as_str())),
     ))
 }
 
