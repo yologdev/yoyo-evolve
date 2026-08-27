@@ -88,7 +88,23 @@ fn markers_in(source: &str) -> Vec<(usize, String)> {
         .enumerate()
         .filter_map(|(i, line)| line.split_once(MARKER).map(|(_, rest)| (i + 1, rest)))
         .map(|(lineno, rest)| {
-            let version = rest
+            // Read only as far as the first `-->` AFTER the marker. This used
+            // to be `.trim_end_matches("-->")`, which strips the arrow from the
+            // END of the line only — so a marker sitting mid-line swallowed
+            // every following character into the "claimed version" (Day 180,
+            // #845: CLAUDE.md's bullets are single ~10k-char lines, and the
+            // gate was green only because the marker happened to sit last).
+            //
+            // The `None` fallback is a near-miss guard, not a convenience:
+            // `src/gasp.rs` writes its markers in Rust `//` comments with no
+            // `-->` at all, so an extractor that REQUIRED the arrow would read
+            // zero markers repo-wide and fail the anti-vacuous invariant — the
+            // one failure this gate must never have.
+            let claimed = match rest.split_once("-->") {
+                Some((before_arrow, _)) => before_arrow,
+                None => rest,
+            };
+            let version = claimed
                 .trim()
                 .trim_end_matches("-->")
                 .trim()
@@ -212,6 +228,60 @@ fn marker_extraction_reads_version_and_line_and_tolerates_comment_syntax() {
     // Naming the convention without the colon must NOT register as a marker,
     // or CLAUDE.md's description of the rule would become an instance of it.
     assert!(markers_in("the `yoagent-version-claim` convention").is_empty());
+}
+
+#[test]
+fn marker_extraction_stops_at_the_closing_arrow_not_the_end_of_line() {
+    // Day 180 (#845): the extractor used `.trim_end_matches("-->")`, which only
+    // strips the arrow from the END of a line — so a marker sitting in the
+    // MIDDLE of one swallowed everything after it as part of the version. That
+    // is not a hypothetical shape: CLAUDE.md's bullets are single lines of ~10k
+    // characters, and the gate was green only by luck of the marker happening
+    // to sit last. It cost a whole finished, green task to a revert.
+    //
+    // Row 1 — the defect. Prose after the closing arrow must not be read as
+    // part of the claimed version.
+    assert_eq!(
+        markers_in(
+            "- `x.rs` — a long bullet <!-- yoagent-version-claim: 0.16.6 --> and then \
+             more prose about the decorator, with `code` and — dashes — after it."
+        ),
+        vec![(1, "0.16.6".to_string())]
+    );
+
+    // Row 2 — near-miss guard: NO `-->` anywhere. `src/gasp.rs` carries its two
+    // live markers in Rust `//` comments with no terminator, so an extractor
+    // that *required* the arrow would silently read zero markers repo-wide —
+    // strictly worse than the bug, since the anti-vacuous invariant is the one
+    // thing this gate must never lose.
+    assert_eq!(
+        markers_in("// yoagent-version-claim: 0.16.6"),
+        vec![(1, "0.16.6".to_string())]
+    );
+
+    // Row 3 — near-miss guard: the end-of-line shape every existing marker uses
+    // is byte-identical to before. That is the whole regression surface.
+    assert_eq!(
+        markers_in("//! <!-- yoagent-version-claim: 0.16.6 -->"),
+        vec![(1, "0.16.6".to_string())]
+    );
+
+    // Row 4 — line numbers stay 1-based and correct when a mid-line marker is
+    // mixed in with the other shapes.
+    assert_eq!(
+        markers_in(
+            "nope\n\
+             prose <!-- yoagent-version-claim: 1.0 --> trailing words\n\
+             nope\n\
+             // yoagent-version-claim: 2.0\n\
+             //! <!-- yoagent-version-claim: 3.0 -->"
+        ),
+        vec![
+            (2, "1.0".to_string()),
+            (4, "2.0".to_string()),
+            (5, "3.0".to_string()),
+        ]
+    );
 }
 
 #[test]
