@@ -1203,54 +1203,154 @@ pub(crate) fn with_read_guard_bash_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn Agen
 /// - ordinary failures inside the sub-agent — the sub-agent ran fine and the
 ///   *work* failed, which a different model does not fix.
 pub(crate) fn is_model_unavailable_error(err: &str) -> bool {
+    matches!(
+        classify_sub_agent_error(err),
+        SubAgentErrorClass::ModelUnavailable
+    )
+}
+
+// --- the shape lists, stated exactly once -----------------------------------
+//
+// These were inline arrays inside `is_model_unavailable_error` until Day 180.
+// They are consts now because a *second* reader arrived — the failure-report
+// composer below, which must tell the parent agent what class of failure it is
+// looking at. Two copies of "what counts as an auth error" would let the
+// fallback predicate and the diagnostic disagree about the same string: the
+// retry would decline while the report said "model unavailable", or worse the
+// reverse. One list, two readers, and the classifier is the only place that
+// reads them.
+
+/// Auth / permission shapes. A different model on the same credential fails
+/// identically, so these never license a fallback.
+const AUTH_ERROR_SHAPES: &[&str] = &[
+    "authentication",
+    "unauthorized",
+    "invalid api key",
+    "invalid_api_key",
+    "permission denied",
+    "forbidden",
+];
+const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+
+/// Rate-limit / capacity shapes. `prompt_retry_limits.rs` owns that policy and
+/// has a real reset-time rule; a second one here would fight it.
+const RATE_LIMIT_ERROR_SHAPES: &[&str] = &[
+    "rate limit",
+    "rate_limit",
+    "overloaded",
+    "capacity",
+    "quota",
+];
+const RATE_LIMIT_STATUS_CODES: &[&str] = &["429"];
+
+/// Model-availability shapes — the prose forms providers actually emit.
+const MODEL_UNAVAILABLE_SHAPES: &[&str] = &[
+    "model not found",
+    "model_not_found",
+    "not found: model",
+    "does not exist",
+    "unknown model",
+    "invalid model",
+    "unsupported model",
+    "model is not supported",
+    "no such model",
+];
+/// A standalone 404 is a model-availability shape on a provider endpoint whose
+/// only path parameter is the model.
+const MODEL_UNAVAILABLE_STATUS_CODES: &[&str] = &["404"];
+
+/// Every HTTP status code worth reporting back to the parent agent, in the
+/// order they are probed. Read through `prompt_retry::contains_status_code`,
+/// never a bare `.contains("404")` — the Day-174 lesson, where
+/// `prompt is too long: 402134 tokens` was diagnosed as exhausted credits
+/// because `402` sat inside a token count.
+const REPORTABLE_STATUS_CODES: &[&str] = &[
+    "400", "401", "402", "403", "404", "408", "409", "422", "429", "500", "502", "503", "504",
+];
+
+/// What kind of failure a sub-agent error names.
+///
+/// `Unclassified` is a **real value and is always reported**, not a silent
+/// omission: "an ordinary failure of the delegated work" tells the parent that
+/// a different model will not help, which is exactly as actionable as any
+/// named class. Dressing it up as one of the named classes, or saying nothing,
+/// is the confident-wrong-diagnosis defect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubAgentErrorClass {
+    ModelUnavailable,
+    Auth,
+    RateLimit,
+    Unclassified,
+}
+
+impl SubAgentErrorClass {
+    /// The one statement of each class's wording, so the report and any future
+    /// reader cannot drift.
+    fn describe(self) -> &'static str {
+        match self {
+            Self::ModelUnavailable => {
+                "the model was unavailable (not found, or not enabled for this key)"
+            }
+            Self::Auth => {
+                "an authentication or permission failure — a different model on the same \
+                 credential fails identically"
+            }
+            Self::RateLimit => {
+                "a rate limit or capacity failure — retrying immediately fails the same way"
+            }
+            Self::Unclassified => {
+                "an ordinary failure of the delegated work — a different model will not help"
+            }
+        }
+    }
+}
+
+/// Classify a sub-agent tool error.
+///
+/// **Precedence is auth → rate limit → model-availability, and that order is
+/// the safety property rather than a style choice.** A message can carry both
+/// an auth word and a model name; in that case the model is not the problem,
+/// so the auth check wins. Losing a genuine fallback is cheap (today's
+/// behaviour); firing on an auth error burns a second full sub-agent run
+/// against the same broken credential.
+///
+/// [`is_model_unavailable_error`] is defined *in terms of* this function, so
+/// the retry decision and the diagnostic can never disagree about a string.
+pub(crate) fn classify_sub_agent_error(err: &str) -> SubAgentErrorClass {
     let lower = err.to_lowercase();
+    let has_code = |codes: &[&str]| {
+        codes
+            .iter()
+            .any(|c| crate::prompt_retry::contains_status_code(&lower, c))
+    };
 
-    // Auth and rate-limit shapes are checked FIRST and always lose: a message
-    // may carry both an auth word and a model name, and in that case the model
-    // is not the problem. Losing a genuine fallback is cheap (today's
-    // behaviour); firing on an auth error burns a second full sub-agent run
-    // against the same broken credential.
-    let never_fallback = [
-        "rate limit",
-        "rate_limit",
-        "overloaded",
-        "capacity",
-        "quota",
-        "authentication",
-        "unauthorized",
-        "invalid api key",
-        "invalid_api_key",
-        "permission denied",
-        "forbidden",
-    ];
-    if never_fallback.iter().any(|n| lower.contains(n)) {
-        return false;
+    if AUTH_ERROR_SHAPES.iter().any(|n| lower.contains(n)) || has_code(AUTH_STATUS_CODES) {
+        return SubAgentErrorClass::Auth;
     }
-    if crate::prompt_retry::contains_status_code(&lower, "401")
-        || crate::prompt_retry::contains_status_code(&lower, "403")
-        || crate::prompt_retry::contains_status_code(&lower, "429")
+    if RATE_LIMIT_ERROR_SHAPES.iter().any(|n| lower.contains(n))
+        || has_code(RATE_LIMIT_STATUS_CODES)
     {
-        return false;
+        return SubAgentErrorClass::RateLimit;
     }
-
-    // A standalone 404 is a model-availability shape on a provider endpoint
-    // whose only path parameter is the model.
-    if crate::prompt_retry::contains_status_code(&lower, "404") {
-        return true;
+    if has_code(MODEL_UNAVAILABLE_STATUS_CODES)
+        || MODEL_UNAVAILABLE_SHAPES.iter().any(|s| lower.contains(s))
+    {
+        return SubAgentErrorClass::ModelUnavailable;
     }
+    SubAgentErrorClass::Unclassified
+}
 
-    let model_shapes = [
-        "model not found",
-        "model_not_found",
-        "not found: model",
-        "does not exist",
-        "unknown model",
-        "invalid model",
-        "unsupported model",
-        "model is not supported",
-        "no such model",
-    ];
-    model_shapes.iter().any(|s| lower.contains(s))
+/// The first HTTP status code actually present in `err`, or `None`.
+///
+/// `None` means **no status code was observed**, and the report then says
+/// nothing about status rather than emitting `status: unknown` — "could not
+/// check" must never render as "checked".
+fn observed_status_code(err: &str) -> Option<&'static str> {
+    let lower = err.to_lowercase();
+    REPORTABLE_STATUS_CODES
+        .iter()
+        .copied()
+        .find(|c| crate::prompt_retry::contains_status_code(&lower, c))
 }
 
 /// The note prefixed to a successful fallback result. Pure so the wording is
@@ -1370,6 +1470,142 @@ impl AgentTool for FallbackSubAgentTool {
             // primary's: it is the more recent and more actionable fact, and
             // the stderr line above already recorded that a switch happened.
             Err(e) => Err(e),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DiagnosticSubAgentTool — the parent gets the error's class, status and model
+// ---------------------------------------------------------------------------
+
+/// The model label the failure report names, stated once so the wording cannot
+/// drift between the two shapes it has.
+///
+/// **The honesty constraint is the whole function.** When a fallback is
+/// configured, this wrapper sits *outside* [`FallbackSubAgentTool`] and so sees
+/// only the error that survived — it cannot observe which of the two attempts
+/// produced it. Naming the wrong model is worse than naming both, so the label
+/// names the *configuration* and says outright that the attribution is not
+/// available. Threading the real answer out of the fallback decorator is a
+/// larger change and is deliberately not started here.
+pub(crate) fn sub_agent_model_label(primary: &str, fallback: Option<&str>) -> String {
+    match fallback {
+        None => format!("`{primary}`"),
+        Some(fb) => format!(
+            "`{primary}` with fallback `{fb}` (which of the two produced this error is not \
+             observable here)"
+        ),
+    }
+}
+
+/// Compose the failure report a parent agent receives when a sub-agent dies.
+///
+/// Returns the original error **verbatim** plus one short bracketed tail. Pure,
+/// so the wording is pinned by table test and every `Result` stays at the call
+/// site.
+///
+/// **It may never invent a field.** Only what is observable is reported:
+/// - the **class** (always — including `Unclassified`, spelled out, because
+///   "a different model will not help" is genuinely actionable);
+/// - the **model configuration**, which the wiring site always knows;
+/// - the **HTTP status**, only when one is actually present, read through
+///   `prompt_retry::contains_status_code` so a digit run like `402134` is not
+///   mistaken for a code.
+///
+/// Deliberately **no request-id field**: no error string this repo has observed
+/// carries one in a recognisable shape, and emitting `request_id: unknown`
+/// would render "could not check" as "checked".
+pub(crate) fn sub_agent_failure_report(model_label: &str, err: &str) -> String {
+    let class = classify_sub_agent_error(err);
+    let mut tail = format!(
+        "[yoyo: the sub-agent failed — {}; model: {model_label}",
+        class.describe()
+    );
+    if let Some(code) = observed_status_code(err) {
+        tail.push_str(&format!("; http status: {code}"));
+    }
+    tail.push(']');
+    format!("{err}\n\n{tail}")
+}
+
+/// Annotates a failed `sub_agent` call with the failure's class, the model
+/// configuration it ran under, and any HTTP status actually present — so the
+/// parent agent can tell a dead model from a bad key from a rate limit from
+/// the delegated work simply not succeeding.
+///
+/// **Why this is the outermost wrapper and unconditional.**
+/// [`FallbackSubAgentTool`] exists only when a fallback model is configured, so
+/// putting the diagnostics inside it would reach a subset of users and leave
+/// everyone else with the opaque string — the "two doors, one policy, one deaf"
+/// shape this repo has already shipped six times (#745, #767, #769, #816,
+/// `/config show`, and the sub-agent fallback itself). Wrapping the value
+/// `tools.rs` finally returns means one wiring line rather than three failure
+/// paths, and it annotates the error that actually **survives** the fallback
+/// attempt rather than an intermediate one.
+///
+/// **The refusal short-circuit is the same one `RecoveryHintTool` (#710) and
+/// `FallbackSubAgentTool` make, and for the same reason.** A read-mode,
+/// plan-mode, session-cap or denied-path refusal is already a precise,
+/// deliberate sentence; wrapping it in diagnostic scaffolding makes a guard
+/// working as designed read as a malfunction.
+pub(crate) struct DiagnosticSubAgentTool {
+    inner: Box<dyn AgentTool>,
+    model_label: String,
+}
+
+impl DiagnosticSubAgentTool {
+    pub(crate) fn new(inner: Box<dyn AgentTool>, model_label: impl Into<String>) -> Self {
+        Self {
+            inner,
+            model_label: model_label.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentTool for DiagnosticSubAgentTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let err = match self.inner.execute(params, ctx).await {
+            // The entire regression surface: every user who never sees a
+            // sub-agent fail gets a byte-identical result.
+            Ok(result) => return Ok(result),
+            Err(e) => e,
+        };
+
+        // Guard first, and it short-circuits.
+        if is_deterministic_refusal(&err.to_string()) {
+            return Err(err);
+        }
+
+        // Only `Failed` is annotated, and the variant is preserved. `NotFound`
+        // and `InvalidArgs` are yoagent's own dispatch/argument errors rather
+        // than the outcome of a sub-agent run — a model class is noise there —
+        // and `Cancelled` carries no payload to annotate.
+        match err {
+            yoagent::types::ToolError::Failed(msg) => Err(yoagent::types::ToolError::Failed(
+                sub_agent_failure_report(&self.model_label, &msg),
+            )),
+            other => Err(other),
         }
     }
 }
@@ -4288,7 +4524,7 @@ mod fallback_sub_agent_tests {
 
     // --- the decorator, driven with counting stubs ---
 
-    struct CountingStub {
+    pub(super) struct CountingStub {
         calls: Arc<AtomicUsize>,
         /// `Some(msg)` → `ToolError::Failed(msg)`; `None` → success.
         fail_msg: Option<String>,
@@ -4296,7 +4532,7 @@ mod fallback_sub_agent_tests {
     }
 
     impl CountingStub {
-        fn failing(msg: &str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
+        pub(super) fn failing(msg: &str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
             let calls = Arc::new(AtomicUsize::new(0));
             (
                 Box::new(Self {
@@ -4307,7 +4543,7 @@ mod fallback_sub_agent_tests {
                 calls,
             )
         }
-        fn ok(reply: &'static str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
+        pub(super) fn ok(reply: &'static str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
             let calls = Arc::new(AtomicUsize::new(0));
             (
                 Box::new(Self {
@@ -4352,7 +4588,7 @@ mod fallback_sub_agent_tests {
         }
     }
 
-    fn ctx() -> yoagent::types::ToolContext {
+    pub(super) fn ctx() -> yoagent::types::ToolContext {
         yoagent::types::ToolContext {
             tool_call_id: "test".to_string(),
             tool_name: "sub_agent".to_string(),
@@ -4362,7 +4598,7 @@ mod fallback_sub_agent_tests {
         }
     }
 
-    fn first_text(result: &yoagent::types::ToolResult) -> String {
+    pub(super) fn first_text(result: &yoagent::types::ToolResult) -> String {
         match &result.content[0] {
             yoagent::Content::Text { text } => text.clone(),
             _ => panic!("expected text content"),
@@ -4490,6 +4726,272 @@ mod fallback_sub_agent_tests {
         let (primary, _) = CountingStub::ok("x");
         let (secondary, _) = CountingStub::ok("y");
         let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+        assert_eq!(tool.name(), "sub_agent");
+        assert_eq!(tool.label(), "sub_agent");
+        assert_eq!(tool.description(), "counting stub");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DiagnosticSubAgentTool tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod diagnostic_sub_agent_tests {
+    use super::fallback_sub_agent_tests::{ctx, first_text, CountingStub};
+    use super::*;
+
+    const LABEL: &str = "`primary-model`";
+
+    // --- the classifier, and its agreement with the fallback predicate ---
+
+    #[test]
+    fn classifier_table() {
+        for (err, want) in [
+            // Model availability.
+            (
+                "API error 404: not found",
+                SubAgentErrorClass::ModelUnavailable,
+            ),
+            (
+                "model not found: claude-opus-9",
+                SubAgentErrorClass::ModelUnavailable,
+            ),
+            (
+                "The model `gpt-5-turbo` does not exist",
+                SubAgentErrorClass::ModelUnavailable,
+            ),
+            // Auth wins over a named model — precedence is the safety property.
+            ("401 Unauthorized", SubAgentErrorClass::Auth),
+            (
+                "authentication_error: invalid x-api-key",
+                SubAgentErrorClass::Auth,
+            ),
+            ("403 Forbidden", SubAgentErrorClass::Auth),
+            (
+                "401 unauthorized: model claude-opus-5 does not exist for this key",
+                SubAgentErrorClass::Auth,
+            ),
+            // Rate limit wins over a named model too.
+            ("429 Too Many Requests", SubAgentErrorClass::RateLimit),
+            (
+                "rate limit exceeded, retry after 60s",
+                SubAgentErrorClass::RateLimit,
+            ),
+            (
+                "rate limit exceeded for model gpt-4o — unknown model tier",
+                SubAgentErrorClass::RateLimit,
+            ),
+            (
+                "Overloaded: please try again",
+                SubAgentErrorClass::RateLimit,
+            ),
+            // The delegated work simply failed.
+            (
+                "Command exited with status 1: cargo test failed",
+                SubAgentErrorClass::Unclassified,
+            ),
+            (
+                "File not found: src/missing.rs",
+                SubAgentErrorClass::Unclassified,
+            ),
+            // Day-174 digit boundary: a code inside a bigger number is not a code.
+            (
+                "prompt is too long: 402134 tokens > 200000 maximum",
+                SubAgentErrorClass::Unclassified,
+            ),
+        ] {
+            assert_eq!(classify_sub_agent_error(err), want, "classifying: {err}");
+        }
+    }
+
+    #[test]
+    fn the_predicate_and_the_classifier_can_never_disagree() {
+        // `is_model_unavailable_error` is defined in terms of the classifier,
+        // so one shape list serves both. This pins that, rather than trusting
+        // two lists to stay in step.
+        for err in [
+            "404 not found",
+            "401 unauthorized",
+            "rate limit exceeded",
+            "cargo test failed",
+            "unknown model: llama-99",
+        ] {
+            assert_eq!(
+                is_model_unavailable_error(err),
+                classify_sub_agent_error(err) == SubAgentErrorClass::ModelUnavailable,
+                "{err}"
+            );
+        }
+    }
+
+    // --- the composer, pure ---
+
+    #[test]
+    fn report_keeps_the_original_error_verbatim_and_names_the_class() {
+        let report = sub_agent_failure_report(LABEL, "API error 404: model not found");
+        assert!(
+            report.starts_with("API error 404: model not found"),
+            "the original error survives verbatim and leads: {report}"
+        );
+        assert!(report.contains("the model was unavailable"), "{report}");
+        assert!(
+            report.contains("primary-model"),
+            "names the model: {report}"
+        );
+        assert!(report.contains("http status: 404"), "{report}");
+    }
+
+    #[test]
+    fn report_always_states_an_unclassified_failure_rather_than_going_quiet() {
+        // `Unclassified` is a real value: "a different model will not help" is
+        // exactly as actionable as any named class. Silence here would be the
+        // parent guessing again.
+        let report = sub_agent_failure_report(LABEL, "cargo test failed with status 1");
+        assert!(
+            report.contains("an ordinary failure of the delegated work"),
+            "{report}"
+        );
+        assert!(
+            report.contains("a different model will not help"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_says_nothing_about_status_when_none_is_observable() {
+        // "could not check" must never render as "checked" — no field at all,
+        // never `http status: unknown`.
+        let report = sub_agent_failure_report(LABEL, "the sub-agent could not complete the task");
+        assert!(!report.contains("http status"), "{report}");
+        assert!(!report.contains("unknown"), "{report}");
+    }
+
+    #[test]
+    fn report_does_not_read_a_status_code_out_of_a_bigger_number() {
+        // The Day-174 defect: `402` inside a token count diagnosed as
+        // exhausted credits.
+        let report =
+            sub_agent_failure_report(LABEL, "prompt is too long: 402134 tokens > 200000 maximum");
+        assert!(!report.contains("http status"), "{report}");
+        assert!(
+            report.contains("an ordinary failure of the delegated work"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_never_mentions_a_request_id() {
+        // No observed provider error carries one in a recognisable shape, so
+        // the field does not exist rather than existing and always being empty.
+        for err in ["404 not found", "cargo test failed", "429 slow down"] {
+            let report = sub_agent_failure_report(LABEL, err);
+            assert!(!report.contains("request_id"), "{report}");
+            assert!(!report.contains("request id"), "{report}");
+        }
+    }
+
+    // --- the label, both shapes ---
+
+    #[test]
+    fn label_names_only_the_primary_when_no_fallback_is_configured() {
+        let label = sub_agent_model_label("claude-opus-5", None);
+        assert_eq!(label, "`claude-opus-5`");
+    }
+
+    #[test]
+    fn label_names_both_models_and_refuses_to_attribute_the_failure() {
+        // Naming the wrong model is worse than naming both: this wrapper sits
+        // outside the fallback decorator and cannot see which attempt failed.
+        let label = sub_agent_model_label("claude-opus-5", Some("claude-sonnet-5"));
+        assert!(
+            label.contains("claude-opus-5") && label.contains("claude-sonnet-5"),
+            "{label}"
+        );
+        assert!(label.contains("not observable here"), "{label}");
+    }
+
+    // --- the decorator, at the emission point ---
+
+    #[tokio::test]
+    async fn success_is_passed_through_byte_identically() {
+        // The entire regression surface: every user whose sub-agents succeed.
+        let (inner, calls) = CountingStub::ok("subtask done");
+        let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.content.len(), 1, "no block added on success");
+        assert_eq!(first_text(&result), "subtask done");
+    }
+
+    #[tokio::test]
+    async fn deterministic_refusals_are_returned_verbatim_and_unannotated() {
+        // The near-miss guard, and the one that matters most: a guard working
+        // as designed must not be dressed up as a malfunction.
+        for stem in [
+            REFUSAL_STEM_MODE_ACTIVE,
+            REFUSAL_STEM_SESSION_CAP,
+            REFUSAL_STEM_PATH_DENIED,
+        ] {
+            let refusal = format!("read mode{stem}write_file is refused");
+            let (inner, _) = CountingStub::failing(&refusal);
+            let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+            let err = tool
+                .execute(serde_json::json!({}), ctx())
+                .await
+                .unwrap_err();
+
+            assert_eq!(
+                err.to_string(),
+                refusal,
+                "a deliberate refusal must survive byte-identically"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn each_failure_class_is_reported_and_keeps_the_original_text() {
+        for (msg, want_class_phrase) in [
+            (
+                "API error 404: model not found",
+                "the model was unavailable",
+            ),
+            (
+                "401 Unauthorized: invalid x-api-key",
+                "an authentication or permission failure",
+            ),
+            (
+                "429 rate limit exceeded",
+                "a rate limit or capacity failure",
+            ),
+            (
+                "cargo test failed with status 1",
+                "an ordinary failure of the delegated work",
+            ),
+        ] {
+            let (inner, calls) = CountingStub::failing(msg);
+            let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+            let err = tool
+                .execute(serde_json::json!({}), ctx())
+                .await
+                .unwrap_err();
+            let text = err.to_string();
+
+            assert_eq!(calls.load(Ordering::SeqCst), 1, "inner called once: {msg}");
+            assert!(text.contains(msg), "original error preserved: {text}");
+            assert!(text.contains(want_class_phrase), "class named: {text}");
+            assert!(text.contains("primary-model"), "model named: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn identity_is_delegated_to_the_inner_tool() {
+        let (inner, _) = CountingStub::ok("x");
+        let tool = DiagnosticSubAgentTool::new(inner, LABEL);
         assert_eq!(tool.name(), "sub_agent");
         assert_eq!(tool.label(), "sub_agent");
         assert_eq!(tool.description(), "counting stub");
