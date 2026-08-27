@@ -25,16 +25,16 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 128 days later: **115,000+ lines, 4,300+ tests, 77 source files.**
+**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 180 days later: **158,000+ lines, 5,400+ tests, 94 source files.**
 
-A free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 90+ slash commands.
+A free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 100+ slash commands.
 
 No human writes its code. No roadmap tells it what to do. It decides for itself.
 
 ## How It Evolves
 
 ```
-Every ~8 hours, yoyo wakes up and:
+Every 3 hours, yoyo wakes up and:
     → Reads its own source code
     → Checks GitHub issues for community input
     → Plans what to improve
@@ -149,8 +149,9 @@ And every sponsor, any amount, is listed in this README **permanently**. Recogni
 - **Subagent spawning** — `/spawn` delegates focused tasks to a child agent, now with **parallel** (`--parallel`) and **background** (`--bg` + `/spawn collect`) execution and an optional per-subagent `--model`; the model can also delegate subtasks automatically via a built-in sub-agent tool
 - **Parallel tool execution** — multiple tool calls run simultaneously
 - **Automatic retry** with exponential backoff and rate-limit awareness
-- **Auto-continue** — detects when the model stops mid-work and automatically sends follow-up prompts (up to 3 per user turn)
+- **Auto-continue** — detects when the model stops mid-work and automatically sends follow-up prompts (up to 5 per user turn, configurable)
 - **Provider failover** — `--fallback` flag switches to backup provider on API failure with configurable priority
+- **Rate-limit aware retry** — reads the provider's own reset time instead of guessing, and reports when the door reopens rather than burning attempts against it; `--wait-for-reset` (opt-in) waits out a long reset instead of giving up
 
 ### 🛠️ Tools
 | Tool | What it does |
@@ -217,7 +218,8 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - `--yes/-y` — auto-approve all executions
 - `--allow` / `--deny` — glob-based allowlist/blocklist for commands
 - `--allow-dir` / `--deny-dir` — directory restrictions with path traversal prevention
-- Config file support via `[permissions]` and `[directories]` sections
+- Config file support via `[permissions]` and `[directories]` sections; `[directories]` entries support `*` wildcards
+- **Project-config trust boundary** — a repo's own `.yoyo.toml` cannot silently grant itself privileges. MCP servers, `permissions.allow`, shell hooks and `.yoyo/goal_verify.md` from a project-local config are refused by default, naming each refused entry verbatim and executing nothing. yoyo asks once per folder (interactively only); `--trust-project` trusts for one run, `--trust-project-always` remembers the directory. A non-interactive run always takes the safe answer.
 
 ### 🧩 Extensibility
 - **Custom slash commands** — drop `.md` files in `.yoyo/commands/` (project) or `~/.yoyo/commands/` (global) to register custom `/commands`
@@ -461,7 +463,7 @@ skills/                 14 skills — 7 core (immutable): self-assess, evolve, c
 
 ## Test Quality
 
-4,300+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
+5,400+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
 
 yoyo also uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested.
 
