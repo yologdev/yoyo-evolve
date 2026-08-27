@@ -1,0 +1,299 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code I'm modifying — the wiring site in tools.rs and the existing decorator in tool_wrappers.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_fallback_targ…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FallbackSubAgentTool\|i… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1160,1400p src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1180,1340p src/tools.rs ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,70p src/tool_wrappers.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4290,4400p src/tool_wrapp… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-*/src 2>/dev/null && pwd && grep -rn "request…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-*/src 2>/dev/null && grep -rn "ToolError" typ… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-* 2>/dev/null; find / -maxdepth 8 -type d … ✓ (19.3s)
+  9 tools completed in 39.3s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 '^name = "yoagent"' Car…  ▶ $ D=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ D=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16… ✓ (4ms)
+  ▶ $ D=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.2s (4 ✓)
+
+Confirmed: no request id exists anywhere in yoagent's error path (only MCP JSON-RPC ids) — so that field must not ship. Let me check ToolError's variants, then write the code.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ D=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1205,1232p src/tool_wrapp… ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Now writing the code — first splitting the shape lists into shared consts so "what counts as auth" has one statement.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (16 → 7 lines)
+  -     let never_fallback = [
+  -         "rate limit",
+  -         "rate_limit",
+  -         "overloaded",
+  -         "capacity",
+  -         "quota",
+  -         "authentication",
+  -         "unauthorized",
+  -         "invalid api key",
+  -         "invalid_api_key",
+  -         "permission denied",
+  -         "forbidden",
+  -     ];
+  -     if never_fallback.iter().any(|n| lower.contains(n)) {
+  +     if RATE_LIMIT_SHAPES
+  +         .iter()
+  +         .chain(AUTH_SHAPES.iter())
+  +         .any(|n| lower.contains(n))
+  +     {
+            return false;
+  ... (1 more lines)
+ ✓ (12.9s)
+  -     let never_fallback = [
+  -         "rate limit",
+  -         "rate_limit",
+  -         "overloaded",
+  -         "capacity",
+  -         "quota",
+  -         "authentication",
+  -         "unauthorized",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the consts (definition and consumer land together):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 23 lines)
+  + /// Error shapes naming a **rate limit / capacity** problem, and shapes naming an
+  + /// **auth** problem. Two lists rather than one because two consumers ask
+  + /// different questions of them: `is_model_unavailable_error` wants their
+  + /// *union* (neither is fixed by trying another model), while
+  + /// `classify_sub_agent_error` must tell them apart to report a class. One
+  + /// statement each, so "what counts as auth" cannot drift between the two.
+  + const RATE_LIMIT_SHAPES: [&str; 5] = [
+  +     "rate limit",
+  +     "rate_limit",
+  +     "overloaded",
+  +     "capacity",
+  +     "quota",
+  + ];
+  + const AUTH_SHAPES: [&str; 6] = [
+  +     "authentication",
+  +     "unauthorized",
+  +     "invalid api key",
+  +     "invalid_api_key",
+  +     "permission denied",
+  +     "forbidden",
+  ... (3 more lines)
+ ✓ (14.9s)
+  + /// Error shapes naming a **rate limit / capacity** problem, and shapes naming an
+  + /// **auth** problem. Two lists rather than one because two consumers ask
+  + /// different questions of them: `is_model_unavailable_error` wants their
+  + /// *union* (neither is fixed by trying another model), while
+  + /// `classify_sub_agent_error` must tell them apart to report a class. One
+  + /// statement each, so "what counts as auth" cannot drift between the two.
+  + const RATE_LIMIT_SHAPES: [&str; 5] = [
+  +     "rate limit",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1196,1210p src/tool_wrapp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1190 && NR<=1212 {print… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1178 && NR<=1190 {print… ✓ (4ms)
+  4 tools completed in 24.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1160 && NR<=1178 {print… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.2s (2 ✓)
+
+Now the diagnostics section. Let me find the insertion point after FallbackSubAgentTool:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^// Tests" src/tool_wra… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (243 lines) ✓ (23ms)
+  2 tools completed in 43.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the wiring in tools.rs — one site, and the label must reflect what was actually wired:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 28 lines)
+        depth: usize,
+        shared_state: &SharedState,
+    ) -> Box<dyn AgentTool> {
+  +     // The single place failure diagnostics are attached, deliberately wrapping
+  +     // the FINAL tool — bare or fallback-decorated — rather than living inside
+  +     // `FallbackSubAgentTool`, which only exists when a fallback is configured
+  +     // and would therefore reach that subset of users only ("two doors, one
+  +     // policy, one deaf": #745, #767, #769, #816, `/config show`, and the
+  +     // sub-agent fallback itself). The label is built from the fallback that was
+  +     // ACTUALLY wired, not from `sub_agent_fallback_target` re-run here: a
+  +     // configured fallback whose API key is missing is dropped by the stack, and
+  +     // a label naming it would assert a second attempt that never happens.
+  +     let (tool, wired_fallback) = sub_agent_tool_stack(config, depth, shared_state);
+  +     let label = sub_agent_model_label(&config.model, wired_fallback.as_deref());
+  +     with_sub_agent_diagnostics(tool, label)
+  + }
+  + 
+  + /// Build the sub-agent tool stack: the bare tool, or the fallback-decorated
+  + /// pair when a fallback model is configured *and* its key resolves. Returns the
+  + /// fallback model actually wired, so the caller can describe what exists rather
+  ... (6 more lines)
+ ✓ (13.0s)
+        depth: usize,
+        shared_state: &SharedState,
+    ) -> Box<dyn AgentTool> {
+  +     // The single place failure diagnostics are attached, deliberately wrapping
+  +     // the FINAL tool — bare or fallback-decorated — rather than living inside
+  +     // `FallbackSubAgentTool`, which only exists when a fallback is configured
+  +     // and would therefore reach that subset of users only ("two doors, one
+  +     // policy, one deaf": #745, #767, #769, #816, `/config show`, and the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (48 lines) ✓ (9.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.5s (2 ✓)
+
+Builds. Now the tests — reusing the existing CountingStub infrastructure:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "async fn\|^}" src/tool_… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (197 lines) ✓ (26.2s)
+  2 tools completed in 55.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+11 passing. First let me clean up an awkward assertion I wrote, then run the positive control:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 3 lines)
+  -         assert!(pair.contains("not \n observable here".replace(" \n ", " ").as_str()), "{pair}");
+  +         // The honesty constraint: it names the configuration and refuses to
+  +         // claim which attempt produced the error.
+  +         assert!(pair.contains("not observable here"), "{pair}");
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A3 'let pair = sub_agen… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4821,4825p src/tool_wrapp… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (4 → 3 lines)
+  -         assert!(
+  -             pair.contains("not \n observable here".replace(" \n ", " ").as_str()),
+  -             "{pair}"
+  -         );
+  +         // The honesty constraint: it names the configuration and refuses to
+  +         // claim which of the two attempts produced the error.
+  +         assert!(pair.contains("not observable here"), "{pair}");
+ ✓ (1m 49s)
+  -         assert!(
+  -             pair.contains("not \n observable here".replace(" \n ", " ").as_str()),
+  -             "{pair}"
+  -         );
+  +         // The honesty constraint: it names the configuration and refuses to
+  +         // claim which of the two attempts produced the error.
+  +         assert!(pair.contains("not observable here"), "{pair}");
+  4 tools completed in 1m 55s (3 ✓, 1 ✗)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5278 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+t...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — expected, the file grew. It prints the exact remedy line:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (201ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own gate asking me to acknowledge the growth rather than absorb it — pasting the register line it prints:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tool_wrappers.rs"'… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/tool_wrappers.rs", 4497),
+  +     ("src/tool_wrappers.rs", 4941),
+ ✓ (1m 9s)
+  -     ("src/tool_wrappers.rs", 4497),
+  +     ("src/tool_wrappers.rs", 4941),
+  2 tools completed in 1m 12s (2 ✓)
+
+Now the positive control — neuter the composer and confirm exactly the annotation tests fail while pass-through and refusal tests stay green:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (14 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That lint output is stale (pre-register-fix). The source is currently neutered for the control — let me run just the affected tests with a filter:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (155ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (154ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.0s (3 ✓)
+
+Positive control is exactly right: the 3 annotation tests fail, while pass-through, refusal-verbatim and identity delegation stay green. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw.bak src/tool_wrappers… ✓ (30.2s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

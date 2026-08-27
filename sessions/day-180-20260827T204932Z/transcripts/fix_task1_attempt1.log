@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc_sync failure: CLAUDE.md was never touched. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Deliberately deferred r… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me read the actual implementation so the docs describe what shipped, not what I imagine.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^enum SubAgentErrorClas… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SubAgentErrorClass\|fn … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1400,1630p' src/tool_wra… ✓ (4ms)
+  3 tools completed in 4.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1270p' src/tools.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the full picture. Two CLAUDE.md edits: correct the superseded sentence in the tools.rs bullet, and document the decorator in the tool_wrappers.rs bullet.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - A keyless/local provider (ollama) needs no key and gets `Some(String::new())`, so it is not mistaken for a missing one. **Deliberately deferred rather than half-done:** the second half of the rival's fix — returning the error *type / status / request id / model* to the parent instead of yoyo's opaque summary string — is a separate diagnostic-quality task and was not started here.
+  + A keyless/local provider (ollama) needs no key and gets `Some(String::new())`, so it is not mistaken for a missing one. **Superseded claim, recorded rather than erased (Day 180, second task — and the gap it left was closed the same day, which is the point rather than the incident).** This bullet used to end: *"**Deliberately deferred rather than half-done:** the second half of the rival's fix — returning the error *type / status / request id / model* to the parent instead of yoyo's opaque su… [yoyo: 1569 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 8s)
+  - A keyless/local provider (ollama) needs no key and gets `Some(String::new())`, so it is not mistaken for a missing one. **Deliberately deferred rather than half-done:** the second half of the rival's fix — returning the error *type / status / request id / model* to the parent instead of yoyo's opaque summary string — is a separate diagnostic-quality task and was not started here.
+  + A keyless/local provider (ollama) needs no key and gets `Some(String::new())`, so it is not mistaken for a missing one. **Superseded claim, recorded rather than erased (Day 180, second task — and the gap it left was closed the same day, which is the point rather than the incident).** This bullet used to end: *"**Deliberately deferred rather than half-done:** the second half of the rival's fix — returning the error *type / status / request id / model* to the parent instead of yoyo's opaque su… [yoyo: 1569 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the tool_wrappers.rs bullet — appending after the FallbackSubAgentTool version marker:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - If a later version adds a chain, this whole wrapper becomes redundant and should be deleted rather than kept beside it. <!-- yoagent-version-claim: 0.16.6 -->
+  + If a later version adds a chain, this whole wrapper becomes redundant and should be deleted rather than kept beside it. <!-- yoagent-version-claim: 0.16.6 --> **Day 180 (second task) — `DiagnosticSubAgentTool`, the other half of the rival's one-sentence fix: the parent gets the failure's class, status and model instead of an opaque summary string.** The user-facing defect: when a sub-agent died, the parent received yoagent's summary text and had to guess — it could not tell a model-availabil… [yoyo: 5352 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (58.4s)
+  - If a later version adds a chain, this whole wrapper becomes redundant and should be deleted rather than kept beside it. <!-- yoagent-version-claim: 0.16.6 -->
+  + If a later version adds a chain, this whole wrapper becomes redundant and should be deleted rather than kept beside it. <!-- yoagent-version-claim: 0.16.6 --> **Day 180 (second task) — `DiagnosticSubAgentTool`, the other half of the rival's one-sentence fix: the parent gets the failure's class, status and model instead of an opaque summary string.** The user-facing defect: when a sub-agent died, the parent received yoagent's summary text and had to guess — it could not tell a model-availabil… [yoyo: 5352 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify two claims I just made in the docs rather than assert them. First, the None early returns:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^fn sub_agent_tool_stac… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. Now the positive control — I claimed it in the docs, so I must actually run it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (16 lines) ✓ (24.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'm mid positive-control with the file neutered. Let me get the pass/fail breakdown:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (1m 18s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 25s (1 ✓, 1 ✗)
+
+Positive control fired: exactly 3 annotation tests failed. Let me confirm the pass-through and refusal guards stayed green (the half that matters), then restore:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "^test tool_wrappers::fa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "^test tool_wrappers::fa… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.5s (2 ✓)
+
+Restored cleanly. Now let me record the measured positive-control numbers rather than the generic claim:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Positive control run rather than assumed:** neutering the composer to return its input unchanged fails exactly the annotation tests and leaves every pass-through and refusal test green.
+  + **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails **exactly 3** tests — `diagnostics_annotate_each_class_and_keep_the_original_text`, `diagnostics_report_a_status_only_when_one_is_really_there` and `sub_agent_failure_report_invents_nothing` — while the other **17** in the module, including every pass-through and refusal guard (`success_is_passed_through_untouched`, `deterministic_refusal_never_reaches_the_fallback`), stay g… [yoyo: 157 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 39s)
+  - **Positive control run rather than assumed:** neutering the composer to return its input unchanged fails exactly the annotation tests and leaves every pass-through and refusal test green.
+  + **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails **exactly 3** tests — `diagnostics_annotate_each_class_and_keep_the_original_text`, `diagnostics_report_a_status_only_when_one_is_really_there` and `sub_agent_failure_report_invents_nothing` — while the other **17** in the module, including every pass-through and refusal guard (`success_is_passed_through_untouched`, `deterministic_refusal_never_reaches_the_fallback`), stay g… [yoyo: 157 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The auto-check output is truncated. Let me run the full verification chain explicitly — and verify the "5277 passed" number I just wrote into the docs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && timeout 300 cargo t…
