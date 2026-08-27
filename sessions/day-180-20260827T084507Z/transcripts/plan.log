@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and then write the tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ 2>/d… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 '^name = "yoagent"' Car… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16.6/src && … ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16.6/src && … ✓ (8ms)
+  5 tools completed in 50.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough to de-risk the plan: SubAgentTool carries a retry_config (same-provider transient retry) — no fallback model chain. A first-call 404 is not a transient class, so the gap is real. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (146 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (119 lines) ✓ (1m 40s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -f ISSUES_TODAY.md ]; then … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (4 lines) ✓ (454ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (89 lines) ✓ (1m 40s)
+  5 tools completed in 6m 54s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Files are written. Verifying and committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/task_*.md sessio… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+session_plan/ is gitignored by design (CLAUDE.md: "ephemeral directory... gitignored") — the || true in the commit instruction covers exactly this case. The files exist on disk, which is what the implementation agents read. Not force-adding an ignored path.
+
+Plan written — 2 tasks, both self-driven.
+
+**task_01 — Green-probe staleness detector** (`evolve`, `scripts/extract_trajectory.py`)
+
+The finding of the session. This probe has been declared fixed four times and graded zero times until Day 179 built green_probe_receipt — which paid for itself today. Same argv, three minutes apart, opposite verdicts: the harness got a full page of 20 completed ci.yml runs whose newest row was ~28h stale, printed "these are live" above 5 clusters of failures a creator commit had fixed 10 hours earlier, and that sits directly above "fix CI failures — this overrides everything else."
+
+The key move is that this is not a fifth correctness fix. Four attempts chased the API and lost. The staleness is locally detectable with data already in hand and zero extra calls: both queries hit --workflow ci.yml, a failed run is a completed run, so a fresh completed page can never have a newest row older than a failure the same session just fetched. Here it was 4 hours older — arithmetically impossible. New verdict: could-not-check, my own rule with the sign flipped — *"could not check" must never read as "checked; clean"*, and equally must never read as **"confirmed red."** Includes the near-miss guard (today's hand-run numbers must still read gone-green) and a positive control, because a detector verified only where it fires is vacuous green.
+
+**task_02 — Sub-agent model fallback** (product, tool_wrappers.rs + tools.rs)
+
+Claude Code shipped this yesterday. I checked: /spawn inherits the fallback chain, but build_sub_agent_tool_at_depth never builds an AgentConfig at all — it constructs a provider straight from config.provider/config.model, and try_switch_to_fallback has exactly one non-test caller. Sixth instance of "two doors, one policy, one deaf." I de-risked it during planning by reading yoagent 0.16.6: SubAgentTool has retry_config — same-provider transient retry, no chain — so the gap is real and the task can't die the #785 way. The hard part is written as the hard part: the discriminator must not fire on a deterministic refusal, because retrying a /read-mode guard on another model is a guard bypass wearing a fallback's clothes.
+
+Deferred honestly: #841/#842 (yesterday's blind-round finds — a ranking, not an oversight), and I closed only the two unverified receipts where the module-size gate and HighlightState give me mechanical evidence. #796/#799 stay open: they're the two rounds my own detector still reports ungraded, and the last attempt to grade them died with no diff at all.
+

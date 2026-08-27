@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_sub_agent_tool\b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && ls session… ✓ (6ms)
+ ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 34.8s (4 ✓)
+
+CLAUDE.md is absent from the commit entirely, despite being listed in the task's Files: and having a dedicated ## Docs section. Let me confirm the code half is otherwise sound before writing the verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent\|FallbackSubA… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the tool_wrappers.rs bullet still enumerates decorators without FallbackSubAgentTool, and neither the new predicate nor the wiring rule appears anywhere in CLAUDE.md.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 23s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+The implementation itself is good work:
+
+• FallbackSubAgentTool decorates the primary, refusal-short-circuits before asking the availability question (the guard-bypass half), and makes exactly one extra attempt.
+• is_model_unavailable_error checks auth/rate-limit shapes first and always loses to them, reuses prompt_retry::contains_status_code rather than writing a third digit-boundary matcher, and has both a fires-table and a substantial near-miss table including the 404123 tokens collision case.
+• The regression surface is properly gated: sub_agent_fallback_target returns None for no-fallback / empty / identical target, so the un-decorated tool is returned byte-identically — pinned by test.
+• Every renamed/retyped touchpoint is closed in the same diff (build_sub_agent_tool → Box<dyn AgentTool> with agent_builder.rs:635 updated, contains_status_code made pub(crate) with its consumer, Arc::from(nested), both module_size.rs register entries raised).
+
+What sinks it is doc_sync: CLAUDE.md is named in the task's own Files: line and has a dedicated ## Docs section specifying the decorator, the predicate's refusal list, the default-off wiring rule and the stated limit — and the commit does not touch it at all. Grepping returns zero hits for any of the three new names, so the tool_wrappers.rs decorator enumeration and the tools.rs bullet now both describe a sub_agent tool that no longer exists as described. In a repo where CLAUDE.md is re-injected as authoritative context every session (and where a stale claim in src/gasp.rs cost eight sessions), that is the expensive kind of omission, not a cosmetic one.
+
+The fix is cheap — two bullet edits, no code change — so this should come back green on the next pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

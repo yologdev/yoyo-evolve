@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the commit and what the code actually does, so the docs I write are accurate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluator is right — CLAUDE.md is untouched. Let me read the actual implementation so the docs describe what the code really does.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/tools.rs ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1165,1370p src/tools.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+Now the decorator and predicate in tool_wrappers.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_model_unavailable_er… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1160,1380p src/tool_wrapp… ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me check the test names and whether the deferred follow-up issue was filed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== tool_wrappers tests ==… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4340,4500p src/tool_wrapp… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --lim… ✓ (174ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 29.3s (3 ✓)
+
+The gh token is expired. Let me handle the main work first — and check one thing that affects how I write the docs: the dependency-version-claim gate scans CLAUDE.md.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-version-claim" … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That output was large. Let me get just the marker format and version tersely.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-version-claim" … ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the marker format (<!-- yoagent-version-claim: 0.16.6 -->) and resolved version. Now the CLAUDE.md edits — let me verify my anchor strings are unique first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "transparent pass-throug… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both anchors unique. Now the two CLAUDE.md bullets — starting with tool_wrappers.rs (the decorator and predicate):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - transparent pass-through when neither mode is on) and helper wrappers
+  + transparent pass-through when neither mode is on; FallbackSubAgentTool — Day 180, see below) and helper wrappers. **Day 180 — `FallbackSubAgentTool`, one extra attempt for the `sub_agent` tool when the session's model is unavailable.** The measured gap: `/spawn` clones the parent's chain (`commands_spawn.rs:1667`, `fallback_model: config.fallback_model.clone()`) and so survives a dead model, while `build_sub_agent_tool_at_depth` never built an `AgentConfig` at all — it constructed an `Arc<… [yoyo: 4999 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 30s)
+  - transparent pass-through when neither mode is on) and helper wrappers
+  + transparent pass-through when neither mode is on; FallbackSubAgentTool — Day 180, see below) and helper wrappers. **Day 180 — `FallbackSubAgentTool`, one extra attempt for the `sub_agent` tool when the session's model is unavailable.** The measured gap: `/spawn` clones the parent's chain (`commands_spawn.rs:1667`, `fallback_model: config.fallback_model.clone()`) and so survives a dead model, while `build_sub_agent_tool_at_depth` never built an `AgentConfig` at all — it constructed an `Arc<… [yoyo: 4999 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Auto-check failed — let me see what actually broke.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (212ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 8s (2 ✓)
+
+The gate captures the version to end-of-line, so an inline marker swallows the rest of the paragraph. Let me read the parser.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MARKER\|fn extract\|tri… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The parser takes everything after the marker to end of line — so the marker must be last on its line. Let me restructure: one statement of the upstream claim, at the end of the bullet, with the marker as the final token.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Checked before writing any code, because a yoagent-side answer would have made the task pointless: `SubAgentTool` carries a `retry_config` (`crate::retry::RetryConfig`) plus `from_config`/`from_provider`/`with_model_config`/`with_model`, but that is **same-provider transient retry with no fallback *chain*, and a 404 / model-not-found is not in its retriable class** — so the gap is real and upstream does not close it. <!-- yoagent-version-claim: 0.16.6 --> **The decorator,
+  + Whether yoagent already closes this was checked **before** any code was written, because an upstream answer would have made the task pointless; the surface consulted and the reason it does not close the gap are stated once at the **end of this bullet**, under the version marker that pins them. **The decorator,
+ ✓ (1m 37s)
+  - Checked before writing any code, because a yoagent-side answer would have made the task pointless: `SubAgentTool` carries a `retry_config` (`crate::retry::RetryConfig`) plus `from_config`/`from_provider`/`with_model_config`/`with_model`, but that is **same-provider transient retry with no fallback *chain*, and a 404 / model-not-found is not in its retriable class** — so the gap is real and upstream does not close it. <!-- yoagent-version-claim: 0.16.6 --> **The decorator,
+  + Whether yoagent already closes this was checked **before** any code was written, because an upstream answer would have made the task pointless; the surface consulted and the reason it does not close the gap are stated once at the **end of this bullet**, under the version marker that pins them. **The decorator,
+
+Now append the upstream claim with the marker as the last token on the line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **The stated limit: this covers model-availability failures only** — not rate limits, not auth, not an ordinary failure of the delegated work — and it is one extra attempt, never a chain
+  + **The stated limit: this covers model-availability failures only** — not rate limits, not auth, not an ordinary failure of the delegated work — and it is one extra attempt, never a chain. **The upstream claim this decorator rests on, pinned rather than asserted:** yoagent's `SubAgentTool` does carry a `retry_config` (`crate::retry::RetryConfig`, alongside `from_config` / `from_provider` / `with_model_config` / `with_model`), but that is **same-provider transient retry with no fallback *chain… [yoyo: 298 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 37s)
+  - **The stated limit: this covers model-availability failures only** — not rate limits, not auth, not an ordinary failure of the delegated work — and it is one extra attempt, never a chain
+  + **The stated limit: this covers model-availability failures only** — not rate limits, not auth, not an ordinary failure of the delegated work — and it is one extra attempt, never a chain. **The upstream claim this decorator rests on, pinned rather than asserted:** yoagent's `SubAgentTool` does carry a `retry_config` (`crate::retry::RetryConfig`, alongside `from_config` / `from_provider` / `with_model_config` / `with_model`), but that is **same-provider transient retry with no fallback *chain… [yoyo: 298 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_version_cl… ✓ (213ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 41s (2 ✓)
+
+Marker gate green. Now the tools.rs bullet — the wiring, the default-off gate, and the key rule:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - see the `commands_rename.rs` bullet for why the recording cannot happen off the tool's arguments.
+  + see the `commands_rename.rs` bullet for why the recording cannot happen off the tool's arguments. Day 180 (sub-agent model fallback — the decorator itself, its predicate and what it refuses to fire on are documented in the `tool_wrappers.rs` bullet; this is the **wiring**): `build_sub_agent_tool` and `build_sub_agent_tool_at_depth` return `Box<dyn AgentTool>` instead of a concrete `SubAgentTool`, because the returned tool is now *either* the bare tool or the decorated pair — the one non-test… [yoyo: 2220 more bytes elided — diff lines are capped at 500 bytes]

@@ -1,0 +1,395 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by confirming the one open question the task flags — whether yoagent's RetryConfig already handles model-availability failures with a different model.
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null | head -50  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && … ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-0.16.6/ 2>/dev/null; ls ~/.cargo/registry/… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16.6/src && … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.0s (4 ✓)
+
+Confirmed — is_retryable matches only RateLimited | Network, and retries reuse the same model. The gap is real. Now the tool construction surface:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.16.6/src && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1260p' src/tools.rs ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_STEM\|is_determ…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fallback_model\|fallbac… ✓ (5ms)
+ ✓ (6ms)
+  4 tools completed in 5.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — verification done, now implementing. Gathering the last pieces:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '28,70p' src/tool_wrapper…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn contains_status_code…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub(crate) use … ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers\|tools.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_sub_agent_tool\b… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,650p' src/agent_buil… ✓ (6ms)
+  7 tools completed in 34.0s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verification complete. Now implementing — first the shared status-code helper needs to be reachable:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '605,620p' src/prompt_ret… ✓ (6ms)
+
+All confirmed. Making contains_status_code shareable (one statement of the digit-boundary rule, not a second copy):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (1 → 1 lines)
+  - fn contains_status_code(haystack: &str, code: &str) -> bool {
+  + pub(crate) fn contains_status_code(haystack: &str, code: &str) -> bool {
+ ✓ (2m 1s)
+  - fn contains_status_code(haystack: &str, code: &str) -> bool {
+  + pub(crate) fn contains_status_code(haystack: &str, code: &str) -> bool {
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1170p' src/tool_wra… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 9s (2 ✓)
+
+Now the predicate and decorator. Writing them at the end of the production half of tool_wrappers.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 209 lines)
+  + // ---------------------------------------------------------------------------
+  + // FallbackSubAgentTool — one retry on the fallback model when the primary
+  + // model is unavailable
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// True when a tool-error message names a **model-availability** failure — the
+  + /// model does not exist, is not enabled for this key, or is otherwise not
+  + /// servable — as opposed to any other reason a sub-agent might fail.
+  + ///
+  + /// This is deliberately the narrowest of the error classifiers in this repo,
+  + /// because the only action it licenses is *re-running the whole subtask on a
+  + /// different model*. Every shape it declines is a shape where a second model
+  + /// would fail identically, waste a second full sub-agent run, or — in the
+  + /// refusal case — quietly defeat a guard.
+  + ///
+  + /// **Why this is not `prompt_retry::is_retriable_error`** (checked, not
+  + /// assumed): that predicate answers a different question — *may I retry this
+  + /// on the SAME model after a backoff?* — and correctly answers "no" for a 404.
+  + /// "No, not on this model" and "yes, on a different model" are opposite
+  + /// verdicts about the same string, so reusing it would invert the decision.
+  ... (186 more lines)
+ ✓ (12.1s)
+  + // ---------------------------------------------------------------------------
+  + // FallbackSubAgentTool — one retry on the fallback model when the primary
+  + // model is unavailable
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// True when a tool-error message names a **model-availability** failure — the
+  + /// model does not exist, is not enabled for this key, or is otherwise not
+  + /// servable — as opposed to any other reason a sub-agent might fail.
+  ... (13 more lines)
+
+The field is content, not output:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 1 lines)
+  -                     output: format!("{note}{}", result.output),
+  +                     content: format!("{note}{}", result.content),
+ ✓ (12.3s)
+  -                     output: format!("{note}{}", result.output),
+  +                     content: format!("{note}{}", result.content),
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolResult {" -A 6 src/… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+content is Vec<Content> — prepending a text block is cleaner than string-splicing (and safe for non-text blocks):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (7 → 16 lines)
+                Ok(result) => {
+  -                 let note = fallback_switch_note(&self.primary_model, &self.fallback_model);
+  +                 // Prepend the note as its own block rather than splicing it
+  +                 // into the first one: `content` may carry non-text blocks, and
+  +                 // a `Vec` insert cannot mangle them.
+  +                 let mut content = result.content;
+  +                 content.insert(
+  +                     0,
+  +                     yoagent::Content::Text {
+  +                         text: fallback_switch_note(&self.primary_model, &self.fallback_model),
+  +                     },
+  +                 );
+                    Ok(yoagent::types::ToolResult {
+  -                     content: format!("{note}{}", result.content),
+  -                     ..result
+  +                     content,
+  +                     details: result.details,
+                    })
+                }
+ ✓ (14.3s)
+                Ok(result) => {
+  -                 let note = fallback_switch_note(&self.primary_model, &self.fallback_model);
+  +                 // Prepend the note as its own block rather than splicing it
+  +                 // into the first one: `content` may carry non-text blocks, and
+  +                 // a `Vec` insert cannot mangle them.
+  +                 let mut content = result.content;
+  +                 content.insert(
+  +                     0,
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the consumer — wiring in tools.rs. Let me see the exact shape:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1168,1200p' src/tools.rs… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct AgentConfig"… ✓ (5ms)
+  2 tools completed in 21.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+AgentConfig isn't Clone — so I'll parameterize the builder by (provider, model, key) instead. Let me see the full function:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1240p' src/tools.rs ✓ (3ms)
+
+Now the wiring — one seam, so nested levels inherit it too:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 61 lines)
+  - pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
+  + /// Decide what `(provider, model)` the sub-agent's one fallback attempt should
+  + /// use, or `None` when there is no usable fallback.
+  + ///
+  + /// Pure so the gate is table-tested: the **`None` branch is the whole
+  + /// regression surface**, because it is every user who has not configured a
+  + /// fallback and it must leave the `sub_agent` tool byte-identical to before.
+  + ///
+  + /// Rules, in order:
+  + /// - no `fallback_model` (or an empty one) → `None`. A fallback *provider*
+  + ///   alone is not enough here: `try_switch_to_fallback` can default the model
+  + ///   for a whole session, but a sub-agent tool is built once at startup and a
+  + ///   guessed model is not worth a silent second API bill.
+  + /// - the fallback provider is `fallback_provider` when set, else the primary's.
+  + /// - the result must actually **differ** from the primary in provider or
+  + ///   model, otherwise the retry is a second identical call → `None`.
+  + pub(crate) fn sub_agent_fallback_target(
+  +     provider: &str,
+  +     model: &str,
+  +     fallback_provider: Option<&str>,
+  ... (41 more lines)
+ ✓ (12.2s)
+  - pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
+  + /// Decide what `(provider, model)` the sub-agent's one fallback attempt should
+  + /// use, or `None` when there is no usable fallback.
+  + ///
+  + /// Pure so the gate is table-tested: the **`None` branch is the whole
+  + /// regression surface**, because it is every user who has not configured a
+  + /// fallback and it must leave the `sub_agent` tool byte-identical to before.
+  + ///
+  ... (13 more lines)
+
+Expected — now the seam itself. Converting build_sub_agent_tool_at_depth to return a decorated Box<dyn AgentTool>:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1233,1246p' src/tools.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 5 lines)
+        config: &AgentConfig,
+        depth: usize,
+        shared_state: &SharedState,
+  - ) -> SubAgentTool {
+  + ) -> Box<dyn AgentTool> {
+ ✓ (12.2s)
+        config: &AgentConfig,
+        depth: usize,
+        shared_state: &SharedState,
+  - ) -> SubAgentTool {
+  + ) -> Box<dyn AgentTool> {
+  2 tools completed in 15.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (4 → 5 lines)
+  -             tools.push(with_session_cap(
+  -                 Box::new(sub_agent_tool),
+  -                 SESSION_TOOL_CALL_CAP,
+  -             ));
+  +             // Already `Box<dyn AgentTool>` — and possibly a
+  +             // `FallbackSubAgentTool` wrapping the real one, so the session cap
+  +             // must sit OUTSIDE it: one capped slot per delegation, whichever
+  +             // model ends up answering.
+  +             tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
+ ✓ (12.2s)
+  -             tools.push(with_session_cap(
+  -                 Box::new(sub_agent_tool),
+  -                 SESSION_TOOL_CALL_CAP,
+  -             ));
+  +             // Already `Box<dyn AgentTool>` — and possibly a
+  +             // `FallbackSubAgentTool` wrapping the real one, so the session cap
+  +             // must sit OUTSIDE it: one capped slot per delegation, whichever
+  +             // model ends up answering.
+  +             tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 1 lines)
+  -         child_tools.push(Arc::new(nested));
+  +         child_tools.push(Arc::from(nested));
+ ✓ (12.2s)
+  -         child_tools.push(Arc::new(nested));
+  +         child_tools.push(Arc::from(nested));
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.7s (2 ✓)
+
+Now the body tail — extract a per-model builder and apply the decorator at this one seam:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1284,1315p' src/tools.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (31 → 86 lines)
+  +     // The primary attempt, on the session's configured model.
+  +     let primary = sub_agent_tool_for(
+  +         config,
+  +         &config.provider,
+  +         &config.model,
+  +         &config.api_key,
+  +         child_tools.clone(),
+  +         shared_state,
+  +     );
+  + 
+  +     // One fallback attempt, and only when a fallback model is actually
+  +     // configured and differs. With none configured — every user who has not
+  +     // set one, and the whole regression surface — the un-decorated tool is
+  +     // returned byte-identically.
+  +     let Some((fb_provider, fb_model)) = sub_agent_fallback_target(
+  +         &config.provider,
+  +         &config.model,
+  +         config.fallback_provider.as_deref(),
+  +         config.fallback_model.as_deref(),
+  +     ) else {
+  ... (68 more lines)
+ ✓ (12.2s)
+  +     // The primary attempt, on the session's configured model.
+  +     let primary = sub_agent_tool_for(
+  +         config,
+  +         &config.provider,
+  +         &config.model,
+  +         &config.api_key,
+  +         child_tools.clone(),
+  +         shared_state,
+  ... (13 more lines)
+  2 tools completed in 29.0s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0433][0m[1m: cannot find type `FallbackSubAgentTool` in this scope[0m
+    [1m[94m--> [0msrc/tools.rs:1319:14
+     [1m[94m|[0m
+[1m[94m1319[0m [1m[94m|[0m     Box::new(FallbackSubAgentTool::new(
+     [1m[94m|[0m              [1m[91m^^^^^^^^^^^^^^^^^^^^[0m [1m[91muse of undeclared type `FallbackSubAgentTool`[0m
+     [1m[94m|[0m
+[1m[96mhelp[0m: consider importing this struct
+     [1m[94m|[0m
+[1m[94m  14[0m [92m+ use crate::tool_wrappers::FallbackSubAgentTool;[0m
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0433`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+Just a missing import:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '23,28p' src/tools.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (6 → 6 lines)
+    use crate::tool_wrappers::{
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+        with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  -     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  -     SESSION_TOOL_CALL_CAP,
+  +     with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
+  +     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    };
+ ✓ (2m 1s)
+    use crate::tool_wrappers::{
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+        with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
+  -     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  -     SESSION_TOOL_CALL_CAP,
+  +     with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
+  +     ToolFailureTracker, SESSION_TOOL_CALL_CAP,
+    };
+  2 tools completed in 2m 10s (2 ✓)
+
+Compiles. Let me see the actual test failure:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (58.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Unit tests green — the failure must be the module-size gate (line counts moved):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B2 -A 12… ✓ (1m 9s)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate is working as designed. Let me add the tests first, then update the register once with final numbers. Checking the existing stub-tool pattern:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2000,2050p' src/tool_wra… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolContext" src/tool_w… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+Now the tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1845,1860p' src/tool_wra… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (297 lines) ✓ (3ms)
+  2 tools completed in 41.2s (2 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+11 new tests, all passing. Now the pure gate's table test in tools.rs, then I'll update the size register once with final numbers:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 src/… (114 lines) ✓ (23.0s)
+
+Now the positive control — neuter the predicate and confirm exactly the fallback tests fail while near-miss guards stay green:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (9 lines) ✓ (23.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control confirms the shape: exactly the 3 fires-tests fail, all 8 near-miss/passthrough guards stay green. Restoring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw.bak src/tool_wrappers… ✓ (2.4s)
+
+Now the size register, with final numbers:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/tool_wrappers.rs… ✓ (5ms)
+
+  ✓ Watch passed after fix (attempt 3)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

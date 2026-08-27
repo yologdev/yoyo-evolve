@@ -1,0 +1,265 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the file — locating the functions named in the task rather than reading the whole 2978-line script.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREEN_BRANCH\|class Gre… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,940p' scripts/extrac… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,835p' scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '938,975p' scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2740,2885p' scripts/extr… ✓ (4ms)
+  5 tools completed in 11.6s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_age_days" -A 22… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.8s (2 ✓)
+
+Now I have the full picture. Making the first concrete change — the observation field on GreenScan:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (12 → 20 lines)
+  -     The three trailing fields are OBSERVATION, not decision: nothing reads them
+  -     to choose a branch, they exist so `green_probe_receipt` can record what the
+  -     page actually held. `rows is None` means no page was ever inspected (the
+  -     payload was not a list, or the caller never asked) and is deliberately kept
+  -     apart from `rows == 0`, which is a real empty listing.
+  +     `rows` / `successes` / `unreadable` are OBSERVATION, not decision: nothing
+  +     reads them to choose a branch, they exist so `green_probe_receipt` can
+  +     record what the page actually held. `rows is None` means no page was ever
+  +     inspected (the payload was not a list, or the caller never asked) and is
+  +     deliberately kept apart from `rows == 0`, which is a real empty listing.
+  + 
+  +     `newest_row_ts` is the one exception and the Day-180 addition: it is the
+  +     newest `createdAt` on the page REGARDLESS of conclusion, and it is the
+  +     freshness evidence. `--status completed` includes failures, so the newest
+  +     failure the same session already fetched MUST appear on a fresh page — if
+  +     the page's newest row predates it, the listing cannot be current and no
+  +     verdict is available. See `page_is_stale`.
+        """
+    
+        newest_success_ts: str | None = None
+  ... (5 more lines)
+ ✓ (1m 25s)
+  -     The three trailing fields are OBSERVATION, not decision: nothing reads them
+  -     to choose a branch, they exist so `green_probe_receipt` can record what the
+  -     page actually held. `rows is None` means no page was ever inspected (the
+  -     payload was not a list, or the caller never asked) and is deliberately kept
+  -     apart from `rows == 0`, which is a real empty listing.
+  +     `rows` / `successes` / `unreadable` are OBSERVATION, not decision: nothing
+  +     reads them to choose a branch, they exist so `green_probe_receipt` can
+  +     record what the page actually held. `rows is None` means no page was ever
+  ... (13 more lines)
+
+Now the branch constant and the pure page_is_stale:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 39 lines)
+    GREEN_BRANCH_COULD_NOT_CHECK = "could-not-check"
+    GREEN_BRANCH_GONE_GREEN = "gone-green"
+    GREEN_BRANCH_STILL_LIVE = "still-live"
+  + GREEN_BRANCH_STALE_PAGE = "stale-page"
+  + 
+  + 
+  + def page_is_stale(newest_row_ts, newest_failure_ts) -> bool:
+  +     """Can this completed-runs page possibly be current? Pure.
+  + 
+  +     A self-consistency check that costs zero extra API calls, because both
+  +     numbers are already in hand: `green_probe_argv` and `failed_runs_argv` name
+  +     the SAME workflow, and a failed run IS a completed run. So on a fresh
+  +     `--status completed` page the newest failure this same session already
+  +     fetched must appear on it — the page's newest row can never be older.
+  + 
+  +     Measured Day 180, same argv three minutes apart: the harness got a full page
+  +     of 20 completed `ci.yml` runs whose newest row was 2026-08-25T23:54:38Z,
+  +     four hours OLDER than a failure (2026-08-26T03:49:23Z) the same run had just
+  +     fetched. Arithmetically impossible for a fresh page. A hand-run at 07:22Z saw
+  +     2026-08-27T03:23:45Z and said gone-green. `max()` over a stale page is still
+  ... (18 more lines)
+ ✓ (1m 40s)
+    GREEN_BRANCH_COULD_NOT_CHECK = "could-not-check"
+    GREEN_BRANCH_GONE_GREEN = "gone-green"
+    GREEN_BRANCH_STILL_LIVE = "still-live"
+  + GREEN_BRANCH_STALE_PAGE = "stale-page"
+  + 
+  + 
+  + def page_is_stale(newest_row_ts, newest_failure_ts) -> bool:
+  +     """Can this completed-runs page possibly be current? Pure.
+  ... (13 more lines)
+
+Now record the newest row of any conclusion in newest_success_from_runs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (28 → 42 lines)
+        best_ts: str | None = None
+        best_age: float | None = None
+  +     newest_row_ts: str | None = None
+  +     newest_row_age: float | None = None
+        unreadable = 0
+        successes = 0
+        # One shared `now` so every row is measured against the same instant, and
+  ···
+            if not isinstance(record, dict):
+                unreadable += 1
+                continue
+  +         # Freshness evidence is collected from EVERY parseable row, before the
+  +         # success filter and before the conclusion is even read: `--status
+  +         # completed` includes failures, and a failure is exactly the row whose
+  +         # absence proves the page is stale. See `page_is_stale`.
+  +         row_age = run_age_days(record.get("createdAt"), now)
+  +         if row_age is not None and (newest_row_age is None or row_age < newest_row_age):
+  +             newest_row_age, newest_row_ts = row_age, record["createdAt"]
+            conclusion = record.get("conclusion")
+            if not isinstance(conclusion, str):
+  ... (19 more lines)
+ ✓ (1m 41s)
+        best_ts: str | None = None
+        best_age: float | None = None
+  +     newest_row_ts: str | None = None
+  +     newest_row_age: float | None = None
+        unreadable = 0
+        successes = 0
+        # One shared `now` so every row is measured against the same instant, and
+  ···
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && python3 -c "i… ✓ (50ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Steps 1–3 are in. Now step 4 — the single statement of the decision:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 12 lines)
+        if success_age is not None and success_age < fail_age:
+            return GREEN_BRANCH_GONE_GREEN
+  +     # Staleness is consulted HERE and nowhere else, and the position is the
+  +     # whole rule. It must not pre-empt gone-green: if a success on the page is
+  +     # already newer than the newest failure, the answer is known and the page's
+  +     # freshness is moot. It must come before still-live: a page that cannot be
+  +     # current is no evidence that CI is red, and asserting red from it is the
+  +     # mirror of my own rule — "could not check" must never read as "checked;
+  +     # clean", and equally must never read as "confirmed red".
+  +     if page_is_stale(green.newest_row_ts, newest_failure_ts):
+  +         return GREEN_BRANCH_STALE_PAGE
+        return GREEN_BRANCH_STILL_LIVE
+ ✓ (1m 40s)
+        if success_age is not None and success_age < fail_age:
+            return GREEN_BRANCH_GONE_GREEN
+  +     # Staleness is consulted HERE and nowhere else, and the position is the
+  +     # whole rule. It must not pre-empt gone-green: if a success on the page is
+  +     # already newer than the newest failure, the answer is known and the page's
+  +     # freshness is moot. It must come before still-live: a page that cannot be
+  +     # current is no evidence that CI is red, and asserting red from it is the
+  +     # mirror of my own rule — "could not check" must never read as "checked;
+  ... (4 more lines)
+
+Now the rendered sentence (step 4b) and the receipt (step 5):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 11 lines)
+  +     if branch == GREEN_BRANCH_STALE_PAGE:
+  +         return (
+  +             "green-since check could not run — the completed-runs listing's newest "
+  +             f"row ({green.newest_row_ts}) predates a failure this same run already "
+  +             f"fetched ({newest_failure_ts}), so the page cannot be current and CI's "
+  +             "state could not be determined. This claims neither that the failures "
+  +             "below are live nor that they are cured."
+  +         )
+        return (
+            "no successful run has landed since the newest failure below — these are live"
+        )
+ ✓ (1m 46s)
+  +     if branch == GREEN_BRANCH_STALE_PAGE:
+  +         return (
+  +             "green-since check could not run — the completed-runs listing's newest "
+  +             f"row ({green.newest_row_ts}) predates a failure this same run already "
+  +             f"fetched ({newest_failure_ts}), so the page cannot be current and CI's "
+  +             "state could not be determined. This claims neither that the failures "
+  +             "below are live nor that they are cured."
+  +         )
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def green_probe_receip… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (25ms)
+  3 tools completed in 1m 54s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (65ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render unchanged\|recei… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2960,3030p' scripts/extr… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.0s (3 ✓)
+
+Now the self-tests — section 13b, inserted before the byte-identity block:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (192 lines) ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (84ms)
+  2 tools completed in 15.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — run it rather than assume it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (15 lines) ✓ (87ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "^  FAIL" /tmp/neutered.txt… ✓ (68ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^  FAIL/{print NR": "$0}' … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.4s (3 ✓)
+
+Positive control passes in both directions — 5 stale-detecting tests died, every near-miss guard stayed green. Now the receipt docstring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 6 lines)
+          * newest_success / newest_failure — the two stamps that were compared
+  +       * newest_row    — the newest row of ANY conclusion, which is the freshness
+  +                         evidence `page_is_stale` reads. Day 180: the receipt
+  +                         earned its keep by showing a page whose newest row was
+  +                         four hours older than a failure the same run had already
+  +                         fetched, so it must carry that input too
+ ✓ (1m 39s)
+          * newest_success / newest_failure — the two stamps that were compared
+  +       * newest_row    — the newest row of ANY conclusion, which is the freshness
+  +                         evidence `page_is_stale` reads. Day 180: the receipt
+  +                         earned its keep by showing a page whose newest row was
+  +                         four hours older than a failure the same run had already
+  +                         fetched, so it must carry that input too
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (7.4s)
+  2 tools completed in 1m 50s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Live run confirms it: newest_row is carried, and on a fresh page the new branch correctly stays silent. Now step 5 — file the crash on the scheduler surface:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (30 lines) ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #843. Now CLAUDE.md — find the tail of the green-probe paragraph:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Unrelated pre-existing … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.5s (2 ✓)
+
+Now the docs edit — inserting the Day-180 record at the right seam:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (97 lines) ✓ (25ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
