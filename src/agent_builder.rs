@@ -63,6 +63,24 @@ pub(crate) fn detect_mcp_collisions(mcp_tools: &[String], builtins: &[&str]) -> 
         .collect()
 }
 
+/// How many times the pre-flight tool listing is attempted before the collision
+/// guard gives up for a server (#841).
+///
+/// The pre-flight and yoagent's real connect are **two separate spawns**, so a
+/// slow start, a transient env problem or a `list_tools` timeout can fail the
+/// pre-flight while the real connect succeeds — and in that window the guard
+/// does not run at all and the session dies on turn one with the API's
+/// `Tool names must be unique` rejection. One retry recovers the realistic
+/// (transient) case so the guard runs normally.
+///
+/// **The tradeoff, stated so a later reader does not "simplify" the retry away:**
+/// this costs one extra spawn **on the failure path only** — a genuinely dead
+/// server pays a second fast failure before yoagent's real diagnostic appears.
+/// That is the price of the guard running at all. A server whose pre-flight
+/// succeeds (every healthy server) pays nothing: the loop returns on the first
+/// attempt and is byte-identical to the pre-#841 behaviour.
+pub(crate) const MCP_PREFLIGHT_ATTEMPTS: usize = 2;
+
 /// Pre-enumerate the tool names an MCP server exposes by opening a short-lived
 /// `McpClient` against it. Used to detect collisions with yoyo's builtins
 /// BEFORE we hand the connection to yoagent (which would otherwise push the
@@ -83,6 +101,60 @@ async fn fetch_mcp_tool_names(
     // Best-effort close; ignore errors since we're about to drop the client.
     let _ = client.close().await;
     Ok(tools.into_iter().map(|t| t.name).collect())
+}
+
+/// Run the pre-flight tool listing, retrying up to `MCP_PREFLIGHT_ATTEMPTS`
+/// times before giving up.
+///
+/// This is the **single** statement of the retry policy, shared by both MCP
+/// connect loops (`--mcp` flags and `[mcp_servers.*]` config sections). Two
+/// copies that agree today is the "two doors, one policy, one deaf" shape this
+/// repo has shipped six times (#745, #767, #769, #816, `/config show`,
+/// sub-agent fallback), so there is one loop and one caller-visible error.
+///
+/// The **last** attempt's error is returned, not the first: it is the more
+/// recent fact and the one whose diagnostic the user is about to see beside
+/// yoagent's own.
+async fn fetch_mcp_tool_names_retrying(
+    command: &str,
+    args: &[&str],
+    env: Option<std::collections::HashMap<String, String>>,
+) -> Result<Vec<String>, String> {
+    let mut last_err = String::from("pre-flight was not attempted");
+    for _ in 0..MCP_PREFLIGHT_ATTEMPTS {
+        match fetch_mcp_tool_names(command, args, env.clone()).await {
+            Ok(names) => return Ok(names),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+/// Pure: the message printed when the collision guard could not run for a
+/// server because every pre-flight attempt failed (#841).
+///
+/// The old text read "pre-flight tool listing failed (...); proceeding to
+/// yoagent connect for diagnostics", which asserts that a pre-flight failure
+/// implies a connect failure. That is true only for the case it was written
+/// for — a server that cannot spawn at all — and false for every other, since
+/// the pre-flight and the real connect are two separate spawns. This says the
+/// three things the old text did not: that the **guard did not run**, which
+/// server it did not run for (verbatim, since a user cannot act on a server
+/// they cannot identify), the error that stopped it, and the **symptom to
+/// expect** if that server happens to expose a builtin name.
+///
+/// Glyph-free under `plain` (bullets *and* em dashes), matching
+/// `cli::project_mcp_refusal_message`.
+pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    let dash = if plain { ":" } else { " —" };
+    format!(
+        "{marker}mcp: the builtin-collision guard did NOT run for '{server_cmd}'{dash} \
+pre-flight tool listing failed after {MCP_PREFLIGHT_ATTEMPTS} attempt(s) ({err}). \
+Connecting anyway so yoagent can surface the real diagnostic. \
+If this server exposes a tool named like one of yoyo's builtins, the session will fail \
+on the first turn with 'Tool names must be unique'."
+    )
 }
 
 /// Connect to external servers (MCP and OpenAPI) and return the updated agent
@@ -120,7 +192,9 @@ pub(crate) async fn connect_external_servers(
         // builtins. yoagent would otherwise push colliding tools onto the
         // agent and the Anthropic API would reject the first turn with
         // "Tool names must be unique". See #MCP collision guard (Day 39).
-        match fetch_mcp_tool_names(command, &args_slice, None).await {
+        // Retried (#841) because a transient pre-flight failure used to
+        // disable the guard entirely for this server — a silent fail-open.
+        match fetch_mcp_tool_names_retrying(command, &args_slice, None).await {
             Ok(tool_names) => {
                 let collisions = detect_mcp_collisions(&tool_names, BUILTIN_TOOL_NAMES);
                 if !collisions.is_empty() {
@@ -136,8 +210,12 @@ pub(crate) async fn connect_external_servers(
                 }
             }
             Err(e) => {
+                // Every attempt failed: keep the fall-through (a genuinely dead
+                // server should still reach yoagent so the user sees the real
+                // diagnostic) but say plainly that the guard did not run.
                 eprintln!(
-                    "{DIM}  mcp: pre-flight tool listing failed ({e}); proceeding to yoagent connect for diagnostics{RESET}"
+                    "{YELLOW}{}{RESET}",
+                    collision_guard_skipped_message(mcp_cmd, &e, is_plain_output())
                 );
             }
         }
@@ -175,8 +253,9 @@ pub(crate) async fn connect_external_servers(
             server_cfg.name, server_cfg.command
         );
 
-        // Pre-flight collision check (see comment above).
-        match fetch_mcp_tool_names(&server_cfg.command, &args_refs, env_map.clone()).await {
+        // Pre-flight collision check (see comment above), same retry policy.
+        match fetch_mcp_tool_names_retrying(&server_cfg.command, &args_refs, env_map.clone()).await
+        {
             Ok(tool_names) => {
                 let collisions = detect_mcp_collisions(&tool_names, BUILTIN_TOOL_NAMES);
                 if !collisions.is_empty() {
@@ -194,8 +273,11 @@ pub(crate) async fn connect_external_servers(
                 }
             }
             Err(e) => {
+                // See the --mcp loop above: same fall-through, same honest
+                // message, one statement of each.
                 eprintln!(
-                    "{DIM}  mcp: pre-flight tool listing failed ({e}); proceeding to yoagent connect for diagnostics{RESET}"
+                    "{YELLOW}{}{RESET}",
+                    collision_guard_skipped_message(&server_cfg.name, &e, is_plain_output())
                 );
             }
         }
@@ -2478,6 +2560,110 @@ mod tests {
         assert!(detect_mcp_collisions(&[], &["read_file"]).is_empty());
         assert!(detect_mcp_collisions(&["foo".to_string()], &[]).is_empty());
         assert!(detect_mcp_collisions(&[], &[]).is_empty());
+    }
+
+    // ---- #841: the collision guard's fail-open branch ----
+    //
+    // These assert at the EMISSION POINT — the exact `String` a caller of
+    // `collision_guard_skipped_message` receives, never a helper one layer
+    // below it.
+
+    #[test]
+    fn collision_guard_skipped_message_names_server_guard_and_symptom() {
+        let msg = collision_guard_skipped_message(
+            "npx -y @modelcontextprotocol/server-filesystem /tmp",
+            "connection refused",
+            false,
+        );
+        assert!(
+            msg.contains("npx -y @modelcontextprotocol/server-filesystem /tmp"),
+            "must name the server verbatim — a user cannot act on a server they cannot identify: {msg}"
+        );
+        assert!(
+            msg.contains("did NOT run"),
+            "must say the collision guard did not run, not merely that a listing failed: {msg}"
+        );
+        assert!(
+            msg.contains("connection refused"),
+            "must carry the error that stopped it: {msg}"
+        );
+        assert!(
+            msg.contains("Tool names must be unique"),
+            "must name the symptom to expect on turn one: {msg}"
+        );
+    }
+
+    #[test]
+    fn collision_guard_skipped_message_no_longer_claims_connect_will_fail() {
+        // The superseded text asserted "proceeding to yoagent connect for
+        // diagnostics", i.e. that a pre-flight failure implies a connect
+        // failure. True only for a server that cannot spawn at all; the
+        // pre-flight and the real connect are two separate spawns.
+        let msg = collision_guard_skipped_message("some-server", "timeout", false);
+        assert!(
+            !msg.contains("proceeding to yoagent connect for diagnostics"),
+            "the superseded justification must not survive: {msg}"
+        );
+    }
+
+    #[test]
+    fn collision_guard_skipped_message_is_glyph_free_when_plain() {
+        let msg = collision_guard_skipped_message("some-server", "timeout", true);
+        for glyph in ["⚠", "—", "•", "…"] {
+            assert!(
+                !msg.contains(glyph),
+                "plain output must carry no glyph '{glyph}': {msg}"
+            );
+        }
+        // ...and the non-plain variant must actually differ, or the `plain`
+        // parameter is vacuous.
+        let fancy = collision_guard_skipped_message("some-server", "timeout", false);
+        assert_ne!(
+            msg, fancy,
+            "the plain branch must differ from the decorated one"
+        );
+        assert!(fancy.contains('⚠'), "non-plain output keeps its marker");
+        // Near-miss guard: stripping glyphs must not strip the payload.
+        assert!(msg.contains("some-server") && msg.contains("Tool names must be unique"));
+    }
+
+    /// Deliberately **weak** source-level guard. `connect_external_servers` is
+    /// async and spawns real processes, so nothing here drives the retry. This
+    /// proves only that both `Err` paths are reached through the retrying
+    /// helper and that the retry policy const is *referenced* — never that the
+    /// retry works.
+    #[test]
+    fn both_mcp_loops_route_through_the_retrying_preflight() {
+        let src = include_str!("agent_builder.rs");
+        // Needles assembled at runtime so this test cannot match itself.
+        let retry_fn = format!("fetch_mcp_tool{}names_retrying(", "_");
+        let bare_fn = format!("fetch_mcp_tool{}names(", "_");
+        let const_name = format!("MCP{}PREFLIGHT{}ATTEMPTS", "_", "_");
+
+        // Two call sites (the --mcp loop and the [mcp_servers.*] loop) plus the
+        // definition itself.
+        assert_eq!(
+            src.matches(&retry_fn).count(),
+            3,
+            "expected the retrying helper's definition plus exactly two call sites"
+        );
+        // The un-retried helper is called exactly once — from inside the retry
+        // loop — plus its own definition line, so two matches total.
+        assert_eq!(
+            src.matches(&bare_fn).count(),
+            2,
+            "the un-retried helper must have exactly one caller: the retry loop"
+        );
+        assert!(
+            src.matches(&const_name).count() >= 2,
+            "the retry loop must consult {const_name}"
+        );
+        // Both loops emit the honest message.
+        let msg_fn = format!("collision{}guard{}skipped{}message(", "_", "_", "_");
+        assert!(
+            src.matches(&msg_fn).count() >= 3,
+            "expected the message fn's definition plus a call in each of the two loops"
+        );
     }
 
     #[test]
