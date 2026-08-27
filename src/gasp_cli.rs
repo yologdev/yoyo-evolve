@@ -5,9 +5,33 @@
 //! `task_result` / `session_end`) landed on Day 177 with **zero callers**, and
 //! the thing that needs to call them — `scripts/gasp_shim.sh` — is shell. So
 //! there was no path from the shim to the ported code, and `tools/gasp-emit`
-//! could not be retired. This builds the door and **wires nothing**: no env var
-//! is set, `RecorderPlan::Disabled` stays the live path, and the sidecar stays
-//! exactly where it is.
+//! could not be retired.
+//!
+//! **Superseded claim, recorded rather than erased (Day 180):** the paragraph
+//! above ended *"This builds the door and **wires nothing**: no env var is set,
+//! `RecorderPlan::Disabled` stays the live path, and the sidecar stays exactly
+//! where it is."* Two of those three clauses are now false and one is still
+//! true, and separating them is the whole point:
+//!
+//! * **The door is wired.** #683 item (7) shipped at `b573e523`:
+//!   `tools/gasp-emit` is **deleted** and `scripts/gasp_shim.sh:43,89` shells
+//!   `target/gasp-yoyo/debug/yoyo gasp <arm>` for every evolve session. This
+//!   module is the operator lane's front door, not a spare one — so a change to
+//!   [`parse_gasp_args`]' flag contract now breaks a live loop.
+//! * **`RecorderPlan::Disabled` really does stay the live path** — for the
+//!   *in-process* tier, which is #683 item (3) and is still open. Measured, not
+//!   assumed: `grep -n 'YOYO_GASP_STATE_DIR' scripts/gasp_shim.sh` returns two
+//!   hits and neither is an export (`:150` is literally "DO NOT export
+//!   YOYO_GASP_STATE_DIR / YOYO_GASP_GOAL_ID here"). The reason survived the
+//!   sidecar: this lane *holds a run open* from `session-start` to
+//!   `session-end`, so a second in-process writer on the same single-writer
+//!   store would steal the lease (measured Day 165). See
+//!   `scripts/gasp_shim.sh:150-194` and [`crate::gasp`]'s module doc.
+//!
+//! Note that every `tools/gasp-emit/src/main.rs:NN` citation below is a
+//! **historical** reference — the file was deleted by `b573e523` and is read
+//! with `git show b573e523^:tools/gasp-emit/src/main.rs`. Those citations say
+//! where a flag name or parse rule came from, and are kept for that reason.
 //!
 //! The flag contract is copied from `tools/gasp-emit/src/main.rs` and checked
 //! against the argv `scripts/gasp_shim.sh` actually passes (lines 132, 176, 185,

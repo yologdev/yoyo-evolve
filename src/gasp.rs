@@ -2,6 +2,14 @@
 //! session-graph emission ported from the `tools/gasp-emit` sidecar (#683
 //! item 5).
 //!
+//! **`tools/gasp-emit` no longer exists in the tree** — #683 item (7) deleted it
+//! (creator commit `b573e523`), and `scripts/gasp_shim.sh` now shells this
+//! binary (`yoyo gasp <arm>`) instead. Every `tools/gasp-emit/src/main.rs:NN`
+//! citation below is therefore a **historical** reference, not a missing file:
+//! it says where a constant or a parse rule came from, and why some of them may
+//! not be reworded (a goal id is a node identity in a shared store). Read it
+//! with `git show b573e523^:tools/gasp-emit/src/main.rs`.
+//!
 //! What exists here: a default-off `gasp` cargo feature, an env-gated open of
 //! `yoagent::gasp::GaspRecorder`, a process-global holder installed once at
 //! startup, and two tee helpers that route a prompt through
@@ -49,7 +57,7 @@
 //! crate does not read its own result as a contradiction.
 //!
 //! The marker line above is pinned to `Cargo.lock` by
-//! `tests/gasp_doc_version.rs`, which fails if the pin moves without this
+//! `tests/doc_version_claims.rs`, which fails if the pin moves without this
 //! analysis being re-run. That guard is the reason this correction cannot go
 //! stale the way the last one did.
 //!
@@ -77,10 +85,44 @@
 //! all four a CLI door (`yoyo gasp <arm>`, routed from `dispatch_sub.rs`) and
 //! #831 made that door open the store directly, so they are wired, they run,
 //! and they record; the `#[allow(dead_code)]` attributes that sentence names
-//! are gone from this file. Still true and worth keeping:
-//! `scripts/gasp_shim.sh` still invokes the `tools/gasp-emit` sidecar, so the
-//! **operator lane has not been swapped** — that is #683 item (7), with the
-//! env bridge item (3), both still pending.
+//! are gone from this file.
+//!
+//! **Superseded claim, recorded rather than erased (Day 180):** the paragraph
+//! above ended *"Still true and worth keeping: `scripts/gasp_shim.sh` still
+//! invokes the `tools/gasp-emit` sidecar, so the **operator lane has not been
+//! swapped** — that is #683 item (7), with the env bridge item (3), both still
+//! pending."* Item (7) **shipped** at `b573e523`: the sidecar is deleted and
+//! `scripts/gasp_shim.sh:43,89` shells `target/gasp-yoyo/debug/yoyo gasp` — a
+//! *separate target dir*, deliberately, so the featured build cannot clobber
+//! the plain `target/debug/yoyo` every `CARGO_BIN_EXE_*` consumer resolves to
+//! (the #832 shared-uplift hazard). **The operator lane is swapped; this file
+//! is the emitter.** It is recorded rather than deleted because a stale
+//! present-tense status claim *in this exact file* is what cost eight sessions
+//! (#763, #765, #782, #785, #787, #789, #803, plus the docs-only #788), and
+//! the lesson is that the half an agent opens to do the work is the half that
+//! has to be true.
+//!
+//! **Item (3), the in-process env bridge, is still open — measured, not
+//! assumed.** `grep -n 'YOYO_GASP_STATE_DIR' scripts/gasp_shim.sh` returns two
+//! hits and **neither is an export**: `:150` is the line *"DO NOT export
+//! YOYO_GASP_STATE_DIR / YOYO_GASP_GOAL_ID here"* and `:193` says an unset
+//! value keeps the recorder unreachable on purpose. So [`plan_from_env_values`]
+//! still lands in [`RecorderPlan::Disabled`] for every evolve-loop process, and
+//! the in-process run/model/tool tier (#683 item (3)) records **nothing** in
+//! the operator lane. **What changed is the *reason*, and that is the part
+//! worth carrying:** it used to be "a second store would collide with the
+//! sidecar's". The sidecar is gone and the hazard is not, because the shim
+//! still *opens and holds a run* for the whole session — now via
+//! `yoyo gasp session-start … session-end` — so exporting the bridge today
+//! would put the agent processes' in-process recorder on the same
+//! single-writer store *while that run is open*, reproducing the lease theft
+//! measured on Day 165 verbatim (`run.finished` written against a live run,
+//! then `session-end` failing with `cannot finish <run>: no run is open`, and
+//! the whole session's record lost). `scripts/gasp_shim.sh:150-194` states it
+//! as an **architecture** question, not a wiring one: either the session tier
+//! moves inside the agent process, or the run/model/tool tier is written
+//! through these same short-lived calls. The bridge is exported in *that*
+//! commit.
 //!
 //! **Behavioural coverage, stated precisely rather than generously.**
 //! `tests/gasp_cli_run_ordering.rs` drives a four-process session through the
@@ -450,9 +492,17 @@ pub(crate) async fn tee_prompt_messages(
 // ---------------------------------------------------------------------------
 // Session-graph emission — the ported half of `tools/gasp-emit` (#683 item 5)
 //
-// LANDED HERE: `session-start`, `task` (plus the `ensure_goal` helper they
-// share) and, since Day 168, `session-end`. STILL ONLY IN `tools/gasp-emit`:
-// `task-result` — UNPORTED, but **NOT BLOCKED**. Read those as two facts.
+// ALL FOUR ARMS LANDED HERE: `session-start`, `task` (plus the `ensure_goal`
+// helper they share), `session-end` (Day 168) and `task-result` (Day 177).
+//
+// **Superseded claim, recorded rather than erased (Day 180):** this block read
+// "LANDED HERE: `session-start`, `task` … and, since Day 168, `session-end`.
+// STILL ONLY IN `tools/gasp-emit`: `task-result` — UNPORTED, but **NOT
+// BLOCKED**. Read those as two facts." It was **doubly stale**: `task-result`
+// was ported on Day 177 (see [`task_result`]), *and* `tools/gasp-emit` was
+// deleted by #683 item (7) (`b573e523`), so there is no "only in" left to be
+// in. Recorded rather than tidied away because a stale status sentence in this
+// exact file is what cost eight sessions.
 //
 // This comment used to say `task-result` was *unreachable*, because it names
 // `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of which appear
@@ -471,14 +521,38 @@ pub(crate) async fn tee_prompt_messages(
 // #765, #782, #785, #787 and #789 each opened this file, believed an
 // authoritative "impossible", and exited without a diff. The corrected claim
 // carries the `yoagent-version-claim` marker in the module doc above, pinned
-// to `Cargo.lock` by `tests/gasp_doc_version.rs`.
+// to `Cargo.lock` by `tests/doc_version_claims.rs`.
 //
-// This half is a prefix of the sequence, not a replacement for the sidecar.
+// **Superseded claim, recorded rather than erased (Day 180):** this block read
+// "This half is a prefix of the sequence, not a replacement for the sidecar."
+// There is nothing left to be a prefix *of*: the sidecar was deleted by #683
+// item (7) and all four arms live here, so this **is** the sequence.
 //
-// Everything below ships DORMANT: nothing calls `session_start` /
+// **Superseded claim, recorded rather than erased (Day 180):** this block also
+// read "Everything below ships DORMANT: nothing calls `session_start` /
 // `task_planned` / `session_end` yet. Their consumers are #683 items (3)+(7),
 // the operator-lane env bridge, which is deliberately not wired here — wiring
-// it early would destroy the sidecar's session record.
+// it early would destroy the sidecar's session record." Both halves are now
+// false, and they were false for *different* reasons, which is why they are
+// recorded separately rather than blanket-deleted:
+//
+//   * NOT DORMANT. #827 gave every arm a CLI door (`yoyo gasp <arm>`, routed
+//     from `dispatch_sub.rs`) and #831 made that door open the store directly;
+//     since `b573e523` (#683 item 7) `scripts/gasp_shim.sh` calls that door for
+//     every evolve session, so these functions are the operator lane's only
+//     writer. The stated *reason* for the dormancy is gone too: there is no
+//     sidecar session record left to destroy.
+//   * ITEM (3) IS STILL OPEN — and the two items were never one consumer.
+//     Item (7) (this operator lane) shipped; item (3) (the in-process
+//     run/model/tool tier, reached by exporting `YOYO_GASP_STATE_DIR` /
+//     `YOYO_GASP_GOAL_ID`) has not. Measured, not assumed:
+//     `scripts/gasp_shim.sh:150` is the line "DO NOT export
+//     YOYO_GASP_STATE_DIR / YOYO_GASP_GOAL_ID here", so `plan_from_env_values`
+//     still returns `RecorderPlan::Disabled` in the evolve loop. The hazard
+//     outlived the sidecar: this lane still opens and *holds* a run from
+//     `session-start` to `session-end`, so a second in-process writer on the
+//     same single-writer store would steal the lease exactly as measured on
+//     Day 165. See the module doc above and `scripts/gasp_shim.sh:150-194`.
 // ---------------------------------------------------------------------------
 
 /// The standing goal an evolve session serves when none is named. Copied
