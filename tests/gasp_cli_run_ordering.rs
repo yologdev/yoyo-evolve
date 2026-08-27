@@ -96,6 +96,16 @@ fn gasp_call(state_dir: &Path, args: &[&str]) -> std::process::Output {
 
 /// The `kind` of every domain event in `state/events.jsonl`, in file order.
 fn domain_event_kinds(state_dir: &Path) -> Vec<String> {
+    domain_events(state_dir)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect()
+}
+
+/// Every domain event as `(kind, payload)`, in file order. The payload half is
+/// what lets an assertion name *which* node was created rather than only that
+/// some `task.created` landed.
+fn domain_events(state_dir: &Path) -> Vec<(String, serde_json::Value)> {
     let path = state_dir.join("state").join("events.jsonl");
     let raw = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("no event log at {}: {e}", path.display()));
@@ -104,12 +114,29 @@ fn domain_event_kinds(state_dir: &Path) -> Vec<String> {
         .map(|l| {
             let v: serde_json::Value =
                 serde_json::from_str(l).unwrap_or_else(|e| panic!("corrupt event line {l:?}: {e}"));
-            v.get("kind")
+            let kind = v
+                .get("kind")
                 .and_then(|k| k.as_str())
                 .unwrap_or_else(|| panic!("event with no kind: {l}"))
+                .to_string();
+            let payload = v.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+            (kind, payload)
+        })
+        .filter(|(k, _)| k != PROJECTION_KIND)
+        .collect()
+}
+
+/// The `id` of every task node created, in file order.
+fn task_created_ids(state_dir: &Path) -> Vec<String> {
+    domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "task.created")
+        .map(|(_, p)| {
+            p.get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or_else(|| panic!("task.created with no string id: {p}"))
                 .to_string()
         })
-        .filter(|k| k != PROJECTION_KIND)
         .collect()
 }
 
@@ -233,5 +260,52 @@ fn four_call_session_finishes_its_own_run_last() {
         stdout.contains("boundary commit"),
         "session-end must report a boundary commit, got stdout {stdout:?} / stderr {:?}",
         String::from_utf8_lossy(&end.stderr)
+    );
+
+    // #847: the session gets its own node, so a run is never the only evidence
+    // that a session happened. Every run-tier assertion above is the regression
+    // guard for the "additive" promise — this must ADD a node and change
+    // nothing about `run.started` / `run.finished`.
+    let task_ids = task_created_ids(dir);
+    let session_node = format!("task_{run_id}_session");
+    assert!(
+        task_ids.contains(&session_node),
+        "no `{session_node}` node — a session with no planned tasks would have \
+         nothing in the graph but its run: {task_ids:?}"
+    );
+
+    // The near-miss guard: the session node is an ADDITION, not a rename of the
+    // planned task's node. Both must be present, or this "fix" would have moved
+    // a node rather than added one.
+    let planned_node = format!("task_{run_id}_1");
+    assert!(
+        task_ids.contains(&planned_node),
+        "planned task node `{planned_node}` must survive beside the session node: {task_ids:?}"
+    );
+
+    // Recorded inside the run, exactly as a planned task is — not before it
+    // opened, and not after it closed.
+    let session_created = kinds
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| *k == "task.created")
+        .map(|(i, _)| i)
+        .next()
+        .expect("a task.created must exist");
+    assert!(
+        started < session_created && session_created < finished,
+        "the session node must be created inside the open run: {kinds:?}"
+    );
+
+    // Closed at session-end, and closed BEFORE the run — a status change after
+    // `run.finished` would both break the ordering above and land outside the
+    // boundary commit.
+    let status_changed = kinds
+        .iter()
+        .position(|k| k == "task.status_changed")
+        .unwrap_or_else(|| panic!("session-end must close the session node: {kinds:?}"));
+    assert!(
+        status_changed < finished,
+        "the session node must be closed before the run is: {kinds:?}"
     );
 }

@@ -614,7 +614,35 @@ fn task_node_id(run_id: &str, num: &str) -> String {
     format!("task_{run_id}_{num}")
 }
 
+/// The `num` the session's own node occupies, so its id shares the one id
+/// convention [`task_node_id`] states rather than inventing a second.
+///
+/// It cannot collide with a planned task: `task_planned` is only ever called
+/// with the shim's `--num`, which is a decimal counter (`1`, `2`, …).
+const SESSION_TASK_NUM: &str = "session";
+
+/// Node id of the session's own task node: `task_{run_id}_session`.
+fn session_task_node_id(run_id: &str) -> String {
+    task_node_id(run_id, SESSION_TASK_NUM)
+}
+
 /// Label stamped on a session run when the caller names no task.
+///
+/// **Known-wrong for non-evolve sessions, and deliberately left that way**
+/// (#847). Since Day 180 this label also titles the session's *node*, and the
+/// node is reached by every session kind — social, skill-evolve and dream are
+/// 57% of runs and none of them is an evolve session. Two reasons it stays:
+///
+/// 1. It is a **fallback**, not the usual path. Every operator-lane caller
+///    passes an explicit `--task` (`scripts/social.sh:350`,
+///    `scripts/skill_evolve.sh:274`, `scripts/dream.sh:265`, and `evolve.sh`
+///    via the shim's own default), so this string is only reached when a
+///    caller names no task at all.
+/// 2. The `kind` that would name it correctly is **not reachable here**:
+///    `GaspCommand::SessionStart` carries no `kind` field, and the shim never
+///    passes `--kind` to `session-start` — it uses its `kind` positional only
+///    to build the run id. Plumbing one through would add a parsed field that
+///    is always empty, i.e. a parameter with no producer.
 fn default_session_task_label(day: &str) -> String {
     format!("evolve session day {day}")
 }
@@ -717,7 +745,27 @@ async fn session_start_in<S: EventStore>(
         .map(str::to_string)
         .unwrap_or_else(|| default_session_task_label(day));
     state
-        .record_run_started(actor.clone(), RunId::new(run_id), task)
+        .record_run_started(actor.clone(), RunId::new(run_id), task.clone())
+        .await?;
+    // #847: give the session itself a node, so a run is never the only
+    // evidence that it happened. Measured on the live graph: 394 of 691 runs
+    // (57%) had no node but the run — every social, skill-evolve and dream
+    // session, because only `evolve.sh` calls `task`. This is **additive**:
+    // `record_run_started` above is untouched, so the run tier is unchanged
+    // and the graph gains a node without losing one.
+    //
+    // Recorded *after* `run.started` on purpose — the node belongs inside the
+    // run, exactly as a planned task does.
+    state
+        .record_task(Task {
+            id: TaskId::new(session_task_node_id(run_id)),
+            title: task,
+            summary: "the session itself — the run's own node, so a session with no planned tasks still has a home in the graph".to_string(),
+            status: TaskStatus::InProgress,
+            goal: Some(GoalId::new(goal)),
+            created_by: actor.clone(),
+            metadata: serde_json::json!({ "node": SESSION_TASK_NUM }),
+        })
         .await?;
     Ok(())
 }
@@ -829,6 +877,40 @@ pub(crate) async fn session_end(
 ) -> Result<Option<String>, StateError> {
     let goal = session_goal(goal, session.goal()).to_string();
     let outcome = session_outcome(outcome);
+    // #847: close the session's own node before closing the run. Ordering is
+    // load-bearing — `run.finished` must remain the *last* domain event, which
+    // `tests/gasp_cli_run_ordering.rs` pins, so this cannot move below it. It
+    // must also precede `commit_run`, or the boundary commit would not carry it.
+    //
+    // The status says the session *ended*; the outcome string says *how*,
+    // verbatim, in the reason. `session_outcome` accepts any string, so mapping
+    // it onto the `TaskStatus` enum would invent a verdict taxonomy the value
+    // does not have — the same free-string treatment `record_run_finished` gives
+    // it a few lines down.
+    //
+    // **Fail-soft, and this is measured rather than defensive**: `update_task_status`
+    // hard-errors with `node not found` when the node is absent, and propagating
+    // that with `?` would abort `session_end` *before* `commit_run` — no boundary
+    // commit, the whole session's state lost, which is the #831 failure mode
+    // exactly. The node is absent whenever `session-start` ran on a build older
+    // than this one, so an in-flight session upgraded mid-flight would lose
+    // everything. This task is additive: the run tier must close whether or not
+    // the node exists. The failure is *named* on stderr rather than swallowed —
+    // a silent degradation is the bug.
+    if let Err(e) = session
+        .state()
+        .update_task_status(
+            TaskId::new(session_task_node_id(run_id)),
+            TaskStatus::Done,
+            Some(outcome.to_string()),
+        )
+        .await
+    {
+        eprintln!(
+            "gasp: could not close the session node {}: {e} (the run still closes)",
+            session_task_node_id(run_id)
+        );
+    }
     session
         .state()
         .record_run_finished(
@@ -1303,6 +1385,20 @@ mod tests {
                 "label for day {day:?}"
             );
         }
+    }
+
+    #[test]
+    fn session_task_node_id_reuses_the_one_id_convention() {
+        // Not a second convention: it is `task_node_id` with a reserved `num`,
+        // so the session node and a planned task cannot drift apart in shape.
+        assert_eq!(session_task_node_id("run_42"), "task_run_42_session");
+        assert_eq!(
+            session_task_node_id("run_42"),
+            task_node_id("run_42", SESSION_TASK_NUM)
+        );
+        // The near-miss guard: it must not collide with a planned task's node.
+        // `task_planned` is only ever called with the shim's decimal `--num`.
+        assert_ne!(session_task_node_id("run_42"), task_node_id("run_42", "1"));
     }
 
     #[test]
