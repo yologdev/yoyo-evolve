@@ -23,8 +23,8 @@ use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
     with_read_guard, with_read_guard_arc, with_read_guard_bash, with_read_guard_bash_arc,
-    with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
-    SESSION_TOOL_CALL_CAP,
+    with_recovery_hints, with_session_cap, with_truncation, FallbackSubAgentTool,
+    ToolFailureTracker, SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
@@ -1169,7 +1169,63 @@ pub fn build_tools(
 /// recursion cannot continue past the cap.
 const MAX_SUB_AGENT_DEPTH: usize = 3;
 
-pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
+/// Decide what `(provider, model)` the sub-agent's one fallback attempt should
+/// use, or `None` when there is no usable fallback.
+///
+/// Pure so the gate is table-tested: the **`None` branch is the whole
+/// regression surface**, because it is every user who has not configured a
+/// fallback and it must leave the `sub_agent` tool byte-identical to before.
+///
+/// Rules, in order:
+/// - no `fallback_model` (or an empty one) → `None`. A fallback *provider*
+///   alone is not enough here: `try_switch_to_fallback` can default the model
+///   for a whole session, but a sub-agent tool is built once at startup and a
+///   guessed model is not worth a silent second API bill.
+/// - the fallback provider is `fallback_provider` when set, else the primary's.
+/// - the result must actually **differ** from the primary in provider or
+///   model, otherwise the retry is a second identical call → `None`.
+pub(crate) fn sub_agent_fallback_target(
+    provider: &str,
+    model: &str,
+    fallback_provider: Option<&str>,
+    fallback_model: Option<&str>,
+) -> Option<(String, String)> {
+    let fb_model = fallback_model.map(str::trim).filter(|m| !m.is_empty())?;
+    let fb_provider = fallback_provider
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .unwrap_or(provider);
+    if fb_provider == provider && fb_model == model {
+        return None;
+    }
+    Some((fb_provider.to_string(), fb_model.to_string()))
+}
+
+/// Resolve the API key for a sub-agent fallback attempt.
+///
+/// Same provider → the key already in hand. Different provider → its own env
+/// var, and an unset/empty one **refuses the fallback** (`None`) rather than
+/// retrying with the primary's credential, which would surface as a baffling
+/// 401. Same rule, same reason as `AgentConfig::try_switch_to_fallback`.
+fn sub_agent_fallback_key(
+    primary_provider: &str,
+    primary_key: &str,
+    fallback_provider: &str,
+) -> Option<String> {
+    if fallback_provider == primary_provider {
+        return Some(primary_key.to_string());
+    }
+    match cli::provider_api_key_env(fallback_provider) {
+        Some(env_var) => match std::env::var(env_var) {
+            Ok(key) if !key.is_empty() => Some(key),
+            _ => None,
+        },
+        // Keyless/local provider (e.g. ollama) — no key required.
+        None => Some(String::new()),
+    }
+}
+
+pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
     let shared_state = SharedState::new();
     let tool = build_sub_agent_tool_at_depth(config, 0, &shared_state);
     (tool, shared_state)
@@ -1185,7 +1241,7 @@ fn build_sub_agent_tool_at_depth(
     config: &AgentConfig,
     depth: usize,
     shared_state: &SharedState,
-) -> SubAgentTool {
+) -> Box<dyn AgentTool> {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
     //
@@ -1222,22 +1278,77 @@ fn build_sub_agent_tool_at_depth(
     // that omission is the termination guarantee.
     if depth + 1 < MAX_SUB_AGENT_DEPTH {
         let nested = build_sub_agent_tool_at_depth(config, depth + 1, shared_state);
-        child_tools.push(Arc::new(nested));
+        child_tools.push(Arc::from(nested));
     }
 
+    // The primary attempt, on the session's configured model.
+    let primary = sub_agent_tool_for(
+        config,
+        &config.provider,
+        &config.model,
+        &config.api_key,
+        child_tools.clone(),
+        shared_state,
+    );
+
+    // One fallback attempt, and only when a fallback model is actually
+    // configured and differs. With none configured — every user who has not
+    // set one, and the whole regression surface — the un-decorated tool is
+    // returned byte-identically.
+    let Some((fb_provider, fb_model)) = sub_agent_fallback_target(
+        &config.provider,
+        &config.model,
+        config.fallback_provider.as_deref(),
+        config.fallback_model.as_deref(),
+    ) else {
+        return Box::new(primary);
+    };
+    let Some(fb_key) = sub_agent_fallback_key(&config.provider, &config.api_key, &fb_provider)
+    else {
+        return Box::new(primary);
+    };
+
+    let secondary = sub_agent_tool_for(
+        config,
+        &fb_provider,
+        &fb_model,
+        &fb_key,
+        child_tools,
+        shared_state,
+    );
+    Box::new(FallbackSubAgentTool::new(
+        Box::new(primary),
+        Box::new(secondary),
+        &config.model,
+        &fb_model,
+    ))
+}
+
+/// Build one `SubAgentTool` bound to an explicit `(provider, model, api_key)`.
+///
+/// Parameterised rather than reading `config.provider`/`config.model` directly
+/// so the primary and the fallback attempt are built by the *same* code —
+/// identical tools, prompt, thinking level, turn cap, skills and shared state,
+/// differing only in which model answers. A second builder would be a second
+/// place for the sub-agent's contract to drift.
+fn sub_agent_tool_for(
+    config: &AgentConfig,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+    child_tools: Vec<Arc<dyn AgentTool>>,
+    shared_state: &SharedState,
+) -> SubAgentTool {
     // Select the right provider
-    let provider: Arc<dyn StreamProvider> = match config.provider.as_str() {
+    let provider: Arc<dyn StreamProvider> = match provider_name {
         "anthropic" => Arc::new(AnthropicProvider),
         "google" => Arc::new(GoogleProvider),
         "bedrock" => Arc::new(BedrockProvider),
         _ => Arc::new(OpenAiCompatProvider),
     };
 
-    let model_config = crate::agent_builder::create_model_config(
-        &config.provider,
-        &config.model,
-        config.base_url.as_deref(),
-    );
+    let model_config =
+        crate::agent_builder::create_model_config(provider_name, model, config.base_url.as_deref());
     SubAgentTool::from_provider("sub_agent", provider, model_config)
         .with_description(
             "Delegate a subtask to a fresh sub-agent with its own context window. \
@@ -1248,8 +1359,8 @@ fn build_sub_agent_tool_at_depth(
              bounded to a hard nesting cap (recursion is available and finite). \
              It starts with a clean context and returns a summary of what it did.",
         )
-        .with_system_prompt(sub_agent_system_prompt(&config.provider, &config.model))
-        .with_api_key(&config.api_key)
+        .with_system_prompt(sub_agent_system_prompt(provider_name, model))
+        .with_api_key(api_key)
         .with_tools(child_tools)
         .with_thinking(config.thinking)
         .with_max_turns(25)
@@ -3295,5 +3406,116 @@ mod tests {
             desc.contains("deep"),
             "Description should mention 'deep' option, got: {desc}"
         );
+    }
+}
+
+#[cfg(test)]
+mod sub_agent_fallback_gate_tests {
+    use super::*;
+
+    #[test]
+    fn no_fallback_model_means_no_decoration() {
+        // The `None` branch is the whole regression surface: every user who has
+        // not configured a fallback must get the un-decorated tool, byte-identically.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, None),
+            None
+        );
+        // A fallback PROVIDER alone is not enough — a guessed model is not
+        // worth a silent second API bill.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", Some("google"), None),
+            None
+        );
+        // Empty / whitespace-only is absence, not a model name.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, Some("")),
+            None
+        );
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, Some("   ")),
+            None
+        );
+    }
+
+    #[test]
+    fn identical_target_means_no_decoration() {
+        // Retrying the exact same (provider, model) is a second identical call.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, Some("claude-opus-5")),
+            None
+        );
+        assert_eq!(
+            sub_agent_fallback_target(
+                "anthropic",
+                "claude-opus-5",
+                Some("anthropic"),
+                Some("claude-opus-5")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_different_model_or_provider_is_a_real_fallback() {
+        // Same provider, different model — the key is unchanged.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, Some("claude-sonnet-5")),
+            Some(("anthropic".to_string(), "claude-sonnet-5".to_string()))
+        );
+        // Different provider carries its own model.
+        assert_eq!(
+            sub_agent_fallback_target(
+                "anthropic",
+                "claude-opus-5",
+                Some("google"),
+                Some("gemini-2.0-flash")
+            ),
+            Some(("google".to_string(), "gemini-2.0-flash".to_string()))
+        );
+        // Same model name on a different provider is still a real switch.
+        assert_eq!(
+            sub_agent_fallback_target("openai", "gpt-4o", Some("openrouter"), Some("gpt-4o")),
+            Some(("openrouter".to_string(), "gpt-4o".to_string()))
+        );
+        // Surrounding whitespace is trimmed, not treated as a distinct model.
+        assert_eq!(
+            sub_agent_fallback_target("anthropic", "claude-opus-5", None, Some("  haiku-4-5  ")),
+            Some(("anthropic".to_string(), "haiku-4-5".to_string()))
+        );
+    }
+
+    #[test]
+    fn same_provider_fallback_reuses_the_key_in_hand() {
+        assert_eq!(
+            sub_agent_fallback_key("anthropic", "sk-primary", "anthropic"),
+            Some("sk-primary".to_string())
+        );
+    }
+
+    #[test]
+    fn cross_provider_fallback_refuses_without_that_providers_key() {
+        // Same rule, same reason as AgentConfig::try_switch_to_fallback:
+        // retrying with the primary's credential surfaces as a baffling 401.
+        // "google" requires a key env var; the test env does not set it.
+        let env_var = cli::provider_api_key_env("google").expect("google needs a key");
+        if std::env::var(env_var).map(|v| v.is_empty()).unwrap_or(true) {
+            assert_eq!(
+                sub_agent_fallback_key("anthropic", "sk-primary", "google"),
+                None,
+                "an unset fallback key must refuse the fallback, not reuse the primary's"
+            );
+        }
+    }
+
+    #[test]
+    fn keyless_provider_needs_no_key() {
+        // ollama and friends have no API-key env var at all.
+        if cli::provider_api_key_env("ollama").is_none() {
+            assert_eq!(
+                sub_agent_fallback_key("anthropic", "sk-primary", "ollama"),
+                Some(String::new())
+            );
+        }
     }
 }

@@ -616,7 +616,7 @@ fn resolve_diagnostic_provider(configured: Option<&str>, model: &str) -> String 
 /// The rule is a **digit** boundary, not a word boundary: `"401"` still matches
 /// in `"HTTP 401"`, `"status=401"`, `"(401)"` and `"401:"`, because only an
 /// adjacent ASCII digit means the code is part of a larger number.
-fn contains_status_code(haystack: &str, code: &str) -> bool {
+pub(crate) fn contains_status_code(haystack: &str, code: &str) -> bool {
     let bytes = haystack.as_bytes();
     let mut from = 0;
     // `code` is ASCII digits, so every match starts on a 1-byte char — `start`

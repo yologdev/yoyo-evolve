@@ -633,10 +633,11 @@ impl AgentConfig {
             // store its sub-agents read. Paired with `sub_agent` deliberately — a
             // store with nobody on the other end is not worth a tool slot.
             let (sub_agent_tool, shared_state) = build_sub_agent_tool(self);
-            tools.push(with_session_cap(
-                Box::new(sub_agent_tool),
-                SESSION_TOOL_CALL_CAP,
-            ));
+            // Already `Box<dyn AgentTool>` — and possibly a
+            // `FallbackSubAgentTool` wrapping the real one, so the session cap
+            // must sit OUTSIDE it: one capped slot per delegation, whichever
+            // model ends up answering.
+            tools.push(with_session_cap(sub_agent_tool, SESSION_TOOL_CALL_CAP));
             tools.push(Box::new(SharedStateTool::new(shared_state)));
 
             agent = agent.with_tools(tools);

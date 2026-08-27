@@ -1163,6 +1163,218 @@ pub(crate) fn with_read_guard_bash_arc(tool: Arc<dyn AgentTool>) -> Arc<dyn Agen
 }
 
 // ---------------------------------------------------------------------------
+// FallbackSubAgentTool — one retry on the fallback model when the primary
+// model is unavailable
+// ---------------------------------------------------------------------------
+
+/// True when a tool-error message names a **model-availability** failure — the
+/// model does not exist, is not enabled for this key, or is otherwise not
+/// servable — as opposed to any other reason a sub-agent might fail.
+///
+/// This is deliberately the narrowest of the error classifiers in this repo,
+/// because the only action it licenses is *re-running the whole subtask on a
+/// different model*. Every shape it declines is a shape where a second model
+/// would fail identically, waste a second full sub-agent run, or — in the
+/// refusal case — quietly defeat a guard.
+///
+/// **Why this is not `prompt_retry::is_retriable_error`** (checked, not
+/// assumed): that predicate answers a different question — *may I retry this
+/// on the SAME model after a backoff?* — and correctly answers "no" for a 404.
+/// "No, not on this model" and "yes, on a different model" are opposite
+/// verdicts about the same string, so reusing it would invert the decision.
+/// The digit-boundary rule it needs *is* shared, though:
+/// `prompt_retry::contains_status_code` is the one statement of that rule
+/// (Day-174 lesson — a bare `.contains("404")` collides with any other number
+/// in an error string, and `"404"` inside `"tokens: 14045"` is exactly the
+/// shape that reaches an error message).
+///
+/// Fires on: HTTP 404 as a standalone code, plus the prose forms providers
+/// actually emit — `model not found`, `does not exist`, `unknown model`,
+/// `invalid model`, `unsupported model`, `model_not_found`.
+///
+/// Deliberately does **not** fire on:
+/// - a deterministic refusal (read/plan mode, session cap, denied path) — the
+///   caller short-circuits those before asking, and see `FallbackSubAgentTool`
+///   for why retrying one would be a guard bypass rather than a fallback;
+/// - rate limits / overload — `prompt_retry_limits.rs` owns that policy and
+///   has a real reset-time rule; a second one here would fight it;
+/// - auth / permission errors — a different model on the same broken key
+///   fails identically, so the retry is pure waste;
+/// - ordinary failures inside the sub-agent — the sub-agent ran fine and the
+///   *work* failed, which a different model does not fix.
+pub(crate) fn is_model_unavailable_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+
+    // Auth and rate-limit shapes are checked FIRST and always lose: a message
+    // may carry both an auth word and a model name, and in that case the model
+    // is not the problem. Losing a genuine fallback is cheap (today's
+    // behaviour); firing on an auth error burns a second full sub-agent run
+    // against the same broken credential.
+    let never_fallback = [
+        "rate limit",
+        "rate_limit",
+        "overloaded",
+        "capacity",
+        "quota",
+        "authentication",
+        "unauthorized",
+        "invalid api key",
+        "invalid_api_key",
+        "permission denied",
+        "forbidden",
+    ];
+    if never_fallback.iter().any(|n| lower.contains(n)) {
+        return false;
+    }
+    if crate::prompt_retry::contains_status_code(&lower, "401")
+        || crate::prompt_retry::contains_status_code(&lower, "403")
+        || crate::prompt_retry::contains_status_code(&lower, "429")
+    {
+        return false;
+    }
+
+    // A standalone 404 is a model-availability shape on a provider endpoint
+    // whose only path parameter is the model.
+    if crate::prompt_retry::contains_status_code(&lower, "404") {
+        return true;
+    }
+
+    let model_shapes = [
+        "model not found",
+        "model_not_found",
+        "not found: model",
+        "does not exist",
+        "unknown model",
+        "invalid model",
+        "unsupported model",
+        "model is not supported",
+        "no such model",
+    ];
+    model_shapes.iter().any(|s| lower.contains(s))
+}
+
+/// The note prefixed to a successful fallback result. Pure so the wording is
+/// pinned by test: an invisible model switch is a bug even when it is the right
+/// switch (the `⚡ auto-continuing` rule), so the parent is told which model
+/// answered and which one it replaced.
+pub(crate) fn fallback_switch_note(primary: &str, fallback: &str) -> String {
+    format!(
+        "[yoyo: the sub-agent's model `{primary}` was unavailable, so this subtask \
+         ran on the fallback model `{fallback}` instead.]\n\n"
+    )
+}
+
+/// Wraps the `sub_agent` tool so a **first-call model-availability failure**
+/// costs one retry on the session's fallback model instead of killing the
+/// subtask outright.
+///
+/// Why a decorator rather than a fix inside the sub-agent: `SubAgentTool` is
+/// yoagent's and yoyo does not drive its turn loop, so there is no seam to
+/// intercept mid-loop. Decoration is the idiom this file already uses
+/// (`GuardedTool`, `TruncatingTool`, `RecoveryHintTool`, `SessionCapTool`,
+/// `ReadModeGuardTool`).
+///
+/// **Exactly one extra attempt, never a chain of N.** The secondary is built
+/// once at construction time from the fallback model; if it also fails, its
+/// error is returned as-is.
+///
+/// **The refusal short-circuit is the dangerous half.** A deterministic refusal
+/// (read mode, plan mode, session cap, denied path) is yoyo's guard working as
+/// designed. Re-running the subtask on a different model would not be a
+/// fallback, it would be a **guard bypass** — the same subtask, the same
+/// forbidden write, one model over. So refusals are returned verbatim before
+/// the availability question is even asked, exactly as `RecoveryHintTool` does
+/// (#710).
+pub(crate) struct FallbackSubAgentTool {
+    primary: Box<dyn AgentTool>,
+    secondary: Box<dyn AgentTool>,
+    primary_model: String,
+    fallback_model: String,
+}
+
+impl FallbackSubAgentTool {
+    pub(crate) fn new(
+        primary: Box<dyn AgentTool>,
+        secondary: Box<dyn AgentTool>,
+        primary_model: impl Into<String>,
+        fallback_model: impl Into<String>,
+    ) -> Self {
+        Self {
+            primary,
+            secondary,
+            primary_model: primary_model.into(),
+            fallback_model: fallback_model.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentTool for FallbackSubAgentTool {
+    fn name(&self) -> &str {
+        self.primary.name()
+    }
+
+    fn label(&self) -> &str {
+        self.primary.label()
+    }
+
+    fn description(&self) -> &str {
+        self.primary.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.primary.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let err = match self.primary.execute(params.clone(), ctx.clone()).await {
+            Ok(result) => return Ok(result),
+            Err(e) => e,
+        };
+
+        let text = err.to_string();
+
+        // Guard first, availability second — see the type doc: retrying a
+        // deliberate refusal on another model is a bypass, not a fallback.
+        if is_deterministic_refusal(&text) || !is_model_unavailable_error(&text) {
+            return Err(err);
+        }
+
+        eprintln!(
+            "{DIM}  sub_agent: model {} unavailable — retrying on fallback {}{RESET}",
+            self.primary_model, self.fallback_model
+        );
+
+        match self.secondary.execute(params, ctx).await {
+            Ok(result) => {
+                // Prepend the note as its own block rather than splicing it
+                // into the first one: `content` may carry non-text blocks, and
+                // a `Vec` insert cannot mangle them.
+                let mut content = result.content;
+                content.insert(
+                    0,
+                    yoagent::Content::Text {
+                        text: fallback_switch_note(&self.primary_model, &self.fallback_model),
+                    },
+                );
+                Ok(yoagent::types::ToolResult {
+                    content,
+                    details: result.details,
+                })
+            }
+            // The fallback failed too. Return its own error rather than the
+            // primary's: it is the more recent and more actionable fact, and
+            // the stderr line above already recorded that a switch happened.
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -3964,5 +4176,322 @@ mod tests {
             }],
             "Arc bash guard must be byte-identical pass-through with no mode active"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FallbackSubAgentTool tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod fallback_sub_agent_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    // --- the predicate, both directions ---
+
+    #[test]
+    fn model_unavailable_fires_on_availability_shapes() {
+        for msg in [
+            "API error 404: not found",
+            "HTTP 404",
+            "status=404 model unavailable",
+            "model not found: claude-opus-9",
+            "model_not_found",
+            "The model `gpt-5-turbo` does not exist",
+            "unknown model: llama-99",
+            "invalid model specified",
+            "unsupported model for this endpoint",
+            "no such model",
+            "Not found: model gemini-4",
+            "MODEL NOT FOUND",
+        ] {
+            assert!(
+                is_model_unavailable_error(msg),
+                "should be a model-availability failure: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_unavailable_does_not_fire_on_near_misses() {
+        // Every one of these is a shape where a second model either fails
+        // identically or must not be tried at all. A discriminator tested only
+        // on the side that fires is vacuous green — and here the near-miss side
+        // includes the guard-bypass case, which is the dangerous half.
+        for msg in [
+            // Ordinary work failure inside the sub-agent.
+            "Command exited with status 1: cargo test failed",
+            "File not found: src/missing.rs",
+            "the sub-agent could not complete the task",
+            // Auth — a different model on the same broken key fails the same.
+            "401 Unauthorized",
+            "authentication_error: invalid x-api-key",
+            "invalid api key provided",
+            "403 Forbidden",
+            "permission denied",
+            // Rate limits / overload — prompt_retry_limits.rs owns that policy.
+            "429 Too Many Requests",
+            "rate limit exceeded, retry after 60s",
+            "rate_limit_error",
+            "Overloaded: please try again",
+            "insufficient quota for this model",
+            "at capacity",
+            // Day-174 digit-boundary lesson: a 404 inside a bigger number is
+            // not a status code.
+            "prompt is too long: 404123 tokens > 200000 maximum",
+            "request id req_14045 failed",
+        ] {
+            assert!(
+                !is_model_unavailable_error(msg),
+                "must NOT be treated as a model-availability failure: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_unavailable_loses_to_auth_even_when_a_model_is_named() {
+        // A message can carry both an auth word and a model name. In that case
+        // the model is not the problem, so the auth check wins: losing a
+        // genuine fallback is cheap, burning a second full sub-agent run
+        // against a broken credential is not.
+        assert!(!is_model_unavailable_error(
+            "401 unauthorized: model claude-opus-5 does not exist for this key"
+        ));
+        assert!(!is_model_unavailable_error(
+            "rate limit exceeded for model gpt-4o — unknown model tier"
+        ));
+    }
+
+    #[test]
+    fn deterministic_refusals_are_never_availability_failures() {
+        // Belt and braces: the decorator short-circuits refusals *before*
+        // asking, but the predicate must not classify one as retriable either.
+        let refusal = format!("read mode{}write_file is refused", REFUSAL_STEM_MODE_ACTIVE);
+        assert!(is_deterministic_refusal(&refusal));
+        assert!(!is_model_unavailable_error(&refusal));
+    }
+
+    #[test]
+    fn switch_note_names_both_models() {
+        // An invisible model switch is a bug even when it is the right switch.
+        let note = fallback_switch_note("claude-opus-5", "claude-sonnet-5");
+        assert!(
+            note.contains("claude-opus-5"),
+            "names the dead model: {note}"
+        );
+        assert!(
+            note.contains("claude-sonnet-5"),
+            "names the model that answered: {note}"
+        );
+    }
+
+    // --- the decorator, driven with counting stubs ---
+
+    struct CountingStub {
+        calls: Arc<AtomicUsize>,
+        /// `Some(msg)` → `ToolError::Failed(msg)`; `None` → success.
+        fail_msg: Option<String>,
+        reply: &'static str,
+    }
+
+    impl CountingStub {
+        fn failing(msg: &str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Box::new(Self {
+                    calls: calls.clone(),
+                    fail_msg: Some(msg.to_string()),
+                    reply: "",
+                }),
+                calls,
+            )
+        }
+        fn ok(reply: &'static str) -> (Box<dyn AgentTool>, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Box::new(Self {
+                    calls: calls.clone(),
+                    fail_msg: None,
+                    reply,
+                }),
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for CountingStub {
+        fn name(&self) -> &str {
+            "sub_agent"
+        }
+        fn label(&self) -> &str {
+            "sub_agent"
+        }
+        fn description(&self) -> &str {
+            "counting stub"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match &self.fail_msg {
+                Some(msg) => Err(yoagent::types::ToolError::Failed(msg.clone())),
+                None => Ok(yoagent::types::ToolResult {
+                    content: vec![yoagent::Content::Text {
+                        text: self.reply.to_string(),
+                    }],
+                    details: serde_json::Value::Null,
+                }),
+            }
+        }
+    }
+
+    fn ctx() -> yoagent::types::ToolContext {
+        yoagent::types::ToolContext {
+            tool_call_id: "test".to_string(),
+            tool_name: "sub_agent".to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            on_update: None,
+            on_progress: None,
+        }
+    }
+
+    fn first_text(result: &yoagent::types::ToolResult) -> String {
+        match &result.content[0] {
+            yoagent::Content::Text { text } => text.clone(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn model_unavailable_reaches_the_fallback_exactly_once() {
+        let (primary, p_calls) = CountingStub::failing("API error 404: model not found");
+        let (secondary, s_calls) = CountingStub::ok("subtask done");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "dead-model", "live-model");
+
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+        assert_eq!(p_calls.load(Ordering::SeqCst), 1, "primary tried once");
+        assert_eq!(
+            s_calls.load(Ordering::SeqCst),
+            1,
+            "fallback tried exactly once — never a chain of N"
+        );
+        // The switch is announced in-band, and the real output survives.
+        let note = first_text(&result);
+        assert!(
+            note.contains("dead-model") && note.contains("live-model"),
+            "{note}"
+        );
+        assert!(
+            result.content.iter().any(|c| matches!(
+                c,
+                yoagent::Content::Text { text } if text.contains("subtask done")
+            )),
+            "the fallback's own output must be preserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_failure_never_reaches_the_fallback() {
+        let (primary, p_calls) = CountingStub::failing("cargo test failed with status 1");
+        let (secondary, s_calls) = CountingStub::ok("should not run");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+
+        assert_eq!(p_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            s_calls.load(Ordering::SeqCst),
+            0,
+            "the sub-agent ran fine and the WORK failed — another model does not fix that"
+        );
+        assert!(
+            err.to_string().contains("cargo test failed"),
+            "returned verbatim: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn deterministic_refusal_never_reaches_the_fallback() {
+        // The dangerous half: re-running the same subtask on another model
+        // would be a guard BYPASS, not a fallback.
+        let refusal = format!("read mode{}write_file is refused", REFUSAL_STEM_MODE_ACTIVE);
+        let (primary, p_calls) = CountingStub::failing(&refusal);
+        let (secondary, s_calls) = CountingStub::ok("should not run");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+
+        assert_eq!(p_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            s_calls.load(Ordering::SeqCst),
+            0,
+            "a deliberate refusal must never be retried on another model"
+        );
+        assert!(err.to_string().contains("write_file is refused"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn success_is_passed_through_untouched() {
+        let (primary, p_calls) = CountingStub::ok("all good");
+        let (secondary, s_calls) = CountingStub::ok("should not run");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+        assert_eq!(p_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            s_calls.load(Ordering::SeqCst),
+            0,
+            "fallback never consulted"
+        );
+        // Byte-identical: exactly one block, no note prepended.
+        assert_eq!(result.content.len(), 1, "no note on the success path");
+        assert_eq!(first_text(&result), "all good");
+    }
+
+    #[tokio::test]
+    async fn fallback_failure_returns_the_fallbacks_own_error() {
+        let (primary, _) = CountingStub::failing("404 model not found");
+        let (secondary, s_calls) = CountingStub::failing("fallback also exploded");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+
+        let err = tool
+            .execute(serde_json::json!({}), ctx())
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            s_calls.load(Ordering::SeqCst),
+            1,
+            "one extra attempt, no more"
+        );
+        assert!(
+            err.to_string().contains("fallback also exploded"),
+            "the more recent and more actionable fact: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delegates_its_identity_to_the_primary() {
+        let (primary, _) = CountingStub::ok("x");
+        let (secondary, _) = CountingStub::ok("y");
+        let tool = FallbackSubAgentTool::new(primary, secondary, "a", "b");
+        assert_eq!(tool.name(), "sub_agent");
+        assert_eq!(tool.label(), "sub_agent");
+        assert_eq!(tool.description(), "counting stub");
     }
 }
