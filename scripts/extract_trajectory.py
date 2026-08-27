@@ -685,11 +685,18 @@ class GreenScan:
     defect this whole probe exists to prevent ("was red" must not read as "is
     red", and its mirror, "could not check" must not read as "checked; clean").
 
-    The three trailing fields are OBSERVATION, not decision: nothing reads them
-    to choose a branch, they exist so `green_probe_receipt` can record what the
-    page actually held. `rows is None` means no page was ever inspected (the
-    payload was not a list, or the caller never asked) and is deliberately kept
-    apart from `rows == 0`, which is a real empty listing.
+    `rows` / `successes` / `unreadable` are OBSERVATION, not decision: nothing
+    reads them to choose a branch, they exist so `green_probe_receipt` can
+    record what the page actually held. `rows is None` means no page was ever
+    inspected (the payload was not a list, or the caller never asked) and is
+    deliberately kept apart from `rows == 0`, which is a real empty listing.
+
+    `newest_row_ts` is the one exception and the Day-180 addition: it is the
+    newest `createdAt` on the page REGARDLESS of conclusion, and it is the
+    freshness evidence. `--status completed` includes failures, so the newest
+    failure the same session already fetched MUST appear on a fresh page — if
+    the page's newest row predates it, the listing cannot be current and no
+    verdict is available. See `page_is_stale`.
     """
 
     newest_success_ts: str | None = None
@@ -697,6 +704,7 @@ class GreenScan:
     rows: int | None = None
     successes: int = 0
     unreadable: int = 0
+    newest_row_ts: str | None = None
 
 
 # Branch names for the green-since decision. These are the receipt's payload.
@@ -708,6 +716,41 @@ GREEN_BRANCH_NO_FAILURES = "no-in-window-failures"
 GREEN_BRANCH_COULD_NOT_CHECK = "could-not-check"
 GREEN_BRANCH_GONE_GREEN = "gone-green"
 GREEN_BRANCH_STILL_LIVE = "still-live"
+GREEN_BRANCH_STALE_PAGE = "stale-page"
+
+
+def page_is_stale(newest_row_ts, newest_failure_ts) -> bool:
+    """Can this completed-runs page possibly be current? Pure.
+
+    A self-consistency check that costs zero extra API calls, because both
+    numbers are already in hand: `green_probe_argv` and `failed_runs_argv` name
+    the SAME workflow, and a failed run IS a completed run. So on a fresh
+    `--status completed` page the newest failure this same session already
+    fetched must appear on it — the page's newest row can never be older.
+
+    Measured Day 180, same argv three minutes apart: the harness got a full page
+    of 20 completed `ci.yml` runs whose newest row was 2026-08-25T23:54:38Z,
+    four hours OLDER than a failure (2026-08-26T03:49:23Z) the same run had just
+    fetched. Arithmetically impossible for a fresh page. A hand-run at 07:22Z saw
+    2026-08-27T03:23:45Z and said gone-green. `max()` over a stale page is still
+    stale: the staleness is in the PAGE, not in the ordering within it.
+
+    Either side missing or unparseable -> False. An unknown is not a defect, and
+    inventing one here would trade a false "red" for a false "cannot check"."""
+    if not newest_row_ts or not newest_failure_ts:
+        return False
+    # Ages against ONE shared instant, so the boolean is a property of the two
+    # stamps alone and `now` cancels out. `run_age_days` is reused rather than a
+    # second ISO-8601 parser written; older reads as a LARGER age.
+    now = datetime.now(timezone.utc)
+    row_age = run_age_days(newest_row_ts, now)
+    fail_age = run_age_days(newest_failure_ts, now)
+    if row_age is None or fail_age is None:
+        return False
+    # STRICT: a page whose newest row is exactly the newest failure is fresh
+    # enough to have seen it. Ties go to "not stale", the direction that leaves
+    # today's behaviour unchanged.
+    return row_age > fail_age
 
 
 def green_probe_argv(repo: str) -> list[str]:
@@ -765,6 +808,8 @@ def newest_success_from_runs(runs, limit: int) -> GreenScan:
         return GreenScan(checked=False)
     best_ts: str | None = None
     best_age: float | None = None
+    newest_row_ts: str | None = None
+    newest_row_age: float | None = None
     unreadable = 0
     successes = 0
     # One shared `now` so every row is measured against the same instant, and
@@ -775,6 +820,13 @@ def newest_success_from_runs(runs, limit: int) -> GreenScan:
         if not isinstance(record, dict):
             unreadable += 1
             continue
+        # Freshness evidence is collected from EVERY parseable row, before the
+        # success filter and before the conclusion is even read: `--status
+        # completed` includes failures, and a failure is exactly the row whose
+        # absence proves the page is stale. See `page_is_stale`.
+        row_age = run_age_days(record.get("createdAt"), now)
+        if row_age is not None and (newest_row_age is None or row_age < newest_row_age):
+            newest_row_age, newest_row_ts = row_age, record["createdAt"]
         conclusion = record.get("conclusion")
         if not isinstance(conclusion, str):
             # A row that cannot be classified is not a non-success. Calling it
@@ -784,13 +836,18 @@ def newest_success_from_runs(runs, limit: int) -> GreenScan:
         if conclusion != "success":
             continue
         successes += 1
-        age = run_age_days(record.get("createdAt"), now)
+        age = row_age
         if age is None:
             unreadable += 1
             continue
         if best_age is None or age < best_age:
             best_age, best_ts = age, record["createdAt"]
-    seen = GreenScan(rows=len(runs), successes=successes, unreadable=unreadable)
+    seen = GreenScan(
+        rows=len(runs),
+        successes=successes,
+        unreadable=unreadable,
+        newest_row_ts=newest_row_ts,
+    )
     if best_ts is not None:
         seen.newest_success_ts, seen.checked = best_ts, True
         return seen
@@ -858,6 +915,15 @@ def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
     # strictly-newer reads as strictly-SMALLER here.
     if success_age is not None and success_age < fail_age:
         return GREEN_BRANCH_GONE_GREEN
+    # Staleness is consulted HERE and nowhere else, and the position is the
+    # whole rule. It must not pre-empt gone-green: if a success on the page is
+    # already newer than the newest failure, the answer is known and the page's
+    # freshness is moot. It must come before still-live: a page that cannot be
+    # current is no evidence that CI is red, and asserting red from it is the
+    # mirror of my own rule — "could not check" must never read as "checked;
+    # clean", and equally must never read as "confirmed red".
+    if page_is_stale(green.newest_row_ts, newest_failure_ts):
+        return GREEN_BRANCH_STALE_PAGE
     return GREEN_BRANCH_STILL_LIVE
 
 
@@ -885,6 +951,14 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
             "below predates it. Not proof the causes are fixed — a flaky test passes "
             "sometimes — only that CI is not red on these patterns now."
         )
+    if branch == GREEN_BRANCH_STALE_PAGE:
+        return (
+            "green-since check could not run — the completed-runs listing's newest "
+            f"row ({green.newest_row_ts}) predates a failure this same run already "
+            f"fetched ({newest_failure_ts}), so the page cannot be current and CI's "
+            "state could not be determined. This claims neither that the failures "
+            "below are live nor that they are cured."
+        )
     return (
         "no successful run has landed since the newest failure below — these are live"
     )
@@ -911,6 +985,11 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
                       exhausted, full means the probe could not see far enough;
                       folding those two is the strongest false alarm available
       * newest_success / newest_failure — the two stamps that were compared
+      * newest_row    — the newest row of ANY conclusion, which is the freshness
+                        evidence `page_is_stale` reads. Day 180: the receipt
+                        earned its keep by showing a page whose newest row was
+                        four hours older than a failure the same run had already
+                        fetched, so it must carry that input too
       * in_window / too_old / undated   — the failure side's own partition
     """
     if green is None:
@@ -920,6 +999,7 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         unreadable = "n/a"
         success_ts = "not-asked"
         checked = "n/a"
+        row_ts = "not-asked"
     else:
         rows = "unknown" if green.rows is None else str(green.rows)
         # `page` answers the short/full question from the same `limit` the query
@@ -929,6 +1009,9 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         unreadable = str(green.unreadable)
         success_ts = green.newest_success_ts or "none"
         checked = "true" if green.checked else "false"
+        # The freshness input the stale-page decision reads. The receipt is the
+        # grader, so it must carry every input the verdict was computed from.
+        row_ts = green.newest_row_ts or "none"
     if scan is None:
         fail_ts, in_window, too_old, undated = "n/a", "n/a", "n/a", "n/a"
     else:
@@ -940,7 +1023,7 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         f"extract_trajectory: green-probe: branch={branch} "
         f"green_rows={rows} page={page} limit={limit} successes={successes} "
         f"unreadable={unreadable} checked={checked} newest_success={success_ts} "
-        f"newest_failure={fail_ts} "
+        f"newest_row={row_ts} newest_failure={fail_ts} "
         f"failures_in_window={in_window} too_old={too_old} undated={undated}"
     )
 
@@ -2888,6 +2971,185 @@ src/commands_config.rs
         and "undated=1" in not_asked,
     )
 
+    # 13b. STALE PAGE. The fifth touch on this probe and the first that is a
+    #      DETECTOR rather than a correctness fix: four fixes chased the API's
+    #      behaviour and lost, so this one only refuses to assert a verdict the
+    #      data cannot support. Costs zero extra API calls — both queries name
+    #      the same workflow and a failure IS a completed run, so the newest
+    #      failure already in hand must appear on a fresh completed page.
+    print("\n=== page_is_stale / stale-page branch self-tests ===\n")
+    # The harness's real numbers, 2026-08-27T07:19Z: a full page of 20 whose
+    # newest row was FOUR HOURS older than a failure the same run had fetched.
+    harness_row, harness_fail = "2026-08-25T23:54:38Z", "2026-08-26T03:49:23Z"
+    # The hand-run's numbers three minutes later, which said gone-green.
+    handrun_row = "2026-08-27T03:23:45Z"
+    assert_true(
+        "the harness's own impossible page is detected as stale",
+        page_is_stale(harness_row, harness_fail),
+    )
+    assert_true(
+        "NEAR-MISS: the hand-run's fresh page is not stale",
+        not page_is_stale(handrun_row, harness_fail),
+    )
+    assert_true(
+        "BOUNDARY: newest row exactly at the newest failure is fresh enough",
+        not page_is_stale(harness_fail, harness_fail),
+    )
+    for label, row_ts, fail_ts in [
+        ("row missing", None, harness_fail),
+        ("failure missing", harness_row, None),
+        ("row unparseable", "not-a-date", harness_fail),
+        ("failure unparseable", harness_row, "not-a-date"),
+        ("both missing", None, None),
+    ]:
+        assert_true(
+            f"unknown is not stale ({label}) — do not invent a defect",
+            not page_is_stale(row_ts, fail_ts),
+        )
+    # Now the branch, driven through the SAME function the renderer consults.
+    stale_scan = GreenScan(
+        newest_success_ts="2026-08-25T20:00:00Z",
+        checked=True,
+        rows=20,
+        successes=19,
+        newest_row_ts=harness_row,
+    )
+    assert_eq(
+        "the harness reading renders stale-page, NOT still-live",
+        green_verdict_branch(harness_fail, stale_scan, rnow),
+        GREEN_BRANCH_STALE_PAGE,
+    )
+    # NEAR-MISS GUARD: a discriminator tested only on the side that fires is
+    # vacuous green, and this one must not start eating healthy readings.
+    fresh_scan = GreenScan(
+        newest_success_ts=handrun_row, checked=True, rows=20, successes=17,
+        newest_row_ts=handrun_row,
+    )
+    assert_eq(
+        "the hand-run reading still renders gone-green",
+        green_verdict_branch(harness_fail, fresh_scan, rnow),
+        GREEN_BRANCH_GONE_GREEN,
+    )
+    # Staleness must NOT pre-empt gone-green: if a success on the page is
+    # already newer than the newest failure, the answer is known.
+    assert_eq(
+        "a success newer than the failure wins even on an otherwise stale page",
+        green_verdict_branch(
+            harness_fail,
+            GreenScan(
+                newest_success_ts="2026-08-26T09:00:00Z", checked=True, rows=20,
+                newest_row_ts=harness_row,
+            ),
+            rnow,
+        ),
+        GREEN_BRANCH_GONE_GREEN,
+    )
+    # The genuinely-red path is the one thing that must not regress: a page
+    # whose newest row is NEWER than the newest failure but holds no success.
+    genuinely_red = GreenScan(
+        newest_success_ts="2026-08-20T00:00:00Z", checked=True, rows=20, successes=1,
+        newest_row_ts="2026-08-26T10:00:00Z",
+    )
+    assert_eq(
+        "a fresh page with no newer success is STILL still-live",
+        green_verdict_branch(harness_fail, genuinely_red, rnow),
+        GREEN_BRANCH_STILL_LIVE,
+    )
+    assert_eq(
+        "a scan with no newest_row_ts at all is still-live, byte-identical to before",
+        green_verdict_branch(
+            harness_fail,
+            GreenScan(newest_success_ts="2026-08-20T00:00:00Z", checked=True),
+            rnow,
+        ),
+        GREEN_BRANCH_STILL_LIVE,
+    )
+    # could-not-check and no-in-window-failures are untouched by the new branch.
+    assert_eq(
+        "an unchecked scan is could-not-check even when its page looks stale",
+        green_verdict_branch(
+            harness_fail, GreenScan(checked=False, newest_row_ts=harness_row), rnow
+        ),
+        GREEN_BRANCH_COULD_NOT_CHECK,
+    )
+    assert_eq(
+        "no in-window failure still short-circuits before any freshness question",
+        green_verdict_branch(None, stale_scan, rnow),
+        GREEN_BRANCH_NO_FAILURES,
+    )
+    # The sentence must claim neither red nor green, and must name both stamps.
+    stale_sentence = green_since_verdict(harness_fail, stale_scan, rnow)
+    assert_true(
+        "stale-page prose names both timestamps it compared",
+        harness_row in stale_sentence and harness_fail in stale_sentence,
+    )
+    assert_true(
+        "stale-page prose claims neither live nor cured",
+        "could not be determined" in stale_sentence
+        and "these are live" not in stale_sentence
+        and "gone green" not in stale_sentence,
+    )
+    # The receipt is the grader: it must carry the input the new decision reads.
+    stale_receipt = green_probe_receipt(
+        rscan, stale_scan, GREEN_BRANCH_STALE_PAGE, GREEN_PROBE_LIMIT
+    )
+    assert_true(
+        "receipt names branch=stale-page and the newest_row it read",
+        f"branch={GREEN_BRANCH_STALE_PAGE} " in stale_receipt
+        and f"newest_row={harness_row} " in stale_receipt,
+    )
+    assert_true(
+        "receipt reports newest_row=none / not-asked rather than fabricating a stamp",
+        "newest_row=none " in green_probe_receipt(
+            rscan, GreenScan(checked=True), GREEN_BRANCH_STILL_LIVE, 20
+        )
+        and "newest_row=not-asked " in green_probe_receipt(
+            rscan, None, GREEN_BRANCH_COULD_NOT_CHECK, 20
+        ),
+    )
+    assert_true(
+        "receipt stays exactly ONE line with the new field",
+        len(stale_receipt.splitlines()) == 1,
+    )
+    # The freshness evidence comes from EVERY parseable row, not only successes:
+    # a page of pure failures still knows how fresh it is.
+    all_failures = newest_success_from_runs(
+        [
+            {"createdAt": "2026-08-24T00:00:00Z", "conclusion": "failure"},
+            {"createdAt": "2026-08-25T23:54:38Z", "conclusion": "failure"},
+            {"createdAt": "2026-08-23T00:00:00Z", "conclusion": "cancelled"},
+        ],
+        20,
+    )
+    assert_eq(
+        "newest_row_ts is the newest row of ANY conclusion",
+        all_failures.newest_row_ts,
+        harness_row,
+    )
+    assert_true(
+        "collecting newest_row_ts did not disturb the success filter",
+        all_failures.newest_success_ts is None and all_failures.successes == 0,
+    )
+    mixed = newest_success_from_runs(
+        [
+            {"createdAt": "2026-08-26T10:00:00Z", "conclusion": "failure"},
+            {"createdAt": "2026-08-25T05:00:00Z", "conclusion": "success"},
+            {"createdAt": "bogus", "conclusion": "success"},
+        ],
+        20,
+    )
+    assert_true(
+        "newest_row_ts and newest_success_ts are separate facts",
+        mixed.newest_row_ts == "2026-08-26T10:00:00Z"
+        and mixed.newest_success_ts == "2026-08-25T05:00:00Z"
+        and mixed.unreadable == 1,
+    )
+    assert_true(
+        "an unreadable-only page reports no newest_row_ts, never a guess",
+        newest_success_from_runs([{"conclusion": "failure"}], 20).newest_row_ts is None
+        and newest_success_from_runs({"a": 1}, 4).newest_row_ts is None,
+    )
+
     # 14. The rendered block must not move by ONE BYTE. TOTAL_LINE_CAP /
     #     TOTAL_BYTE_CAP are tight and the epistemic section renders last (it has
     #     already been truncated away once, Day 142), so the receipt belongs in
@@ -2937,6 +3199,22 @@ src/commands_config.rs
         "green=None render unchanged",
         render_ci_errors(bscan, None, rnow),
         could_not,
+    )
+    assert_eq(
+        "stale-page render — the NEW branch, pinned like its four siblings",
+        render_ci_errors(
+            bscan,
+            GreenScan(
+                newest_success_ts="2026-08-25T09:00:00Z", checked=True, rows=20,
+                newest_row_ts="2026-08-26T01:00:00Z",
+            ),
+            rnow,
+        ),
+        f"{hdr}\ngreen-since check could not run — the completed-runs listing's "
+        "newest row (2026-08-26T01:00:00Z) predates a failure this same run already "
+        "fetched (2026-08-26T06:00:00Z), so the page cannot be current and CI's "
+        "state could not be determined. This claims neither that the failures below "
+        f"are live nor that they are cured.\n{rows}",
     )
     assert_eq(
         "no-in-window-failure render unchanged (no verdict line at all)",
