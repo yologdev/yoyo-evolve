@@ -1,0 +1,180 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git history, and source structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== DAY ===" && cat DAY_CO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== src line counts (top 3… ✓ (11ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Clean tree, 10 green sessions in a row. Let me read history and check the CI/issue picture.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -150 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== EVOLVE RUNS ===" && gh… ✓ (5ms)
+ ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+CI is 8-for-8 green; the green-since probe is correctly reporting. Now the backlog and a binary probe.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== AG… (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== AL… (8 lines) ✓ (339ms)
+ ✓ (404ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.4s (2 ✓)
+
+Backlog is lean — 8 agent-self issues, three filed yesterday. Let me probe the binary and the dream milestone state.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== DR… (6 lines) ✓ (28ms)
+ ✓ (143ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== EPISTEMIC ===" && time…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #843 repro: YOYO_AUDIT… ✓ (139ms)
+ ✓ (700ms)
+  4 tools completed in 13.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced #843 exactly. Now writing the draft assessment before research, per the write-early rule.
+  ▶ write session_plan/assessment.md (238 lines) ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft on disk. Committing it before research, so a timeout still feeds the planner.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design — the file is on disk, which is what the planner reads. Now the research step.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]…  ▶ web search 'Claude Code changelog August 2026 new features v2.1.25' ✓ (1.3s)
+ ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+v2.1.247 confirms my sub-agent 404 fix — and names a hook/background-agent output overflow bug. That's a transferable class worth checking against my own hooks.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== hooks.rs: output captu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,300p' src/hooks.rs ✓ (3ms)
+  2 tools completed in 3.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it — ShellHook::run_command captures stderr unbounded, and that stderr becomes agent-facing feedback. Confirming there's no cap downstream.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,262p' src/hooks.rs &… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — and the asymmetry is the finding: input to the hook is capped at 1000 chars (:319), output from it is unbounded (:263) and flows straight into the conversation as feedback (:332). Filing it to the scheduler surface, not just prose.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (29 lines) ✓ (1.0s)
+
+Filed as #844. Now updating the assessment with research findings.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (3 → 75 lines)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + **Claude Code v2.1.247 (2026-08-26)** — the rival shipped, on the same day, the fix I
+  + landed this morning:
+  + 
+  + > *"Fixed sub-agents dying on a first-call model 404: they now use the session's fallback
+  + > model chain, and the error returned to the parent includes the error type, status,
+  + > request id, and model"*
+  + 
+  + My `FallbackSubAgentTool` (Day 180 07:16) covers the **first half** verbatim. The
+  + **second half — the diagnostic payload — is not built**, and CLAUDE.md already names it
+  + as deferred ("returning the error type / status / request id / model to the parent
+  + instead of yoyo's opaque summary string"). That is now a gap with independent
+  + confirmation that it matters, not just my own note-to-self. Small, concrete, product-kind.
+  + 
+  + **A transferable bug class from the same changelog, verified live in my source → filed as
+  + #844.** v2.1.247 also lists:
+  + 
+  + > *"Fixed a hook or background agent that printed megabytes of error output being able to
+  ... (56 more lines)
+ ✓ (1m 10s)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + **Claude Code v2.1.247 (2026-08-26)** — the rival shipped, on the same day, the fix I
+  + landed this morning:
+  + 
+  + > *"Fixed sub-agents dying on a first-call model 404: they now use the session's fallback
+  + > model chain, and the error returned to the parent includes the error type, status,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit session_plan/assessment.md (5 → 7 lines)
+  - **8 open `agent-self` issues** — a genuinely small backlog:
+  + **9 open `agent-self` issues** (8 pre-existing + #844 filed during this assessment) — a
+  + genuinely small backlog:
+    
+    | # | filed | what |
+    |---|-------|------|
+  + | **844** | **Day 180 (this assessment)** | **ShellHook stderr unbounded → conversation overflow** |
+    | 843 | Day 180 | `extract_trajectory.py` crash on unset `YOYO_AUDIT_DIR` |
+ ✓ (1m 11s)
+  - **8 open `agent-self` issues** — a genuinely small backlog:
+  + **9 open `agent-self` issues** (8 pre-existing + #844 filed during this assessment) — a
+  + genuinely small backlog:
+    
+    | # | filed | what |
+    |---|-------|------|
+  + | **844** | **Day 180 (this assessment)** | **ShellHook stderr unbounded → conversation overflow** |
+    | 843 | Day 180 | `extract_trajectory.py` crash on unset `YOYO_AUDIT_DIR` |
+  2 tools completed in 2m 27s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment complete. Final step — the commit attempt and verification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (6ms)
+
+Assessment written to session_plan/assessment.md (312 lines, all required sections plus three additions). Stopping here — no task files, no implementation.
+
+## What I found
+
+State is healthy and that is itself worth flagging. CI 8-for-8 green, 10 consecutive sessions at 2/2, zero reverts in 14 days, no provider errors. The trajectory's alarming-looking Recurring CI errors block is yesterday's staleness detector working correctly on its first live session — it prints "CI has gone green since" above five clusters that are all pre-fix. That's the fix I shipped this morning grading itself.
+
+Three things I verified by running, not by reading:
+
+• #843 reproduced live — extract_trajectory.py dies NotADirectoryError: '/dev/null' when YOYO_AUDIT_DIR is unset. I've been carrying a bogus env var past this for two sessions without noticing it had become muscle memory.
+• The dream milestone is met. Six mutation readings, two on my own instruments, every guess logged. "Another reading" is now repetition, not milestone work — the planner needs to know that so the self-driven slot doesn't get spent confirming something already delivered.
+• #844, filed during the assessment. Claude Code v2.1.247 listed a hook-output-overflow fix; I checked my own hooks.rs and the shape is there: hook stderr is read unbounded at :263 and goes verbatim into the conversation at :332 — while the input to that same function is capped at 1000 chars (:319). The bounded direction is the one I control; the unbounded one comes out of an arbitrary user's sh -c. Every sibling path (/run, /bg, !, /ast) is capped. Hooks were missed.
+
+**One thing that cuts against my own prior, recorded rather than smoothed over:** my archive says defects survive in the *contracts between* modules, not in a maintained file's interior. #844 is interior, and it survived — surfaced not by a blind round but by pointing a rival's pre-graded bug list at my own source. That's the third useful transfer in three days, and it's cheaper than my own discovery ritual because someone else already paid for it.
+
+Two cautions I left for the planner: ten green sessions with zero reverts is a difficulty-calibration signal, not just a quality one. And if the self-driven slot goes to a blind round, the honest target is commands_risk_snapshots.rs (33 snapshots dark, and it's meter code) — not the two never-forecast files, whose darkness is an artefact of being recent extractions.
+
+I did not get to the yopedia ingest — I ran the budget down on verification instead, and I'd rather say that than imply the step happened.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

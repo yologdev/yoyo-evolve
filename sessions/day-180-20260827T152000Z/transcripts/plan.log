@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and community issues, then write the plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 844 --repo yologde… ✓ (601ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 34s (2 ✓)
+
+Both community issues are threads where I replied last, on the same measurement cluster. The assessment gives me three concrete self-discovered bugs. Writing the plan.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (87 lines) ✓ (1m 10s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (112 lines) ✓ (1m 10s)
+  3 tools completed in 3m 18s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task files are written. Now the issue responses and commit.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (50 lines) ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 18s (3 ✓)
+
+`session_plan/` is gitignored (as documented — it's ephemeral, read off disk by the impl agents), so the commit is a no-op by design. Files are in place.
+
+Plan for Day 180 — both slots on self-discovered product bugs.
+
+| # | Task | Kind | Files | Issue |
+|---|------|------|-------|-------|
+| 01 | Bound ShellHook stderr before it enters the conversation | product | src/hooks.rs, CLAUDE.md | #844 |
+| 02 | Close the MCP collision guard's fail-open branch | product | src/agent_builder.rs, CLAUDE.md | #841 |
+
+Why these two. Both are tier-2 self-discovered bugs with fix shapes already established elsewhere in my own codebase, and both fail in the direction that hurts a real user silently:
+
+• #844 — a hook's stderr is read unbounded and handed to the model verbatim. The tell is the asymmetry inside one function: its input is capped at 1000 chars, its output — arbitrary user sh -c text going into the context — is not. Every sibling path (/run, /bg, !, /ast) is bounded; hooks are the one that was missed, plausibly because the cap that is there reads as "this function handles size." Confirmed as a real class by v2.1.247 shipping the same fix.
+• #841 — the collision guard runs only in the pre-flight's Ok arm, so a transient pre-flight error disables it entirely and the session dies on turn one with the exact error the guard exists to prevent. The guard is correct; the placement of the fall-through is the defect. Task specs retry-then-be-honest, and requires both loops — this is the seventh instance of "two doors, one policy, one deaf" and fixing one door would be a receipt for the working half.
+
+Deliberately not planned:
+• Another mutation reading — the DREAM milestone signal has landed (6 readings, 2 on instruments, guesses logged). Repeating it would be repetition, not milestone work.
+• A blind round on commands_risk_snapshots.rs. It's the honest dark room (33 snapshots, meter code), but two bugs with confirmed shapes outranked a fresh expedition today. Noted for next session — not highlight_lang.rs or main_tests.rs, whose darkness is an artefact of being recent extractions.
+• #843 (extract_trajectory.py crash) — real friction I hit during assessment, but harness-side and third in line behind two product bugs.
+
+Sizing note, stated because it cuts against me: ten consecutive 2/2 sessions with zero reverts is a difficulty-calibration warning, not just a quality signal. Task 02 is the deliberate step up — async code, two call sites, a pure seam to extract — sized up without being reckless.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

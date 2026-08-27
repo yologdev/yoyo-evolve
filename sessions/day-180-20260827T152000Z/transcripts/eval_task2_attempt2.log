@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,180p' src/agent_build…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fetch_mcp_tool_names\|c… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/agent_builder…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo clippy --lib -… ✓ (7ms)
+ ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/ag… (9 lines) ✓ (75ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 22s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 1s (6 ✓)
+
+Verdict written: PASS.
+
+Evidence I actually checked:
+• Both loops (--mcp flags at line 197/218, `[mcp_servers.*] at 257/280) call the same fetch_mcp_tool_names_retrying and the same collision_guard_skipped_message` — grep confirms one definition each, two call sites each, and fetch_mcp_tool_names has exactly one caller (the retry loop).
+• Message rendered by hand in both modes: plain output carries no ⚠/—, names the server verbatim, says "did NOT run", carries the error, and names Tool names must be unique.
+• Fall-through preserved — the dead-server branch still reaches with_mcp_server_stdio, as the task required.
+• No dangling definitions: MCP_PREFLIGHT_ATTEMPTS consumed by the loop and the message; DIM/YELLOW both still referenced; tests/module_size.rs register updated to 2907, matching wc -l exactly (the ratchet's fatal direction).
+• Docs: CLAUDE.md records the superseded justification rather than erasing it, plus the retry, the honest message, and the out-of-scope items.
+• Out of scope respected: no mcp_count change, no post-connect re-check, no double-spawn disclosure.
+
+One non-blocking note passed on as cleanup feedback: the config loop passes server_cfg.name where the flag loop passes the command string — both identify the server, but they aren't the same field.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

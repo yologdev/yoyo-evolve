@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to update CLAUDE.md — the src/ half is done. Let me look at what's actually there now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pre-flight" CLAUDE.md ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MCP gotchas" CLAUDE.md …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,300p' src/agent_buil… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,160p' src/agent_buil… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 9.6s (5 ✓)
+
+Now I have the full picture. Two doc edits: the MCP gotchas section, and the stale "recorded and filed rather than fixed" claim in the agent_builder.rs bullet.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 9 lines)
+  - yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/agent_builder.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally. If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic.
+  + yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/agent_builder.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally.
+  + 
+  + **Superseded claim, recorded rather than erased (Day 180, #841).** This paragraph used to end: *"If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic."* That sentence was true **only for the one case it was written for** — a server that cannot spawn at all — and it reads far wider than it is, because it silently assumes *pre-flight failure implies connect failure*. The pre-flight and the real connect are **two sep… [yoyo: 728 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **What replaced it, in two parts.** (1) The pre-flight is **retried once** before anything falls through — `MCP_PREFLIGHT_ATTEMPTS = 2`, looped inside `fetch_mcp_tool_names_retrying` — so a single transient failure, which is the realistic case and the one that produced the silent fail-open, is recovered and the guard runs normally. **The stated tradeoff, written into the const's doc comment rather than left to be discovered:** this costs one extra spawn **on the failure path only**, so a gen… [yoyo: 1217 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Both loops share one statement of each.** The `--mcp` flag loop and the `[mcp_servers.*]` config loop each carry their own copy of this `match`, and both call the same `fetch_mcp_tool_names_retrying` and the same `collision_guard_skipped_message` — never two copies that agree today. Fixing one would have been the "two doors, one policy, one deaf" shape this repo has now shipped six times (#745, #767, #769, #816, `/config show`, sub-agent fallback). The message is pinned at the **emission poi… [yoyo: 421 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Deliberately not done, named rather than smuggled in:** **#842** (`mcp_count` still counts a server whose connect failed, because both loops rebuild the agent — which carries zero MCP connections — without resetting the counter) is a separate issue with a separate fix and was not touched; **option 2 of #841**, a post-connect collision re-check, collides with #842's rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure** (every configured stdio MCP server… [yoyo: 248 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 22s)
+  - yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/agent_builder.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally. If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic.
+  + yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/agent_builder.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally.
+  + 
+  + **Superseded claim, recorded rather than erased (Day 180, #841).** This paragraph used to end: *"If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic."* That sentence was true **only for the one case it was written for** — a server that cannot spawn at all — and it reads far wider than it is, because it silently assumes *pre-flight failure implies connect failure*. The pre-flight and the real connect are **two sep… [yoyo: 728 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **What replaced it, in two parts.** (1) The pre-flight is **retried once** before anything falls through — `MCP_PREFLIGHT_ATTEMPTS = 2`, looped inside `fetch_mcp_tool_names_retrying` — so a single transient failure, which is the realistic case and the one that produced the silent fail-open, is recovered and the guard runs normally. **The stated tradeoff, written into the const's doc comment rather than left to be discovered:** this costs one extra spawn **on the failure path only**, so a gen… [yoyo: 1217 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Both loops share one statement of each.** The `--mcp` flag loop and the `[mcp_servers.*]` config loop each carry their own copy of this `match`, and both call the same `fetch_mcp_tool_names_retrying` and the same `collision_guard_skipped_message` — never two copies that agree today. Fixing one would have been the "two doors, one policy, one deaf" shape this repo has now shipped six times (#745, #767, #769, #816, `/config show`, sub-agent fallback). The message is pinned at the **emission poi… [yoyo: 421 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Deliberately not done, named rather than smuggled in:** **#842** (`mcp_count` still counts a server whose connect failed, because both loops rebuild the agent — which carries zero MCP connections — without resetting the counter) is a separate issue with a separate fix and was not touched; **option 2 of #841**, a post-connect collision re-check, collides with #842's rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure** (every configured stdio MCP server… [yoyo: 248 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the stale "recorded and filed rather than fixed" claim in the agent_builder.rs bullet:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Two findings recorded and filed rather than fixed** (one defect per round, and Day 179's evidence is that the round-82 finding routed to the **scheduler** surface was fixed within the day while the two left in prose were not): (1) **the collision guard fails open** — `detect_mcp_collisions` is called at exactly two sites, both inside the `Ok(tool_names)` arm, while the `Err` arm falls straight through to `with_mcp_server_stdio` with **no post-connect re-check anywhere in `src/`**; its messag… [yoyo: 598 more bytes elided — diff lines are capped at 500 bytes]
+  + **Two findings recorded and filed rather than fixed** (one defect per round, and Day 179's evidence is that the round-82 finding routed to the **scheduler** surface was fixed within the day while the two left in prose were not): (1) **the collision guard fails open** — `detect_mcp_collisions` is called at exactly two sites, both inside the `Ok(tool_names)` arm, while the `Err` arm falls straight through to `with_mcp_server_stdio` with **no post-connect re-check anywhere in `src/`**; its messag… [yoyo: 1566 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 23s)
+  - **Two findings recorded and filed rather than fixed** (one defect per round, and Day 179's evidence is that the round-82 finding routed to the **scheduler** surface was fixed within the day while the two left in prose were not): (1) **the collision guard fails open** — `detect_mcp_collisions` is called at exactly two sites, both inside the `Ok(tool_names)` arm, while the `Err` arm falls straight through to `with_mcp_server_stdio` with **no post-connect re-check anywhere in `src/`**; its messag… [yoyo: 598 more bytes elided — diff lines are capped at 500 bytes]
+  + **Two findings recorded and filed rather than fixed** (one defect per round, and Day 179's evidence is that the round-82 finding routed to the **scheduler** surface was fixed within the day while the two left in prose were not): (1) **the collision guard fails open** — `detect_mcp_collisions` is called at exactly two sites, both inside the `Ok(tool_names)` arm, while the `Err` arm falls straight through to `with_mcp_server_stdio` with **no post-connect re-check anywhere in `src/`**; its messag… [yoyo: 1566 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both CLAUDE.md edits landed. Let me verify them and run the gates.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "--- sta… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fall through to yoagent… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.8s (2 ✓)
+
+Only remaining occurrence is inside the quoted superseded-claim record — exactly as required. Now let me verify my doc claims are actually true of the code rather than asserted:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== const ===" && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn.*collision_guard_ski… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+All doc claims verified against code. Let me confirm the weak source-level guard I described in the docs actually exists:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2625,2680p' src/agent_bu… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything I documented is true of the code. Now the four gates:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (2.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+fmt and build pass. Running the remaining two gates:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (201ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 39s (2 ✓)
+
+All four gates pass (5268 tests, 0 failed). The evaluator's only FAIL was doc_sync, now addressed. But the task requires the positive control be run rather than assumed, and I shouldn't take the prior attempt's word for it. Let me actually run both halves:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (24.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Part 1 confirmed — the guard passes with ATTEMPTS = 1, so it is honestly weak exactly as labelled. Restoring and running part 2:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ab.b… (12 lines) ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Part 2 confirmed — neutering the message fails **exactly* the two positive emission-point tests. (The third, `no_longer_claims_connect_will_fail`, is a negative* assertion so a stripped message trivially satisfies it — which is precisely why the two positive tests carry the weight.) Restoring:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ab.bak src/agent_builder… ✓ (26.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control left no residue — git diff shows only CLAUDE.md. Final full gate run:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (26.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…

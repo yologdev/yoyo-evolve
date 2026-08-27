@@ -1,0 +1,251 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at the site of the defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/hooks.rs && sed -n '20…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CAPTURE_HEAD_BYTES\|CAP… ✓ (3ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,120p' src/commands_ru…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/hooks.rs && e… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_to_string\|stderr_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[cfg(test)… ✓ (5ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs:255..270  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs:725..755 ✓ (0ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 26.9s (8 ✓)
+
+Now I have the full picture. Writing the pure capper first, beside the imports:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (2 → 52 lines)
+    use yoagent::types::{AgentTool, ToolError, ToolResult};
+    use yoagent::Content;
+  + 
+  + /// Bytes of the *head* of a hook's stderr kept by [`cap_hook_stderr`].
+  + ///
+  + /// Deliberately the same budget `CAPTURE_HEAD_BYTES` in `src/commands_run.rs` uses for
+  + /// `/run`, and for the same reason: a hook's stderr reaches the model's context verbatim
+  + /// (`PostHookResult::with_feedback`), so an unbounded one can overflow the conversation
+  + /// and wedge the session (#844). Head **and** tail rather than tail-only, because a hook's
+  + /// *first* error line is the actionable one while its last lines are usually the summary —
+  + /// a tail-only cut throws away the line the user actually needs.
+  + const HOOK_STDERR_HEAD_BYTES: usize = 4096;
+  + /// Bytes of the *tail* of a hook's stderr kept by [`cap_hook_stderr`]. See
+  + /// [`HOOK_STDERR_HEAD_BYTES`].
+  + const HOOK_STDERR_TAIL_BYTES: usize = 4096;
+  + 
+  + /// Bound a hook's stderr to `head` + `tail` bytes before it enters the conversation.
+  + ///
+  + /// At or under budget the input is returned **byte-identically** — that is every hook
+  + /// anyone has today and is the whole regression surface. Over budget the middle is
+  ... (32 more lines)
+ ✓ (14.1s)
+    use yoagent::types::{AgentTool, ToolError, ToolResult};
+    use yoagent::Content;
+  + 
+  + /// Bytes of the *head* of a hook's stderr kept by [`cap_hook_stderr`].
+  + ///
+  + /// Deliberately the same budget `CAPTURE_HEAD_BYTES` in `src/commands_run.rs` uses for
+  + /// `/run`, and for the same reason: a hook's stderr reaches the model's context verbatim
+  + /// (`PostHookResult::with_feedback`), so an unbounded one can overflow the conversation
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The lint is right — definition without consumer. Wiring the call site now (rule: both halves in the same edit).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (6 → 16 lines)
+                        if let Some(mut stderr) = child.stderr.take() {
+                            let _ = stderr.read_to_string(&mut stderr_buf);
+                        }
+  +                     // Bound at *capture* time, not at each reader, so every consumer
+  +                     // of the returned pair inherits the cap (#844). This string reaches
+  +                     // the model's context verbatim via `PostHookResult::with_feedback`,
+  +                     // and a hook printing megabytes could otherwise overflow the
+  +                     // conversation and wedge the session.
+  +                     let stderr_buf = cap_hook_stderr(
+  +                         &stderr_buf,
+  +                         HOOK_STDERR_HEAD_BYTES,
+  +                         HOOK_STDERR_TAIL_BYTES,
+  +                     );
+                        return Ok((status.code().unwrap_or(1), stderr_buf));
+ ✓ (1m 51s)
+                        if let Some(mut stderr) = child.stderr.take() {
+                            let _ = stderr.read_to_string(&mut stderr_buf);
+                        }
+  +                     // Bound at *capture* time, not at each reader, so every consumer
+  +                     // of the returned pair inherits the cap (#844). This string reaches
+  +                     // the model's context verbatim via `PostHookResult::with_feedback`,
+  +                     // and a hook printing megabytes could otherwise overflow the
+  +                     // conversation and wedge the session.
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Let me add them to the test module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/hooks.rs && echo "==… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (149 lines) ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hooks:: 2>… ✓ (23.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^fn cap_hook_stderr/,/^… ✓ (3ms)
+  4 tools completed in 1m 14s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+🐙 is 4 bytes, not 3 — my test's arithmetic was wrong, not the code. Fixing the test to assert the property rather than a hand-counted char count:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (13 → 28 lines)
+  -         // 3 bytes each, so a 10-byte cut lands inside a character on both ends.
+  +         // 🐙 is FOUR bytes, so a 10-byte cut lands inside a character on both ends
+  +         // (boundaries sit at 0, 4, 8, 12 …). Asserted as a property rather than a
+  +         // hand-counted char count, so the test does not silently encode my own
+  +         // arithmetic about the fixture.
+            let raw = "🐙".repeat(4000);
+            assert!(raw.len() > 8192);
+    
+            let capped = cap_hook_stderr(&raw, 10, 10);
+  -         // Did not panic, and the result is still valid UTF-8 made of whole octopuses.
+  -         assert!(capped.starts_with("🐙🐙🐙"), "head kept whole chars");
+  -         assert!(capped.ends_with("🐙🐙🐙"), "tail kept whole chars");
+  -         assert!(
+  -             !capped.starts_with("🐙🐙🐙🐙"),
+  -             "the char straddling the head cut must be dropped whole, not split"
+  +         // Did not panic, and both halves are made of WHOLE octopuses.
+  +         let (head_part, rest) = capped.split_once('\n').expect("marker sits on its own line");
+  +         let tail_part = rest.rsplit_once('\n').expect("marker sits on its own line").1;
+  + 
+  +         assert!(!head_part.is_empty() && !tail_part.is_empty());
+  ... (15 more lines)
+ ✓ (1m 52s)
+  -         // 3 bytes each, so a 10-byte cut lands inside a character on both ends.
+  +         // 🐙 is FOUR bytes, so a 10-byte cut lands inside a character on both ends
+  +         // (boundaries sit at 0, 4, 8, 12 …). Asserted as a property rather than a
+  +         // hand-counted char count, so the test does not silently encode my own
+  +         // arithmetic about the fixture.
+            let raw = "🐙".repeat(4000);
+            assert!(raw.len() > 8192);
+    
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (24.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 26s (2 ✓)
+
+All 38 pass. Now the positive control — run rather than assumed, and serially (Day-179 lesson: two file-mutating controls in one parallel block raced and one falsely passed):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/hooks… (15 lines) ✓ (23.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hooks:: 2>… ✓ (298ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.1s (2 ✓)
+
+The control fired exactly right: the 4 over-budget tests failed, while the near-miss guard (under_budget_is_byte_identical) stayed green — that's the half that matters, since a fix that also broke pass-through would be worse. Restoring, then the second control on the call site:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/hooks.rs.bak src/hooks.r… ✓ (23.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored and green. Second control — delete the call site, the source guard must fail:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (23.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire. Restoring and running the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/hooks.rs.bak src/hooks.r… ✓ (15.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 42s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 4s (2 ✓)
+
+All green — 5264 tests. Now the docs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`hooks.rs\`" CLAUDE… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`).
+  + (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`). Day 180 (#844): a hook's **stderr is bounded before it enters the conversation** by the pure, table-tested `cap_hook_stderr(raw, head, tail)` — `HOOK_STDERR_HEAD_BYTES` / `HOOK_STDERR_TAIL_BYTES`, 4096 each, **deliberately the same budget** `CAPTURE_HEAD_BYTES`/`CAPTURE_TAIL_BYTES` give `/run`, with the const doc comment back-referencing it rather than inventing a new number. The measured defect: `Shell… [yoyo: 3600 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 10s)
+  - (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`).
+  + (pinned by the source-level test `test_hooks_never_writes_to_the_audit_log` in `hooks.rs`). Day 180 (#844): a hook's **stderr is bounded before it enters the conversation** by the pure, table-tested `cap_hook_stderr(raw, head, tail)` — `HOOK_STDERR_HEAD_BYTES` / `HOOK_STDERR_TAIL_BYTES`, 4096 each, **deliberately the same budget** `CAPTURE_HEAD_BYTES`/`CAPTURE_TAIL_BYTES` give `/run`, with the const doc comment back-referencing it rather than inventing a new number. The measured defect: `Shell… [yoyo: 3600 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 30s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md updated. Final verification and commit:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the two task-scope files, no strays. Final gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (2.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 13s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 27s (2 ✓, 1 ✗)
+
+All four checks green. Committing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (28ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done — committed as f008328e, tree clean.
+
+## What shipped
+
+The hole: ShellHook::run_command read a hook's stderr with an unbounded read_to_string and returned it, and that string lands in the model's context verbatim via PostHookResult::with_feedback. A user's `sh -c` hook printing megabytes could overflow the conversation and wedge the session.
+
+The asymmetry is the part I want to remember. The same function already capped its input (TOOL_OUTPUT, 1000 chars). So the bounded direction was the one I control — my own tool output going into a hook — and the unbounded one was arbitrary user output coming out and into the conversation. An existing cap reads as "this function handles size", which is exactly how the missing half stayed invisible. Every sibling path was already bounded (/run 4KB+4KB, /bg 256KB, ! 8KB, /ast 200 lines); hooks were the one that got skipped.
+
+The fix: pure cap_hook_stderr(raw, head, tail), 4096+4096 — deliberately `/run`'s budget, with the const back-referencing it rather than inventing a number. Head and tail, because a hook's first error line is the actionable one; cut marked in band; applied once at capture time, so every consumer of the returned pair inherits it.
+
+**Six tests, and the ones I care about are the guards:**
+• under budget → byte-identical, asserted as a full-string assert_eq! (a contains would quietly certify the rest)
+• boundary pinned on both sides — exactly at budget untouched, one byte over truncated
+• multi-byte: 🐙 is 4 bytes, my first draft's arithmetic said 3 and the test failed. The code was right and my fixture was wrong — I rewrote it to assert the property (both halves are whole chars) rather than a hand-counted char count, so it doesn't encode my own bad arithmetic
+• the marker's dropped-byte count must match what was actually dropped; a lying marker is worse than none
+
+Both positive controls run, serially — the Day-179 lesson about two file-mutating controls racing and one falsely passing. Neutering the capper failed exactly the four over-budget tests and left the byte-identical pass-through green, which is the half that matters. Deleting the call site failed exactly the source guard.
+
+The source-level guard is deliberately weak and its own doc comment says so: it proves the call is present, never that its result is used. run_command spawns real processes; the real assertions live on the pure function.
+
+Named rather than smuggled in: the pipe-buffer deadlock question is a different mechanism and is untouched, as is stdout (Stdio::null(), never reaches the conversation) and the 1000-char input cap.
+
+5264 tests green, clippy -D warnings clean, fmt clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

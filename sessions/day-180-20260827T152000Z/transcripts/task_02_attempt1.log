@@ -1,0 +1,304 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at the two call sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_mcp_collisions\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (7ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:40..265 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn project_mcp_refusal_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/agent_builder… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/agent_builder… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' src/agent_builder… ✓ (6ms)
+  7 tools completed in 20.0s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use crate" src/agent_b… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use tools::" src/fo… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+Good — is_plain_output is in scope via crate::format::*. Now the implementation.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (9 → 27 lines)
+  + /// How many times the pre-flight tool listing is attempted before the collision
+  + /// guard gives up for a server (#841).
+  + ///
+  + /// The pre-flight and yoagent's real connect are **two separate spawns**, so a
+  + /// slow start, a transient env problem or a `list_tools` timeout can fail the
+  + /// pre-flight while the real connect succeeds — and in that window the guard
+  + /// does not run at all and the session dies on turn one with the API's
+  + /// `Tool names must be unique` rejection. One retry recovers the realistic
+  + /// (transient) case so the guard runs normally.
+  + ///
+  + /// **The tradeoff, stated so a later reader does not "simplify" the retry away:**
+  + /// this costs one extra spawn **on the failure path only** — a genuinely dead
+  + /// server pays a second fast failure before yoagent's real diagnostic appears.
+  + /// That is the price of the guard running at all. A server whose pre-flight
+  + /// succeeds (every healthy server) pays nothing: the loop returns on the first
+  + /// attempt and is byte-identical to the pre-#841 behaviour.
+  + pub(crate) const MCP_PREFLIGHT_ATTEMPTS: usize = 2;
+  + 
+    /// Pre-enumerate the tool names an MCP server exposes by opening a short-lived
+    /// `McpClient` against it. Used to detect collisions with yoyo's builtins
+  ... (1 more lines)
+ ✓ (15.0s)
+  + /// How many times the pre-flight tool listing is attempted before the collision
+  + /// guard gives up for a server (#841).
+  + ///
+  + /// The pre-flight and yoagent's real connect are **two separate spawns**, so a
+  + /// slow start, a transient env problem or a `list_tools` timeout can fail the
+  + /// pre-flight while the real connect succeeds — and in that window the guard
+  + /// does not run at all and the session dies on turn one with the API's
+  + /// `Tool names must be unique` rejection. One retry recovers the realistic
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the consumer lands in the same edit. Adding the retry helper and the message function.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 57 lines)
+        let _ = client.close().await;
+        Ok(tools.into_iter().map(|t| t.name).collect())
+  + }
+  + 
+  + /// Run the pre-flight tool listing, retrying up to `MCP_PREFLIGHT_ATTEMPTS`
+  + /// times before giving up.
+  + ///
+  + /// This is the **single** statement of the retry policy, shared by both MCP
+  + /// connect loops (`--mcp` flags and `[mcp_servers.*]` config sections). Two
+  + /// copies that agree today is the "two doors, one policy, one deaf" shape this
+  + /// repo has shipped six times (#745, #767, #769, #816, `/config show`,
+  + /// sub-agent fallback), so there is one loop and one caller-visible error.
+  + ///
+  + /// The **last** attempt's error is returned, not the first: it is the more
+  + /// recent fact and the one whose diagnostic the user is about to see beside
+  + /// yoagent's own.
+  + async fn fetch_mcp_tool_names_retrying(
+  +     command: &str,
+  +     args: &[&str],
+  +     env: Option<std::collections::HashMap<String, String>>,
+  ... (37 more lines)
+ ✓ (15.4s)
+        let _ = client.close().await;
+        Ok(tools.into_iter().map(|t| t.name).collect())
+  + }
+  + 
+  + /// Run the pre-flight tool listing, retrying up to `MCP_PREFLIGHT_ATTEMPTS`
+  + /// times before giving up.
+  + ///
+  + /// This is the **single** statement of the retry policy, shared by both MCP
+  ... (13 more lines)
+
+Now wiring both call sites — the --mcp flag loop first.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (25 → 31 lines)
+            // builtins. yoagent would otherwise push colliding tools onto the
+            // agent and the Anthropic API would reject the first turn with
+            // "Tool names must be unique". See #MCP collision guard (Day 39).
+  -         match fetch_mcp_tool_names(command, &args_slice, None).await {
+  +         // Retried (#841) because a transient pre-flight failure used to
+  +         // disable the guard entirely for this server — a silent fail-open.
+  +         match fetch_mcp_tool_names_retrying(command, &args_slice, None).await {
+                Ok(tool_names) => {
+                    let collisions = detect_mcp_collisions(&tool_names, BUILTIN_TOOL_NAMES);
+                    if !collisions.is_empty() {
+  ···
+                    }
+                }
+                Err(e) => {
+  +                 // Every attempt failed: keep the fall-through (a genuinely dead
+  +                 // server should still reach yoagent so the user sees the real
+  +                 // diagnostic) but say plainly that the guard did not run.
+                    eprintln!(
+  -                     "{DIM}  mcp: pre-flight tool listing failed ({e}); proceeding to yoagent connect for diagnostics{RESET}"
+  +                     "{YELLOW}{}{RESET}",
+  ... (4 more lines)
+ ✓ (1m 52s)
+            // builtins. yoagent would otherwise push colliding tools onto the
+            // agent and the Anthropic API would reject the first turn with
+            // "Tool names must be unique". See #MCP collision guard (Day 39).
+  -         match fetch_mcp_tool_names(command, &args_slice, None).await {
+  +         // Retried (#841) because a transient pre-flight failure used to
+  +         // disable the guard entirely for this server — a silent fail-open.
+  +         match fetch_mcp_tool_names_retrying(command, &args_slice, None).await {
+                Ok(tool_names) => {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 3 lines)
+  -         // Pre-flight collision check (see comment above).
+  -         match fetch_mcp_tool_names(&server_cfg.command, &args_refs, env_map.clone()).await {
+  +         // Pre-flight collision check (see comment above), same retry policy.
+  +         match fetch_mcp_tool_names_retrying(&server_cfg.command, &args_refs, env_map.clone()).await
+  +         {
+ ✓ (1m 52s)
+  -         // Pre-flight collision check (see comment above).
+  -         match fetch_mcp_tool_names(&server_cfg.command, &args_refs, env_map.clone()).await {
+  +         // Pre-flight collision check (see comment above), same retry policy.
+  +         match fetch_mcp_tool_names_retrying(&server_cfg.command, &args_refs, env_map.clone()).await
+  +         {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (9 → 12 lines)
+                Err(e) => {
+  +                 // See the --mcp loop above: same fall-through, same honest
+  +                 // message, one statement of each.
+                    eprintln!(
+  -                     "{DIM}  mcp: pre-flight tool listing failed ({e}); proceeding to yoagent connect for diagnostics{RESET}"
+  +                     "{YELLOW}{}{RESET}",
+  +                     collision_guard_skipped_message(&server_cfg.name, &e, is_plain_output())
+                    );
+                }
+            }
+ ✓ (1m 51s)
+                Err(e) => {
+  +                 // See the --mcp loop above: same fall-through, same honest
+  +                 // message, one statement of each.
+                    eprintln!(
+  -                     "{DIM}  mcp: pre-flight tool listing failed ({e}); proceeding to yoagent connect for diagnostics{RESET}"
+  +                     "{YELLOW}{}{RESET}",
+  +                     collision_guard_skipped_message(&server_cfg.name, &e, is_plain_output())
+                    );
+                }
+            }
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 49s (2 ✓)
+
+Both loops wired. Now the tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn builtin_tool_names_i… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2560,2575p' src/agent_bu… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (4 → 109 lines)
+            assert!(detect_mcp_collisions(&[], &["read_file"]).is_empty());
+            assert!(detect_mcp_collisions(&["foo".to_string()], &[]).is_empty());
+            assert!(detect_mcp_collisions(&[], &[]).is_empty());
+  +     }
+  + 
+  +     // ---- #841: the collision guard's fail-open branch ----
+  +     //
+  +     // These assert at the EMISSION POINT — the exact `String` a caller of
+  +     // `collision_guard_skipped_message` receives, never a helper one layer
+  +     // below it.
+  + 
+  +     #[test]
+  +     fn collision_guard_skipped_message_names_server_guard_and_symptom() {
+  +         let msg = collision_guard_skipped_message(
+  +             "npx -y @modelcontextprotocol/server-filesystem /tmp",
+  +             "connection refused",
+  +             false,
+  +         );
+  +         assert!(
+  +             msg.contains("npx -y @modelcontextprotocol/server-filesystem /tmp"),
+  ... (89 more lines)
+ ✓ (15.5s)
+            assert!(detect_mcp_collisions(&[], &["read_file"]).is_empty());
+            assert!(detect_mcp_collisions(&["foo".to_string()], &[]).is_empty());
+            assert!(detect_mcp_collisions(&[], &[]).is_empty());
+  +     }
+  + 
+  +     // ---- #841: the collision guard's fail-open branch ----
+  +     //
+  +     // These assert at the EMISSION POINT — the exact `String` a caller of
+  ... (13 more lines)
+  3 tools completed in 38.2s (3 ✓)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (5 → 4 lines)
+  -         assert_eq!(
+  +         assert!(
+                src.matches(&msg_fn).count() >= 3,
+  -             true,
+                "expected the message fn's definition plus a call in each of the two loops"
+            );
+ ✓ (1m 41s)
+  -         assert_eq!(
+  +         assert!(
+                src.matches(&msg_fn).count() >= 3,
+  -             true,
+                "expected the message fn's definition plus a call in each of the two loops"
+            );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fetch_mcp_tool_names(" … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 48s (3 ✓)
+
+My own comment matched the needle — the self-matching trap. Rewording it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 3 lines)
+  -         // The bare helper is called exactly once — from inside the retry loop.
+  -         // (Its own definition is `async fn fetch_mcp_tool_names(` and matches too.)
+  +         // The un-retried helper is called exactly once — from inside the retry
+  +         // loop — plus its own definition line, so two matches total.
+            assert_eq!(
+ ✓ (1m 53s)
+  -         // The bare helper is called exactly once — from inside the retry loop.
+  -         // (Its own definition is `async fn fetch_mcp_tool_names(` and matches too.)
+  +         // The un-retried helper is called exactly once — from inside the retry
+  +         // loop — plus its own definition line, so two matches total.
+            assert_eq!(
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (184ms)
+  2 tools completed in 1m 55s (2 ✓)
+
+
+All 80 pass. Now the positive controls — run rather than assumed, and serially (two file-mutating controls in one block raced once before).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 confirms the guard is honestly weak as labelled. Restoring, then control 2.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ab.bak src/agent_builder… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (24.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.6s (2 ✓)
+
+Exactly the 3 emission-point tests fail. Checking the near-miss guard stayed green under the same neutering:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo mcp_collis… ✓ (291ms)
+
+Both controls behaved correctly. Restoring and verifying green.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ab.bak src/agent_builder… ✓ (25.1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+File is 2907 lines against a register entry of 2650 — that drift is now past the 100-line grace band. Checking the gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (10.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fires correctly and hands me the line. Pasting only my file's entry — the other two are pre-existing grace-band warnings, not this task's business.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 2650),
+  +     ("src/agent_builder.rs", 2907),
+ ✓ (1m 25s)
+  -     ("src/agent_builder.rs", 2650),
+  +     ("src/agent_builder.rs", 2907),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (192ms)
+  2 tools completed in 1m 28s (2 ✓)
+
+Now the docs. Updating the MCP gotchas section in CLAUDE.md — recording the superseded claim rather than erasing it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fall through to yoagent… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
