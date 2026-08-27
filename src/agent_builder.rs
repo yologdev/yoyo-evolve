@@ -2647,4 +2647,74 @@ mod tests {
             "exactly 2 tools should survive: {filtered_names:?}"
         );
     }
+    /// Drift guard (blind round 83, Day 180): every tool name `tools::build_tools`
+    /// actually registers must appear in `BUILTIN_TOOL_NAMES`, because that const is
+    /// the *only* input to `detect_mcp_collisions` — a registered builtin missing from
+    /// it means an MCP server exposing that same name is waved through, and the
+    /// Anthropic API then rejects the first turn with "Tool names must be unique",
+    /// which is the exact failure the guard exists to prevent.
+    ///
+    /// `BUILTIN_TOOL_NAMES` is a hand-maintained second copy of an enumeration whose
+    /// authority lives in another module — the same shape as `ROUTED_SUBCOMMANDS` and
+    /// `GLOBAL_SETTERS`, both of which needed a second test to stay tied to reality.
+    /// Before this test the only checks were two single-name spot assertions
+    /// (`web_search` in `src/tools.rs`, `shared_state` in `tests/integration.rs`), so
+    /// a *newly added* builtin could drift out silently. Measured when this landed:
+    /// the two lists agreed, so this guards the future rather than repairing a hole.
+    ///
+    /// Deliberately a SUPERSET check, not an equality check: `BUILTIN_TOOL_NAMES` is
+    /// correctly wider than `build_tools`, because `ask_user`, `sub_agent` and
+    /// `shared_state` are pushed elsewhere (conditionally, in `agent_builder`) and
+    /// still must be guarded against collision. Asserting equality would fail on
+    /// exactly the names the guard most needs to keep.
+    #[test]
+    fn every_registered_builtin_tool_is_named_in_builtin_tool_names() {
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = crate::tools::build_tools(true, &perms, &dirs, 10_000, false, vec![], None);
+        let registered: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        // Anti-vacuous: a scan that finds nothing must fail loudly rather than pass
+        // on an empty list — a guard that can never fire is the quieter defect.
+        assert!(
+            !registered.is_empty(),
+            "build_tools registered no tools at all — this drift guard would be vacuous"
+        );
+
+        for name in &registered {
+            assert!(
+                BUILTIN_TOOL_NAMES.contains(name),
+                "tools::build_tools registers '{name}' but BUILTIN_TOOL_NAMES does not \
+                 list it, so detect_mcp_collisions cannot catch an MCP server exposing \
+                 that name. Fix: add \"{name}\" to BUILTIN_TOOL_NAMES in src/agent_builder.rs. \
+                 Registered: {registered:?}"
+            );
+        }
+    }
+
+    /// Near-miss guard for the drift check above: the three builtins that are pushed
+    /// OUTSIDE `build_tools` must stay in `BUILTIN_TOOL_NAMES`. A future "cleanup" that
+    /// derived the const from `build_tools` alone would drop exactly these and silently
+    /// un-guard them — `shared_state` and `sub_agent` are the RLM pair (#715) and
+    /// `ask_user` is interactive-only, so none of them is reachable from that call.
+    #[test]
+    fn builtin_tool_names_keeps_the_builtins_build_tools_does_not_register() {
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = crate::tools::build_tools(true, &perms, &dirs, 10_000, false, vec![], None);
+        let registered: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        for name in ["ask_user", "sub_agent", "shared_state"] {
+            assert!(
+                BUILTIN_TOOL_NAMES.contains(&name),
+                "'{name}' must stay in BUILTIN_TOOL_NAMES even though build_tools does \
+                 not register it — it is pushed elsewhere and still collides"
+            );
+            assert!(
+                !registered.contains(&name),
+                "'{name}' is now registered by build_tools — the superset rationale in \
+                 every_registered_builtin_tool_is_named_in_builtin_tool_names needs updating"
+            );
+        }
+    }
 }
