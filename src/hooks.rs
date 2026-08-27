@@ -7,6 +7,56 @@ use std::sync::Arc;
 use yoagent::types::{AgentTool, ToolError, ToolResult};
 use yoagent::Content;
 
+/// Bytes of the *head* of a hook's stderr kept by [`cap_hook_stderr`].
+///
+/// Deliberately the same budget `CAPTURE_HEAD_BYTES` in `src/commands_run.rs` uses for
+/// `/run`, and for the same reason: a hook's stderr reaches the model's context verbatim
+/// (`PostHookResult::with_feedback`), so an unbounded one can overflow the conversation
+/// and wedge the session (#844). Head **and** tail rather than tail-only, because a hook's
+/// *first* error line is the actionable one while its last lines are usually the summary —
+/// a tail-only cut throws away the line the user actually needs.
+const HOOK_STDERR_HEAD_BYTES: usize = 4096;
+/// Bytes of the *tail* of a hook's stderr kept by [`cap_hook_stderr`]. See
+/// [`HOOK_STDERR_HEAD_BYTES`].
+const HOOK_STDERR_TAIL_BYTES: usize = 4096;
+
+/// Bound a hook's stderr to `head` + `tail` bytes before it enters the conversation.
+///
+/// At or under budget the input is returned **byte-identically** — that is every hook
+/// anyone has today and is the whole regression surface. Over budget the middle is
+/// dropped and the cut is marked **in band**, because a silent elision is the bug (the
+/// same rule `/run`, `/bg`, `!` and `/ast` already follow).
+///
+/// Both cuts land on a `char` boundary and are never taken by raw byte index (rule #250 —
+/// `s[..n]` panics inside a multi-byte character): the head walks *back* and the tail walks
+/// *forward*, so a character straddling either cut is dropped **whole** rather than split.
+fn cap_hook_stderr(raw: &str, head: usize, tail: usize) -> String {
+    if raw.len() <= head + tail {
+        return raw.to_string();
+    }
+
+    let mut head_end = head;
+    while head_end > 0 && !raw.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+
+    let mut tail_start = raw.len() - tail;
+    while tail_start < raw.len() && !raw.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    // A pathological `head`/`tail` pair must not produce overlapping slices.
+    if tail_start < head_end {
+        tail_start = head_end;
+    }
+
+    let dropped = tail_start - head_end;
+    format!(
+        "{}\n… [yoyo: {dropped} bytes elided — hook stderr is capped at {head} head + {tail} tail bytes]\n{}",
+        &raw[..head_end],
+        &raw[tail_start..],
+    )
+}
+
 /// Result returned by a post-hook, carrying both the (possibly modified) output
 /// and optional feedback that will be injected into the agent's context.
 ///
@@ -262,6 +312,16 @@ impl ShellHook {
                     if let Some(mut stderr) = child.stderr.take() {
                         let _ = stderr.read_to_string(&mut stderr_buf);
                     }
+                    // Bound at *capture* time, not at each reader, so every consumer
+                    // of the returned pair inherits the cap (#844). This string reaches
+                    // the model's context verbatim via `PostHookResult::with_feedback`,
+                    // and a hook printing megabytes could otherwise overflow the
+                    // conversation and wedge the session.
+                    let stderr_buf = cap_hook_stderr(
+                        &stderr_buf,
+                        HOOK_STDERR_HEAD_BYTES,
+                        HOOK_STDERR_TAIL_BYTES,
+                    );
                     return Ok((status.code().unwrap_or(1), stderr_buf));
                 }
                 Ok(None) => {
@@ -1111,5 +1171,168 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("lint warning: unused var"));
+    }
+
+    // -----------------------------------------------------------------------
+    // #844 — hook stderr is bounded before it enters the conversation.
+    //
+    // `run_command` already capped its *input* (`TOOL_OUTPUT`, 1000 chars) and left
+    // its *output* unbounded — so the bounded direction was the one yoyo controls
+    // and the unbounded one was arbitrary user output flowing into the model's
+    // context. The existing input cap is what made the missing half look handled.
+    // -----------------------------------------------------------------------
+
+    /// Under budget is byte-identical. This is every hook anyone has today and is the
+    /// whole regression surface, so it is asserted as a full-string equality rather
+    /// than a `contains` — a fragment assertion would quietly certify the rest.
+    #[test]
+    fn cap_hook_stderr_under_budget_is_byte_identical() {
+        let raw = "error: something broke\n  at line 3\n";
+        assert_eq!(cap_hook_stderr(raw, 4096, 4096), raw);
+        assert_eq!(cap_hook_stderr("", 4096, 4096), "");
+    }
+
+    /// The boundary, pinned on BOTH sides: a discriminator tested only on the side
+    /// that fires is vacuous green.
+    #[test]
+    fn cap_hook_stderr_boundary_is_pinned_on_both_sides() {
+        let exactly = "x".repeat(20);
+        assert_eq!(
+            cap_hook_stderr(&exactly, 10, 10),
+            exactly,
+            "exactly at budget must pass through untouched"
+        );
+
+        let one_over = "x".repeat(21);
+        let capped = cap_hook_stderr(&one_over, 10, 10);
+        assert_ne!(capped, one_over, "one byte over budget must be truncated");
+        assert!(capped.contains("1 bytes elided"));
+    }
+
+    /// Head AND tail, not tail-only: the first error line is the actionable one and
+    /// the last lines are the summary. Tail-only would throw away the line the user
+    /// needs, which is why `/run` made the same choice.
+    #[test]
+    fn cap_hook_stderr_keeps_head_and_tail_and_marks_the_cut() {
+        let raw = format!("FIRST-LINE\n{}\nLAST-LINE", "m".repeat(50_000));
+        let capped = cap_hook_stderr(&raw, 4096, 4096);
+
+        assert!(
+            capped.starts_with("FIRST-LINE"),
+            "the head must survive: {capped:.60}"
+        );
+        assert!(capped.ends_with("LAST-LINE"), "the tail must survive");
+        assert!(
+            capped.len() < raw.len(),
+            "a 50KB stderr must not reach the conversation whole"
+        );
+        assert!(
+            capped.len() <= 4096 + 4096 + 200,
+            "capped length {} exceeds budget plus marker",
+            capped.len()
+        );
+        // The cut is marked in band — a silent elision is the bug.
+        assert!(
+            capped.contains("bytes elided — hook stderr is capped at"),
+            "elision must be marked in band: {capped:.200}"
+        );
+        // ... and the marker sits on its own line between the two halves.
+        assert!(capped.contains("\n… [yoyo: "));
+    }
+
+    /// Rule #250: never slice on a raw byte offset. Both cuts land mid-character
+    /// here, and a straddling char must be dropped WHOLE rather than split.
+    #[test]
+    fn cap_hook_stderr_never_splits_a_multibyte_char() {
+        // 🐙 is FOUR bytes, so a 10-byte cut lands inside a character on both ends
+        // (boundaries sit at 0, 4, 8, 12 …). Asserted as a property rather than a
+        // hand-counted char count, so the test does not silently encode my own
+        // arithmetic about the fixture.
+        let raw = "🐙".repeat(4000);
+        assert!(raw.len() > 8192);
+
+        let capped = cap_hook_stderr(&raw, 10, 10);
+        // Did not panic, and both halves are made of WHOLE octopuses.
+        let (head_part, rest) = capped
+            .split_once('\n')
+            .expect("marker sits on its own line");
+        let tail_part = rest
+            .rsplit_once('\n')
+            .expect("marker sits on its own line")
+            .1;
+
+        assert!(!head_part.is_empty() && !tail_part.is_empty());
+        assert_eq!(
+            head_part,
+            "🐙".repeat(head_part.chars().count()),
+            "head must be whole chars, not a split one"
+        );
+        assert_eq!(
+            tail_part,
+            "🐙".repeat(tail_part.chars().count()),
+            "tail must be whole chars, not a split one"
+        );
+        // The straddling char is dropped WHOLE: the kept head is the largest multiple
+        // of 4 at or below the 10-byte budget, i.e. 8 — never a 10-byte split.
+        assert_eq!(
+            head_part.len(),
+            8,
+            "head cut walked back to a char boundary"
+        );
+        assert_eq!(
+            tail_part.len(),
+            8,
+            "tail cut walked forward to a char boundary"
+        );
+        assert!(capped.contains("bytes elided"));
+
+        // And at the real budget it still holds.
+        let capped = cap_hook_stderr(&raw, HOOK_STDERR_HEAD_BYTES, HOOK_STDERR_TAIL_BYTES);
+        assert!(capped.contains("bytes elided"));
+        assert!(capped.len() < raw.len());
+    }
+
+    /// The dropped-byte count in the marker must agree with what was actually dropped,
+    /// or the in-band marker is itself a lie.
+    #[test]
+    fn cap_hook_stderr_marker_byte_count_is_honest() {
+        let raw = "a".repeat(100);
+        let capped = cap_hook_stderr(&raw, 10, 10);
+        // 100 bytes in, 10 head + 10 tail kept, so 80 dropped.
+        assert!(
+            capped.contains("80 bytes elided"),
+            "marker must state the real count: {capped}"
+        );
+        assert!(capped.starts_with("aaaaaaaaaa\n"));
+        assert!(capped.ends_with("\naaaaaaaaaa"));
+    }
+
+    /// Source-level guard that `run_command` still routes its stderr through the cap.
+    ///
+    /// Deliberately WEAK, and this doc comment is the disclosure: it proves the call is
+    /// *present* in that body, never that its result is used. `run_command` spawns real
+    /// processes, so the real assertions live on the pure function above; this only
+    /// guards against the call site being silently deleted. The needle is assembled at
+    /// runtime so this test's own source cannot satisfy it.
+    #[test]
+    fn test_run_command_routes_stderr_through_the_cap() {
+        let src = include_str!("hooks.rs");
+        let body = src
+            .split_once("fn run_command(")
+            .expect("run_command must exist")
+            .1;
+        let body = body
+            .split_once("\nimpl Hook for ShellHook")
+            .map(|(before, _)| before)
+            .unwrap_or(body);
+        let needle = format!("{}{}", "cap_hook", "_stderr(");
+        assert!(
+            body.contains(&needle),
+            "ShellHook::run_command no longer calls `{needle})`. A hook's stderr is \
+             returned verbatim into the agent's context via \
+             PostHookResult::with_feedback, so an unbounded one can overflow the \
+             conversation and wedge the session (#844). The cap belongs at capture \
+             time so every consumer of the returned pair inherits it."
+        );
     }
 }
