@@ -306,12 +306,75 @@ pub(crate) fn read_first_scored(
     parse_first_scored(&content)
 }
 
-/// Returns the `git_hash` of the last snapshot line in the given JSONL content,
-/// or None if the content is empty / unparseable.
-fn last_snapshot_git_hash(content: &str) -> Option<String> {
-    let last = content.lines().rev().find(|l| !l.trim().is_empty())?;
-    let v: serde_json::Value = serde_json::from_str(last).ok()?;
-    v.get("git_hash")?.as_str().map(|s| s.to_string())
+/// Every `git_hash` recorded **anywhere** in the given snapshot JSONL content.
+///
+/// Pure; no I/O. The decision half of the idempotency guard, reading the whole
+/// **set** rather than the tail on purpose (#846): the previous
+/// `last_snapshot_git_hash` asked "is HEAD the hash of the *last* line?", which
+/// is strictly narrower than the intent stated on `auto_risk_snapshot` ("one
+/// snapshot per distinct commit-state"), so a HEAD returning to a commit
+/// already in the ledger but no longer at its tail sailed past it. That is the
+/// routine outcome of a reverted task — `scripts/evolve.sh` reverts with
+/// `git reset --hard PRE_TASK_SHA`. Measured live when this landed: 303
+/// snapshots, 300 distinct hashes, 3 duplicated.
+///
+/// The ledger is append-only history and may hold anything, so a line that
+/// fails to parse — or carries no `git_hash` — contributes nothing and must
+/// never panic. Owned `String`s because `serde_json::Value` owns its strings.
+/// Deliberately **not** a bounded "last N lines" scan: that reintroduces this
+/// exact bug class one parameter over, and the file is already in memory.
+fn snapshot_hashes(content: &str) -> std::collections::HashSet<String> {
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            v.get("git_hash")?.as_str().map(str::to_string)
+        })
+        .collect()
+}
+
+/// What the dedup-guarded snapshot append actually did.
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotWrite {
+    Recorded,
+    SkippedDuplicate,
+}
+
+/// Append a snapshot for `git_hash` unless that hash is already somewhere in
+/// the ledger at `path`. The **single** statement of the idempotency rule.
+///
+/// `build` is called only when the guard lets the write through, preserving the
+/// pre-#846 property that a deduped snapshot never pays for
+/// `compute_file_risk_scores` (which shells out to git repeatedly). Injecting it
+/// as a closure — the discipline `never_forecast_files` uses for `added_ts` —
+/// keeps guard and write in one path-taking function whose emission point is the
+/// file's own bytes, instead of a decision helper whose caller would have to
+/// re-state the rule to be testable.
+///
+/// `"unknown"` is exempt and must stay exempt: `run_git` falls back to that
+/// literal when it cannot resolve HEAD, and two unknown states may be different
+/// commits, so deduping `"unknown"` against `"unknown"` would be *more* wrong
+/// than the tail read ever was.
+fn write_snapshot_unless_recorded<F>(
+    path: &std::path::Path,
+    git_hash: &str,
+    build: F,
+) -> Result<SnapshotWrite, std::io::Error>
+where
+    F: FnOnce() -> (String, Vec<String>, u32),
+{
+    if git_hash != "unknown" {
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        if snapshot_hashes(&content).contains(git_hash) {
+            return Ok(SnapshotWrite::SkippedDuplicate);
+        }
+    }
+
+    let (json_line, scored, day) = build();
+    let scored_refs: Vec<&str> = scored.iter().map(String::as_str).collect();
+    write_risk_snapshot_to(path, &json_line, &scored_refs, day, git_hash)?;
+    Ok(SnapshotWrite::Recorded)
 }
 
 /// Automatically capture a risk snapshot after a successful commit.
@@ -330,34 +393,34 @@ pub(crate) fn auto_risk_snapshot() {
         .trim()
         .to_string();
 
-    // Dedup by git hash: skip if the last snapshot already recorded this HEAD.
-    // Never dedup on "unknown" — two "unknown" states may genuinely differ.
-    if git_hash != "unknown" {
-        let content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
-        if last_snapshot_git_hash(&content).as_deref() == Some(git_hash.as_str()) {
-            eprintln!("  {DIM}(risk snapshot skipped: already recorded for {git_hash}){RESET}");
-            return;
-        }
-    }
-
-    let risks = compute_file_risk_scores();
-    let emerging = detect_emerging_risks(&risks);
-
-    let day: u32 = std::fs::read_to_string("DAY_COUNT")
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-
-    let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
-    let scored: Vec<&str> = risks.iter().map(|r| r.path.as_str()).collect();
-    if let Err(e) = write_risk_snapshot_to(
+    // Dedup by git hash: skip if *any* snapshot already recorded this HEAD
+    // (#846 — the guard used to compare only against the ledger's last line,
+    // so a `git reset --hard` back to an earlier recorded commit re-snapshotted
+    // it). Never dedup on "unknown" — two unknown states may genuinely differ.
+    match write_snapshot_unless_recorded(
         std::path::Path::new(RISK_SNAPSHOT_PATH),
-        &json_line,
-        &scored,
-        day,
         &git_hash,
+        || {
+            let risks = compute_file_risk_scores();
+            let emerging = detect_emerging_risks(&risks);
+
+            let day: u32 = std::fs::read_to_string("DAY_COUNT")
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
+
+            let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
+            let scored: Vec<String> = risks.iter().map(|r| r.path.clone()).collect();
+            (json_line, scored, day)
+        },
     ) {
-        eprintln!("  {DIM}(risk snapshot skipped: {e}){RESET}");
+        Ok(SnapshotWrite::Recorded) => {}
+        Ok(SnapshotWrite::SkippedDuplicate) => {
+            eprintln!("  {DIM}(risk snapshot skipped: already recorded for {git_hash}){RESET}");
+        }
+        Err(e) => {
+            eprintln!("  {DIM}(risk snapshot skipped: {e}){RESET}");
+        }
     }
 }
 
@@ -828,66 +891,128 @@ mod tests {
         assert!(!risk_autosnapshot_enabled_for(Some("Yes")));
     }
 
+    /// The decision half, pure. The ledger is append-only history and may hold
+    /// anything, so unreadable lines contribute nothing and must not panic.
     #[test]
-    fn test_last_snapshot_git_hash_basic() {
-        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
+    fn snapshot_hashes_reads_every_readable_line_and_drops_the_rest() {
+        let jsonl = concat!(
+            "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n\n",
+            "garbage not json\n{\"day\":101,\"top_10\":[]}\n   \n",
+            "{\"day\":102,\"git_hash\":\"bbb222\",\"top_10\":[]}\n"
+        );
+        let hashes = snapshot_hashes(jsonl);
+        assert_eq!(hashes.len(), 2, "only the two lines carrying a git_hash");
+        assert!(hashes.contains("aaa111") && hashes.contains("bbb222"));
+        assert!(snapshot_hashes("").is_empty(), "empty content → empty set");
+    }
+
+    fn snapshot_line(day: u32, git_hash: &str) -> String {
+        format!("{{\"day\":{day},\"git_hash\":\"{git_hash}\",\"top_10\":[],\"emerging\":[]}}")
+    }
+
+    /// Seed a tempdir ledger with one line per hash, in order.
+    fn seed_ledger(dir: &tempfile::TempDir, hashes: &[&str]) -> std::path::PathBuf {
+        let path = dir.path().join("risk_snapshots.jsonl");
+        let body: String = hashes
+            .iter()
+            .enumerate()
+            .map(|(i, h)| format!("{}\n", snapshot_line(100 + i as u32, h)))
+            .collect();
+        std::fs::write(&path, body).expect("seed ledger");
+        path
+    }
+
+    /// Drive the guard at its emission point — the ledger's own bytes — and
+    /// report how many times the (expensive) build closure was invoked.
+    fn attempt(path: &std::path::Path, git_hash: &str) -> (SnapshotWrite, usize, String) {
+        let calls = std::cell::Cell::new(0usize);
+        let outcome = write_snapshot_unless_recorded(path, git_hash, || {
+            calls.set(calls.get() + 1);
+            (
+                snapshot_line(200, git_hash),
+                vec!["src/x.rs".to_string()],
+                200,
+            )
+        })
+        .expect("tempdir write should succeed");
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        (outcome, calls.get(), content)
+    }
+
+    /// #846, the regression guard: HEAD returns to a hash the ledger already
+    /// holds but which is no longer at its tail — the routine outcome of a
+    /// `git reset --hard PRE_TASK_SHA` revert. Fails against the old tail read.
+    #[test]
+    fn a_hash_recorded_earlier_in_the_ledger_is_not_re_snapshotted() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = seed_ledger(&dir, &["aaa111", "bbb222"]);
+        let before = std::fs::read_to_string(&path).expect("read");
+
+        let (outcome, build_calls, after) = attempt(&path, "aaa111");
+
+        assert_eq!(outcome, SnapshotWrite::SkippedDuplicate);
         assert_eq!(
-            last_snapshot_git_hash(jsonl),
-            Some("bbb222".to_string()),
-            "should return the last line's git_hash"
+            after, before,
+            "nothing appended for an already-recorded hash"
+        );
+        assert_eq!(
+            build_calls, 0,
+            "a skipped snapshot must not pay for scoring"
         );
     }
 
+    /// The near-miss guard: a dedup that blocks everything would silently
+    /// freeze the meter — worse than the duplicate it fixes.
     #[test]
-    fn test_last_snapshot_git_hash_empty() {
-        assert_eq!(last_snapshot_git_hash(""), None);
+    fn a_genuinely_new_hash_is_still_recorded() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = seed_ledger(&dir, &["aaa111", "bbb222"]);
+
+        let (outcome, build_calls, after) = attempt(&path, "ccc333");
+
+        assert_eq!(outcome, SnapshotWrite::Recorded);
+        assert_eq!(build_calls, 1);
+        assert!(after.contains("ccc333"), "new hash appended: {after}");
+        assert_eq!(after.lines().count(), 3, "exactly one line added");
     }
 
+    /// Pre-existing behaviour, unchanged — the case the old tail read got right.
     #[test]
-    fn test_last_snapshot_git_hash_trailing_blank() {
-        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n\n";
-        assert_eq!(
-            last_snapshot_git_hash(jsonl),
-            Some("aaa111".to_string()),
-            "trailing blank lines should be ignored"
-        );
+    fn an_immediate_repeat_of_the_tail_hash_still_skips() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = seed_ledger(&dir, &["bbb222"]);
+        let before = std::fs::read_to_string(&path).expect("read");
+
+        let (outcome, _, after) = attempt(&path, "bbb222");
+
+        assert_eq!(outcome, SnapshotWrite::SkippedDuplicate);
+        assert_eq!(after, before, "tail-hash repeat still skipped");
     }
 
+    /// The exemption, and the one case where set membership would be *more*
+    /// wrong than the tail read: two "unknown" states may be different commits.
     #[test]
-    fn test_last_snapshot_git_hash_malformed_last_line() {
-        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\ngarbage";
-        assert_eq!(
-            last_snapshot_git_hash(jsonl),
-            None,
-            "malformed last line → None"
-        );
+    fn unknown_never_dedups_against_unknown() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = seed_ledger(&dir, &["unknown"]);
+
+        let (outcome, _, after) = attempt(&path, "unknown");
+
+        assert_eq!(outcome, SnapshotWrite::Recorded);
+        assert_eq!(after.lines().count(), 2, "both unknowns recorded: {after}");
     }
 
+    /// A missing ledger is an honest empty set, not an error.
     #[test]
-    fn test_last_snapshot_git_hash_dedup_decision() {
-        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
-        // Same hash as last → would dedup.
-        assert_eq!(
-            last_snapshot_git_hash(jsonl).as_deref(),
-            Some("bbb222"),
-            "same-hash case detected"
-        );
-        // A different hash would NOT match the last line's hash.
-        assert_ne!(
-            last_snapshot_git_hash(jsonl).as_deref(),
-            Some("ccc333"),
-            "different-hash case detected"
-        );
-    }
+    fn a_missing_ledger_records_rather_than_skipping() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("risk_snapshots.jsonl");
+        assert!(!path.exists());
 
-    #[test]
-    fn test_last_snapshot_git_hash_missing_field() {
-        let jsonl = "{\"day\":100,\"top_10\":[]}";
-        assert_eq!(
-            last_snapshot_git_hash(jsonl),
-            None,
-            "missing git_hash field → None"
-        );
+        let (outcome, _, after) = attempt(&path, "aaa111");
+
+        assert_eq!(outcome, SnapshotWrite::Recorded);
+        assert!(after.contains("aaa111"));
     }
 
     #[test]

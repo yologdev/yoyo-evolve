@@ -126,6 +126,14 @@ const REGISTER_DRIFT_GRACE_LINES: usize = 100;
 /// and the same commit makes drift past `REGISTER_DRIFT_GRACE_LINES` fatal so
 /// the next large one cannot be absorbed the same way.
 const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
+    // Day 181 (#846): 2047 — the snapshot dedup moved from a tail read to a set
+    // read, plus its emission-point tests. Registered rather than left in the
+    // grace band because 2047 leaves 3 lines before the fatal branch, i.e. the
+    // next task touching this file would be reverted by the overshoot rather
+    // than by anything it did. Registering names the debt and hands it to the
+    // branch-3 ratchet; the split (the ledger *readers* here are a separate
+    // concern from the *writers*) is real follow-up work, not done here.
+    ("src/commands_risk_snapshots.rs", 2047),
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
