@@ -253,9 +253,8 @@ pub(crate) fn external_tool_failure_note(failures: &[FailedServer]) -> Option<St
     }
     let n = failures.len();
     let plural = if n == 1 { "" } else { "s" };
-    let mut lines = format!(
-        "[yoyo: {n} configured tool server{plural} failed to connect this session]\n"
-    );
+    let mut lines =
+        format!("[yoyo: {n} configured tool server{plural} failed to connect this session]\n");
     for f in failures {
         let id = if f.id.len() <= EXTERNAL_FAILURE_ID_MAX_BYTES {
             f.id.clone()
@@ -353,6 +352,20 @@ pub(crate) async fn connect_external_servers(
                     eprintln!(
                         "{DIM}  mcp: skipping '{mcp_cmd}' — rename/exclude the colliding tool(s) or use a different server{RESET}"
                     );
+                    // Deliberately NOT recorded via `record_failed_server`, and
+                    // the omission is a decision rather than an oversight: this
+                    // is a **refusal working as designed**, not a connection
+                    // failure. The model-facing note exists to say "the
+                    // capability was configured and the connection failed, so
+                    // report it unavailable rather than hand-rolling it"; here
+                    // the server was refused *because* it exposes a name yoyo
+                    // already provides, so the capability is not missing at all
+                    // — the builtin is right there. Telling the model a tool is
+                    // unavailable while it sits in the tool list would be the
+                    // confident-wrong-diagnosis defect, and dressing a guard
+                    // working as designed as a malfunction is the same rule
+                    // `RecoveryHintTool`/`DiagnosticSubAgentTool` already follow
+                    // for `REFUSAL_STEM_*` (#710).
                     continue;
                 }
             }
@@ -458,7 +471,10 @@ pub(crate) async fn connect_external_servers(
                 // Same second audience as the --mcp loop above, one statement
                 // of the rule per loop. The *resolved command* is what a user
                 // can act on, so record it beside the friendly name.
-                record_failed_server("mcp", &format!("{} ({})", server_cfg.name, server_cfg.command));
+                record_failed_server(
+                    "mcp",
+                    &format!("{} ({})", server_cfg.name, server_cfg.command),
+                );
                 // Same rebuild, same loss, same reset — one statement of the
                 // rule per loop, never two copies that agree today (#842).
                 agent = agent_config.build_agent();
@@ -2873,10 +2889,7 @@ mod tests {
         );
         assert!(one.contains("mcp"), "must carry the kind: {one}");
         assert!(one.contains('1'), "must say how many: {one}");
-        assert!(
-            !one.contains("servers failed"),
-            "singular agreement: {one}"
-        );
+        assert!(!one.contains("servers failed"), "singular agreement: {one}");
         // The actionable half: unavailable, NOT nonexistent.
         assert!(
             one.contains("unavailable"),
@@ -2927,10 +2940,7 @@ mod tests {
 
         // Recover the kept prefix and prove it is whole characters of the
         // original — a straddling char must be dropped whole (#250).
-        let after = note
-            .split("  - mcp: ")
-            .nth(1)
-            .expect("the row is rendered");
+        let after = note.split("  - mcp: ").nth(1).expect("the row is rendered");
         let kept = after
             .split("… [yoyo:")
             .next()

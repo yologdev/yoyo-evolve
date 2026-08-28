@@ -3034,7 +3034,11 @@ mod tests {
         }];
         let out = prepend_external_failure_block_with(note, original.clone());
 
-        assert_eq!(out.len(), 2, "a NEW leading block, nothing spliced: {out:?}");
+        assert_eq!(
+            out.len(),
+            2,
+            "a NEW leading block, nothing spliced: {out:?}"
+        );
         match &out[0] {
             Content::Text { text } => {
                 assert!(text.contains("./specs/petstore.yaml"), "names it: {text}");
