@@ -220,6 +220,12 @@ fn emit_output(
     duration: std::time::Duration,
     num_turns: usize,
 ) -> bool {
+    // Record usage FIRST, before any mode branch, so all three modes reach it
+    // (#848). It used to survive only under `--output-format json`, which is a
+    // flag this repo's own harness does not pass — and the human-facing route,
+    // `print_usage`, is suppressed by quiet mode, which `cli.rs` auto-enables
+    // for every piped run. A file write is the one channel neither can close.
+    prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
     if print_mode {
         print!("{}", response.text);
     } else if json_output {

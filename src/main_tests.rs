@@ -960,3 +960,61 @@ fn test_apply_cli_flags_no_rtk_via_env() {
         std::env::remove_var("YOYO_NO_RTK");
     }
 }
+
+/// `emit_output` must record usage for **every** output mode, not just
+/// `--output-format json`.
+///
+/// This is the shape of the 102-day defect (#848): the token counts and cost
+/// were computed by `build_json_output` and reachable only under a flag this
+/// repo's own harness never passes, while the human-facing route
+/// (`print_usage`) is suppressed by quiet mode — which `cli.rs` auto-enables
+/// whenever stdin and stdout are both non-terminal, i.e. every piped session.
+///
+/// Checked by control flow rather than by three end-to-end runs, and the
+/// reason is a hazard rather than convenience: `audit_log_usage` reads the
+/// process-global `AUDIT_ENABLED`, which `tests/global_state_races.rs` names
+/// as a shared setter. A test that switched it on would race its ~5,000
+/// siblings, and any tool call executing in that window would append to the
+/// **real** `.yoyo/audit.jsonl`. So the emission point is asserted on real
+/// bytes one layer down, in `prompt_budget`'s tempdir tests, and this pins the
+/// one thing those cannot see: that the call sits *above* the mode branch.
+///
+/// Deliberately weak, and stated as such: it proves the call is present and
+/// positioned, never that a given run wrote a line.
+#[test]
+fn emit_output_records_usage_before_branching_on_the_output_mode() {
+    let src = include_str!("main.rs");
+    let start = src
+        .find("fn emit_output(")
+        .expect("emit_output must exist in main.rs");
+    let end = src[start..]
+        .find("\n/// Handle `--prompt")
+        .map(|i| start + i)
+        .expect("emit_output must be followed by run_single_prompt's doc comment");
+    let body = &src[start..end];
+
+    // Needles assembled at runtime so this test cannot match itself.
+    let call = format!("audit_log_{}(", "usage");
+    let call_at = body
+        .find(&call)
+        .unwrap_or_else(|| panic!("emit_output must call {call} — see #848"));
+
+    let branch = format!("if print_{} {{", "mode");
+    let branch_at = body
+        .find(&branch)
+        .expect("emit_output must still branch on print_mode");
+
+    assert!(
+        call_at < branch_at,
+        "the usage record must be written before the output-mode branch, or \
+         print/json/default modes would not all reach it (#848)"
+    );
+
+    // ...and it must not be wrapped in a mode or quiet condition itself.
+    let between = &body[..call_at];
+    let quiet = format!("is_{}()", "quiet");
+    assert!(
+        !between.contains(&quiet),
+        "the usage record must not be gated on quiet mode — that is the defect"
+    );
+}
