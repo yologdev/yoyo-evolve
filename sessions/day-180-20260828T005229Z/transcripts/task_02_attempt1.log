@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two files at the heart of this task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_budget.rs src/m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,260p' src/main.rs ✓ (3ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,200p' src/prompt_budg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit" src/prompt_budge… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\-\-audit\|audit" scrip…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "emit_output(" src/main… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '394,412p' scripts/evolve…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,380p;408,460p' src/m… ✓ (4ms)
+ ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct Usage" ~/.c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,300p' src/prompt_bud… ✓ (3ms)
+ ✓ (12ms)
+  10 tools completed in 36.6s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,325p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GOAL_BASE_DIR" -A12 src… ✓ (3ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.5s (2 ✓)
+
+Now I have everything I need. Let me write the code — starting with prompt_budget.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/prompt_budget… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '74,130p' src/prompt_budg… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (19ms)
+  3 tools completed in 5.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (177 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use.*cost\|pub mod … ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.2s (3 ✓)
+
+Now the emit_output call site:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (4 → 10 lines)
+        num_turns: usize,
+    ) -> bool {
+  +     // Record usage FIRST, before any mode branch, so all three modes reach it
+  +     // (#848). It used to survive only under `--output-format json`, which is a
+  +     // flag this repo's own harness does not pass — and the human-facing route,
+  +     // `print_usage`, is suppressed by quiet mode, which `cli.rs` auto-enables
+  +     // for every piped run. A file write is the one channel neither can close.
+  +     prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
+        if print_mode {
+            print!("{}", response.text);
+ ✓ (15.0s)
+        num_turns: usize,
+    ) -> bool {
+  +     // Record usage FIRST, before any mode branch, so all three modes reach it
+  +     // (#848). It used to survive only under `--output-format json`, which is a
+  +     // flag this repo's own harness does not pass — and the human-facing route,
+  +     // `print_usage`, is suppressed by quiet mode, which `cli.rs` auto-enables
+  +     // for every piped run. A file write is the one channel neither can close.
+  +     prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
+        if print_mode {
+            print!("{}", response.text);
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests — pinned at the emission point (bytes in the file):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|#\[cfg(test… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (251 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (10.2s)
+  3 tools completed in 58.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_bud… ✓ (24.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (24.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 6s (2 ✓)
+
+The global AUDIT_ENABLED races across parallel tests — the exact class tests/global_state_races.rs enumerates. Applying its preferred remedy (pass the value explicitly, not #[serial]):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (139 lines) ✓ (25.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 33 pass. Now the emit_output guard in main.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/mai… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests {" src/main.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/main_tests.rs && sed -… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/m… (61 lines) ✓ (24.6s)
+  4 tools completed in 50.3s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

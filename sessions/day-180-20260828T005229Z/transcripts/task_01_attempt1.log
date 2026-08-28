@@ -1,0 +1,384 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/gasp.rs to understand the session-start/session-end paths.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_start\|task_pla…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/gasp.rs tests/gasp_cli… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,880p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat tests/gasp_cli_run_ordering.… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,730p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionStart\|kind" src… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,145p' src/gasp_cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session-start\|session_… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '236,275p' src/gasp_cli.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,160p' scripts/gasp_sh… ✓ (3ms)
+ ✓ (3ms)
+  10 tools completed in 16.6s (10 ✓)
+
+
+I'll pick up where I left off. Let me check the current state of the working tree first, since I don't know what (if anything) landed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_task\|session_ta… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.7s (2 ✓)
+
+Clean tree — nothing landed yet. Let me settle the one judgment call with evidence, and look at how task_result writes an outcome.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "gasp_session_start" sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,960p' src/gasp.rs ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.3s (2 ✓)
+
+Confirmed — every non-evolve caller passes its own --task label. Now the outcome-recording shape:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1050p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,80p' ~/.cargo/registr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "task.created\|Task {" … ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub async fn update_\|p… ✓ (3ms)
+  5 tools completed in 10.6s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've spent enough on reading. Let me get the one remaining signature and then write code immediately.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '457,482p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1270,1310p' src/gasp.rs … ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.5s (2 ✓)
+
+All signatures in hand, and Task/TaskId/TaskStatus are already imported. Writing the code now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Event\b" -A … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (9 → 37 lines)
+    /// Node id of a planned task: `task_{run_id}_{num}`.
+    fn task_node_id(run_id: &str, num: &str) -> String {
+        format!("task_{run_id}_{num}")
+  + }
+  + 
+  + /// The `num` the session's own node occupies, so its id shares the one id
+  + /// convention [`task_node_id`] states rather than inventing a second.
+  + ///
+  + /// It cannot collide with a planned task: `task_planned` is only ever called
+  + /// with the shim's `--num`, which is a decimal counter (`1`, `2`, …).
+  + const SESSION_TASK_NUM: &str = "session";
+  + 
+  + /// Node id of the session's own task node: `task_{run_id}_session`.
+  + fn session_task_node_id(run_id: &str) -> String {
+  +     task_node_id(run_id, SESSION_TASK_NUM)
+    }
+    
+    /// Label stamped on a session run when the caller names no task.
+  + ///
+  + /// **Known-wrong for non-evolve sessions, and deliberately left that way**
+  ... (17 more lines)
+ ✓ (1m 8s)
+    /// Node id of a planned task: `task_{run_id}_{num}`.
+    fn task_node_id(run_id: &str, num: &str) -> String {
+        format!("task_{run_id}_{num}")
+  + }
+  + 
+  + /// The `num` the session's own node occupies, so its id shares the one id
+  + /// convention [`task_node_id`] states rather than inventing a second.
+  + ///
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 23s (2 ✓)
+
+Now the additive session node in session_start_in:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (9 → 29 lines)
+            .map(str::to_string)
+            .unwrap_or_else(|| default_session_task_label(day));
+        state
+  -         .record_run_started(actor.clone(), RunId::new(run_id), task)
+  +         .record_run_started(actor.clone(), RunId::new(run_id), task.clone())
+  +         .await?;
+  +     // #847: give the session itself a node, so a run is never the only
+  +     // evidence that it happened. Measured on the live graph: 394 of 691 runs
+  +     // (57%) had no node but the run — every social, skill-evolve and dream
+  +     // session, because only `evolve.sh` calls `task`. This is **additive**:
+  +     // `record_run_started` above is untouched, so the run tier is unchanged
+  +     // and the graph gains a node without losing one.
+  +     //
+  +     // Recorded *after* `run.started` on purpose — the node belongs inside the
+  +     // run, exactly as a planned task does.
+  +     state
+  +         .record_task(Task {
+  +             id: TaskId::new(session_task_node_id(run_id)),
+  +             title: task,
+  +             summary: "the session itself — the run's own node, so a session with no planned tasks still has a home in the graph".to_string(),
+  ... (8 more lines)
+ ✓ (1m 8s)
+            .map(str::to_string)
+            .unwrap_or_else(|| default_session_task_label(day));
+        state
+  -         .record_run_started(actor.clone(), RunId::new(run_id), task)
+  +         .record_run_started(actor.clone(), RunId::new(run_id), task.clone())
+  +         .await?;
+  +     // #847: give the session itself a node, so a run is never the only
+  +     // evidence that it happened. Measured on the live graph: 394 of 691 runs
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two edits landed. Now the session_end half — and it must go before record_run_finished so run.finished stays last.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (5 → 23 lines)
+        let goal = session_goal(goal, session.goal()).to_string();
+        let outcome = session_outcome(outcome);
+  +     // #847: close the session's own node before closing the run. Ordering is
+  +     // load-bearing — `run.finished` must remain the *last* domain event, which
+  +     // `tests/gasp_cli_run_ordering.rs` pins, so this cannot move below it. It
+  +     // must also precede `commit_run`, or the boundary commit would not carry it.
+  +     //
+  +     // The status says the session *ended*; the outcome string says *how*,
+  +     // verbatim, in the reason. `session_outcome` accepts any string, so mapping
+  +     // it onto the `TaskStatus` enum would invent a verdict taxonomy the value
+  +     // does not have — the same free-string treatment `record_run_finished` gives
+  +     // it one line down.
+  +     session
+  +         .state()
+  +         .update_task_status(
+  +             TaskId::new(session_task_node_id(run_id)),
+  +             TaskStatus::Done,
+  +             Some(outcome.to_string()),
+  +         )
+  +         .await?;
+  ... (3 more lines)
+ ✓ (1m 9s)
+        let goal = session_goal(goal, session.goal()).to_string();
+        let outcome = session_outcome(outcome);
+  +     // #847: close the session's own node before closing the run. Ordering is
+  +     // load-bearing — `run.finished` must remain the *last* domain event, which
+  +     // `tests/gasp_cli_run_ordering.rs` pins, so this cannot move below it. It
+  +     // must also precede `commit_run`, or the boundary commit would not carry it.
+  +     //
+  +     // The status says the session *ended*; the outcome string says *how*,
+  ... (13 more lines)
+
+Now the behavioural test — extending the existing four-process harness:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (18 → 45 lines)
+    /// The `kind` of every domain event in `state/events.jsonl`, in file order.
+    fn domain_event_kinds(state_dir: &Path) -> Vec<String> {
+  +     domain_events(state_dir)
+  +         .into_iter()
+  +         .map(|(kind, _)| kind)
+  +         .collect()
+  + }
+  + 
+  + /// Every domain event as `(kind, payload)`, in file order. The payload half is
+  + /// what lets an assertion name *which* node was created rather than only that
+  + /// some `task.created` landed.
+  + fn domain_events(state_dir: &Path) -> Vec<(String, serde_json::Value)> {
+        let path = state_dir.join("state").join("events.jsonl");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("no event log at {}: {e}", path.display()));
+  ···
+            .map(|l| {
+                let v: serde_json::Value =
+                    serde_json::from_str(l).unwrap_or_else(|e| panic!("corrupt event line {l:?}: {e}"));
+  -             v.get("kind")
+  ... (26 more lines)
+ ✓ (1m 8s)
+    /// The `kind` of every domain event in `state/events.jsonl`, in file order.
+    fn domain_event_kinds(state_dir: &Path) -> Vec<String> {
+  +     domain_events(state_dir)
+  +         .into_iter()
+  +         .map(|(kind, _)| kind)
+  +         .collect()
+  + }
+  + 
+  ... (13 more lines)
+
+Now the assertions — the session node plus the unchanged-run-tier regression guard:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (9 → 58 lines)
+            stdout.contains("boundary commit"),
+            "session-end must report a boundary commit, got stdout {stdout:?} / stderr {:?}",
+            String::from_utf8_lossy(&end.stderr)
+  +     );
+  + 
+  +     // #847: the session gets its own node, so a run is never the only evidence
+  +     // that a session happened. Every run-tier assertion above is the regression
+  +     // guard for the "additive" promise — this must ADD a node and change
+  +     // nothing about `run.started` / `run.finished`.
+  +     let task_ids = task_created_ids(dir);
+  +     let session_node = format!("task_{run_id}_session");
+  +     assert!(
+  +         task_ids.contains(&session_node),
+  +         "no `{session_node}` node — a session with no planned tasks would have \
+  +          nothing in the graph but its run: {task_ids:?}"
+  +     );
+  + 
+  +     // The near-miss guard: the session node is an ADDITION, not a rename of the
+  +     // planned task's node. Both must be present, or this "fix" would have moved
+  +     // a node rather than added one.
+  ... (34 more lines)
+ ✓ (1m 8s)
+            stdout.contains("boundary commit"),
+            "session-end must report a boundary commit, got stdout {stdout:?} / stderr {:?}",
+            String::from_utf8_lossy(&end.stderr)
+  +     );
+  + 
+  +     // #847: the session gets its own node, so a run is never the only evidence
+  +     // that a session happened. Every run-tier assertion above is the regression
+  +     // guard for the "additive" promise — this must ADD a node and change
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build --featu… ✓ (11.8s)
+  2 tools completed in 1m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Featured build is green. Let me fix a clippy-bait assertion I wrote, then run the test.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (10 → 8 lines)
+  -     let status_changed = kinds.iter().position(|k| k == "task.status_changed");
+  -     assert_eq!(
+  -         status_changed.is_some(),
+  -         true,
+  -         "session-end must close the session node: {kinds:?}"
+  -     );
+  +     let status_changed = kinds
+  +         .iter()
+  +         .position(|k| k == "task.status_changed")
+  +         .unwrap_or_else(|| panic!("session-end must close the session node: {kinds:?}"));
+        assert!(
+  -         status_changed.unwrap() < finished,
+  +         status_changed < finished,
+            "the session node must be closed before the run is: {kinds:?}"
+        );
+ ✓ (1m 9s)
+  -     let status_changed = kinds.iter().position(|k| k == "task.status_changed");
+  -     assert_eq!(
+  -         status_changed.is_some(),
+  -         true,
+  -         "session-end must close the session node: {kinds:?}"
+  -     );
+  +     let status_changed = kinds
+  +         .iter()
+  ... (7 more lines)
+
+Adding the pure unit test for the new id helper, beside its sibling:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (2 → 16 lines)
+  +     #[test]
+  +     fn session_task_node_id_reuses_the_one_id_convention() {
+  +         // Not a second convention: it is `task_node_id` with a reserved `num`,
+  +         // so the session node and a planned task cannot drift apart in shape.
+  +         assert_eq!(session_task_node_id("run_42"), "task_run_42_session");
+  +         assert_eq!(
+  +             session_task_node_id("run_42"),
+  +             task_node_id("run_42", SESSION_TASK_NUM)
+  +         );
+  +         // The near-miss guard: it must not collide with a planned task's node.
+  +         // `task_planned` is only ever called with the shim's decimal `--num`.
+  +         assert_ne!(session_task_node_id("run_42"), task_node_id("run_42", "1"));
+  +     }
+  + 
+        #[test]
+        fn session_goal_prefers_request_then_recorder_then_default() {
+ ✓ (1m 9s)
+  +     #[test]
+  +     fn session_task_node_id_reuses_the_one_id_convention() {
+  +         // Not a second convention: it is `task_node_id` with a reserved `num`,
+  +         // so the session node and a planned task cannot drift apart in shape.
+  +         assert_eq!(session_task_node_id("run_42"), "task_run_42_session");
+  +         assert_eq!(
+  +             session_task_node_id("run_42"),
+  +             task_node_id("run_42", SESSION_TASK_NUM)
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --featur… ✓ (11.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 27s (2 ✓)
+
+Test passes. Now the positive control, run rather than assumed — serially, never in one parallel block (two file-mutating controls raced once before).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.… (10 lines) ✓ (10.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired at line 213. Let me confirm which assertion that is — the run-tier ones sit above it, so reaching 213 proves they stayed green.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '208,218p' tests/gasp_cli… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 213 is session-end failed — not the assertion I designed. That's a real finding: update_task_status on a missing node appears to kill session-end, which would lose the boundary commit. Let me confirm the mechanism.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (10.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: `node not found — session_end` propagated it, so **no boundary commit and the whole session's state is lost**. That is the #831 failure mode and it is not additive. Fixing it to fail soft:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (21 → 37 lines)
+        // verbatim, in the reason. `session_outcome` accepts any string, so mapping
+        // it onto the `TaskStatus` enum would invent a verdict taxonomy the value
+        // does not have — the same free-string treatment `record_run_finished` gives
+  -     // it one line down.
+  -     session
+  +     // it a few lines down.
+  +     //
+  +     // **Fail-soft, and this is measured rather than defensive**: `update_task_status`
+  +     // hard-errors with `node not found` when the node is absent, and propagating
+  +     // that with `?` would abort `session_end` *before* `commit_run` — no boundary
+  +     // commit, the whole session's state lost, which is the #831 failure mode
+  +     // exactly. The node is absent whenever `session-start` ran on a build older
+  +     // than this one, so an in-flight session upgraded mid-flight would lose
+  +     // everything. This task is additive: the run tier must close whether or not
+  +     // the node exists. The failure is *named* on stderr rather than swallowed —
+  +     // a silent degradation is the bug.
+  +     if let Err(e) = session
+            .state()
+            .update_task_status(
+                TaskId::new(session_task_node_id(run_id)),
+  ... (14 more lines)
+ ✓ (1m 9s)
+        // verbatim, in the reason. `session_outcome` accepts any string, so mapping
+        // it onto the `TaskStatus` enum would invent a verdict taxonomy the value
+        // does not have — the same free-string treatment `record_run_finished` gives
+  -     // it one line down.
+  -     session
+  +     // it a few lines down.
+  +     //
+  +     // **Fail-soft, and this is measured rather than defensive**: `update_task_status`
+  ... (13 more lines)
+
+Now re-run the control — the session-node assertion should fire while the run tier stays green:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt &&… (7 lines) ✓ (11.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "847" CLAUDE.md | cut -c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 540 cargo test --feature… ✓ (4ms)
+ ✓ (10.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "session_start[^.]\{0,18… ✓ (8ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (1m 8s)
+  8 tools completed in 2m 8s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== file ===" && cat sessi… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evaluation complete. Verdict written to session_plan/eval_task_1.md — format verified (6 lines, no leftover placeholders), and git status confirms I changed no code.
+
+Verdict: FAIL — on doc_sync only.
+
+What I actually checked:
+
+• **The code half is correct and I confirmed it runs.* `session_start_in` additively records a session node after* the untouched record_run_started; the id goes through session_task_node_id → task_node_id(run_id, "session") rather than a second convention; session_end closes it to Done before record_run_finished and before commit_run, fail-soft with a named stderr line so a run started on an older build still closes. Because this module sits behind the default-off gasp feature, the harness's "Tests: PASS" is a green over a denominator that excludes the new test — so I ran `cargo test --features gasp --test gasp_cli_run_ordering` myself: 1 passed, i.e. the four-real-process assertion genuinely fires.
+• The label judgment call was taken correctly, with a reason that checks out rather than an assertion: GaspCommand::SessionStart carries no kind, so naming it would mean a parsed field with no producer. Left kind-blind with a comment, sidecar-parity test intact — exactly the branch the task pre-authorised.
+• forgotten_touchpoints is clean. Every new definition has a consumer in the same diff (SESSION_TASK_NUM → session_task_node_id + metadata; session_task_node_id → both call sites + unit test; domain_events → `domain_event_kinds *and* the new task_created_ids), and task became task.clone()` at the point it started being used twice.
+
+The single gap: `git show --name-only HEAD lists only src/gasp.rs and tests/gasp_cli_run_ordering.rs`, working tree clean. **CLAUDE.md was named in the task's `Files:` line, given its own `## Docs section with specific required content, and not touched at all.** Behaviour did change — every session now emits an extra task.created plus a task.status_changed` — so `N/A` was not available on that line per the rubric, and a Checked FAIL forces the overall verdict.
+
+I want to be plain that this is a docs gap on otherwise good work, not a broken feature: the fix is one paragraph in the src/gasp.rs bullet saying every session kind now gets a task node, that the run tier is untouched, and that the label is deliberately kind-blind. That bullet is re-injected as authoritative context every session and has already carried two stale status claims about this exact module — which is the reason the task called it out and the reason I held the line rather than waving it through.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

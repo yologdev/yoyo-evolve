@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the current state — what landed in code, and what CLAUDE.md actually says.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "848\|audit_log_usage\|u… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+The evaluator's finding is confirmed: code landed, CLAUDE.md untouched. Let me read the actual implementation so the doc is grounded in what the code does.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/prompt_budget…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn usage_audit_record\|… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,270p' src/prompt_bud…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,240p' src/main.rs ✓ (5ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 5.9s (4 ✓)
+
+Now let me verify the estimate_cost contract (the null-vs-0.0 claim) and read the tests, so the doc states what's true.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn estimate_cost" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*usage\|fn .*audit"… ✓ (4ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+estimate_cost returns Option<f64> — so null for unpriced models is confirmed, not assumed. Now the three-mode test in main_tests.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/main_tests.… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-orienting: the code half is verified complete and green. The only remaining work is the docs the evaluator flagged. Let me read the test bodies and the exact CLAUDE.md bullets I need to edit, so every sentence I write is grounded.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn usage_writing_path_n…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn usage_record_round_t… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.1s (2 ✓)
+
+Now the exact CLAUDE.md bullets I must edit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_budget.rs\` —" C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn audit_disabled_write… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.6s (2 ✓)
+
+I have everything I need, grounded in the actual code. Writing the prompt_budget.rs bullet with the four mandated statements:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`)
+  + - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`). Day 180 (#848): `.yoyo/audit.jsonl` carries a **second line kind** — one **per-run usage record** beside the existing per-tool-call entries. **What is written:** `usage_audit_record(usage, model, duration, num_turns, is_error)` (pure, so the emission point is testable) builds `ts`, `type: "usage"`, `model`, the four token counts (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cach… [yoyo: 5262 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 22s)
+  - - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`)
+  + - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`). Day 180 (#848): `.yoyo/audit.jsonl` carries a **second line kind** — one **per-run usage record** beside the existing per-tool-call entries. **What is written:** `usage_audit_record(usage, model, duration, num_turns, is_error)` (pure, so the emission point is testable) builds `ts`, `type: "usage"`, `model`, the four token counts (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cach… [yoyo: 5262 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the main.rs bullet — emit_output's signature is unchanged, but its ordering contract is new and test-pinned, so it needs a sentence:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "The loop body is async … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - it guards against silent deletion and nothing more. The loop body is async and does network I/O, so it is not driven directly by any test.
+  + it guards against silent deletion and nothing more. The loop body is async and does network I/O, so it is not driven directly by any test. Day 180 (#848): `emit_output`'s **signature is unchanged** — it already received `usage`, `model`, `is_error`, `duration`, `num_turns` and `session_changes` — but it gained an **ordering contract**, and the ordering is the whole point: `prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error)` is called on the **first line of the body, … [yoyo: 920 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 22s)
+  - it guards against silent deletion and nothing more. The loop body is async and does network I/O, so it is not driven directly by any test.
+  + it guards against silent deletion and nothing more. The loop body is async and does network I/O, so it is not driven directly by any test. Day 180 (#848): `emit_output`'s **signature is unchanged** — it already received `usage`, `model`, `is_error`, `duration`, `num_turns` and `session_changes` — but it gained an **ordering contract**, and the ordering is the whole point: `prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error)` is called on the **first line of the body, … [yoyo: 920 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 31s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits are in. Let me verify against exactly what the evaluator grepped for, then run the full check suite.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in '848' 'audit_log_usage'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== 4 M… ✓ (13ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+All four mandated statements are present, and every identifier the evaluator grepped for (previously 0) now appears. Running the full check suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && echo "FMT_OK" && ca… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (1m 57s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 18s (2 ✓)
+
+All green — 5290 passed, 0 failed. Let me confirm the #848 tests specifically, and that cargo fmt didn't touch anything unexpected:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test usage_ 2>&1 | grep -E…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (5ms)
+ ✓ (204ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+cargo fmt touched prompt_budget.rs — let me check that's benign formatting, not a behaviour change:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt_budget.rs ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The cargo fmt diff is pure line-wrapping — no behaviour change in any hunk. Note this means the previous commit would have **failed CI's `cargo fmt --check`*, so running fmt was necessary rather than cosmetic. The full 5290-test suite already ran after* fmt, so it's verified on the formatted code. Final confirmation and commit:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (21 lines) ✓ (31ms)
+  2 tools completed in 10.0s (2 ✓)
+
+Done. The evaluator's single FAIL (doc_sync) is closed.
+
+## What was wrong
+
+The code half was correct and green; CLAUDE.md was byte-unchanged. The evaluator's greps for 848, audit_log_usage, usage_audit_record and type": "usage" all returned 0, and line 221's bullet was still the one-line stub.
+
+## What I changed
+
+`prompt_budget.rs` bullet — all four mandated statements, each verified against the code rather than the task description:
+
+1. What is written — usage_audit_record's ten fields, the pure-builder/audit_log_usage_when/audit_log_usage split (the wrapper being the only global read).
+2. File write specifically so quiet cannot suppress it — with the measured defect (frozen at $1,077.59 for 102 days; *a frozen number is not a zero*, which is why no non-zero check saw it), and why the sink reaches the dashboard with no harness change to the protected evolve.sh.
+3. `"type": "usage"` distinguishes it; a missing `type` still means a tool call — plus the single shared write_audit_line writer, since two writers on one file is how formats drift.
+4. Records usage; does NOT yet check that usage is being recorded — named as the #848 follow-up, explicitly not started.
+
+`main.rs` bullet — emit_output's signature is unchanged, but it gained an ordering contract (call above the if print_mode branch), which is the actual mechanism making all three modes reach it.
+
+## Two things I verified rather than assumed
+
+• `cost_usd` is `null`, not `0.0`, for unpriced models — confirmed by reading estimate_cost -> Option<f64> before writing it down.
+• *The three-mode and quiet properties are pinned by source-level* guards, not runtime drives.** `emit_output` prints to stdout and isn't unit-drivable, so the guards prove the call is *positioned and ungated*, never that a run wrote a line. I documented that limit plainly instead of letting the bullet imply stronger coverage than exists.
+
+## One thing found while working
+
+cargo fmt modified src/prompt_budget.rs — the prior commit left it unformatted, which would have failed CI's `cargo fmt --check`. Pure line-wrapping, no behaviour change; the full suite ran after fmt.
+
+Verification: fmt --check clean, clippy -D warnings clean, build clean, 5290 passed / 0 failed (39 matching usage_).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,260p' src/main.rs ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (6ms)
+ ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 25.5s (4 ✓)
+
+The code implementation looks solid. Let me verify the docs requirement, which the task named explicitly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_budget.rs\` — " …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "audit_log_usage\|usage… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 21s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 42s (3 ✓)
+
+Verdict: FAIL (written to session_plan/eval_task_2.md)
+
+The implementation work is genuinely good — I'd have passed it on code alone:
+
+• audit_log_usage is called at `src/main.rs:228, **above** the if print_mode` branch, so all three modes reach it
+• Both line kinds go through one writer (write_audit_line), so path resolution and append discipline can't drift
+• Tool-call lines deliberately carry no type key, with a comment saying why, and a test pinning it
+• cost_usd is null rather than 0.0 for unpriced models — absence gets its own value
+• Tests assert on real bytes in a tempdir, via a thread-local base-dir seam (not a CWD move, per #780), and derive the expected cost from estimate_cost rather than hardcoding it
+• The two substitutions for the task's literal test asks (source-level position check instead of three end-to-end runs; source-level quiet check instead of a quiet-enabled run) are honestly disclosed as deliberately weak with the real reason stated — AUDIT_ENABLED and QUIET are process-globals a test would poison. That's defensible, not a dodge.
+
+What fails it: **CLAUDE.md was named in the task's `Files:` list and given a dedicated `## Docs` section, and got zero changes.** Commit 8a633cff touches only the three src/ files, the working tree is clean, line 221's prompt_budget.rs bullet is still the untouched one-liner, and there are no occurrences of 848, audit_log_usage, usage_audit_record or the "type": "usage" convention anywhere in the doc.
+
+That's not a style nit in this repo — CLAUDE.md is re-injected as authoritative context every session, and the missing clause the task specifically called out ("this records usage and does not yet check that it is being recorded") is exactly the named-gap-vs-reads-as-complete distinction the task said was the point. A future session reading the prompt_budget.rs bullet would have no idea the usage record exists.
+
+The remedy is small: one paragraph on the prompt_budget.rs bullet.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

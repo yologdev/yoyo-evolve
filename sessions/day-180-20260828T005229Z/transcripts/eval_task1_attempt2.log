@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,790p src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 860,940p src/gasp.rs ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/gasp.rs | grep … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "update_task_status" sr… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 450,480p ~/.cargo/registr… ✓ (3ms)
+  5 tools completed in 14.5s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo check --featur… ✓ (14.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Featured build compiles clean — that was the one real risk, since plain cargo test compiles this module into nothing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 21s)
+
+Verdict: PASS
+
+The diff does what #847 asked, and the "additive" promise holds under inspection:
+
+• `session_start_in` records a session node after record_run_started (unchanged apart from a .clone() so the label can be reused as the node title), using `session_task_node_id(run_id) = task_node_id(run_id, "session")` — the existing id convention, not a second one. The unit test pins both the shape and that it can't collide with `task_node_id(run_id, "1")`.
+• `session_end` closes it with update_task_status(..., Done, Some(outcome)) placed above record_run_finished, so run.finished stays the last domain event and the boundary commit carries the close. The fail-soft if let Err is correct rather than lazy: propagating would abort before commit_run and reproduce #831's lost-session failure for any session upgraded mid-flight, and the failure is named on stderr rather than swallowed.
+• The label judgment call went the way the task pre-decided: GaspCommand::SessionStart genuinely carries no kind, so plumbing one would add a field with no producer. Label left unchanged, two-reason comment written at the function, sidecar-parity test untouched.
+• Verification extends the existing four-real-process harness rather than duplicating it, and every pre-existing run-tier assertion survives as the regression guard.
+
+One thing I confirmed rather than assumed, since it's the gap plain cargo test structurally cannot see: cargo check --features gasp --tests exits 0. update_task_status's signature matches yoagent-state-0.5.0 exactly and emits task.status_changed, the kind the new assertion looks for.
+
+Minor, not a fail: the session_created index is taken as the first task.created rather than the session node's specific position — both land inside the run, so the assertion is true but slightly weaker than it reads.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
