@@ -1,0 +1,381 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in scripts/extract_trajectory.py.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1300,1470p scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 115,150p scripts/extract_… ✓ (7ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1450,1490p scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "usage" scripts/extract_… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1298,1322p scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1755,1770p scripts/extrac… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%cI | %s' 8…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1298..1323 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:3594..3719 ✓ (1ms)
+  9 tools completed in 19.1s (9 ✓)
+
+
+I'll pick up where I left off: I've read all the relevant code and confirmed the boundary commit. Now I'll make the actual edits.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Boundary confirmed. Now the edits — constants first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (7 → 35 lines)
+  - # Three states, and ABSENT / UNREADABLE must never fold into each other:
+  + # FOUR states, and no two of them may fold into each other:
+  + #   RECORDED       the producer wrote a usage line here
+  + #   ABSENT         the session ran on a binary that COULD log usage, and did not
+  + #   UNREADABLE     *could not check* — the file would not open or would not parse
+  + #   NOT_MEASURABLE the session predates the producer, so it *could not have*
+    # "the session ran and logged no usage" is an error, while "I could not read
+    # the file" is *could not check* — collapsing them rebuilds the frozen-number
+    # defect one layer down, which is the exact failure this detector exists for.
+  + #
+  + # NOT_MEASURABLE is the Day-181 correction. Shipped with three states, this
+  + # detector's first live render said "8 session(s) ran and logged NO usage line"
+  + # about eight sessions that predated the producer entirely — a false alarm in
+  + # the block where priority 0 is "fix CI failures, this overrides everything
+  + # else". Same class as the CI green-since probe: **"was red" must not read as
+  + # "is red"**. It also self-heals in ~10 sessions as the window slides, which is
+  + # worse rather than better — an alarm that decays on its own trains me to
+  + # discount the line permanently, right before a real freeze looks identical.
+    USAGE_RECORDED = "recorded"
+    USAGE_ABSENT = "absent"
+  ... (16 more lines)
+ ✓ (1m 9s)
+  - # Three states, and ABSENT / UNREADABLE must never fold into each other:
+  + # FOUR states, and no two of them may fold into each other:
+  + #   RECORDED       the producer wrote a usage line here
+  + #   ABSENT         the session ran on a binary that COULD log usage, and did not
+  + #   UNREADABLE     *could not check* — the file would not open or would not parse
+  + #   NOT_MEASURABLE the session predates the producer, so it *could not have*
+    # "the session ran and logged no usage" is an error, while "I could not read
+    # the file" is *could not check* — collapsing them rebuilds the frozen-number
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure boundary functions, inserted after classify_session_usage:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (8 → 9 lines)
+    @dataclass
+    class UsageCoverage:
+  -     """Four numbers that are never summed into each other."""
+  +     """Five numbers that are never summed into each other."""
+    
+        recorded: int = 0
+        absent: int = 0
+        unreadable: int = 0
+  +     not_measurable: int = 0
+        examined: int = 0
+ ✓ (1m 9s)
+    @dataclass
+    class UsageCoverage:
+  -     """Four numbers that are never summed into each other."""
+  +     """Five numbers that are never summed into each other."""
+    
+        recorded: int = 0
+        absent: int = 0
+        unreadable: int = 0
+  +     not_measurable: int = 0
+        examined: int = 0
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (1 → 65 lines)
+  + COMPACT_STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
+  + 
+  + 
+  + def compact_utc_stamp(s) -> "str | None":
+  +     """Pure: normalise a UTC timestamp to the compact form YYYYMMDDTHHMMSSZ.
+  + 
+  +     ONE statement of "what instant is this string", so nothing anywhere
+  +     re-derives it. Accepts both shapes that actually occur here: the compact
+  +     session-directory stamp (`20260828T020932Z`, SESSION_DIR_RE group 2) and
+  +     the ISO-8601 form git prints (`2026-08-28T00:26:33Z`).
+  + 
+  +     Returns None for anything else — a malformed stamp must stay *unknown*,
+  +     never be coerced into a comparable value. Two normalised stamps compare
+  +     correctly with plain `<` because the compact Zulu form is fixed-width and
+  +     big-endian; no datetime parsing, so nothing here can raise.
+  +     """
+  +     if not isinstance(s, str):
+  +         return None
+  +     t = s.strip().replace("-", "").replace(":", "")
+  +     return t if COMPACT_STAMP_RE.match(t) else None
+  ... (45 more lines)
+ ✗ (0ms)
+    │ old_text matches 3 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py. Include more surrounding context to make the match unique.
+  2 tools completed in 1m 21s (1 ✓, 1 ✗)
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (3 → 65 lines)
+  + COMPACT_STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
+  + 
+  + 
+  + def compact_utc_stamp(s):
+  +     """Pure: normalise a UTC timestamp to the compact form YYYYMMDDTHHMMSSZ.
+  + 
+  +     ONE statement of "what instant is this string", so nothing anywhere
+  +     re-derives it. Accepts both shapes that actually occur here: the compact
+  +     session-directory stamp (`20260828T020932Z`, SESSION_DIR_RE group 2) and
+  +     the ISO-8601 form git prints (`2026-08-28T00:26:33Z`).
+  + 
+  +     Returns None for anything else — a malformed stamp must stay *unknown*,
+  +     never be coerced into a comparable value. Two normalised stamps compare
+  +     correctly with plain `<` because the compact Zulu form is fixed-width and
+  +     big-endian; no datetime parsing, so nothing here can raise.
+  +     """
+  +     if not isinstance(s, str):
+  +         return None
+  +     t = s.strip().replace("-", "").replace(":", "")
+  +     return t if COMPACT_STAMP_RE.match(t) else None
+  ... (45 more lines)
+ ✓ (1m 10s)
+  + COMPACT_STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
+  + 
+  + 
+  + def compact_utc_stamp(s):
+  +     """Pure: normalise a UTC timestamp to the compact form YYYYMMDDTHHMMSSZ.
+  + 
+  +     ONE statement of "what instant is this string", so nothing anywhere
+  +     re-derives it. Accepts both shapes that actually occur here: the compact
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fold, then the collector wiring:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (10 → 12 lines)
+                cov.recorded += 1
+            elif v == USAGE_ABSENT:
+                cov.absent += 1
+  +         elif v == USAGE_NOT_MEASURABLE:
+  +             cov.not_measurable += 1
+            else:
+                cov.unreadable += 1
+        return cov
+ ✓ (1m 10s)
+                cov.recorded += 1
+            elif v == USAGE_ABSENT:
+                cov.absent += 1
+  +         elif v == USAGE_NOT_MEASURABLE:
+  +             cov.not_measurable += 1
+            else:
+                cov.unreadable += 1
+        return cov
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (4 → 6 lines)
+        `examined` counts every session we looked at, including the unreadable
+  -     ones — a shrinking denominator inside my own meter is the defect this
+  -     whole family of checks exists to prevent.
+  +     and the not-measurable ones — a shrinking denominator inside my own meter
+  +     is the defect this whole family of checks exists to prevent. In
+  +     particular `not_measurable` is NEVER summed into `absent`: a session that
+  +     predates the producer did not fail to log, it could not have logged.
+        """
+ ✓ (1m 9s)
+        `examined` counts every session we looked at, including the unreadable
+  -     ones — a shrinking denominator inside my own meter is the defect this
+  -     whole family of checks exists to prevent.
+  +     and the not-measurable ones — a shrinking denominator inside my own meter
+  +     is the defect this whole family of checks exists to prevent. In
+  +     particular `not_measurable` is NEVER summed into `absent`: a session that
+  +     predates the producer did not fail to log, it could not have logged.
+        """
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (6 → 14 lines)
+  -             verdicts.append(classify_session_usage(_bounded()))
+  +             verdicts.append(
+  +                 apply_usage_boundary(
+  +                     classify_session_usage(_bounded()), session_dir_stamp(child.name)
+  +                 )
+  +             )
+            except OSError as e:
+                warn(f"skipped {audit}: {e}")
+                # Could not open it at all — that is *could not check*, and it is
+  -             # counted rather than dropped.
+  -             verdicts.append(USAGE_UNREADABLE)
+  +             # counted rather than dropped. Routed through the same boundary
+  +             # call so the rule has ONE statement; it is a no-op here by
+  +             # `apply_usage_boundary`'s rule 1 (only ABSENT is ever demoted).
+  +             verdicts.append(
+  +                 apply_usage_boundary(USAGE_UNREADABLE, session_dir_stamp(child.name))
+  +             )
+ ✓ (1m 11s)
+  -             verdicts.append(classify_session_usage(_bounded()))
+  +             verdicts.append(
+  +                 apply_usage_boundary(
+  +                     classify_session_usage(_bounded()), session_dir_stamp(child.name)
+  +                 )
+  +             )
+            except OSError as e:
+                warn(f"skipped {audit}: {e}")
+  ... (9 more lines)
+  3 tools completed in 3m 40s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_usage_covera… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1535..1597 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (46 → 79 lines)
+  -     Anti-vacuous: `examined == 0` renders the could-not-check line, NEVER a
+  -     healthy "0 of 0". A detector that reports success on an empty scan is the
+  -     "cannot fail loudly" defect wearing the opposite sign, and it is quieter
+  -     than the bug it was built for.
+  +     Anti-vacuous, in BOTH denominators: `examined == 0` renders the
+  +     could-not-check line, NEVER a healthy "0 of 0" — and so does a window
+  +     whose sessions are ALL not-measurable, because "0 of 0 measurable
+  +     sessions" would reintroduce that exact defect one denominator down. A
+  +     detector that reports success on an empty scan is the "cannot fail
+  +     loudly" defect wearing the opposite sign, and it is quieter than the bug
+  +     it was built for.
+  + 
+  +     `not_measurable` is reported as its OWN clause and is never summed into
+  +     `absent`, and it leaves the denominator: coverage is k of the sessions
+  +     that *could* have logged. A partially-measurable window is still real
+  +     data, so a non-zero `not_measurable` is not a refusal; a wholly
+  +     unmeasurable one is.
+    
+        Held to at most 3 lines: this renders before the epistemic block, which
+        absorbs all truncation pressure and has been cut away once already.
+  ... (50 more lines)
+ ✓ (1m 9s)
+  -     Anti-vacuous: `examined == 0` renders the could-not-check line, NEVER a
+  -     healthy "0 of 0". A detector that reports success on an empty scan is the
+  -     "cannot fail loudly" defect wearing the opposite sign, and it is quieter
+  -     than the bug it was built for.
+  +     Anti-vacuous, in BOTH denominators: `examined == 0` renders the
+  +     could-not-check line, NEVER a healthy "0 of 0" — and so does a window
+  +     whose sessions are ALL not-measurable, because "0 of 0 measurable
+  +     sessions" would reintroduce that exact defect one denominator down. A
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 32s (3 ✓)
+
+Now the usage_unknown call site:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "usage_unknown" scripts/… ✓ (3ms)
+
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py:1968..1983 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (9 → 18 lines)
+        # honest but is not trajectory DATA, so it must not suppress the global
+        # "(no trajectory data yet)" state below. `examined == 0` is one of those
+        # could-not-check states, never a healthy 0-of-0.
+  +     #
+  +     # Day 181: a NON-ZERO `not_measurable` is deliberately NOT one of them. A
+  +     # partially-measurable window still carries real coverage data about the
+  +     # sessions that could have logged, so it stays data. A WHOLLY
+  +     # unmeasurable window (every session predates the producer) is a refusal
+  +     # and is counted as one — same anti-vacuous invariant as `examined == 0`,
+  +     # applied to the second denominator rather than a new policy.
+        s = render_usage_coverage(usage_cov, audit_dir_state)
+        usage_unknown = bool(s) and (
+  -         audit_dir_state != AUDIT_DIR_OK or usage_cov.examined == 0
+  +         audit_dir_state != AUDIT_DIR_OK
+  +         or usage_cov.examined == 0
+  +         or usage_cov.examined - usage_cov.not_measurable <= 0
+        )
+ ✓ (1m 9s)
+        # honest but is not trajectory DATA, so it must not suppress the global
+        # "(no trajectory data yet)" state below. `examined == 0` is one of those
+        # could-not-check states, never a healthy 0-of-0.
+  +     #
+  +     # Day 181: a NON-ZERO `not_measurable` is deliberately NOT one of them. A
+  +     # partially-measurable window still carries real coverage data about the
+  +     # sessions that could have logged, so it stays data. A WHOLLY
+  +     # unmeasurable window (every session predates the producer) is a refusal
+  ... (9 more lines)
+  2 tools completed in 1m 18s (2 ✓)
+
+Now the self-tests. Let me add them after the existing usage-coverage block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/extract_trajectory.py (10 → 163 lines)
+            "an unusable audit dir says outright it is not 'no records missing'",
+            "NOT 'no usage records missing'"
+            in render_usage_coverage(UsageCoverage(), AUDIT_DIR_UNUSABLE),
+  +     )
+  + 
+  +     # --- The #848 producer boundary (Day 181) -----------------------------
+  +     # A session that PREDATES the producer did not fail to log; it could not
+  +     # have. Shipped without this, the detector's first live render alarmed
+  +     # about eight such sessions.
+  +     before = "20260827T221700Z"  # day-180, pre-producer
+  +     after = "20260828T020932Z"  # day-181, post-producer
+  +     at_boundary = "20260828T002633Z"  # exactly 8a633cff's commit instant
+  + 
+  +     assert_eq(
+  +         "an ABSENT session predating the producer is NOT_MEASURABLE, not absent",
+  +         apply_usage_boundary(USAGE_ABSENT, before),
+  +         USAGE_NOT_MEASURABLE,
+  +     )
+  +     # Near-miss guard: the side that must NOT fire.
+  +     assert_eq(
+  ... (137 more lines)
+ ✓ (1m 9s)
+            "an unusable audit dir says outright it is not 'no records missing'",
+            "NOT 'no usage records missing'"
+            in render_usage_coverage(UsageCoverage(), AUDIT_DIR_UNUSABLE),
+  +     )
+  + 
+  +     # --- The #848 producer boundary (Day 181) -----------------------------
+  +     # A session that PREDATES the producer did not fail to log; it could not
+  +     # have. Shipped without this, the detector's first live render alarmed
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (70ms)
+  2 tools completed in 1m 12s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ALL PASSED. Now the positive control — neuter apply_usage_boundary and confirm the new tests go red:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (17 lines) ✓ (164ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fires — 2 failures, exit 1, and only the two demotion assertions moved (the pass-through rules assert unchanged output by construction, so they can't detect a no-op). Restoring:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/et_good.py scripts/extra… ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the real end-to-end run. Let me fetch the audit-log branch:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOYO_AUDIT_DIR=${YOYO_AUDI… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOYO_AUDIT_DIR=${YOYO_AUDI… ✓ (303ms)
+  2 tools completed in 3.1s (1 ✓, 1 ✗)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls /tmp/alog/sessions 2>/dev/nul… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls /tmp/alog/sessions | sort -t-… ✓ (30ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.6s (2 ✓)
+
+Confirmed the task's table exactly. Now the real end-to-end run:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/alog/session… ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Empty output — exactly the composition failure I keep hitting. Let me check stderr:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/tj.err | head -20; echo… ✓ (897ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

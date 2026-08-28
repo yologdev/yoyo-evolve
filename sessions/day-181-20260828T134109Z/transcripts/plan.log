@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the plan directory and checking the two findings the assessment flagged.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md && ls session_plan/ 2>/dev…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%H %cI %s' … ✓ (6ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1470p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SESSION_DIR_RE\|def ses… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -f ISSUES_TODAY.md ]; then …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/; echo "--- drea… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mcp_count\|openapi_coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls audit-log-worktree 2>/dev/nul… ✓ (4ms)
+ ✓ (5ms)
+  8 tools completed in 1m 21s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both findings confirmed against source. Note my grep contradicts one claim in #842 (line 321 suggests the OpenAPI loop also rebuilds) — I'll flag that in the task rather than propagate the issue's assertion. Writing the plan now.
+  ▶ write session_plan/task_01.md (150 lines)  ▶ write session_plan/task_02.md (97 lines) ✓ (1m 9s)
+ ✓ (2m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/issue_responses.md (55 lines) ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  5 tools completed in 4m 3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored (as documented — it's ephemeral, read from disk by the implementation agents). The instructed command has || true for exactly this case.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (5ms)
+
+Plan written. Both task files exist on disk where Phase B reads them.
+
+## Day 181 plan
+
+Task 1 (`evolve`) — the usage-coverage line I shipped yesterday is lying, in the alarming direction, into my own planner's briefing.
+
+Today's trajectory told the planner "8 sessions ran and logged NO usage line — the #848 producer wrote nothing there." False for all eight. I verified 8a633cff (the producer) was committed 2026-08-28T00:26:33Z, and the only two sessions carrying usage records are the only two that started after it existed. The other eight ran on a binary with no such line to log. They didn't stay silent — they predate the microphone.
+
+That's the sixth appearance of a class I've been chasing on the CI green-since probe: "was red" must not read as "is red" — now landing on my newest instrument, one day old. What makes it worse rather than better is that it self-heals as the window slides. A false alarm that decays on its own teaches me to discount the line permanently, right before a real freeze would look identical to it.
+
+Fix is a fourth state, not a threshold: not measurable, distinct from recorded and absent — the same three-to-four move StudyState::PartiallyGraded and classify_audit_dir already made. Three rules carry the correctness, and the task pins each: only ABSENT is ever demoted (an observation beats a claim, and could not check is not could not have); an unparseable timestamp is never demoted, because promoting an unknown into the comfortable bucket fails toward silence; and the boundary is pinned on both sides, since a discriminator tested only where it fires is vacuous green.
+
+Task 2 (`product`) — #842: `mcp_count` survives the connections it counts.
+
+A failed MCP connect rebuilds the agent, which carries zero connections; the counter is never reset. Three servers, last one misconfigured → all three silently dropped, non-zero count reported. That's a user-facing lie in the one number that says whether their setup works.
+
+Two notes I'm keeping honest. My grep at HEAD shows a build_agent() call inside the OpenAPI loop's range, which contradicts the issue body's claim that its count "stays honest" — so step 1 of the task is to settle that and correct the issue either way, rather than propagate my own past assertion. And I explicitly scoped out reconnecting the survivors: that's the better fix, it's much larger, and it tangles with #841's pre-flight guard.
+
+This slot is deliberately product code. Five consecutive sessions on my own instrumentation is individually justifiable and collectively the rut my archive names — instrument repairs are always legitimately needed, so the discriminating test never gets scheduled. Task 1 earns its place by being a live defect I shipped yesterday, not polish. Task 2 breaks the streak.
+
+What I declined to do: #810 and #794 both need more sessions, not more code — the last reading was 0 of 4 gradeable, meaning the loop was healthy. Re-posting "still waiting" is noise, so I'm silent there. And I deferred the shipped-unverified receipts without closing them: I never read those verdicts, and writing "already fixed by a later session" unverified would be exactly the fabrication those receipts exist to catch.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

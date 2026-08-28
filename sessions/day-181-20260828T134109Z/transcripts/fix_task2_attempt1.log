@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to update CLAUDE.md — the code half landed but the doc half didn't. Let me look at the current state first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '158,196p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2726,2832p' src/agent_bu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,392p' src/agent_buil… ✓ (4ms)
+  5 tools completed in 12.6s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the full code picture. Now the only outstanding work is CLAUDE.md — both false statements plus the landed-fix record. Let me make the edits.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Finding (2) is filed as **#842** and remains **open and unfixed**, deliberately: it was named out of scope in #841's own task file, because a post-connect re-check collides with its rebuild-drops-servers behaviour.
+  + Finding (2) is filed as **#842**. **Superseded on Day 181, recorded rather than erased — and this is the *third* consecutive round finding routed to the scheduler surface that was fixed, which is now the pattern rather than three incidents:** this clause used to read "**remains open and unfixed**, deliberately: it was named out of scope in #841's own task file, because a post-connect re-check collides with its rebuild-drops-servers behaviour." The *reason* is still exactly right and is why the… [yoyo: 420 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 21s)
+  - Finding (2) is filed as **#842** and remains **open and unfixed**, deliberately: it was named out of scope in #841's own task file, because a post-connect re-check collides with its rebuild-drops-servers behaviour.
+  + Finding (2) is filed as **#842**. **Superseded on Day 181, recorded rather than erased — and this is the *third* consecutive round finding routed to the scheduler surface that was fixed, which is now the pattern rather than three incidents:** this clause used to read "**remains open and unfixed**, deliberately: it was named out of scope in #841's own task file, because a post-connect re-check collides with its rebuild-drops-servers behaviour." The *reason* is still exactly right and is why the… [yoyo: 420 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '419,427p' CLAUDE.md ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Now the gotchas section — I'll add the landed-fix paragraph and correct the closing "deliberately not done" clause.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 9 lines)
+  - **Deliberately not done, named rather than smuggled in:** **#842** (`mcp_count` still counts a server whose connect failed, because both loops rebuild the agent — which carries zero MCP connections — without resetting the counter) is a separate issue with a separate fix and was not touched; **option 2 of #841**, a post-connect collision re-check, collides with #842's rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure**
+  + **Day 181 (#842) — the count a failed connect leaves behind is now honest, and the servers are still gone.** `connect_external_servers` returns `(agent, mcp_count, openapi_count)`, and on a connect failure yoagent has **consumed** the agent, so every `Err` arm rebuilds it with `agent_config.build_agent()` — a **fresh** agent carrying **zero** external connections, which the pre-existing comment already said outright. Neither counter was reset, so with three MCP servers whose *last* one is mi… [yoyo: 1171 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Superseded claim, recorded rather than erased — and it is #842's own text that was wrong, which is why step 1 of the task was to settle it rather than trust it.** The issue asserted the OpenAPI loop "does not rebuild the agent, so its count stays honest". **Read at HEAD, it does rebuild** — `agent = agent_config.build_agent()` sits in its `Err` arm exactly as in the two MCP loops — so it carried the identical defect and was fixed in the same diff; fixing two of three doors would have bee… [yoyo: 464 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **`connect_external_servers` is `async` and spawns real processes, so it gets only a deliberately weak source-level guard** (`every_rebuild_arm_resets_the_counter_it_invalidated`), and its doc comment says so: it slices this one function's body — `build_agent()` has other callers in the file — and asserts **exactly three** rebuild sites, **three** `mcp_count = 0` resets, **one** `openapi_count = 0` reset, and **four** `connections_lost_note(` call sites, with every needle assembled at runtim… [yoyo: 522 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The residue, stated plainly rather than implied: the count is now honest and the servers are still dropped.** Nothing reconnects the survivors — a user whose third server is misconfigured still loses the first two, and now gets told so. Reconnection is the better and much larger fix, it interacts with the fail-open pre-flight guard above (#841's option 2), and it is a **separate issue**; #842 filed the honest-count half separately *because* it is small and strictly an improvement either way.
+  + 
+  + **Deliberately not done, named rather than smuggled in:** reconnecting the survivors after a rebuild (above); **option 2 of #841**, a post-connect collision re-check, which collides with that same rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure**
+ ✓ (1m 21s)
+  - **Deliberately not done, named rather than smuggled in:** **#842** (`mcp_count` still counts a server whose connect failed, because both loops rebuild the agent — which carries zero MCP connections — without resetting the counter) is a separate issue with a separate fix and was not touched; **option 2 of #841**, a post-connect collision re-check, collides with #842's rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure**
+  + **Day 181 (#842) — the count a failed connect leaves behind is now honest, and the servers are still gone.** `connect_external_servers` returns `(agent, mcp_count, openapi_count)`, and on a connect failure yoagent has **consumed** the agent, so every `Err` arm rebuilds it with `agent_config.build_agent()` — a **fresh** agent carrying **zero** external connections, which the pre-existing comment already said outright. Neither counter was reset, so with three MCP servers whose *last* one is mi… [yoyo: 1171 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Superseded claim, recorded rather than erased — and it is #842's own text that was wrong, which is why step 1 of the task was to settle it rather than trust it.** The issue asserted the OpenAPI loop "does not rebuild the agent, so its count stays honest". **Read at HEAD, it does rebuild** — `agent = agent_config.build_agent()` sits in its `Err` arm exactly as in the two MCP loops — so it carried the identical defect and was fixed in the same diff; fixing two of three doors would have bee… [yoyo: 464 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **`connect_external_servers` is `async` and spawns real processes, so it gets only a deliberately weak source-level guard** (`every_rebuild_arm_resets_the_counter_it_invalidated`), and its doc comment says so: it slices this one function's body — `build_agent()` has other callers in the file — and asserts **exactly three** rebuild sites, **three** `mcp_count = 0` resets, **one** `openapi_count = 0` reset, and **four** `connections_lost_note(` call sites, with every needle assembled at runtim… [yoyo: 522 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The residue, stated plainly rather than implied: the count is now honest and the servers are still dropped.** Nothing reconnects the survivors — a user whose third server is misconfigured still loses the first two, and now gets told so. Reconnection is the better and much larger fix, it interacts with the fail-open pre-flight guard above (#841's option 2), and it is a **separate issue**; #842 filed the honest-count half separately *because* it is small and strictly an improvement either way.
+  + 
+  + **Deliberately not done, named rather than smuggled in:** reconnecting the survivors after a rebuild (above); **option 2 of #841**, a post-connect collision re-check, which collides with that same rebuild-drops-servers behaviour and is a larger change; and the **double-spawn disclosure**
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "842" CLAUDE.md | sed 's… ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+The grep hit at line 187 is now only the quoted superseded text inside the record-rather-than-erase note; the live claim is corrected. Now verifying:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy is clean. Now the build and full test suite (CLAUDE.md is scanned by tests/doc_version_claims.rs):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (1m 21s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (2m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 10s (2 ✓)
+
+All green, zero failures. Let me confirm the task's own tests and the doc gates specifically:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo connection… ✓ (690ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. My CLAUDE.md text asserts "positive control run rather than assumed" — I should verify that claim myself rather than propagate it. Running both controls serially (parallel file-mutating controls raced once before and one falsely passed):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (17 lines) ✓ (24.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fires. Now control 2 (delete one counter reset → source guard must go red), after confirming the restore is clean:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (16 lines) ✓ (24.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire with exact receipts (left: 2, right: 3). Restoring and confirming green:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== working tree (should b… ✓ (24.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean except the CLAUDE.md fix, both controls verified by running. Final full gauntlet:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…

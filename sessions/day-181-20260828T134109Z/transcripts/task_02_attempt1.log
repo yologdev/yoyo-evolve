@@ -1,0 +1,384 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code in question — step 1 is settling whether the issue's claim about the OpenAPI loop is right.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mcp_count\|openapi_coun… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:160..335 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.7s (2 ✓)
+
+Step 1 settled immediately: the issue is wrong — line 321 is build_agent() inside the OpenAPI loop. Let me confirm what build_agent() carries and check the call site's quiet gating.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '596,640p' src/agent_buil… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2615,2680p' src/agent_bu… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_quiet\|is_plain_outp… ✓ (5ms)
+  3 tools completed in 8.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check the downstream consumer that displays the count, then make the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1168,1182p' src/commands… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the user-facing lie: /mcp prints "N server(s) configured, M connected" straight from mcp_count. Now the fix — let me find where to put the pure helper.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn collision_guard_skip… ✓ (5ms)
+
+Now I have everything. Adding the pure helper right after collision_guard_skipped_message:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (5 → 37 lines)
+    on the first turn with 'Tool names must be unique'."
+        )
+  + }
+  + 
+  + /// Pure: the message printed when a failed connect forced an agent rebuild and
+  + /// took previously-established connections down with it (#842).
+  + ///
+  + /// `build_agent()` returns a **fresh** agent carrying zero MCP connections and
+  + /// zero OpenAPI tools, so every server connected before the failure is gone —
+  + /// and the counters that were tracking them are now lying. The old text said
+  + /// only "previous connections lost"; it never said **how many**, and the count
+  + /// is the thing that was wrong.
+  + ///
+  + /// `None` when `lost == 0`: a first-server failure drops nothing, there is no
+  + /// true sentence to print, and that path stays byte-identical to before. That
+  + /// is also the common case — one misconfigured server and nothing before it.
+  + ///
+  + /// Glyph-free under `is_plain_output()`, matching `project_mcp_refusal_message`
+  + /// and `collision_guard_skipped_message`.
+  + pub(crate) fn connections_lost_note(kind: &str, lost: u32, plain: bool) -> Option<String> {
+  ... (17 more lines)
+ ✓ (15.0s)
+    on the first turn with 'Tool names must be unique'."
+        )
+  + }
+  + 
+  + /// Pure: the message printed when a failed connect forced an agent rebuild and
+  + /// took previously-established connections down with it (#842).
+  + ///
+  + /// `build_agent()` returns a **fresh** agent carrying zero MCP connections and
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own rule caught me — definition without consumer. Adding the three call sites now. Arm 1 (--mcp flag loop):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (10 → 18 lines)
+                Err(e) => {
+                    eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  -                 // Agent was consumed on error — rebuild it with previous MCP connections lost
+  +                 // Agent was consumed on error — rebuild it. The rebuilt agent
+  +                 // carries ZERO MCP connections, so every server connected
+  +                 // before this point is gone and `mcp_count` was still counting
+  +                 // them (#842). Build the note before resetting, or it reports 0.
+                    agent = agent_config.build_agent();
+  +                 let note = connections_lost_note("mcp", mcp_count, is_plain_output());
+  +                 mcp_count = 0;
+                    eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+  +                 if let Some(note) = note {
+  +                     eprintln!("{YELLOW}  {note}{RESET}");
+  +                 }
+                }
+            }
+        }
+ ✓ (2m 2s)
+                Err(e) => {
+                    eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+  -                 // Agent was consumed on error — rebuild it with previous MCP connections lost
+  +                 // Agent was consumed on error — rebuild it. The rebuilt agent
+  +                 // carries ZERO MCP connections, so every server connected
+  +                 // before this point is gone and `mcp_count` was still counting
+  +                 // them (#842). Build the note before resetting, or it reports 0.
+                    agent = agent_config.build_agent();
+  ... (9 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Arm 1 done. Now arm 2 (config loop) and arm 3 (the OpenAPI loop the issue said was safe — it needs both counters reset):
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (7 → 14 lines)
+  +                 // Same rebuild, same loss, same reset — one statement of the
+  +                 // rule per loop, never two copies that agree today (#842).
+                    agent = agent_config.build_agent();
+  +                 let note = connections_lost_note("mcp", mcp_count, is_plain_output());
+  +                 mcp_count = 0;
+                    eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+  +                 if let Some(note) = note {
+  +                     eprintln!("{YELLOW}  {note}{RESET}");
+  +                 }
+                }
+            }
+        }
+ ✓ (2m 2s)
+  +                 // Same rebuild, same loss, same reset — one statement of the
+  +                 // rule per loop, never two copies that agree today (#842).
+                    agent = agent_config.build_agent();
+  +                 let note = connections_lost_note("mcp", mcp_count, is_plain_output());
+  +                 mcp_count = 0;
+                    eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+  +                 if let Some(note) = note {
+  +                     eprintln!("{YELLOW}  {note}{RESET}");
+  ... (4 more lines)
+
+Now arm 3 — the loop the issue claimed was honest. It drops MCP connections too, so both counters reset:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (6 → 18 lines)
+                Err(e) => {
+                    eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+  -                 // Agent was consumed on error — rebuild it
+  +                 // Agent was consumed on error — rebuild it. #842 claimed this
+  +                 // loop "does not rebuild the agent, so its count stays honest";
+  +                 // that is false, and it is worse than the two above: a fresh
+  +                 // agent carries neither OpenAPI tools NOR the MCP connections
+  +                 // made earlier in this same function, so BOTH counters are
+  +                 // lying from here on. Reset both.
+                    agent = agent_config.build_agent();
+  +                 let openapi_note = connections_lost_note("openapi", openapi_count, is_plain_output());
+  +                 let mcp_note = connections_lost_note("mcp", mcp_count, is_plain_output());
+  +                 openapi_count = 0;
+  +                 mcp_count = 0;
+                    eprintln!("{DIM}  openapi: agent rebuilt (previous connections lost){RESET}");
+  +                 for note in [openapi_note, mcp_note].into_iter().flatten() {
+  +                     eprintln!("{YELLOW}  {note}{RESET}");
+  +                 }
+                }
+ ✓ (2m 2s)
+                Err(e) => {
+                    eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+  -                 // Agent was consumed on error — rebuild it
+  +                 // Agent was consumed on error — rebuild it. #842 claimed this
+  +                 // loop "does not rebuild the agent, so its count stays honest";
+  +                 // that is false, and it is worse than the two above: a fresh
+  +                 // agent carries neither OpenAPI tools NOR the MCP connections
+  +                 // made earlier in this same function, so BOTH counters are
+  ... (11 more lines)
+
+Now the tests — the pure table plus the deliberately weak source guard:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 2 lines)
+        #[test]
+        fn builtin_tool_names_includes_shared_state() {
+  -         // SharedStateTool registers as "shared_state" in sub-agents — MCP servers
+ ✓ (2m 2s)
+        #[test]
+        fn builtin_tool_names_includes_shared_state() {
+  -         // SharedStateTool registers as "shared_state" in sub-agents — MCP servers
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That edit was clumsy — let me restore the comment I clipped and insert the tests properly:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 87 lines)
+  +     /// Table test for the #842 honest-count note. `None` at zero is the
+  +     /// byte-identical common path (a first-server failure drops nothing).
+  +     #[test]
+  +     fn connections_lost_note_table() {
+  +         // lost == 0 → nothing true to say, and the pre-#842 output is unchanged.
+  +         assert_eq!(connections_lost_note("mcp", 0, false), None);
+  +         assert_eq!(connections_lost_note("mcp", 0, true), None);
+  +         assert_eq!(connections_lost_note("openapi", 0, false), None);
+  + 
+  +         // Singular and plural both name the number — the count is the thing
+  +         // that was wrong, so "some connections lost" is not good enough.
+  +         let one = connections_lost_note("mcp", 1, false).expect("1 lost must speak");
+  +         assert!(one.contains('1'), "must name how many: {one}");
+  +         assert!(one.contains("server was"), "singular agreement: {one}");
+  +         assert!(!one.contains("servers"), "no plural leak: {one}");
+  + 
+  +         let many = connections_lost_note("mcp", 3, false).expect("3 lost must speak");
+  +         assert!(many.contains('3'), "must name how many: {many}");
+  +         assert!(many.contains("servers were"), "plural agreement: {many}");
+  + 
+  ... (67 more lines)
+ ✓ (1m 54s)
+  +     /// Table test for the #842 honest-count note. `None` at zero is the
+  +     /// byte-identical common path (a first-server failure drops nothing).
+  +     #[test]
+  +     fn connections_lost_note_table() {
+  +         // lost == 0 → nothing true to say, and the pre-#842 output is unchanged.
+  +         assert_eq!(connections_lost_note("mcp", 0, false), None);
+  +         assert_eq!(connections_lost_note("mcp", 0, true), None);
+  +         assert_eq!(connections_lost_note("openapi", 0, false), None);
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me see the actual failure:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The needle matched rebuild sites elsewhere in the file. The guard should slice the function body — same discipline as the format/mod.rs guards:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (6 → 18 lines)
+            let mcp_reset = format!("mcp{}count = 0;", "_");
+            let oa_reset = format!("openapi{}count = 0;", "_");
+            let note_fn = format!("connections{}lost{}note(", "_", "_");
+  + 
+  +         // Slice this function's body — `build_agent()` is called from several
+  +         // other places in this file, and the claim here is only about the
+  +         // three connect loops.
+  +         let start_marker = format!("async fn connect{}external{}servers(", "_", "_");
+  +         let start = src.find(&start_marker).expect("function must exist");
+  +         let end_marker = format!("fn insert{}client{}headers(", "_", "_");
+  +         let end = src[start..]
+  +             .find(&end_marker)
+  +             .expect("following function must exist")
+  +             + start;
+  +         let src = &src[start..end];
+ ✓ (1m 52s)
+            let mcp_reset = format!("mcp{}count = 0;", "_");
+            let oa_reset = format!("openapi{}count = 0;", "_");
+            let note_fn = format!("connections{}lost{}note(", "_", "_");
+  + 
+  +         // Slice this function's body — `build_agent()` is called from several
+  +         // other places in this file, and the claim here is only about the
+  +         // three connect loops.
+  +         let start_marker = format!("async fn connect{}external{}servers(", "_", "_");
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 58s (2 ✓)
+
+Right — the slice excludes the definition, so it's 4 call sites, not 5. Fixing the assertion:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (7 → 7 lines)
+  -         // The honest note's definition plus one call per invalidated counter
+  -         // (mcp ×3, openapi ×1).
+  +         // One call per invalidated counter (mcp ×3, openapi ×1). The fn's
+  +         // definition sits above this slice, so only call sites are counted.
+            assert_eq!(
+                src.matches(&note_fn).count(),
+  -             5,
+  -             "expected the note fn's definition plus four call sites"
+  +             4,
+  +             "expected one honest-count note per invalidated counter"
+            );
+ ✓ (2m 2s)
+  -         // The honest note's definition plus one call per invalidated counter
+  -         // (mcp ×3, openapi ×1).
+  +         // One call per invalidated counter (mcp ×3, openapi ×1). The fn's
+  +         // definition sits above this slice, so only call sites are counted.
+            assert_eq!(
+                src.matches(&note_fn).count(),
+  -             5,
+  -             "expected the note fn's definition plus four call sites"
+  ... (3 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_buil… ✓ (183ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the full check suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (379ms)
+  2 tools completed in 2m 4s (1 ✓, 1 ✗)
+
+Clippy clean. Now the positive controls — run rather than assumed, and serially (parallel file-mutating controls raced once and one falsely passed):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (19 lines) ✓ (25.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired. Now control 2 — delete one counter reset, confirm the source guard catches it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (49.5s)
+
+Both controls fired and green is restored. Now the full test suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 34s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B2 -A12 … ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 2s (2 ✓)
+
+My own module-size gate, branch 2, firing exactly as designed with a one-line remedy. Pasting it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/agent_builder.rs"'… ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5293 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ....
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The only failure is my own module-size gate, whose remedy is the line it printed. Pasting it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < src/agent_builder.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 2907),
+  +     ("src/agent_builder.rs", 3066),
+ ✓ (1m 22s)
+  -     ("src/agent_builder.rs", 2907),
+  +     ("src/agent_builder.rs", 3066),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (205ms)
+  3 tools completed in 1m 28s (3 ✓)
+
+Green. Now let me verify the actual behaviour change end-to-end by reading the three arms as they now stand:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/openapi: failed to load… ✓ (4ms)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

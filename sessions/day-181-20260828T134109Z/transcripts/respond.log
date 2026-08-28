@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll go through each issue and decide. Let me first check what I actually did this session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format='%H %s' -8 | he… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat 509ac934^ fd8704…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff a4fcd848^ fa51a142 -- s… ✓ (7ms)
+ ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -25 --all -- s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_node" src/gasp.rs |… ✓ (3ms)
+ ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat db04d300 | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show e29c0862 --stat; echo "… ✓ (8ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 850 849 842 835 834 830… ✓ (4.0s)
+  9 tools completed in 38.7s (9 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 849 --repo yologde… ✓ (282ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent-state"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' tests/gasp_sessio… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show fa51a142 --stat; echo "… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.2s (4 ✓)
+
+Now I have everything. Three issues to act on; the rest saw no work this session.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (31 lines) ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 842 --repo yologd… ✓ (870ms)
+  2 tools completed in 4.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#842 done. Now #850 — fixed in the earlier Day-181 session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (38 lines) ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 850 --repo yologd… ✓ (982ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (31 lines) ✓ (866ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 849 --repo yologd… ✓ (968ms)
+  4 tools completed in 27.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three actionable issues are handled. Final verification:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 850 849 842 835 834 830… ✓ (2.2s)
+
+Done. Build is PASSING; here's the accounting.
+
+## Acted on — 3 issues, commented and closed
+
+#842 — `mcp_count` survives the connections it counts. Fixed this session (a4fcd848). Every rebuild arm now resets the counter it invalidated and prints a pure, table-tested note naming how many servers were dropped. Two things worth flagging in the comment:
+
+• **The issue's asymmetry claim was wrong, and settling it was step 1.** #842 asserted the OpenAPI loop "does not rebuild the agent, so its count stays honest." Read at HEAD, it does — same build_agent() in its Err arm. It carried the identical defect and was fixed in the same diff; fixing two of three doors would have been the two doors, one policy, one deaf shape again.
+• The residue is named rather than smuggled: the count is honest, the servers are still dropped. Reconnection is a separate, larger fix.
+
+**#850 — session_end appends a dangling UpdateNode. Landed at `db04d300` in this morning's session, which closed without replying here. The comment records that I did not write the test the issue asked for** — `MemoryEventStore` is unreachable, so no behavioural fold assertion exists; what shipped is a deliberately weak source-level ordering guard whose own doc says it proves the check is positioned, never that it fires. I'm not describing that as equivalent.
+
+#849 — live graph no longer folds. Closed on your stated condition ("stays open until the graph actually folds again"). You fixed this, not me — e29c0862, the lockfile bump to yoagent-state 0.5.2 carrying your upstream yoagent#168. What I verified myself is only that Cargo.lock resolves 0.5.2 and the suite is green; the 7/7 on the live graph is your measurement and I left it attributed to you.
+
+## Skipped — 7 issues, no comment
+
+#835, #834, #830, #810, #794, #738, #683 — no work this session, nothing new to say. #810 and #794 are both waiting on measurement I did not take today, and my last word on each is already accurate; a "still waiting" comment is noise.
+
+One correction I'd flag for the record: the CLAUDE.md sentence claiming session_end's failure was "measured rather than defensive" was false — nothing was ever named on stderr, because nothing ever errored. update_task_status appends first and reports second, so the if let Err(…) was dead twice over. The transferable rule is now written down: a guard on the result cannot protect a side effect that happens before the result.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The issue-response task is complete. Let me verify I've left the tree in a clean state rather than assume it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short; echo "--- br…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (11ms)
+ ✓ (274ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.7s (2 ✓)
+
+Tree is clean apart from one staged file that predates my issue work. Let me inspect it read-only rather than assume.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat memory/… ✓ (18ms)
