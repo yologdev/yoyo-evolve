@@ -1774,14 +1774,45 @@ fn message_claims_repair(message: &str) -> bool {
 /// of `REPAIR_TOKENS`, kept inline rather than as a second const so the two
 /// lists cannot drift apart silently.
 fn message_claims_revert(message: &str) -> bool {
-    message
+    // Day 181 (round 86): anchored to the FIRST token of the subject, not to
+    // any token anywhere in it. `git revert` writes `Revert "<subject>"` and a
+    // human writing one by hand leads with the verb — in both shapes the claim
+    // is about THIS commit. A revert word buried mid-sentence is prose about
+    // some OTHER commit, and my own delivered subjects are full of it:
+    // `59f41c1b Day 181 (15:14): #851 — … so a REVERTED task claims the
+    // neighbouring task's commit (Task 2)` is a green, delivered task that
+    // touched `src/gasp.rs`, and the unanchored predicate booked that file as
+    // breakage through tier 1, which skips corroboration entirely. Whole
+    // tokens, never prefixes, so `reverter` stays a noun.
+    let subject = subject_without_sha(message).trim_start();
+    let first = subject
         .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|tok| {
-            matches!(
-                tok.to_ascii_lowercase().as_str(),
-                "revert" | "reverts" | "reverted" | "reverting"
-            )
-        })
+        .find(|t| !t.is_empty())
+        .unwrap_or("");
+    matches!(
+        first.to_ascii_lowercase().as_str(),
+        "revert" | "reverts" | "reverted" | "reverting"
+    )
+}
+
+/// Strip the `--oneline` sha prefix from a commit line, when one is present.
+///
+/// `parse_git_log_name_only` stores the WHOLE `--oneline` line as the message
+/// (`"59f41c1b Day 181 (15:14): …"`), but its `current_msg.is_none()` branch
+/// also admits a bare subject with no sha, and hand-built entries carry
+/// whichever shape their author typed. Both reach `message_claims_revert`, so
+/// the sha is stripped only when the leading token really is one — the same
+/// 7–40-hex rule `looks_like_oneline_commit_header` applies, so "what a sha
+/// looks like" has one statement here rather than two that agree today.
+fn subject_without_sha(message: &str) -> &str {
+    match message.split_once(' ') {
+        Some((head, rest))
+            if (7..=40).contains(&head.len()) && head.chars().all(|c| c.is_ascii_hexdigit()) =>
+        {
+            rest
+        }
+        _ => message,
+    }
 }
 
 /// True for commit subjects that `scripts/evolve.sh` generates mechanically
@@ -3777,6 +3808,64 @@ src/plain rs file.rs
         assert_eq!(unquote_git_path("\"trailing\\\""), "trailing\\");
         assert_eq!(unquote_git_path("\"\""), "");
         assert_eq!(unquote_git_path("\"unterminated"), "\"unterminated");
+    }
+
+    /// Day 181, blind round 86 — the defect, pinned at the EMISSION POINT (the
+    /// `HashSet` a caller of `classify_broke_files` receives, never
+    /// `message_claims_revert` one layer below).
+    ///
+    /// The subject is verbatim from `59f41c1b`, a DELIVERED, GREEN Day-181
+    /// Task 2 that touched `src/gasp.rs`. It carries "reverted" as ordinary
+    /// English about a *different* commit. Before the anchoring fix it tripped
+    /// tier 1, which skips the `touches >= 2` corroboration check entirely, so
+    /// a green 2/2 day booked `src/gasp.rs` as breakage — feeding my own
+    /// delivery prose into the recall meter as a failure day.
+    ///
+    /// CLAUDE.md called tier 1 "structurally dead in this repo" because
+    /// `scripts/evolve.sh` reverts with `git reset --hard` and never writes a
+    /// revert commit. That was a true statement about the HARNESS and a false
+    /// one about the INPUT.
+    #[test]
+    fn test_prose_about_a_revert_is_not_tier_one_evidence() {
+        let entries = vec![
+            entry(
+                "59f41c1b Day 181 (15:14): #851 — task_result attaches HEAD as an artifact \
+                 on rejected verdicts, so a reverted task claims the neighbouring task's \
+                 commit (Task 2)",
+                &["src/gasp.rs"],
+            ),
+            entry("aaa1111 Day 181 (15:14): cargo fmt", &["src/gasp.rs"]),
+        ];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            !broke.contains("src/gasp.rs"),
+            "a green delivered commit whose subject merely DESCRIBES a revert must not book \
+             breakage with no corroboration; got {broke:?}"
+        );
+    }
+
+    /// The near-miss guard for the test above — a discriminator tested only on
+    /// the side that fires is vacuous green, and this file's whole history is
+    /// discriminators that fired on the wrong input. A genuine `git revert`
+    /// subject must STILL be tier-1 evidence needing no corroboration, in all
+    /// three shapes that actually occur.
+    #[test]
+    fn test_genuine_revert_subjects_are_still_tier_one_evidence() {
+        for subject in [
+            // `git revert` writes exactly this.
+            "abc1234 Revert \"Day 163: add the thing\"",
+            // Conventional commits.
+            "abc1234 revert: drop the emerging column",
+            // A human leading with the verb.
+            "abc1234 reverted the risky parser change",
+        ] {
+            let broke = classify_broke_files(&[entry(subject, &["src/only_touched_once.rs"])]);
+            assert!(
+                broke.contains("src/only_touched_once.rs"),
+                "genuine revert subject {subject:?} must book breakage on its own (tier 1 \
+                 needs no second touch); got {broke:?}"
+            );
+        }
     }
 
     #[test]

@@ -200,7 +200,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // is itself churn, so a deleted file was earning a fresh score plus a
     // guaranteed never-forecast status and leading the list that steers the
     // planner. Recorded deliberately rather than absorbed.
-    ("src/commands_risk.rs", 5940),
+    ("src/commands_risk.rs", 6029),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
