@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the one failing check: A.4 (CLAUDE.md documentation). Let me first verify the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A1 '^name = "yoagent"' Car… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+PATH A confirmed (0.18.1), and CLAUDE.md indeed has zero mentions. Let me read the actual implementation so the docs describe what's really there.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "==… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "loop_detected_notice\|a… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,400p' src/prompt.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1845,1880p' src/prompt.r… ✓ (5ms)
+  4 tools completed in 7.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check the json-path arm and the A.2 builder comments precisely so the docs describe what actually shipped.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1850,1864p' src/prompt.r… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1852 && NR<=1872' src/p… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1840..1866 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_agent_event" src/p… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1068..1096 ✓ (1ms)
+  5 tools completed in 16.6s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the facts now. Let me check the version-claim gate before writing, since I'll be making a dependency-behaviour claim.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "yoagent-version-claim"… ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "There are currently \*\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "There are currently \*\… ✓ (490ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.0s (3 ✓)
+
+Now the two edits. First, verify the exact tail of the prompt.rs bullet I'll append to:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "one layer down. See the… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - one layer down. See the MCP gotchas section for why the system prompt cannot carry it.
+  + one layer down. See the MCP gotchas section for why the system prompt cannot carry it. Day 181 (#856 part 2): the `AgentEvent` match gained arms for yoagent 0.18's **`LoopDetected`** and **`ContextCompacted`**, which the `_ =>` wildcard had been swallowing — and the first one matters because it can **end a run**: `ExecutionLimits::default()` carries `max_consecutive_identical_tool_calls: Some(3)`, so three byte-identical consecutive tool calls (same name *and* same args) steer the model, and a… [yoyo: 3065 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 24s)
+  - one layer down. See the MCP gotchas section for why the system prompt cannot carry it.
+  + one layer down. See the MCP gotchas section for why the system prompt cannot carry it. Day 181 (#856 part 2): the `AgentEvent` match gained arms for yoagent 0.18's **`LoopDetected`** and **`ContextCompacted`**, which the `_ =>` wildcard had been swallowing — and the first one matters because it can **end a run**: `ExecutionLimits::default()` carries `max_consecutive_identical_tool_calls: Some(3)`, so three byte-identical consecutive tool calls (same name *and* same args) steer the model, and a… [yoyo: 3065 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 42s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Edit 1 landed. Now edit 2 — the marker count, or I recreate the exact stale-claim defect the gate documents:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - There are currently **three** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and one in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet — this sentence read **two** for a day after the third landed, i.e. the stale-claim shape the gate exists to catch, sitting inside the gate's own description.
+  + There are currently **four** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and two in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet and on the `prompt.rs` bullet (the #856 claim that an alternating `[a, b, a, b]` loop is **not** caught by yoagent's consecutive-identical-call guard) — this sentence read **two** for a day after the third landed, i.e. the stale-… [yoyo: 80 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 24s)
+  - There are currently **three** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and one in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet — this sentence read **two** for a day after the third landed, i.e. the stale-claim shape the gate exists to catch, sitting inside the gate's own description.
+  + There are currently **four** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and two in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet and on the `prompt.rs` bullet (the #856 claim that an alternating `[a, b, a, b]` loop is **not** caught by yoagent's consecutive-identical-call guard) — this sentence read **two** for a day after the third landed, i.e. the stale-… [yoyo: 80 more bytes elided — diff lines are capped at 500 bytes]
+
+Now verify both edits satisfy the evaluator's checks and the version-claim gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evaluator's exact grep… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+grep -c counts lines (these bullets are single ~10k-char lines), so non-zero is the point. Now the real check — the version-claim gate, since I added a mid-line marker:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --locked --test doc_v… ✓ (225ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes — and note that marker sits mid-line with trailing prose after it, which is exactly the Day-180 --> regression surface, so its passing confirms the extractor stopped at the arrow. Now the full suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --lock… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --locked 2>&1 | tail… ✓ (1m 24s)
+  2 tools completed in 1m 28s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5313 passed, 0 failed). Let me check for any stale 0.16.x claims left in CLAUDE.md, since task_01 moved the pin:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "0\.16\.[0-9]" CLAUDE.md… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o ".\{90\}0\.16\.6.\{110\}… ✓ (54ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.0s (2 ✓)
+
+Those are all dated historical records ("recorded rather than erased" style), not live claims — and the gate's markers all pin 0.18.1. Let me review my diff before committing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (29 lines) ✓ (18ms)
+  2 tools completed in 9.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Final verification against the evaluator's exact failing checks:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evaluator grep 1: grep… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+loop guard doesn't literally appear but the OR-grep now returns hits — and grep-driven wording would be the wrong instinct anyway; what matters is the behaviour is documented. Final full-suite run on the committed state:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && cargo fmt … ✓ (2m 49s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Working tree clean, fmt/clippy clean, all 12 test binaries `ok, zero failures (the EXIT=1 is grep finding no FAILED` lines — the desired result).
+
+## What was wrong and what I changed
+
+The evaluator passed three of four checks — the code half of PATH A was complete. The single failure was `doc_sync`: CLAUDE.md was on the task's Files line and step A.4 was

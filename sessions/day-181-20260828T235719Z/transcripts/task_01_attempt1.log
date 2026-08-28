@@ -1,0 +1,312 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by getting oriented on the actual current state, then make the first concrete change fast.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/t… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.1s (2 ✓)
+
+Confirmed Trap 2's measurements. Making the first concrete change now — the pin.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/Cargo.toml (1 → 1 lines)
+  - yoagent = { version = "0.16", features = ["openapi"] }
+  + yoagent = { version = "0.18", features = ["openapi"] }
+ ✓ (16.4s)
+  - yoagent = { version = "0.16", features = ["openapi"] }
+  + yoagent = { version = "0.18", features = ["openapi"] }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pin bumped and lock resolved. Let me get the full error inventory.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'name = "yoagent"' -A2 C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --locked --all-targe… ✓ (6ms)
+ ✓ (22.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --locked --all-targe… ✓ (12.9s)
+  3 tools completed in 37.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: pin is bumped (0.18.1 in lock), now fixing the 18 compile errors. Let me locate all sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ExecutionLimits\|CacheC…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'AgentEnd' src/prompt.rs ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && grep -rn 'impl CacheConfig' -A25 sr…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && grep -rn 'impl ExecutionLimits' -A4… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && grep -rn 'impl ToolContext' -A20 sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '948,975p' src/agent_buil… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && sed -n '340,378p' src/types.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1152p' src/agent_bu… ✓ (3ms)
+ ✓ (5ms)
+  8 tools completed in 12.5s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && grep -n 'impl Default for CacheConf… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+CacheConfig::default() is byte-identical to the literal (plus the new session_key: None), and ExecutionLimits::default() was already being spread. Making the 7 agent_builder.rs edits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (11 → 8 lines)
+  -         agent = agent.with_cache_config(CacheConfig {
+  -             enabled: true,
+  -             strategy: CacheStrategy::Auto,
+  -         });
+  +         agent = agent.with_cache_config(CacheConfig::new());
+    
+            // Always set execution limits — use user's --max-turns or a generous default
+  -         agent = agent.with_execution_limits(ExecutionLimits {
+  -             max_turns: self.max_turns.unwrap_or(200),
+  -             max_total_tokens: 1_000_000,
+  -             ..ExecutionLimits::default()
+  -         });
+  +         agent = agent.with_execution_limits(
+  +             ExecutionLimits::default()
+  +                 .with_max_turns(self.max_turns.unwrap_or(200))
+  +                 .with_max_total_tokens(1_000_000),
+  +         );
+ ✓ (12.3s)
+  -         agent = agent.with_cache_config(CacheConfig {
+  -             enabled: true,
+  -             strategy: CacheStrategy::Auto,
+  -         });
+  +         agent = agent.with_cache_config(CacheConfig::new());
+    
+            // Always set execution limits — use user's --max-turns or a generous default
+  -         agent = agent.with_execution_limits(ExecutionLimits {
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3080,3100p' src/agent_bu… ✓ (3ms)
+  3 tools completed in 27.3s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the test at 3094 — and its comment needs updating honestly, since the equality assert loses its teeth once both sides come from the same default.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (16 → 19 lines)
+            // Verify that the CacheConfig we set has the exact fields we expect:
+  -         // enabled=true and strategy=Auto. This catches silent changes to yoagent
+  -         // defaults or accidental overwrites.
+  +         // enabled=true and strategy=Auto. The two field assertions below are the
+  +         // half that catches a silent change to yoagent's defaults — they name the
+  +         // values verbatim, so a default flipping to `enabled: false` fails here.
+            let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+            let agent = config.build_agent();
+    
+  ···
+            assert!(cache.enabled, "caching must be enabled");
+            assert_eq!(cache.strategy, CacheStrategy::Auto);
+    
+  -         // Verify the explicit construction matches CacheConfig default
+  -         let expected = CacheConfig {
+  -             enabled: true,
+  -             strategy: CacheStrategy::Auto,
+  -         };
+  -         assert_eq!(agent.cache_config, expected);
+  +         // Verify build_agent did not override the default. Stated rather than
+  ... (7 more lines)
+ ✓ (12.6s)
+            // Verify that the CacheConfig we set has the exact fields we expect:
+  -         // enabled=true and strategy=Auto. This catches silent changes to yoagent
+  -         // defaults or accidental overwrites.
+  +         // enabled=true and strategy=Auto. The two field assertions below are the
+  +         // half that catches a silent change to yoagent's defaults — they name the
+  +         // values verbatim, so a default flipping to `enabled: false` fails here.
+            let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+            let agent = config.build_agent();
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+agent_builder.rs done (7/7). Now the 4 ToolContext and 4 AgentEnd sites in one pass.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '584,596p' src/smart_edit… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (74 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+All 8 done. Now the last compile error — classify_stop_reason and its doc comment (step 3).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/prompt_retry.… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=25 && NR<=48' src/promp… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'InspectError\|RefusalNo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (28ms)
+  4 tools completed in 15.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decision: route to InspectError. Ignore is forbidden; RefusalNotice would print a confident wrong diagnosis ("refused… rephrase") and pollute the harness's refused this request grep contract. InspectError surfaces honestly and, on an empty message, sets fatal_error — surface-and-stop, never auto-retried (#646).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (14 → 38 lines)
+    /// Classify a terminal `stop_reason` for AgentEnd handling.
+    ///
+  - /// The match is deliberately exhaustive (no wildcard): if yoagent adds a new
+  - /// `StopReason` variant, this fails to compile and forces an explicit retry
+  - /// decision instead of silently ignoring it.
+  + /// **Superseded guarantee, recorded rather than erased (Day 181, yoagent 0.18.1).**
+  + /// This doc used to read: *"The match is deliberately exhaustive (no wildcard): if
+  + /// yoagent adds a new `StopReason` variant, this fails to compile and forces an
+  + /// explicit retry decision instead of silently ignoring it."* That guarantee is
+  + /// **gone** and was not given up by choice — yoagent 0.17 marked `StopReason`
+  + /// `#[non_exhaustive]`, so a wildcard arm is now required to compile at all and a
+  + /// new upstream variant lands here **silently**. Nothing detects it; the arm below
+  + /// is a fallback, not a guard, and this paragraph exists so the next reader does
+  + /// not inherit a compile-time promise that no longer holds.
+  + ///
+  + /// The wildcard routes to [`StopHandling::InspectError`], deliberately, and the
+  + /// other two were rejected for stated reasons rather than by elimination:
+  + /// - **Not `Ignore`** — that is "the turn finished cleanly". An unknown stop
+  + ///   reason is precisely the case where that claim is unfounded, and reporting a
+  + ///   dead turn as a clean one is the silent-wrong-op this repo keeps paying for.
+  ... (21 more lines)
+ ✓ (1m 45s)
+    /// Classify a terminal `stop_reason` for AgentEnd handling.
+    ///
+  - /// The match is deliberately exhaustive (no wildcard): if yoagent adds a new
+  - /// `StopReason` variant, this fails to compile and forces an explicit retry
+  - /// decision instead of silently ignoring it.
+  + /// **Superseded guarantee, recorded rather than erased (Day 181, yoagent 0.18.1).**
+  + /// This doc used to read: *"The match is deliberately exhaustive (no wildcard): if
+  + /// yoagent adds a new `StopReason` variant, this fails to compile and forces an
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiling now. Let me check what's left failing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --locked 2>&1 | grep … ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 18 compile errors fixed, 5308 tests pass. Now step 4 — the version markers. First verifying the load-bearing claim against vendored source myself, rather than trusting the issue.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1 && echo "=== 0.18.1 gasp re-exports ==…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.6 2>/dev/null && grep -n 'pub use yoagen… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+Verified independently: the pub use yoagent_state list is byte-identical between 0.16.6 and 0.18.1, MemoryEventStore appears nowhere in 0.18.1's source, and ToolError's four variants are unchanged. All three claims survive. Now reading each paragraph before bumping.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'yoagent-version-claim'… ✓ (8ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5309 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_muta...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the expected marker failure. Reading the two src/gasp.rs paragraphs before bumping.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.9s (2 ✓)
+
+Both claims verified true against 0.18.1. Bumping all three markers.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (39ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three bumped, --> intact. Now step 5 — re-measuring the register (never copying the issue's figures).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/agent_bui… ✓ (1.3s)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Version markers pass now; size gate is the remaining failure, as expected. Measured after cargo fmt: agent_builder.rs 3312 (−2), tool_wrappers.rs 4987 (−12), tools.rs 3537 (+1). Pasting the real numbers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (27ms)
+
+Now step 6 — clearing Trap 3, the pre-existing clippy failure that isn't mine.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'is_some_and(|e| e == "r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/feature_gated_tests.rs (1 → 1 lines)
+  -         if path.is_dir() || !path.extension().is_some_and(|e| e == "rs") {
+  +         if path.is_dir() || path.extension().is_none_or(|e| e != "rs") {
+ ✓ (1m 13s)
+  -         if path.is_dir() || !path.extension().is_some_and(|e| e == "rs") {
+  +         if path.is_dir() || path.extension().is_none_or(|e| e != "rs") {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 19s (2 ✓)
+
+Now the four required verifications.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --locked 2>&1 | tail… ✓ (362ms)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+
