@@ -222,6 +222,43 @@ fn is_wait_for_reset() -> bool {
 /// v2.1.234 ships this behaviour default-ON with an opt-out. A process that can
 /// silently sleep for hours is not a product-safe default (#448), so yoyo ships
 /// it default-OFF and opt-in.
+///
+/// # Why there is no terminal-error check here (Day 181 — traced, not assumed)
+///
+/// Claude Code v2.1.24x later shipped *"persistent retry mode now fails
+/// immediately on organization spend-limit and out-of-credits errors instead of
+/// waiting indefinitely for a reset"*. That is the expensive failure: an
+/// out-of-credits error **never clears**, so sleeping [`MAX_RESET_WAIT`]
+/// against it is a silent hang, and an opted-in user reads it as the flag
+/// working. This function has no such check — and that is correct, because the
+/// guard is **upstream and total**. Traced rather than reasoned about:
+///
+/// 1. `PromptResult::RetriableError` is constructed at exactly **one** non-test
+///    site in `src/`: `PromptEventState::into_result` in `prompt.rs`. Every
+///    other occurrence of the name is a `match` pattern or a test.
+/// 2. That construction fires only when `PromptEventState::retriable_error` is
+///    `Some`, and that field is assigned at exactly **one** non-test site,
+///    inside an `else if is_retriable_error(err_msg)` arm.
+/// 3. [`crate::prompt_retry::is_retriable_error`] checks its non-retriable list
+///    — which includes `insufficient_quota`, `billing hard limit`,
+///    `credit balance`, `out of credits`, `plan limit`, `spending limit`,
+///    `budget exceeded`, `quota exceeded`, `payment required` and `402` —
+///    **first**, and returns `false` on a match before the retriable list is
+///    ever consulted. So a terminal message loses even when it also carries a
+///    retriable keyword such as a `429`.
+/// 4. Both `retry_wait_decision` call sites in `prompt.rs` sit inside
+///    `PromptResult::RetriableError` arms.
+///
+/// A spend-limit message therefore cannot reach this function. **No second
+/// guard was added**, deliberately: a duplicate check here would be a second
+/// statement of one policy, and two copies that agree today are how they
+/// disagree tomorrow. What the fix *is*: the discrimination is now asserted on
+/// **both** sides (see `prompt_retry`'s `terminal_*` / `genuine_rate_limit_*`
+/// tests) and step 1–2 of the trace — the single gated assignment site the
+/// whole argument rests on — is pinned by
+/// `the_only_retriable_error_assignment_site_is_gated_by_is_retriable_error`
+/// below, so a future second assignment site fails a test instead of quietly
+/// opening this path.
 pub fn retry_wait_decision_with(
     attempt: u32,
     error_msg: &str,
@@ -289,6 +326,85 @@ pub fn rate_limit_giveup_message(retry_after: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pin behind `retry_wait_decision_with`'s "no terminal check here"
+    /// paragraph (Day 181).
+    ///
+    /// That argument rests on two structural facts in `prompt.rs`, and neither
+    /// was asserted anywhere before this test: `PromptResult::RetriableError`
+    /// is constructed at exactly one non-test site, and the field it reads is
+    /// assigned at exactly one non-test site, gated on `is_retriable_error`.
+    /// A second, ungated assignment site would open a path from a terminal
+    /// billing error straight into a 6-hour sleep — silently, since nothing
+    /// else in the tree would notice.
+    ///
+    /// **Deliberately weak, and its own doc says so:** this is a text scan, not
+    /// a control-flow analysis. It proves the gate is *present and singular*,
+    /// never that it fires — the same discipline the `format/mod.rs` wrapper
+    /// guards state about themselves. Needles are assembled at runtime so this
+    /// test cannot match itself.
+    #[test]
+    fn the_only_retriable_error_assignment_site_is_gated_by_is_retriable_error() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prompt.rs"),
+        )
+        .expect("src/prompt.rs must be readable");
+
+        // Truncate at the test module: `prompt.rs`'s own tests assign the field
+        // directly, which is legitimate and must not count as a production site.
+        let marker = format!("#[cfg{}]\nmod tests", "(test)");
+        let prod = match src.find(&marker) {
+            Some(i) => &src[..i],
+            None => panic!("test-module marker not found — has prompt.rs been restructured?"),
+        };
+
+        let construction = format!("PromptResult::{} {{", "RetriableError");
+        let assignment = format!("self.{} = Some(", "retriable_error");
+        let gate = format!("is_{}(", "retriable_error");
+        let field_read = format!("= self.{} {{", "retriable_error");
+
+        // The construction needle deliberately is NOT counted: it also matches
+        // the three `match` *patterns* that consume the variant, and a text
+        // scan cannot tell a pattern from a construction. What is checkable —
+        // and is the actual reachability chain — is that the variant is built
+        // from exactly one field read, which is fed by exactly one gated write.
+        let reads: Vec<_> = prod.match_indices(&field_read).collect();
+        assert_eq!(
+            reads.len(),
+            1,
+            "expected exactly one non-test read of the retriable_error field in prompt.rs; \
+             found {} — each feeds a RetriableError and needs its own trace",
+            reads.len()
+        );
+        let read_at = reads[0].0;
+        let after_read = &prod[read_at..(read_at + 80).min(prod.len())];
+        assert!(
+            after_read.contains(&construction),
+            "the retriable_error field read no longer feeds {construction:?} directly — \
+             re-trace before trusting --wait-for-reset"
+        );
+
+        let sites: Vec<_> = prod.match_indices(&assignment).collect();
+        assert_eq!(
+            sites.len(),
+            1,
+            "expected exactly one non-test assignment to the retriable_error field; \
+             found {} — each must be gated by {gate:?}",
+            sites.len()
+        );
+
+        // The gate sits in the `else if` immediately above the assignment.
+        let at = sites[0].0;
+        let mut window_start = at.saturating_sub(400);
+        while window_start > 0 && !prod.is_char_boundary(window_start) {
+            window_start -= 1;
+        }
+        assert!(
+            prod[window_start..at].contains(&gate),
+            "the assignment to retriable_error is no longer gated by {gate:?} — \
+             a terminal billing error can now reach retry_wait_decision's 6h sleep"
+        );
+    }
 
     // ---- retry-after parsing (Day 177) -------------------------------
     // Measured evidence: two post-#808 sessions died on the verbatim string

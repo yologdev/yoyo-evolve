@@ -838,6 +838,158 @@ mod tests {
         assert!(!is_retriable_error("Stream ended: no more data"));
     }
 
+    /// Day 181: the terminal billing/quota family must never be retriable.
+    ///
+    /// This is the property `--wait-for-reset` rests on. Opted in,
+    /// `retry_wait_decision_with` will sleep up to `MAX_RESET_WAIT` (6h) inside
+    /// one retry — and an out-of-credits error **never clears**, so sleeping
+    /// against it is a silent hang rather than a delay. There is deliberately
+    /// no terminal check at the wait layer (one policy, one statement); the
+    /// whole safety of that choice is that this classifier refuses first.
+    ///
+    /// Asserts the **strings**, not a count: a count passes while the list is
+    /// silently rewritten.
+    ///
+    /// **What this table alone does *not* prove, measured by positive control
+    /// rather than assumed:** `is_retriable_error` falls through to `false`, so
+    /// deleting a terminal string leaves most of these rows still green — the
+    /// message simply stops matching anything and lands on the default. Breaking
+    /// `"spending limit"` killed only *one* test, and it was
+    /// [`terminal_family_wins_when_a_message_carries_both`], not this one. That
+    /// test is the load-bearing half of the pair; this one guards the vocabulary.
+    #[test]
+    fn terminal_billing_and_quota_errors_are_never_retriable() {
+        // Bare keywords, exactly as the non-retriable list spells them.
+        for msg in [
+            "insufficient_quota",
+            "insufficient quota",
+            "billing_hard_limit_reached",
+            "billing hard limit",
+            "credit balance",
+            "out of credits",
+            "plan limit",
+            "spending limit",
+            "budget exceeded",
+            "quota exceeded",
+            "payment required",
+            "402",
+        ] {
+            assert!(
+                !is_retriable_error(msg),
+                "terminal error must not be retriable: {msg:?}"
+            );
+        }
+
+        // The shapes providers actually emit — full sentences, mixed case, and
+        // wrapped in the surrounding text of a real error body.
+        for msg in [
+            "Your credit balance is too low to access the Anthropic API.",
+            "Organization has reached its monthly spending limit",
+            "You exceeded your current quota, please check your plan and billing details",
+            "error: insufficient_quota - You exceeded your current quota",
+            "HTTP 402: Payment Required",
+            "Billing hard limit reached for this organization",
+            "You are out of credits. Purchase more to continue.",
+            "Your organization's budget exceeded for this billing period",
+        ] {
+            assert!(
+                !is_retriable_error(msg),
+                "terminal error must not be retriable: {msg:?}"
+            );
+        }
+    }
+
+    /// The near-miss guard, and the half that matters more than the one above.
+    ///
+    /// A discriminator tested only on the side that *blocks* is vacuous green:
+    /// a classifier that refused everything would pass the terminal test and
+    /// silently disable all retry. A genuine rate limit is transient and must
+    /// still come back `true`.
+    #[test]
+    fn genuine_rate_limit_and_transient_errors_are_still_retriable() {
+        for msg in [
+            "429 Too Many Requests",
+            "rate_limit_error",
+            "Rate limited, please slow down",
+            "Overloaded",
+            "503 Service Unavailable",
+            "502 Bad Gateway",
+            "Internal server error",
+            "connection reset by peer",
+            "request timed out",
+        ] {
+            assert!(
+                is_retriable_error(msg),
+                "transient error must stay retriable: {msg:?}"
+            );
+        }
+    }
+
+    /// **Recorded defect, pinned rather than hidden — see #852.**
+    ///
+    /// This asserts *wrong* behaviour on purpose, which is normally forbidden
+    /// (a fixture row asserting a known-wrong output turns a defect into a
+    /// green invariant). It earns its place by naming the defect and its issue,
+    /// so the fix has to face this assertion and invert it: it is a ratchet,
+    /// not a fixture.
+    ///
+    /// The defect: status codes are matched by **bare substring**, the exact
+    /// shape Day 174 fixed in the sibling `diagnose_api_error` by introducing
+    /// [`contains_status_code`] — never swept here. `14454000` contains `400`,
+    /// `"400"` is in the non-retriable list, and that list is scanned first, so
+    /// the real observed rate-limit message below classifies as **terminal**.
+    ///
+    /// Why it matters: this is the exact string CLAUDE.md records as the
+    /// provider error that killed 2 of 4 gradeable post-#808 sessions. Because
+    /// `prompt.rs` sets `retriable_error` only under this predicate, the
+    /// message never becomes `PromptResult::RetriableError`, so
+    /// `retry_wait_decision` is never reached — meaning `--wait-for-reset`
+    /// cannot fire for the one error shape it was built for, and ordinary
+    /// backoff is silently disabled too.
+    ///
+    /// Not fixed in the task that found it, deliberately: ten numeric entries
+    /// are matched this way and giving each a digit boundary flips retry
+    /// behaviour for every user in both directions — a product default that
+    /// must not be changed unverified.
+    #[test]
+    fn recorded_defect_status_code_substring_match_hides_a_real_rate_limit() {
+        let observed = "error: Rate limited, retry after Some(14454000)ms";
+
+        // The mechanism, asserted directly so the cause cannot be mistaken for
+        // something about the words "rate limited".
+        assert!(observed.contains("400"), "premise of #852 no longer holds");
+        assert!(
+            !contains_status_code(observed, "400"),
+            "the digit-boundary matcher already rejects this — #852 is a \
+             matter of routing is_retriable_error through it"
+        );
+
+        // Current, wrong behaviour. When #852 lands this flips to `assert!`.
+        assert!(
+            !is_retriable_error(observed),
+            "#852 appears to be fixed — invert this assertion and delete the \
+             `recorded_defect_` prefix"
+        );
+    }
+
+    /// Precedence, pinned because it is load-bearing rather than incidental: a
+    /// real spend-limit error routinely arrives carrying an HTTP status, and
+    /// `429` is in the *retriable* list. The non-retriable list is scanned
+    /// first and returns early, so terminal wins — which is the safe direction,
+    /// and the direction the wait layer depends on.
+    #[test]
+    fn terminal_family_wins_when_a_message_carries_both() {
+        assert!(!is_retriable_error(
+            "429 Too Many Requests: your organization has reached its spending limit"
+        ));
+        assert!(!is_retriable_error(
+            "rate_limit_error: credit balance is too low"
+        ));
+        assert!(!is_retriable_error(
+            "Service temporarily unavailable — insufficient_quota"
+        ));
+    }
+
     #[test]
     fn test_is_benign_stream_end() {
         // Issue #612: "stream ended" is a known-benign, deliberately-not-retried
