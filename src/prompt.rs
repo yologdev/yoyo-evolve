@@ -38,6 +38,52 @@ pub(crate) fn apply_effort_hint_with(level: crate::cli_config::EffortLevel, inpu
     }
 }
 
+/// Prepend the external-tool-failure note to a turn's text input.
+///
+/// The **text-path** seam. `note` is injected rather than read from the
+/// process-global one-shot so tests drive it explicitly — the remedy
+/// `tests/global_state_races.rs` states as its best, and the shape
+/// `apply_effort_hint_with` / `context_budget_warning_with` already use.
+///
+/// **`None` returns the input unchanged**, byte-identically. That is every
+/// user whose configured servers all connect (and every user who configured
+/// none), i.e. the whole regression surface.
+///
+/// The note leads because it is *session*-level context, while `[Effort: …]`
+/// is a per-turn instruction that should sit adjacent to the request.
+pub(crate) fn apply_external_failure_note_with(note: Option<String>, input: String) -> String {
+    match note {
+        Some(n) => format!("{n}\n\n{input}"),
+        None => input,
+    }
+}
+
+/// Prepend the external-tool-failure note as a leading content block.
+///
+/// The **image/content-path** seam, and it must exist separately: this path
+/// composes its own `Content::Text` blocks and never goes through the text
+/// path, so wiring one and not the other is exactly the "two doors, one policy,
+/// one deaf" defect this whole change is about, one layer down.
+///
+/// A **new** block, never spliced into an existing one — `content` may carry
+/// non-text blocks (images) and rewriting one would mangle them.
+///
+/// **`None` returns the blocks unchanged**, so the no-failure case is
+/// byte-identical.
+pub(crate) fn prepend_external_failure_block_with(
+    note: Option<String>,
+    blocks: Vec<Content>,
+) -> Vec<Content> {
+    match note {
+        Some(text) => {
+            let mut out = vec![Content::Text { text }];
+            out.extend(blocks);
+            out
+        }
+        None => blocks,
+    }
+}
+
 /// Stable substring of the refusal notice printed when a provider refuses
 /// (`stop_reason: "refusal"` — HTTP 200, empty content).
 ///
@@ -1011,6 +1057,14 @@ pub async fn run_prompt_with_changes(
 
     // Apply effort-level hint (no-op for Medium/default)
     let effective_input = apply_effort_hint(input);
+    // Tell the MODEL about servers that failed to connect (one-shot, drained).
+    // This cannot live in the system prompt: that is composed inside
+    // build_agent(), which runs BEFORE connect_external_servers, and rebuilding
+    // the agent afterwards would drop every server that DID connect (#842).
+    let effective_input = apply_external_failure_note_with(
+        crate::agent_builder::take_external_failure_note(),
+        effective_input,
+    );
 
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
@@ -1357,6 +1411,13 @@ pub async fn run_prompt_with_content_and_changes(
             blocks
         }
     };
+    // Same one-shot as the text path, so whichever path runs first consumes it
+    // and the other cannot re-fire it. See the text-path call site for why the
+    // system prompt cannot carry this (#842).
+    let effective_blocks = prepend_external_failure_block_with(
+        crate::agent_builder::take_external_failure_note(),
+        effective_blocks,
+    );
 
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
@@ -2907,6 +2968,103 @@ mod tests {
         };
         assert!(outcome.text.contains('🐙'));
         assert!(outcome.text.contains("日本語"));
+    }
+
+    #[test]
+    fn external_failure_note_absent_leaves_both_paths_byte_identical() {
+        // The near-miss guard and the whole product-safety property: a user
+        // whose servers all connect (or who configured none) must get exactly
+        // the prompt they got before this change. assert_eq!, not contains.
+        let input = "Refactor the parser".to_string();
+        assert_eq!(
+            apply_external_failure_note_with(None, input.clone()),
+            input,
+            "text path must be byte-identical with no failures"
+        );
+
+        let blocks = vec![
+            Content::Text {
+                text: "[Effort: think harder]".to_string(),
+            },
+            Content::Text {
+                text: "look at this".to_string(),
+            },
+        ];
+        assert_eq!(
+            prepend_external_failure_block_with(None, blocks.clone()),
+            blocks,
+            "content path must be byte-identical with no failures"
+        );
+    }
+
+    #[test]
+    fn external_failure_note_reaches_the_text_path_emission_point() {
+        let note = crate::agent_builder::external_tool_failure_note(&[
+            crate::agent_builder::FailedServer {
+                kind: "mcp",
+                id: "npx -y @modelcontextprotocol/server-github".to_string(),
+            },
+        ]);
+        let out = apply_external_failure_note_with(note, "Open the PR".to_string());
+
+        assert!(
+            out.contains("npx -y @modelcontextprotocol/server-github"),
+            "the model must be able to name the server: {out}"
+        );
+        assert!(
+            out.contains("unavailable") && out.contains("does not exist"),
+            "must say unavailable, not nonexistent: {out}"
+        );
+        assert!(
+            out.ends_with("Open the PR"),
+            "the user's own request must survive intact: {out}"
+        );
+    }
+
+    #[test]
+    fn external_failure_note_reaches_the_content_path_and_carries_the_kind() {
+        let note = crate::agent_builder::external_tool_failure_note(&[
+            crate::agent_builder::FailedServer {
+                kind: "openapi",
+                id: "./specs/petstore.yaml".to_string(),
+            },
+        ]);
+        let original = vec![Content::Text {
+            text: "describe this image".to_string(),
+        }];
+        let out = prepend_external_failure_block_with(note, original.clone());
+
+        assert_eq!(out.len(), 2, "a NEW leading block, nothing spliced: {out:?}");
+        match &out[0] {
+            Content::Text { text } => {
+                assert!(text.contains("./specs/petstore.yaml"), "names it: {text}");
+                // A note that misattributes the source is worse than none.
+                assert!(text.contains("openapi"), "reports openapi: {text}");
+                assert!(
+                    !text.contains("mcp"),
+                    "must not report an openapi failure as mcp: {text}"
+                );
+            }
+            other => panic!("leading block must be text, got {other:?}"),
+        }
+        assert_eq!(out[1], original[0], "the caller's blocks are untouched");
+    }
+
+    #[test]
+    fn external_failure_note_fires_once_at_the_emission_point() {
+        // Turn 1 carries it; the one-shot is drained, so turn 2 is handed None
+        // and must be byte-identical to the no-failure case.
+        let note = crate::agent_builder::external_tool_failure_note(&[
+            crate::agent_builder::FailedServer {
+                kind: "mcp",
+                id: "server-a".to_string(),
+            },
+        ]);
+        let turn1 = apply_external_failure_note_with(note, "first".to_string());
+        assert!(turn1.contains("server-a"), "turn 1 speaks: {turn1}");
+
+        let turn2 = apply_external_failure_note_with(None, "second".to_string());
+        assert_eq!(turn2, "second", "turn 2 must not re-fire a stale note");
     }
 
     #[test]

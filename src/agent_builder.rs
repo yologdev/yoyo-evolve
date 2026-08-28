@@ -189,6 +189,121 @@ Fix the failing server and restart to get {} back.",
     ))
 }
 
+/// One external tool server that was configured and did **not** connect.
+///
+/// `kind` is the source family (`"mcp"` / `"openapi"`) and `id` is the
+/// identifier a human wrote in their config — the resolved command string for
+/// MCP, the spec path/URL for OpenAPI. The kind is carried rather than inferred
+/// because a note that misattributes the source is worse than none, the same
+/// rule [`connections_lost_note`] already follows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FailedServer {
+    pub(crate) kind: &'static str,
+    pub(crate) id: String,
+}
+
+/// Cap on an interpolated server identifier inside the model-facing note.
+///
+/// A judgment threshold, not a measurement: long enough that a realistic
+/// `npx -y @scope/package --flag=value` command survives whole, short enough
+/// that one pathological config entry cannot eat the turn's context. Cut on a
+/// **char** boundary with the elision marked in band, never a raw byte index
+/// (#250) — the same discipline `goal_verify_refusal_message` uses.
+const EXTERNAL_FAILURE_ID_MAX_BYTES: usize = 200;
+
+/// Servers that failed to connect this session, recorded for the model.
+///
+/// Written by the three `Err` arms of [`connect_external_servers`], drained
+/// once by the first prompt of the session (see [`take_external_failure_note`]).
+static FAILED_EXTERNAL_SERVERS: std::sync::Mutex<Vec<FailedServer>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Record that a configured external server did not connect.
+///
+/// Called from the same `Err` arms that compose the user-facing
+/// [`connections_lost_note`] — those arms are the only place that knows *which*
+/// server failed, and threading a return value out through
+/// `connect_external_servers` would touch `main.rs` for nothing.
+pub(crate) fn record_failed_server(kind: &'static str, id: &str) {
+    crate::sync_util::lock_or_recover(&FAILED_EXTERNAL_SERVERS).push(FailedServer {
+        kind,
+        id: id.to_string(),
+    });
+}
+
+/// Compose the model-facing note for servers that failed to connect.
+///
+/// Pure, so the sentence the model actually reads is pinned by a table test
+/// rather than only the boolean underneath it.
+///
+/// **`None` for an empty slice** — every user whose servers all connect (and
+/// every user who configured none) gets a byte-identical prompt, which is the
+/// whole regression surface.
+///
+/// It **invents nothing**. A failed connect means yoyo never learned which
+/// tools the server exposes, so the note names the *server* and never guesses a
+/// tool name — claiming "the `read_file` tool is missing" when we do not know
+/// is the confident-wrong-diagnosis defect. What it does say is the half the
+/// model cannot infer from an absence: the capability was *configured*, the
+/// gap is a connection failure, and the honest move is to report the tool as
+/// unavailable rather than silently substituting a hand-rolled implementation.
+pub(crate) fn external_tool_failure_note(failures: &[FailedServer]) -> Option<String> {
+    if failures.is_empty() {
+        return None;
+    }
+    let n = failures.len();
+    let plural = if n == 1 { "" } else { "s" };
+    let mut lines = format!(
+        "[yoyo: {n} configured tool server{plural} failed to connect this session]\n"
+    );
+    for f in failures {
+        let id = if f.id.len() <= EXTERNAL_FAILURE_ID_MAX_BYTES {
+            f.id.clone()
+        } else {
+            let head = crate::format::safe_truncate(&f.id, EXTERNAL_FAILURE_ID_MAX_BYTES);
+            format!(
+                "{head}… [yoyo: {dropped} bytes elided from this identifier]",
+                dropped = f.id.len() - head.len(),
+            )
+        };
+        lines.push_str(&format!("  - {}: {}\n", f.kind, id));
+    }
+    lines.push_str(
+        "Their tools are unavailable for this session. This is a connection failure, not \
+evidence that the capability does not exist — yoyo never learned which tools these servers \
+expose, so it cannot name them. If a request would be served by one of them, say it is \
+unavailable and name the server above, rather than substituting your own implementation.",
+    );
+    Some(lines)
+}
+
+/// Drain the recorded failures from a store and compose the note.
+///
+/// The store is a parameter so tests drive a local `Mutex` instead of the
+/// process-global one — the seam `context_budget_warning_with` already uses,
+/// and the remedy `tests/global_state_races.rs` states as its best.
+///
+/// **Draining is what makes it one-shot.** The note is session-level context
+/// with no new information on turn two, and it would go stale the moment a
+/// later `/mcp` reconnects.
+fn drain_failure_note(store: &std::sync::Mutex<Vec<FailedServer>>) -> Option<String> {
+    let mut guard = crate::sync_util::lock_or_recover(store);
+    if guard.is_empty() {
+        return None;
+    }
+    let failures: Vec<FailedServer> = guard.drain(..).collect();
+    drop(guard);
+    external_tool_failure_note(&failures)
+}
+
+/// Take the session's external-tool-failure note, if any, consuming it.
+///
+/// The single one-shot both prompt seams share, so the content path cannot
+/// re-fire what the text path already consumed.
+pub(crate) fn take_external_failure_note() -> Option<String> {
+    drain_failure_note(&FAILED_EXTERNAL_SERVERS)
+}
+
 /// Connect to external servers (MCP and OpenAPI) and return the updated agent
 /// plus the count of successfully connected MCP and OpenAPI servers.
 ///
@@ -264,6 +379,10 @@ pub(crate) async fn connect_external_servers(
             }
             Err(e) => {
                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
+                // Second audience: the stderr line above reaches the *user*, who
+                // has usually scrolled past it. The model is handed an absence,
+                // and an absence reads as "this capability does not exist".
+                record_failed_server("mcp", mcp_cmd);
                 // Agent was consumed on error — rebuild it. The rebuilt agent
                 // carries ZERO MCP connections, so every server connected
                 // before this point is gone and `mcp_count` was still counting
@@ -336,6 +455,10 @@ pub(crate) async fn connect_external_servers(
                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
                     server_cfg.name
                 );
+                // Same second audience as the --mcp loop above, one statement
+                // of the rule per loop. The *resolved command* is what a user
+                // can act on, so record it beside the friendly name.
+                record_failed_server("mcp", &format!("{} ({})", server_cfg.name, server_cfg.command));
                 // Same rebuild, same loss, same reset — one statement of the
                 // rule per loop, never two copies that agree today (#842).
                 agent = agent_config.build_agent();
@@ -364,6 +487,10 @@ pub(crate) async fn connect_external_servers(
             }
             Err(e) => {
                 eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
+                // Second audience, and the kind is carried: an OpenAPI failure
+                // must not report as `mcp` — a note that misattributes the
+                // source is worse than none.
+                record_failed_server("openapi", spec_path);
                 // Agent was consumed on error — rebuild it. #842 claimed this
                 // loop "does not rebuild the agent, so its count stays honest";
                 // that is false, and it is worse than the two above: a fresh
@@ -2728,6 +2855,127 @@ mod tests {
 
     /// Table test for the #842 honest-count note. `None` at zero is the
     /// byte-identical common path (a first-server failure drops nothing).
+    #[test]
+    fn external_tool_failure_note_table() {
+        // Empty → None. Every user whose servers all connect, and every user
+        // who configured none: the whole regression surface.
+        assert_eq!(external_tool_failure_note(&[]), None);
+
+        // One failure names the server verbatim and its kind.
+        let one = external_tool_failure_note(&[FailedServer {
+            kind: "mcp",
+            id: "npx -y @modelcontextprotocol/server-github".to_string(),
+        }])
+        .expect("a failure must speak");
+        assert!(
+            one.contains("npx -y @modelcontextprotocol/server-github"),
+            "must name the server verbatim: {one}"
+        );
+        assert!(one.contains("mcp"), "must carry the kind: {one}");
+        assert!(one.contains('1'), "must say how many: {one}");
+        assert!(
+            !one.contains("servers failed"),
+            "singular agreement: {one}"
+        );
+        // The actionable half: unavailable, NOT nonexistent.
+        assert!(
+            one.contains("unavailable"),
+            "must say the tools are unavailable: {one}"
+        );
+        assert!(
+            one.contains("does not exist"),
+            "must deny the 'capability absent' reading: {one}"
+        );
+        assert!(
+            one.contains("substituting"),
+            "must forbid a silent hand-rolled substitute: {one}"
+        );
+
+        // Several: both are named, plural agrees.
+        let many = external_tool_failure_note(&[
+            FailedServer {
+                kind: "mcp",
+                id: "server-a".to_string(),
+            },
+            FailedServer {
+                kind: "openapi",
+                id: "./specs/b.yaml".to_string(),
+            },
+        ])
+        .expect("two failures must speak");
+        assert!(many.contains("server-a"), "names the first: {many}");
+        assert!(many.contains("./specs/b.yaml"), "names the second: {many}");
+        assert!(many.contains("openapi"), "carries the openapi kind: {many}");
+        assert!(many.contains("2 configured"), "says how many: {many}");
+        assert!(many.contains("servers failed"), "plural agreement: {many}");
+    }
+
+    #[test]
+    fn external_tool_failure_note_cuts_long_ids_on_a_char_boundary() {
+        // 3-byte chars, so a raw byte cut at the cap lands INSIDE a character.
+        let id = "✓".repeat(EXTERNAL_FAILURE_ID_MAX_BYTES);
+        let note = external_tool_failure_note(&[FailedServer {
+            kind: "mcp",
+            id: id.clone(),
+        }])
+        .expect("a failure must speak");
+
+        assert!(
+            note.contains("bytes elided from this identifier"),
+            "a silent elision is the bug: {note}"
+        );
+
+        // Recover the kept prefix and prove it is whole characters of the
+        // original — a straddling char must be dropped whole (#250).
+        let after = note
+            .split("  - mcp: ")
+            .nth(1)
+            .expect("the row is rendered");
+        let kept = after
+            .split("… [yoyo:")
+            .next()
+            .expect("the marker terminates the kept prefix");
+        assert!(id.starts_with(kept), "kept text is a real prefix: {kept}");
+        assert!(
+            kept.chars().all(|c| c == '✓'),
+            "no split character survived the cut"
+        );
+        assert!(
+            kept.len() <= EXTERNAL_FAILURE_ID_MAX_BYTES,
+            "kept {} bytes exceeds the cap",
+            kept.len()
+        );
+
+        // The marker's own arithmetic must agree with what was dropped — an
+        // in-band marker that lies is worse than none.
+        let dropped = id.len() - kept.len();
+        assert!(
+            note.contains(&format!("{dropped} bytes elided from this identifier")),
+            "marker must report {dropped} dropped bytes: {note}"
+        );
+    }
+
+    #[test]
+    fn failure_note_fires_once_then_the_store_is_empty() {
+        // Local store, so no process-global is written and no #[serial] is
+        // needed — the remedy tests/global_state_races.rs states as its best.
+        let store: std::sync::Mutex<Vec<FailedServer>> = std::sync::Mutex::new(Vec::new());
+        assert_eq!(drain_failure_note(&store), None, "empty store says nothing");
+
+        store.lock().unwrap().push(FailedServer {
+            kind: "mcp",
+            id: "server-a".to_string(),
+        });
+        let first = drain_failure_note(&store).expect("first drain speaks");
+        assert!(first.contains("server-a"));
+        // One-shot: turn two carries no stale note.
+        assert_eq!(
+            drain_failure_note(&store),
+            None,
+            "the note must not re-fire on the next turn"
+        );
+    }
+
     #[test]
     fn connections_lost_note_table() {
         // lost == 0 → nothing true to say, and the pre-#842 output is unchanged.
