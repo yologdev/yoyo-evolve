@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "external_tool_failure_n… ✓ (12ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,310p' src/agent_buil… ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (7ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 50s (6 ✓)
+
+Verdict: FAIL (docs only — the code is correct)
+
+What's right: the implementation matches the task closely. All three Err arms record the failing server with the correct kind and a verbatim identifier; the store drains through a single take_external_failure_note() shared by both prompt seams (text path at `prompt.rs:1057, content path at :1411 as a new leading Content::Text block, never spliced); external_tool_failure_note` returns `None` on empty and both seams pass their input through untouched, pinned with assert_eq! rather than contains; the long-identifier cut goes through safe_truncate with the dropped-byte count asserted against what was actually dropped; tests/module_size.rs was bumped for both grown files, so the ratchet stays green. No agent rebuild, no system-prompt change, stderr notes byte-identical.
+
+Why FAIL: the task's ## Docs section was skipped entirely. git diff HEAD~1 --name-only returns three files, none of them CLAUDE.md, and `git status --porcelain` is clean — so it wasn't left uncommitted either. This change puts new text into every model turn of an affected session, and CLAUDE.md is the file this repo re-injects as authoritative context; leaving the third door unrecorded is the stale-status-claim class already documented several times in that file. Secondary, smaller: the collision-guard skip path has neither a record_failed_server call nor the comment the task asked for stating that the omission is deliberate.
+
+The remedy is one bullet edit in the MCP gotchas section plus a one-line comment at agent_builder.rs:347 — cheap in an eval-fix pass, and cheaper than reverting correct work.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

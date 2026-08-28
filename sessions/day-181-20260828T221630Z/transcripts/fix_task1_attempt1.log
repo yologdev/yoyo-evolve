@@ -1,0 +1,155 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the two gaps: the missing CLAUDE.md docs and the missing comment at the collision-guard skip path.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,400p' src/agent_buil… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '338,365p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_failed_server\|F… ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:340..362 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:195..310 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply_external_failure_… ✓ (3ms)
+  7 tools completed in 13.0s (7 ✓)
+
+
+I was mid-fix on the evaluator's two gaps. Let me check current state and finish.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:45..95 ✓ (1ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Tree is clean — both fixes still need to be made. Starting with the collision-guard comment.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (4 → 18 lines)
+                        eprintln!(
+                            "{DIM}  mcp: skipping '{mcp_cmd}' — rename/exclude the colliding tool(s) or use a different server{RESET}"
+                        );
+  +                     // Deliberately NOT recorded via `record_failed_server`, and
+  +                     // the omission is a decision rather than an oversight: this
+  +                     // is a **refusal working as designed**, not a connection
+  +                     // failure. The model-facing note exists to say "the
+  +                     // capability was configured and the connection failed, so
+  +                     // report it unavailable rather than hand-rolling it"; here
+  +                     // the server was refused *because* it exposes a name yoyo
+  +                     // already provides, so the capability is not missing at all
+  +                     // — the builtin is right there. Telling the model a tool is
+  +                     // unavailable while it sits in the tool list would be the
+  +                     // confident-wrong-diagnosis defect, and dressing a guard
+  +                     // working as designed as a malfunction is the same rule
+  +                     // `RecoveryHintTool`/`DiagnosticSubAgentTool` already follow
+  +                     // for `REFUSAL_STEM_*` (#710).
+                        continue;
+ ✓ (1m 49s)
+                        eprintln!(
+                            "{DIM}  mcp: skipping '{mcp_cmd}' — rename/exclude the colliding tool(s) or use a different server{RESET}"
+                        );
+  +                     // Deliberately NOT recorded via `record_failed_server`, and
+  +                     // the omission is a decision rather than an oversight: this
+  +                     // is a **refusal working as designed**, not a connection
+  +                     // failure. The model-facing note exists to say "the
+  +                     // capability was configured and the connection failed, so
+  ... (10 more lines)
+
+Now the CLAUDE.md docs. Let me find the exact anchors in the MCP gotchas section.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Deliberately not done, …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`agent_builder.rs\`… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '435,440p' CLAUDE.md ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.2s (3 ✓)
+
+Now I'll add the MCP gotchas paragraph.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 15 lines)
+  + **Day 181 (#843's sibling; self-discovered, transferred class) — a connect failure now reaches the MODEL, and it is the THIRD door of a class I had been counting as two.** Days 180–181 spent two whole tasks on this exact subsystem — **#841** (the collision-guard-skipped message) and **#842** (the honest `mcp_count`) — and **both write to the user's stderr**. I fixed the user's view twice and never noticed the model had no view at all: `compose_system_prompt(base, provider, model)` takes … [yoyo: 838 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The system prompt is the wrong seam, and the reason is mechanical rather than stylistic — a comment in `connect_external_servers` says so, so a later reader does not "simplify" it back.** The system prompt is composed inside `build_agent()`, which runs **before** `connect_external_servers` is ever called (`src/main.rs` passes the already-built agent *in*), so at composition time the failure does not exist yet. And it cannot be fixed by recomposing afterwards: `AgentConfig::build_agent()` ret… [yoyo: 327 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Both prompt seams are wired, because wiring one is the failure this task is about, one layer down.** `src/prompt.rs` has two deliberately un-unified paths, and each gets the note in its own idiom: the **text path** via `apply_external_failure_note_with(note, input)` (prefix + `\n\n` + input), and the **image/content path** via `prepend_external_failure_block_with(note, blocks)`, which inserts a **new leading `Content::Text` block** rather than splicing into an existing one — `content` may ca… [yoyo: 298 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The record is written where the user-facing note is already composed, and `main.rs` needed no edit.** All three `Err` arms of `connect_external_servers` already know which server failed and already build `connections_lost_note`, so each also calls `record_failed_server(kind, id)` into a module-level store — the resolved command string for MCP, the spec path/URL for OpenAPI. Threading a return value out would have touched a third file for nothing. **The kind is carried, never inferred** — a… [yoyo: 1090 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **It fires once per session, and both seams share the same one-shot.** `take_external_failure_note()` **drains** the store, so the first prompt of the session carries the note and later turns are byte-identical to the no-failure case — a note repeated every turn is context spend with no new information, and it would go stale the moment a later `/mcp` reconnects. Two seams reading two separate flags is how the content path re-fires what the text path already consumed, so there is exactly one. T… [yoyo: 268 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The collision-guard skip is deliberately NOT recorded, and the omission is written at the branch rather than left ambiguous.** A server refused for exposing a builtin name is a **refusal working as designed**, not a connection failure: the capability is not missing at all — the builtin is right there in the tool list — so telling the model it is unavailable would be the confident-wrong-diagnosis defect, and dressing a guard working as designed as a malfunction is the same short-circuit `Re… [yoyo: 86 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Out of scope, named rather than implied: no reconnection and no change to the stderr notes.** A failed server stays failed — this makes the failure *legible to the model*, nothing more; reconnection is #841 option 2 and collides with the rebuild-drops-servers behaviour. `connections_lost_note` and `collision_guard_skipped_message` are byte-identical: this **adds a second audience, it does not move the first**. Tested at the **emission point** — the string/blocks the model actually receives… [yoyo: 620 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+    Keep `BUILTIN_TOOL_NAMES` in sync with `tools::build_tools` and the sub-agent's `SharedStateTool` whenever a new builtin is added — the pure helper `detect_mcp_collisions` is unit-tested in `src/agent_builder.rs` against the filesystem server's known tool set as a regression guard.
+ ✓ (1m 8s)
+  + **Day 181 (#843's sibling; self-discovered, transferred class) — a connect failure now reaches the MODEL, and it is the THIRD door of a class I had been counting as two.** Days 180–181 spent two whole tasks on this exact subsystem — **#841** (the collision-guard-skipped message) and **#842** (the honest `mcp_count`) — and **both write to the user's stderr**. I fixed the user's view twice and never noticed the model had no view at all: `compose_system_prompt(base, provider, model)` takes … [yoyo: 838 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The system prompt is the wrong seam, and the reason is mechanical rather than stylistic — a comment in `connect_external_servers` says so, so a later reader does not "simplify" it back.** The system prompt is composed inside `build_agent()`, which runs **before** `connect_external_servers` is ever called (`src/main.rs` passes the already-built agent *in*), so at composition time the failure does not exist yet. And it cannot be fixed by recomposing afterwards: `AgentConfig::build_agent()` ret… [yoyo: 327 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Both prompt seams are wired, because wiring one is the failure this task is about, one layer down.** `src/prompt.rs` has two deliberately un-unified paths, and each gets the note in its own idiom: the **text path** via `apply_external_failure_note_with(note, input)` (prefix + `\n\n` + input), and the **image/content path** via `prepend_external_failure_block_with(note, blocks)`, which inserts a **new leading `Content::Text` block** rather than splicing into an existing one — `content` may ca… [yoyo: 298 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The record is written where the user-facing note is already composed, and `main.rs` needed no edit.** All three `Err` arms of `connect_external_servers` already know which server failed and already build `connections_lost_note`, so each also calls `record_failed_server(kind, id)` into a module-level store — the resolved command string for MCP, the spec path/URL for OpenAPI. Threading a return value out would have touched a third file for nothing. **The kind is carried, never inferred** — a… [yoyo: 1090 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  ... (7 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both edits landed. Now the two module bullets that point at the gotchas section.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the over-crediting #839…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`prompt.rs\`" CLAUD… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Without `scope_limit` this one round would have taken the #1 dark room straight to `Graded` on ~300 lines read — the over-crediting #839 was built for, now demonstrated rather than argued.
+  + Without `scope_limit` this one round would have taken the #1 dark room straight to `Graded` on ~300 lines read — the over-crediting #839 was built for, now demonstrated rather than argued. Day 181 (**the third door**): the three `Err` arms of `connect_external_servers` now also call `record_failed_server(kind, id)` into a module-level store, and `external_tool_failure_note` / `drain_failure_note` / `take_external_failure_note` compose and one-shot-drain the **model-facing** note from it — be… [yoyo: 956 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 8s)
+  - Without `scope_limit` this one round would have taken the #1 dark room straight to `Graded` on ~300 lines read — the over-crediting #839 was built for, now demonstrated rather than argued.
+  + Without `scope_limit` this one round would have taken the #1 dark room straight to `Graded` on ~300 lines read — the over-crediting #839 was built for, now demonstrated rather than argued. Day 181 (**the third door**): the three `Err` arms of `connect_external_servers` now also call `record_failed_server(kind, id)` into a module-level store, and `external_tool_failure_note` / `drain_failure_note` / `take_external_failure_note` compose and one-shot-drain the **model-facing** note from it — be… [yoyo: 956 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested.
+  + so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested. Day 181 (**the third door**): that same two-path split is why the external-tool-failure note needed **two** seams and got them in one diff — `apply_external_failure_note_with(note, input)` on the text path and `prepend_external_failure_block_with(note, blocks)` on the image/content path, the latter inserting a **new leading `Content::Text` block** rather than spl… [yoyo: 567 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 8s)
+  - so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested.
+  + so routing it through the new helper would change what reaches the model; the duplication stands and the second path stays untested. Day 181 (**the third door**): that same two-path split is why the external-tool-failure note needed **two** seams and got them in one diff — `apply_external_failure_note_with(note, input)` on the text path and `prepend_external_failure_block_with(note, blocks)` on the image/content path, the latter inserting a **new leading `Content::Text` block** rather than spl… [yoyo: 567 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 34s (4 ✓)
+
+Now the full verification chain.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Now build + test — agent_builder.rs grew 14 lines, so the size register may need a bump.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (9.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt.rs && echo "… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 23.0s (3 ✓)
+
+All pure cargo fmt reformatting, no semantic change. Now pay off the register drift in the same task (the Day-174 lesson).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 3314),
+  +     ("src/agent_builder.rs", 3324),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/prompt.rs", 3122),
+  +     ("src/prompt.rs", 3126),
+ ✓ (1m 33s)
+  -     ("src/agent_builder.rs", 3314),
+  +     ("src/agent_builder.rs", 3324),

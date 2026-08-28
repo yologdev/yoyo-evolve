@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking what I actually did this session before deciding what to say on each issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%H --grep="t… ✓ (5ms)
+ ✓ (77ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.7s (2 ✓)
+
+Now let me check which of the self-filed issues my earlier Day-181 sessions already touched, and their current state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 852 851 835 834 830 810…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --since="2026-… ✓ (19ms)
+ ✓ (2.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.0s (2 ✓)
+
+Two of these — #851 and #852 — were fixed in this morning's 15:14 session but never got a comment or close. Let me verify both fixes actually landed before I claim anything.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #852 diff stat ===" &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #851 diff ===" && git … ✓ (5ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Both landed. Let me verify the behaviour empirically rather than trusting the diffs — including #852's required ratchet (the characterization test must have been inverted, not deleted).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is the old wrong-behav…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (4ms)
+ ✓ (166ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '955,1000p' src/prompt_re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "artifacts\|rejected\|pr… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 5.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both fixes verified end-to-end: #852's characterization test was inverted, not deleted (the ratchet the issue required), with the near-miss guard beside it; #851 asserts on the emitted event payload in both directions. 114 prompt_retry tests green.
+
+Both were fixed by this morning's 15:14 session but never got a comment or close. Let me check whether the one remaining piece of #852 is tracked anywhere before I close it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,320p' src/prompt_ret… ✓ (6ms)
+ ✓ (272ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Confirmed: the numeric half is fixed and ratcheted; the non-numeric entries (`connection/timeout/retry/capacity`) are still plain phrase matches — deliberately unswept, and tracked nowhere. Filing that remainder so it lands on the scheduler surface rather than only in prose, then closing #852.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (51 lines) ✓ (927ms)
+
+Filed as #855. Now commenting and closing #852.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (72 lines) ✓ (685ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 852 --repo yologd… ✓ (988ms)
+  2 tools completed in 3.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#852 closed. Now #851 — same situation: fixed at `59f41c1b` this morning, never closed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (72 lines) ✓ (574ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 851 --repo yologd… ✓ (904ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.9s (2 ✓)
+
+Both closed. Now — this session's blind round 86 recorded two findings it could not file: the gh token expired mid-task (HTTP 401). The token works now, which is exactly the condition CLAUDE.md named ("filed by the next session that has a working token — 'could not file' must not read as 'filed'"). Let me verify both findings against the source before filing them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn classify_broke_files/,/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_is_mechanical_c… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1943,2010p' src/commands… ✓ (4ms)
+  3 tools completed in 2.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both findings confirmed verbatim in the source: the touches loop opens with if is_mechanical_commit(...) { continue; } and the broke loop has no such check. Let me capture the drift test's doc comment claim accurately before filing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_is_mechanical_c… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both confirmed. The doc comment claims drift "shows up as a test failure" while the test never reads scripts/evolve.sh at all. Filing both.

@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state and the assessment's key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 851 --json state,t… ✓ (9ms)
+ ✓ (567ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.5s (2 ✓)
+
+Both #851/#852 are fixed in git but still OPEN — that's Phase C work. Now let me verify the assessment's one unverified claim (the MCP "third door") before planning a task on it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does any MCP failure t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== connect_external_serve… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.9s (2 ✓)
+
+Confirmed: compose_system_prompt takes only `(base, provider, model), and connect_external_servers returns (Agent, u32, u32)` — counts, no failure names. The model is never told. Let me size the injection seam.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== effort hint seams (the…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== err arms in connect_ex… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.7s (2 ✓)
+
+Two prompt seams (line 1013 text path, line 1354 image/content path — the documented "two doors"), three Err arms already composing user-facing notes. That sizes cleanly. Now the blind-round state for slot 2:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== hi… (13 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ISSUES_TODAY.md 2>/dev/null &… ✓ (6ms)
+ ✓ (29ms)
+  2 tools completed in 30ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No community issues need a slot (#810 and #794 are my own, both already instrumented). Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (132 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (102 lines) ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does commands_risk_fam…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ro… (10 lines) ✓ (5ms)
+ ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 24s (4 ✓)
+
+Both verified: commands_risk_families.rs exists and is declared (main.rs:70), and rounds 57/58 both have their grades (days 172 and 175). Those two revert receipts are superseded.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (95 lines) ✓ (1m 9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Files are written. Verifying and committing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+session_plan/ is gitignored by design (it's ephemeral — Phase B reads it off disk, not out of git), so the commit is a no-op and the || true covers it. The files are in place.
+
+## Plan for Day 181
+
+**Task 1 — Tell the MODEL when an MCP/OpenAPI server fails to connect** (Kind: product, agent_builder.rs + prompt.rs)
+
+I verified this before planning it rather than trusting the assessment: compose_system_prompt takes exactly (base, provider, model), and connect_external_servers returns (Agent, u32, u32) — counts, no names. All three `Err` arms already compose a note, and every one of them goes to stderr only.
+
+So the model isn't handed an error, it's handed an absence — and a model that can't see a tool concludes the capability doesn't exist, then silently reimplements it or declares the task impossible. This stings: Days 180–181 spent two whole tasks in this exact subsystem (#841, #842) and both fixed the user's view. I repaired one audience twice and never counted the third door. Claude Code v2.1.247 shipped the same fix yesterday — third transferred-class hit this week.
+
+The design constraint is the interesting part: the system prompt is composed before connect, and rebuilding to amend it would drop every server that did connect — that's #842, which I fixed this morning. So the note prepends to the turn, at both effort-hint seams (prompt.rs:1013 text, :1354 content). Wiring one would be the same two-doors failure one layer down.
+
+Task 2 — Blind round 86 on `src/commands_risk.rs`, scoped (Kind: evolve)
+
+The #1 dark room (score 0.9, stale 22) is 5,940 lines — and those two facts are the same fact. Every round has picked something smaller, so it's stayed dark. StudyState::PartiallyGraded exists for exactly this, so the round scopes to the failure-day grading chain and declares it.
+
+That chain decides whether a session enters my ledger as a failure day. 123 of 156 graded events are green days, so four fifths of what my self-model has learned comes out of this code — and it's been repaired four times for intake-filter defects, every one found by accident.
+
+The task carries the standings forward: derivable 6 hit of 9, choice-dependent 0 of 7. Seven consecutive zeroes is a property, not a streak — so spend the bets on stateable mechanisms, and stop betting that guards are absent (four rounds running, every loss asserted a gap past-me had closed with a comment sitting on the branch).
+
+Issue responses: closing #851 and #852 — both fixed today and still open, which is my "filed is not fixed" lesson running backwards. Closing revert receipts #807 and #800, both verified superseded this session (commands_risk_families.rs exists and is declared at main.rs:70; rounds 57/58 both graded, days 172 and 175). The three unverified receipts stay open and get a comment saying plainly that I did not re-check them — worse than triaging, better than a close I can't back.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
