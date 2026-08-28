@@ -1174,6 +1174,69 @@ PROVIDER_ERROR_RE = re.compile(r'"type"\s*:\s*"error"|provider_error|rate_limit'
 AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
 
 
+# Three states for the audit-log directory, and none of them may be folded into
+# a neighbour (#843). `main` used to substitute `Path("/dev/null")` for an unset
+# `YOYO_AUDIT_DIR` — a placeholder that RENDERS PLAUSIBLY: it is a real path, so
+# nothing upstream could see the value was missing, and the failure surfaced four
+# frames away as `NotADirectoryError` from `iterdir()` rather than as "the
+# variable is unset". `evolve.sh` always sets the var, so this only ever bit
+# hand-runs, i.e. exactly how this script gets debugged.
+#
+# UNSET and UNUSABLE are DIFFERENT FACTS: "nobody told me where to look" is not
+# "I was told, and the place is not there". Collapsing the second into silence is
+# the reading this file has already been corrected twice for on the green probe —
+# "could not check" must never read as "checked; clean".
+AUDIT_DIR_UNSET = "unset"
+AUDIT_DIR_UNUSABLE = "unusable"
+AUDIT_DIR_OK = "ok"
+
+
+def classify_audit_dir(raw, exists, is_dir) -> str:
+    """Pure: which of the three audit-dir states does this env value name?
+
+    `raw` is the env value exactly as read (`None` or `""` when unset);
+    `exists` / `is_dir` are injected predicates over the path string, so all
+    filesystem work stays at the call site and this half is reachable from the
+    self-tests — the split `newest_success_from_runs` vs `newest_successful_run`
+    already uses, for the same reason.
+
+    A whitespace-only value counts as UNSET: it names no path, and treating it
+    as a misconfiguration would report a directory that was never asked for.
+    """
+    if raw is None or not str(raw).strip():
+        return AUDIT_DIR_UNSET
+    path = str(raw)
+    if not exists(path) or not is_dir(path):
+        return AUDIT_DIR_UNUSABLE
+    return AUDIT_DIR_OK
+
+
+def resolve_audit_dir(raw) -> tuple[str, Path | None]:
+    """I/O half: classify the env value and hand back a Path only when usable.
+
+    Returns `(state, path_or_None)`. `None` is deliberate — a caller cannot
+    accidentally scan a directory that does not exist, because there is no
+    plausible-looking stand-in to scan. Fail-soft: an OSError from the
+    filesystem probes reports UNUSABLE rather than raising, since this
+    extractor must never block a session.
+    """
+
+    def _exists(p: str) -> bool:
+        try:
+            return Path(p).exists()
+        except OSError:
+            return False
+
+    def _is_dir(p: str) -> bool:
+        try:
+            return Path(p).is_dir()
+        except OSError:
+            return False
+
+    state = classify_audit_dir(raw, _exists, _is_dir)
+    return state, (Path(str(raw)) if state == AUDIT_DIR_OK else None)
+
+
 def collect_provider_errors(audit_dir: Path) -> tuple[int, int]:
     """Return (sessions_examined, total_provider_error_hits).
     Streams audit.jsonl line-by-line so a multi-MB file doesn't slurp into
@@ -1208,7 +1271,27 @@ def collect_provider_errors(audit_dir: Path) -> tuple[int, int]:
     return sessions, hits
 
 
-def render_provider_health(sessions: int, hits: int) -> str:
+def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) -> str:
+    """Render the provider-health section, or an honest one-line refusal.
+
+    The two non-OK states get ONE line each (header inline, the shape
+    `render_ci_errors` already uses for its could-not-check note): this section
+    renders before the epistemic block, TOTAL_BYTE_CAP is tight, and the
+    epistemic section has been truncated away once already (Day 142).
+
+    The OK path is byte-identical to before — that is `evolve.sh`'s path, i.e.
+    every real session and the whole regression surface.
+    """
+    if state == AUDIT_DIR_UNSET:
+        return (
+            "## Provider/API health: not checked — YOYO_AUDIT_DIR is unset, "
+            "so there is no audit-log to scan (this is normal for a hand-run)."
+        )
+    if state == AUDIT_DIR_UNUSABLE:
+        return (
+            "## Provider/API health: not checked — YOYO_AUDIT_DIR is set but is "
+            "not a readable directory. This is not 'no provider errors'."
+        )
     if sessions == 0:
         return ""
     if hits == 0:
@@ -1472,7 +1555,10 @@ def main() -> int:
     except OSError as e:
         warn(f"could not unlink stale {out_path}: {e}")
 
-    audit_dir = Path(audit_dir_str) if audit_dir_str else Path("/dev/null")
+    # Three states, none folded (#843). No plausible-looking placeholder: an
+    # unset var yields `None`, so neither scan below can be handed a path that
+    # was never named. `audit_dir_state` is what the section renders.
+    audit_dir_state, audit_dir = resolve_audit_dir(audit_dir_str)
 
     header = (
         f"# YOUR TRAJECTORY\n\n"
@@ -1481,9 +1567,13 @@ def main() -> int:
     )
 
     # Gather all sections (each falls back to "" silently on no-data)
-    outcomes = load_outcomes(audit_dir)
+    # Both audit-log scans are skipped outright when the directory is unset or
+    # unusable — there is no placeholder to walk, which is the whole of #843.
+    outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
     tasks, reverts = collect_task_commits()
-    sessions_audited, provider_hits = collect_provider_errors(audit_dir)
+    sessions_audited, provider_hits = (
+        collect_provider_errors(audit_dir) if audit_dir is not None else (0, 0)
+    )
     ci_scan = collect_failed_ci_fingerprints(repo)
     # One shared instant for the CI section, so the rendered verdict and the
     # stderr receipt are provably about the same moment rather than two clocks.
@@ -1547,7 +1637,11 @@ def main() -> int:
     ci_unknown = bool(s) and not ci_scan.ok
     if s:
         sections.append(s)
-    s = render_provider_health(sessions_audited, provider_hits)
+    s = render_provider_health(sessions_audited, provider_hits, audit_dir_state)
+    # Same rule as `ci_unknown` above: a "could not check" provider note is
+    # honest, but it is not trajectory DATA and must not suppress the global
+    # "(no trajectory data yet)" state below.
+    provider_unknown = bool(s) and audit_dir_state != AUDIT_DIR_OK
     if s:
         sections.append(s)
     # Always rendered when any signal exists (it has its own honest fallback
@@ -1555,7 +1649,7 @@ def main() -> int:
     # Skipped only when there is no trajectory data at all AND no epistemic
     # data — preserving the honest global "(no trajectory data yet)" state.
     epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
-    data_sections = len(sections) - (1 if ci_unknown else 0)
+    data_sections = len(sections) - (1 if ci_unknown else 0) - (1 if provider_unknown else 0)
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
 
@@ -3223,6 +3317,80 @@ src/commands_config.rs
         ),
         "## Recurring CI errors (failed runs, last 14 days)\n[1×, last <1d ago] boom",
     )
+
+    # --- #843: audit-dir classification, three states, none folded ---
+    print("\n=== classify_audit_dir / render_provider_health self-tests ===\n")
+
+    def yes(_p: str) -> bool:
+        return True
+
+    def no(_p: str) -> bool:
+        return False
+
+    # State 1: unset. Nothing to scan — and NOT a misconfiguration report.
+    assert_eq("unset env value classifies as UNSET", classify_audit_dir(None, yes, yes), AUDIT_DIR_UNSET)
+    assert_eq("empty string classifies as UNSET", classify_audit_dir("", yes, yes), AUDIT_DIR_UNSET)
+    assert_eq("whitespace-only classifies as UNSET", classify_audit_dir("   ", yes, yes), AUDIT_DIR_UNSET)
+
+    # State 2: set but unusable. Two distinct causes, one state — and it must
+    # NOT be reported as "unset", which would blame the wrong thing.
+    assert_eq(
+        "set but nonexistent classifies as UNUSABLE",
+        classify_audit_dir("/tmp/nope", no, no), AUDIT_DIR_UNUSABLE,
+    )
+    assert_eq(
+        "set but not a directory classifies as UNUSABLE (the /dev/null shape)",
+        classify_audit_dir("/dev/null", yes, no), AUDIT_DIR_UNUSABLE,
+    )
+
+    # State 3: the harness path. Near-miss guard — a discriminator tested only
+    # on the side that fires is vacuous green.
+    assert_eq(
+        "existing directory classifies as OK",
+        classify_audit_dir("/tmp/sessions", yes, yes), AUDIT_DIR_OK,
+    )
+
+    # The rendered strings: one line each for the two refusals, and the OK path
+    # byte-identical to before (whole-string compare, never a `contains`).
+    assert_eq(
+        "UNSET renders one honest line naming the variable",
+        render_provider_health(0, 0, AUDIT_DIR_UNSET),
+        "## Provider/API health: not checked — YOYO_AUDIT_DIR is unset, "
+        "so there is no audit-log to scan (this is normal for a hand-run).",
+    )
+    assert_eq(
+        "UNUSABLE renders a DIFFERENT line and refuses the clean-bill reading",
+        render_provider_health(0, 0, AUDIT_DIR_UNUSABLE),
+        "## Provider/API health: not checked — YOYO_AUDIT_DIR is set but is "
+        "not a readable directory. This is not 'no provider errors'.",
+    )
+    assert_eq(
+        "OK with hits is byte-identical to the pre-#843 render",
+        render_provider_health(7, 3, AUDIT_DIR_OK),
+        "## Provider/API health\n7 sessions, 3 provider error hit(s) in audit.jsonl.",
+    )
+    assert_eq(
+        "OK with no hits is byte-identical to the pre-#843 render",
+        render_provider_health(7, 0, AUDIT_DIR_OK),
+        "## Provider/API health\n7 sessions, no provider errors detected.",
+    )
+    assert_eq(
+        "OK with zero sessions still renders nothing (unchanged)",
+        render_provider_health(0, 0, AUDIT_DIR_OK), "",
+    )
+    assert_eq(
+        "default state argument keeps every existing call site unchanged",
+        render_provider_health(4, 1), "## Provider/API health\n4 sessions, 1 provider error hit(s) in audit.jsonl.",
+    )
+
+    # The I/O half must hand back NO path for the two refusals — the whole of
+    # #843 is that there is no plausible-looking placeholder left to walk.
+    st, p = resolve_audit_dir("")
+    assert_eq("resolve: unset yields no path", f"{st}/{p}", f"{AUDIT_DIR_UNSET}/None")
+    st, p = resolve_audit_dir("/dev/null")
+    assert_eq("resolve: /dev/null yields no path", f"{st}/{p}", f"{AUDIT_DIR_UNUSABLE}/None")
+    st, p = resolve_audit_dir("/tmp")
+    assert_eq("resolve: a real directory yields that path", f"{st}/{p}", f"{AUDIT_DIR_OK}//tmp")
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
