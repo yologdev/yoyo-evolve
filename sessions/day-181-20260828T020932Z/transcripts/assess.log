@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git history, and source structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (9ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (4ms)
+ ✓ (418ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (363ms)
+ ✓ (487ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 843 repro ===" && unse… ✓ (139ms)
+ ✓ (793ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO_AUDIT_DIR" scripts…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/main_tests.rs src/form… ✓ (273ms)
+ ✓ (796ms)
+  10 tools completed in 24.5s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough for a draft. Writing it now before research, per the write-early rule.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo risk epistem… ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#849 is flagged LIVE — that outranks everything. Reading it now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 849 --repo yologde… ✓ (274ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+This contradicts CLAUDE.md, which claims #847's close is fail-soft for exactly this case. Checking the actual code.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_task_node_id\|u… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,930p' src/gasp.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+The fail-soft branch exists but the events were still written. Checking whether update_task_status appends before it errors — that decides the fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src -name… ✓ (145ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Budget is tight — one decisive check, then I write.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent-state" Cargo.lo… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive: update_task_status appends task.status_changed first, unconditionally, then applies the UpdateNode op — with no node-existence check anywhere. So the if let Err(e) guard in session_end is doubly dead: the writes already happened, and the error likely never returns at all (the fold fails later, at YoAgentState::load). Writing the assessment now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (71 lines) ✓ (1m 37s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/assessment.m… ✓ (4ms)
+  3 tools completed in 1m 43s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment is on disk at session_plan/assessment.md (10,036 bytes). The commit was a no-op — session_plan/ is gitignored by design (CLAUDE.md documents it as an ephemeral directory), which is why the instruction carried || true. The file on disk is what feeds the planner.
+
+## What I found
+
+The headline is #849, filed 3 minutes before this session started, and it is live and silent. The yoyo-gasp state repo went from 7/7 conformant to 5/7: `fold failed: node not found: task_run_day180_20260827T232710Z_session`. GASP recording is dead for every future session — the shim degrades quietly, so sessions still run, still pass, and record nothing.
+
+**I verified the mechanism against source rather than trusting the issue, and it falsified a claim in my own CLAUDE.md.** That file asserts #847's session-node close is deliberately fail-soft for exactly this mid-flight-deploy case, and that a failure gets "named on stderr rather than swallowed." The `if let Err(e) guard is really there. But in yoagent-state, update_task_status records the task.status_changed` event **first, unconditionally**, then applies the `UpdateNode` op, with no node-existence check anywhere. So the guard is dead twice over: the appends have already happened before any Err could return, and the error probably never returns at all — the corruption surfaces later, at fold time. Nothing was named on stderr, because nothing errored.
+
+That is a lesson already in my archive — *a fallback cascade assumes every failed attempt was a no-op, but some tools fail dirty* — and I walked into it anyway. The sharp form: **a guard on the result cannot protect a side effect that happens before the result.** The check has to be on the call, not its return value.
+
+Also verified: #843 reproduces exactly (NotADirectoryError on /dev/null when YOYO_AUDIT_DIR is unset) — small, and it has been quietly training me to paste a bogus env var into every hand-run.
+
+## What I did not do
+
+Step 6, research, is missing, and I did not fabricate it. The #849 investigation ate the window I had budgeted for it. No yopedia recall, no yopedia ingest, no web searches — so the Research Findings section says that plainly instead of inventing a competitor survey I never ran. What I put there instead is only what the material already in front of me supports: the recurring gap isn't capability against Claude Code, it's that I keep opening channels with no alarm on them — the $1,077.59 freeze, the dead GASP recorder, the eight-day silent warning in tests/module_size.rs, all one shape.
+
+One thing for the planner to handle carefully: the state-repo repair writes to yoyo-gasp and needs a human decision on the repaired node's title/status. The prevention half — existence check before the update — is small, testable, and entirely in my lane, so it shouldn't wait on that.
+
+Stopping here as instructed: no task files, nothing implemented.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

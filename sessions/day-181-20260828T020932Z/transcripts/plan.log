@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking the live #849 situation the assessment flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 849 --repo yologde… ✓ (10ms)
+ ✓ (622ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.8s (2 ✓)
+
+The assessment verified the mechanism. Let me confirm the feasibility of the prevention fix — whether a node-existence check is even reachable in the API (a task that can't be done is a revert).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-*/src 2>/dev/null && ls && echo "=== no…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-*/src 2>/dev/null && echo "=== update_t… ✓ (2ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ ls ~/.cargo/registry/src/*/ 2>/dev/null | grep -i "yoagent" | head; echo "=== lo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== session_end in src/gas… ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0/src && ls && echo "=== public rea… ✓ (6ms)
+  5 tools completed in 7.4s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need on feasibility. Two more checks before writing — the exact API shape, so the impl agent doesn't hit a compile wall.
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-state-0.5.0/src && echo "=== TaskId -> NodeId…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.16.6/src && echo "=== what yoagent::gasp re… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.9s (2 ✓)
+
+Decisive: NodeId is re-exported from yoagent::gasp, and yoagent's own gasp.rs:182 already uses exactly the existence-check pattern (`state.get_node(NodeId::new(id.as_str())).await.is_none()`). The fix is an upstream-blessed shape, not an invention. Now the unverified receipts I'm required to route:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=… ✓ (359ms)
+ ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 53.2s (2 ✓)
+
+All 8 unverified receipts share one shape: "the evaluator produced no verdict line" — budget-gated skips, not objections. The receipts say so themselves: "There is no objection to answer here; the gap is that nobody looked." That changes the routing, and I'll handle it honestly in issue_responses.md. Writing the plan now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (86 lines) ✓ (1m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (58 lines) ✓ (1m 39s)
+  2 tools completed in 3m 43s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task files written. Now the community queue — I haven't checked it yet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -f ISSUES_TODAY.md ]; then … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No community issues today — ISSUES_TODAY.md holds only my own #810 and #794. Writing the responses file now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (46 lines) ✓ (1m 39s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (9ms)
+  2 tools completed in 1m 42s (2 ✓)
+
+Both task files present and non-empty. Committing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's ephemeral — implementation agents read it off disk). The || true in the instruction covers exactly this. Running it as specified and confirming final state:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in session_plan/task_01.md… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+Plan complete. Both task files well-formed, issue_responses.md written, commit run (no-op — session_plan/ is gitignored by design).
+
+## What I planned
+
+Task 1 — #849 prevention. The yoyo-gasp graph stopped folding, so GASP recording is dead for every future session and the shim degrades silently via _gasp_off. Sessions still run, still pass, record nothing.
+
+The part worth reporting: verifying the mechanism **falsified a claim in my own CLAUDE.md**. I had written that #847's close was deliberately fail-soft for exactly this mid-flight case, and that the failure would be "named on stderr rather than swallowed." It isn't and it wasn't. update_task_status appends the event first, unconditionally, then applies the UpdateNode op, and checks node existence nowhere — so my if let Err(e) guard was dead twice over: the write had already happened before any error could return, and no error returned at all. Nothing printed because nothing failed; the corruption surfaced later, in another process, at fold time.
+
+A guard on the result cannot protect a side effect that happens before the result. That's my own archived lesson — "some tools fail dirty" — walked into anyway.
+
+I checked feasibility before planning rather than after: NodeId is re-exported from yoagent::gasp, and yoagent's own gasp.rs:182 already uses the exact existence-check shape. So the fix copies an upstream-blessed pattern instead of inventing one. I deliberately did not plan the state-repo repair — it writes to an external repo and needs two decisions I shouldn't make alone.
+
+Task 2 — #843. A crash I've been routing around for three sessions by passing a bogus YOYO_AUDIT_DIR on every hand-run. That's workaround mastery, which my archive calls the most durable blindness, and it was in this session's own assessment too.
+
+## Two things I want to flag honestly
+
+The pattern is bigger than either task. Three consecutive sessions now where a GASP change had a consequence nobody noticed until something external looked — the $1,077.59 frozen for 102 days, the dead recorder, the silent degradation. Same shape: I keep opening channels without alarms on them. #849 names the fix (conformance checker in CI) and I can't do it — both candidate files are protected. That makes it operator-lane, and I said so rather than filing a task I'd have to revert.
+
+The unverified receipts weren't the class I expected. All eight say "the evaluator produced no verdict line" — budget-gated skips, not objections. So there was nothing to re-check, only whether the diffs had since been read. I closed three on concrete evidence of later review (#805 was mutation-read twice; #804 was extended line-by-line by #806; #812 is covered by a green grading gate) and kept five open with stated reasons — including #799 and #796, whose subject is a measured debt: `risk epistemic` still reports rounds 57 and 58 ungraded, and a prior attempt to close them reverted with no diff. Closing those would have been closing on a feeling.
+

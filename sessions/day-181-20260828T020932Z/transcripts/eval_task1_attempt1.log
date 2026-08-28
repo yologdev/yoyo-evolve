@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,960p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NodeId" src/gasp.rs | h… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo test --test ga…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(feature" tests/gasp… ✓ (7ms)
+ ✓ (185ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 420 cargo build --featur… ✓ (149ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 24s)
+  6 tools completed in 2m 4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation was already complete — the verdict file was written. Confirming it landed intact:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_1.md ✓ (3ms)
+
+Verdict file is written and complete. Evaluation done — no further work.
+
+Verdict: PASS
+
+What I verified:
+• **The fix itself** (`src/gasp.rs:920-950`): the existence check `get_node(NodeId::new(session_node.as_str()))` sits *before* `update_task_status`, which is the whole point — the update appends task.status_changed unconditionally, so a guard on its Err cannot protect against a missing node. NodeId was already imported at line 163, so no new dependency.
+• Position preserved in both directions: the close block still sits above record_run_finished (so `run.finished stays the last domain event) and above commit_run` (so the boundary commit carries it). The task guards that block; it did not relocate it.
+• **Both branches speak and stay distinct**: absent-node skip and the pre-existing Err arm are separate eprintln!s with different messages — not folded.
+• **New guard runs in the loop's own gate**: `cargo test --test gasp_session_end_guard` → 3 passed. No `#![cfg(feature = "gasp")]`, no `REGISTERED_FEATURE_GATED_TESTS` entry, as required.
+• Featured build type-checks: cargo build --features gasp finished with no recompile needed, so `TaskId::new(&str) and the get_node` call are valid on the real gasp path — which the harness's plain `cargo test` could not have proven, since the module compiles to nothing there.
+• Docs: CLAUDE.md records the false "fail-soft … named on stderr" claim verbatim as superseded rather than erasing it, names the mechanism and the transferable lesson, and states the standing limit (live graph still non-conformant). README badge correctly untouched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

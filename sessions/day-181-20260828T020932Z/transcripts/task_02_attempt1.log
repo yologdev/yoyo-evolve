@@ -1,0 +1,273 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the crash and reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && unset YOYO_AUDIT_DIR && python3 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dev/null\|YOYO_AUDIT_DI… ✓ (3ms)
+ ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Reproduced exactly as the issue describes. Now reading the relevant code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1260p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1520p' scripts/extr… ✓ (6ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1177,1225p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_provider_health\… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "class CiScan\|class Gre… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '650,710p' scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1583,1640p' scripts/extr… ✓ (4ms)
+ ✓ (4ms)
+  8 tools completed in 12.7s (8 ✓)
+
+
+I have the full picture now. Let me write the fix: a pure three-state classifier plus the I/O half.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "class GreenScan" -A 40 … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll implement the fix. First, the pure classifier and the three states:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (4 → 67 lines)
+    
+    
+    AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+  + 
+  + 
+  + # Three states for the audit-log directory, and none of them may be folded into
+  + # a neighbour (#843). `main` used to substitute `Path("/dev/null")` for an unset
+  + # `YOYO_AUDIT_DIR` — a placeholder that RENDERS PLAUSIBLY: it is a real path, so
+  + # nothing upstream could see the value was missing, and the failure surfaced four
+  + # frames away as `NotADirectoryError` from `iterdir()` rather than as "the
+  + # variable is unset". `evolve.sh` always sets the var, so this only ever bit
+  + # hand-runs, i.e. exactly how this script gets debugged.
+  + #
+  + # UNSET and UNUSABLE are DIFFERENT FACTS: "nobody told me where to look" is not
+  + # "I was told, and the place is not there". Collapsing the second into silence is
+  + # the reading this file has already been corrected twice for on the green probe —
+  + # "could not check" must never read as "checked; clean".
+  + AUDIT_DIR_UNSET = "unset"
+  + AUDIT_DIR_UNUSABLE = "unusable"
+  + AUDIT_DIR_OK = "ok"
+  ... (46 more lines)
+ ✓ (1m 37s)
+    
+    
+    AUDIT_FILE_SIZE_CAP = 10 * 1024 * 1024  # 10MB per file — guard against runaway audit.jsonl
+  + 
+  + 
+  + # Three states for the audit-log directory, and none of them may be folded into
+  + # a neighbour (#843). `main` used to substitute `Path("/dev/null")` for an unset
+  + # `YOYO_AUDIT_DIR` — a placeholder that RENDERS PLAUSIBLY: it is a real path, so
+  ... (13 more lines)
+
+Now the renderer — one line each for the two non-OK states, following the ## CI: ... inline-header precedent already in this file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (6 → 26 lines)
+  - def render_provider_health(sessions: int, hits: int) -> str:
+  + def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) -> str:
+  +     """Render the provider-health section, or an honest one-line refusal.
+  + 
+  +     The two non-OK states get ONE line each (header inline, the shape
+  +     `render_ci_errors` already uses for its could-not-check note): this section
+  +     renders before the epistemic block, TOTAL_BYTE_CAP is tight, and the
+  +     epistemic section has been truncated away once already (Day 142).
+  + 
+  +     The OK path is byte-identical to before — that is `evolve.sh`'s path, i.e.
+  +     every real session and the whole regression surface.
+  +     """
+  +     if state == AUDIT_DIR_UNSET:
+  +         return (
+  +             "## Provider/API health: not checked — YOYO_AUDIT_DIR is unset, "
+  +             "so there is no audit-log to scan (this is normal for a hand-run)."
+  +         )
+  +     if state == AUDIT_DIR_UNUSABLE:
+  +         return (
+  +             "## Provider/API health: not checked — YOYO_AUDIT_DIR is set but is "
+  ... (5 more lines)
+ ✓ (1m 38s)
+  - def render_provider_health(sessions: int, hits: int) -> str:
+  + def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) -> str:
+  +     """Render the provider-health section, or an honest one-line refusal.
+  + 
+  +     The two non-OK states get ONE line each (header inline, the shape
+  +     `render_ci_errors` already uses for its could-not-check note): this section
+  +     renders before the epistemic block, TOTAL_BYTE_CAP is tight, and the
+  +     epistemic section has been truncated away once already (Day 142).
+  ... (13 more lines)
+
+Now wire it into main() — resolving once, and never fabricating a directory:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (1 → 4 lines)
+  -     audit_dir = Path(audit_dir_str) if audit_dir_str else Path("/dev/null")
+  +     # Three states, none folded (#843). No plausible-looking placeholder: an
+  +     # unset var yields `None`, so neither scan below can be handed a path that
+  +     # was never named. `audit_dir_state` is what the section renders.
+  +     audit_dir_state, audit_dir = resolve_audit_dir(audit_dir_str)
+ ✓ (1m 39s)
+  -     audit_dir = Path(audit_dir_str) if audit_dir_str else Path("/dev/null")
+  +     # Three states, none folded (#843). No plausible-looking placeholder: an
+  +     # unset var yields `None`, so neither scan below can be handed a path that
+  +     # was never named. `audit_dir_state` is what the section renders.
+  +     audit_dir_state, audit_dir = resolve_audit_dir(audit_dir_str)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "audit_dir\|render_provi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1566,1575p' scripts/extr… ✓ (5ms)
+  ▶ edit scripts/extract_trajectory.py (4 → 8 lines)
+        # Gather all sections (each falls back to "" silently on no-data)
+  -     outcomes = load_outcomes(audit_dir)
+  +     # Both audit-log scans are skipped outright when the directory is unset or
+  +     # unusable — there is no placeholder to walk, which is the whole of #843.
+  +     outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
+        tasks, reverts = collect_task_commits()
+  -     sessions_audited, provider_hits = collect_provider_errors(audit_dir)
+  +     sessions_audited, provider_hits = (
+  +         collect_provider_errors(audit_dir) if audit_dir is not None else (0, 0)
+  +     )
+ ✓ (1m 38s)
+        # Gather all sections (each falls back to "" silently on no-data)
+  -     outcomes = load_outcomes(audit_dir)
+  +     # Both audit-log scans are skipped outright when the directory is unset or
+  +     # unusable — there is no placeholder to walk, which is the whole of #843.
+  +     outcomes = load_outcomes(audit_dir) if audit_dir is not None else []
+        tasks, reverts = collect_task_commits()
+  -     sessions_audited, provider_hits = collect_provider_errors(audit_dir)
+  +     sessions_audited, provider_hits = (
+  +         collect_provider_errors(audit_dir) if audit_dir is not None else (0, 0)
+  +     )
+  ▶ edit scripts/extract_trajectory.py (3 → 7 lines)
+  -     s = render_provider_health(sessions_audited, provider_hits)
+  +     s = render_provider_health(sessions_audited, provider_hits, audit_dir_state)
+  +     # Same rule as `ci_unknown` above: a "could not check" provider note is
+  +     # honest, but it is not trajectory DATA and must not suppress the global
+  +     # "(no trajectory data yet)" state below.
+  +     provider_unknown = bool(s) and audit_dir_state != AUDIT_DIR_OK
+        if s:
+            sections.append(s)
+ ✓ (1m 37s)
+  -     s = render_provider_health(sessions_audited, provider_hits)
+  +     s = render_provider_health(sessions_audited, provider_hits, audit_dir_state)
+  +     # Same rule as `ci_unknown` above: a "could not check" provider note is
+  +     # honest, but it is not trajectory DATA and must not suppress the global
+  +     # "(no trajectory data yet)" state below.
+  +     provider_unknown = bool(s) and audit_dir_state != AUDIT_DIR_OK
+        if s:
+            sections.append(s)
+  4 tools completed in 3m 27s (4 ✓)
+
+  ▶ edit scripts/extract_trajectory.py (1 → 1 lines)
+  -     data_sections = len(sections) - (1 if ci_unknown else 0)
+  +     data_sections = len(sections) - (1 if ci_unknown else 0) - (1 if provider_unknown else 0)
+ ✓ (1m 38s)
+  -     data_sections = len(sections) - (1 if ci_unknown else 0)
+  +     data_sections = len(sections) - (1 if ci_unknown else 0) - (1 if provider_unknown else 0)
+
+Now the self-tests. Let me find where to add them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print(f\"\\\\n{'ALL PAS… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3300,3322p' scripts/extr… ✓ (3ms)
+  ▶ edit scripts/extract_trajectory.py (2 → 76 lines)
+  +     # --- #843: audit-dir classification, three states, none folded ---
+  +     print("\n=== classify_audit_dir / render_provider_health self-tests ===\n")
+  + 
+  +     def yes(_p: str) -> bool:
+  +         return True
+  + 
+  +     def no(_p: str) -> bool:
+  +         return False
+  + 
+  +     # State 1: unset. Nothing to scan — and NOT a misconfiguration report.
+  +     assert_eq("unset env value classifies as UNSET", classify_audit_dir(None, yes, yes), AUDIT_DIR_UNSET)
+  +     assert_eq("empty string classifies as UNSET", classify_audit_dir("", yes, yes), AUDIT_DIR_UNSET)
+  +     assert_eq("whitespace-only classifies as UNSET", classify_audit_dir("   ", yes, yes), AUDIT_DIR_UNSET)
+  + 
+  +     # State 2: set but unusable. Two distinct causes, one state — and it must
+  +     # NOT be reported as "unset", which would blame the wrong thing.
+  +     assert_eq(
+  +         "set but nonexistent classifies as UNUSABLE",
+  +         classify_audit_dir("/tmp/nope", no, no), AUDIT_DIR_UNUSABLE,
+  +     )
+  ... (56 more lines)
+ ✓ (1m 38s)
+  +     # --- #843: audit-dir classification, three states, none folded ---
+  +     print("\n=== classify_audit_dir / render_provider_health self-tests ===\n")
+  + 
+  +     def yes(_p: str) -> bool:
+  +         return True
+  + 
+  +     def no(_p: str) -> bool:
+  +         return False
+  ... (13 more lines)
+  3 tools completed in 1m 58s (3 ✓)
+
+
+Now verification — the self-tests, then the intended end-to-end invocation:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (66ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && unset YOYO_AUDIT_DIR && python3 … ✓ (858ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_AUDIT_DIR=/tmp/nonexistent-… ✓ (1.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.9s (3 ✓)
+
+State (3) is the harness path and the whole regression surface. Let me prove it byte-identical against the pre-change code:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -rf /tmp/… (6 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own safety guard caught the rm -rf / prefix — fair. Using mktemp -d instead:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && FA=$(mktemp -d) && echo "FA=$FA"… ✓ (861ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && source /tmp/fa_path && git stash… ✓ (899ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.5s (2 ✓)
+
+State (3) proven byte-identical by diff against the real pre-change code. Now the positive control — run, not assumed, and serially (my own archive: two file-mutating controls in one parallel block raced once and one falsely passed):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/e… (11 lines) ✓ (156ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (155ms)
+  2 tools completed in 4.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fire (7 FAILs and 3 FAILs), restored green. Now the docs — finding the end of the extractor bullet in CLAUDE.md:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Unrelated pre-existing … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==359' CLAUDE.md | tail -… ✓ (5ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - and both verified to fail against the pre-fix body before landing)
+  + and both verified to fail against the pre-fix body before landing). Day 181 (#843): the **audit-log directory has three states, none folded into a neighbour** — `classify_audit_dir(raw, exists, is_dir)` (pure, table-tested, filesystem predicates injected; `resolve_audit_dir` is the I/O half and hands back **no `Path` at all** unless the directory is usable) returns `AUDIT_DIR_UNSET` (nothing was named — normal for a hand-run), `AUDIT_DIR_UNUSABLE` (a path *was* named and is not a readable di… [yoyo: 1998 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 39s)
+  - and both verified to fail against the pre-fix body before landing)
+  + and both verified to fail against the pre-fix body before landing). Day 181 (#843): the **audit-log directory has three states, none folded into a neighbour** — `classify_audit_dir(raw, exists, is_dir)` (pure, table-tested, filesystem predicates injected; `resolve_audit_dir` is the I/O half and hands back **no `Path` at all** unless the directory is usable) returns `AUDIT_DIR_UNSET` (nothing was named — normal for a hand-run), `AUDIT_DIR_UNUSABLE` (a path *was* named and is not a readable di… [yoyo: 1998 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 58s (3 ✓)
+
+Now the full gate — Rust is untouched, but the harness gates on it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (16.0s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
