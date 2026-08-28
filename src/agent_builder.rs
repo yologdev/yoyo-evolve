@@ -952,7 +952,24 @@ impl AgentConfig {
         // second-to-last message.
         agent = agent.with_cache_config(CacheConfig::new());
 
-        // Always set execution limits — use user's --max-turns or a generous default
+        // Always set execution limits — use user's --max-turns or a generous default.
+        //
+        // #856: this spread also inherits yoagent 0.18's
+        // `max_consecutive_identical_tool_calls: Some(3)`. That value is KEPT
+        // DELIBERATELY, not merely inherited — a policy arriving through
+        // `..Default::default()` is a policy nobody chose. Three *byte-identical
+        // consecutive* calls is not a shape legitimate work produces: an agent
+        // that tests, edits and re-tests has an `edit_file` in between, a
+        // different signature, which resets the streak. The guard also fires a
+        // warning shot — it steers first and only aborts on a later repeat — so
+        // killing a legitimate run requires the agent to ignore an explicit
+        // steer. It is the cheapest catastrophic-loop guard yoyo does not
+        // otherwise have.
+        //
+        // Stated limit, so this is not read as more than it is: different
+        // signatures always reset the streak, so an ALTERNATING loop
+        // (`[a, b, a, b, …]`) is NOT caught. Both escalations surface through
+        // `prompt::announce_loop_detected`.
         agent = agent.with_execution_limits(
             ExecutionLimits::default()
                 .with_max_turns(self.max_turns.unwrap_or(200))
@@ -1089,6 +1106,11 @@ impl AgentConfig {
             ))
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig::new())
+            // #856: inherits the same `max_consecutive_identical_tool_calls:
+            // Some(3)` as `build_agent` — kept deliberately, see the comment
+            // there for the reasoning and its stated limit. At `max_turns(1)`
+            // the guard is near-moot here; it is inherited rather than opted
+            // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         if let Some(temp) = self.temperature {
@@ -1129,6 +1151,11 @@ impl AgentConfig {
             ))
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig::new())
+            // #856: inherits the same `max_consecutive_identical_tool_calls:
+            // Some(3)` as `build_agent` — kept deliberately, see the comment
+            // there for the reasoning and its stated limit. At `max_turns(1)`
+            // the guard is near-moot here; it is inherited rather than opted
+            // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         if let Some(temp) = self.temperature {

@@ -319,6 +319,82 @@ fn is_dropped_tool_args_error(error_msg: &str) -> bool {
             || lower.contains("no arguments"))
 }
 
+/// Compose the human-readable notice for `AgentEvent::LoopDetected` (#856).
+///
+/// yoagent 0.18's `ExecutionLimits` carries a loop guard
+/// (`max_consecutive_identical_tool_calls`, default `Some(3)`): three
+/// consecutive byte-identical tool calls steer the model, and a later repeat of
+/// the same signature **aborts the run**. `aborted` separates the two, and it
+/// is the load-bearing case — the run is ending *because of this*, so the line
+/// says the stop was deliberate rather than a failure. A run that stops with no
+/// stated reason is the whole defect this arm exists to fix.
+///
+/// Pure so the wording has exactly one statement and is assertable without an
+/// event stream; `plain` is passed in rather than read from the global, so a
+/// test never touches process state (the `apply_effort_hint_with` split).
+fn loop_detected_notice(tool_name: &str, repetitions: usize, aborted: bool, plain: bool) -> String {
+    // Glyph-free under plain output means bullets AND em dashes (the
+    // `git_redirection_refusal_message` convention).
+    let dash = if plain { "-" } else { "—" };
+    if aborted {
+        let marker = if plain { "" } else { "🛑 " };
+        format!(
+            "{marker}stopped the run: '{tool_name}' was called {repetitions} times in a row \
+             with identical arguments. This stop is deliberate {dash} yoyo's loop guard fired \
+             after an earlier steer was ignored; it is not a provider or tool failure."
+        )
+    } else {
+        let marker = if plain { "" } else { "⚠ " };
+        format!(
+            "{marker}loop guard: '{tool_name}' was called {repetitions} times in a row with \
+             identical arguments. Steering the model {dash} a further repeat of the same call \
+             will stop the run."
+        )
+    }
+}
+
+/// Emit the loop-detected notice on stderr, gated exactly once (#856).
+///
+/// **Called from BOTH event paths** — the display handler and
+/// `handle_stream_json_events` — so the gating and the wording cannot drift
+/// between them, the same discipline `record_tool_arg_writes` /
+/// `record_rename_tool_writes` already use. Wiring one path and not the other
+/// is the "two doors, one policy, one deaf" shape this repo has shipped seven
+/// times (#745, #767, #769, #816, `/config show`, sub-agent fallback, #852).
+///
+/// stdout is untouched, so `--output-format json`'s NDJSON wire contract is
+/// unchanged: a machine consumer already receives the full-fidelity event from
+/// `emit_agent_event`, and this is the line a *human* reads. Silent under
+/// `is_quiet()` and glyph-free under `is_plain_output()`, like ~15 sibling
+/// notices.
+///
+/// It deliberately does **not** set `last_api_error`: `try_fallback_prompt`
+/// retries on any `last_api_error`, and re-running an aborted loop on a
+/// fallback model would just loop again. A deterministic behavioural stop is
+/// not flakiness — the same short-circuit `RecoveryHintTool` makes (#710).
+fn announce_loop_detected(tool_name: &str, repetitions: usize, aborted: bool) {
+    if crate::format::is_quiet() {
+        return;
+    }
+    let plain = crate::format::is_plain_output();
+    let notice = loop_detected_notice(tool_name, repetitions, aborted, plain);
+    let color = if aborted { &RED } else { &YELLOW };
+    eprintln!("{color}  {notice}{RESET}");
+}
+
+/// Compose the informational notice for `AgentEvent::ContextCompacted` (#856).
+///
+/// Context being compacted mid-run is exactly the kind of silent event a user
+/// should be able to see — it explains why the model suddenly "forgot" earlier
+/// turns. Kept short on purpose: this one fires on healthy runs.
+fn context_compacted_notice(messages_before: usize, messages_after: usize, plain: bool) -> String {
+    let marker = if plain { "" } else { "🗜 " };
+    // Glyph-free under plain output covers the ARROW too, not just the marker —
+    // an assertion caught this one, which is the near-miss guard earning its keep.
+    let arrow = if plain { "->" } else { "→" };
+    format!("{marker}context compacted: {messages_before} messages {arrow} {messages_after}")
+}
+
 /// Record the files a successful `rename_symbol` tool call actually wrote
 /// into the session tracker, as `ChangeKind::Edit` (#783).
 ///
@@ -990,6 +1066,27 @@ async fn handle_prompt_events(
                     AgentEvent::TurnEnd { .. } => {
                         // Turn complete — nothing needed here for now.
                         // Explicitly matched to keep event handling exhaustive.
+                    }
+                    // #856: yoagent 0.18's loop guard. Both escalations arrive
+                    // here; without this arm an aborted run just stops with no
+                    // stated reason. The emitter is shared with the JSON path.
+                    AgentEvent::LoopDetected { tool_name, repetitions, aborted, .. } => {
+                        if let Some(s) = state.spinner.take() { s.stop(); }
+                        if state.in_text {
+                            println!();
+                            state.in_text = false;
+                        }
+                        announce_loop_detected(&tool_name, repetitions, aborted);
+                    }
+                    // #856: history was compacted mid-run — the reason the model
+                    // may suddenly have "forgotten" earlier turns.
+                    AgentEvent::ContextCompacted { messages_before, messages_after, .. }
+                        if !crate::format::is_quiet() =>
+                    {
+                        if let Some(s) = state.spinner.take() { s.stop(); }
+                        let plain = crate::format::is_plain_output();
+                        let notice = context_compacted_notice(messages_before, messages_after, plain);
+                        eprintln!("{DIM}  {notice}{RESET}");
                     }
                     _ => {}
                 }
@@ -1751,6 +1848,14 @@ async fn handle_stream_json_events(
                             last_api_error = Some(format!("{reason}: {diagnostic}"));
                         }
                     }
+                    // #856: the second door. The full-fidelity event already went
+                    // out on the NDJSON wire above (`emit_agent_event`), which is
+                    // the machine consumer's channel; this is the line a human
+                    // watching stderr reads, through the SAME emitter the display
+                    // path calls so the two cannot say different things.
+                    AgentEvent::LoopDetected { tool_name, repetitions, aborted, .. } => {
+                        announce_loop_detected(tool_name, *repetitions, *aborted);
+                    }
                     _ => {}
                 }
             }
@@ -1780,6 +1885,146 @@ async fn handle_stream_json_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #856: the two escalations of yoagent 0.18's loop guard must read
+    /// differently, and the aborted one must say the run STOPPED. A run that
+    /// ends with no stated reason is the defect this arm exists to fix, so the
+    /// assertion is on the string a caller receives, not on a flag below it.
+    #[test]
+    fn loop_detected_notice_separates_a_steer_from_a_stop() {
+        let steer = loop_detected_notice("bash", 3, false, false);
+        let stop = loop_detected_notice("bash", 4, true, false);
+
+        assert_ne!(
+            steer, stop,
+            "a steer and a stop must not read the same: {steer}"
+        );
+
+        // The stop states that it stopped, and that it was deliberate.
+        assert!(
+            stop.contains("stopped the run"),
+            "aborted notice must say the run stopped: {stop}"
+        );
+        assert!(
+            stop.contains("deliberate"),
+            "aborted notice must say the stop was deliberate: {stop}"
+        );
+        assert!(
+            stop.contains("not a provider or tool failure"),
+            "aborted notice must not read as a failure: {stop}"
+        );
+
+        // The steer is a warning, not a failure: it must NOT claim a stop.
+        assert!(
+            !steer.contains("stopped the run"),
+            "a steer must not claim the run stopped: {steer}"
+        );
+        assert!(
+            steer.contains("will stop the run"),
+            "a steer must name what happens next: {steer}"
+        );
+    }
+
+    /// Both the tool name and the repetition count appear verbatim in both
+    /// branches — a user cannot act on a loop they cannot identify.
+    #[test]
+    fn loop_detected_notice_names_the_tool_and_the_count() {
+        for aborted in [false, true] {
+            let notice = loop_detected_notice("read_file", 7, aborted, false);
+            assert!(
+                notice.contains("read_file"),
+                "must name the tool (aborted={aborted}): {notice}"
+            );
+            assert!(
+                notice.contains('7'),
+                "must name the repetition count (aborted={aborted}): {notice}"
+            );
+        }
+    }
+
+    /// Glyph-free under `--screen-reader` means bullets AND em dashes, the
+    /// convention ~15 sibling notices follow. Both branches, since a
+    /// discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn loop_detected_notice_is_glyph_free_under_plain_output() {
+        for aborted in [false, true] {
+            let plain = loop_detected_notice("bash", 3, aborted, true);
+            assert!(
+                plain.is_ascii(),
+                "plain output must carry no glyph and no em dash (aborted={aborted}): {plain}"
+            );
+            // ...and the non-plain form is the near-miss guard: it DOES carry one.
+            let fancy = loop_detected_notice("bash", 3, aborted, false);
+            assert!(
+                !fancy.is_ascii(),
+                "non-plain output keeps its marker (aborted={aborted}): {fancy}"
+            );
+        }
+    }
+
+    /// #856: the compaction line names both counts, and is glyph-free under
+    /// plain output like every sibling notice.
+    #[test]
+    fn context_compacted_notice_names_both_counts() {
+        let notice = context_compacted_notice(40, 13, false);
+        assert!(notice.contains("40"), "must name messages before: {notice}");
+        assert!(notice.contains("13"), "must name messages after: {notice}");
+
+        let plain = context_compacted_notice(40, 13, true);
+        assert!(plain.is_ascii(), "plain output must be glyph-free: {plain}");
+        assert!(plain.contains("40") && plain.contains("13"));
+    }
+
+    /// #856: BOTH event paths must carry the `LoopDetected` arm.
+    ///
+    /// **Stated limit, so "could not check" cannot read as "checked; clean":**
+    /// this is a deliberately WEAK source-level guard. It proves the arm is
+    /// *present* in each function body, never that it fires, and never that the
+    /// two behave identically at runtime. It exists because wiring one path and
+    /// not the other is the "two doors, one policy, one deaf" shape this repo
+    /// has shipped seven times; it guards against silent deletion of one half.
+    ///
+    /// Both needles are assembled at runtime so this test cannot match itself.
+    #[test]
+    fn both_event_paths_handle_the_loop_guard() {
+        let src = include_str!("prompt.rs");
+        let variant = format!("{}{}", "Loop", "Detected");
+        let emitter = format!("{}{}", "announce_loop_", "detected(");
+
+        // Slice each function body: from its `fn` header to the start of the
+        // next top-level item, so a hit in one cannot vouch for the other.
+        let display_start = src
+            .find("async fn handle_prompt_events(")
+            .expect("display path handler must exist");
+        let json_start = src
+            .find("async fn handle_stream_json_events(")
+            .expect("json path handler must exist");
+        assert!(
+            display_start < json_start,
+            "slicing assumes the display handler comes first"
+        );
+
+        let display_body = &src[display_start..json_start];
+        // The json body ends at the test module, which is the next top-level item.
+        let tests_marker = format!("#[cfg({})]\nmod tests", "test");
+        let json_end = src[json_start..]
+            .find(&tests_marker)
+            .map(|i| json_start + i)
+            .unwrap_or(src.len());
+        let json_body = &src[json_start..json_end];
+
+        for (name, body) in [("display", display_body), ("json", json_body)] {
+            assert!(
+                body.contains(&variant),
+                "the {name} event path must handle the loop-guard event"
+            );
+            assert!(
+                body.contains(&emitter),
+                "the {name} event path must route through the SHARED emitter, \
+                 so the two paths cannot say different things"
+            );
+        }
+    }
 
     /// #686: the harness greps phase logs for `refused this request`. This
     /// asserts the *emitted* notice text (what `eprintln!` receives at the
