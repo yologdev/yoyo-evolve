@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual source to confirm the defect before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "task_result" src/gasp.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1000,1160p' src/gasp.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.4s (3 ✓)
+
+The defect is confirmed, and promoted is already hoisted above the patch block — so I only need to consult it. Let me see the rest and the integration test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1200p' src/gasp.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/gasp_cli_run_orderin… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,311p' tests/gasp_cli_… ✓ (5ms)
+  3 tools completed in 3.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---A… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,135p' src/gasp_cli.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,470p' src/gasp_cli.r… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.7s (3 ✓)
+
+Tree is clean; promoted is already hoisted above the patch block, so no second spelling is needed. Making the source fix first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/gasp.rs (3 → 21 lines)
+  -     patch.artifacts =
+  -         vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)];
+  +     // #851: the commit artifact is attached ONLY for a promoted verdict, and it
+  +     // reads the same `promoted` binding the status, the eval and the decision
+  +     // below read — one statement of the rule, so the artifact and the status
+  +     // cannot disagree about the same task.
+  +     //
+  +     // Why an empty vec rather than a sentinel: `scripts/evolve.sh` reverts a
+  +     // failed task with `git reset --hard PRE_TASK_SHA`, so by the time this runs
+  +     // HEAD is back where the task started — which, in a two-task session whose
+  +     // first task shipped, *is task 1's commit*. A rejected patch therefore did
+  +     // not record a meaningless sha, it recorded the most confusable value
+  +     // available (day 173: patches `_1` and `_2` both carrying `fb60556e`).
+  +     // "No artifact" is the true statement — a reverted task produced nothing —
+  +     // and a placeholder would be one more thing every reader must special-case.
+  +     // `base_project_ref` above still records `pre_sha`, so the patch keeps
+  +     // saying where it started from.
+  +     patch.artifacts = if promoted {
+  +         vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)]
+  +     } else {
+  ... (3 more lines)
+ ✓ (1m 39s)
+  -     patch.artifacts =
+  -         vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)];
+  +     // #851: the commit artifact is attached ONLY for a promoted verdict, and it
+  +     // reads the same `promoted` binding the status, the eval and the decision
+  +     // below read — one statement of the rule, so the artifact and the status
+  +     // cannot disagree about the same task.
+  +     //
+  +     // Why an empty vec rather than a sentinel: `scripts/evolve.sh` reverts a
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me verify the emitted event shape so the test asserts on the real payload rather than a guess.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && SRC=$(ls -d ~/.cargo/registry/sr… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+patch.proposed carries the serialized patch directly. Let me check the artifacts serde shape before writing assertions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && SRC=/home/runner/.cargo/registry… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent-state"… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+Resolved version is 0.5.2 — reading 0.4.1 would be the stale-version mistake this repo has paid eight sessions for.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && SRC=/home/runner/.cargo/registry… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && SRC=/home/runner/.cargo/registry… ✓ (4ms)
+  2 tools completed in 3.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '35,62p' /home/runner/.ca… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=41 && NR<=48' /home/run… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.9s (2 ✓)
+
+Zero `skip_serializing` attributes — so artifacts always serializes, as [] when empty. That's unambiguous to assert on. Now the test:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/gasp_cli_run_ordering.rs (2 → 165 lines)
+  + /// The payload of every `patch.proposed` event, in file order.
+  + ///
+  + /// `propose_patch` records `serde_json::to_value(&patch)` verbatim, and
+  + /// `StatePatch` carries no `skip_serializing_if` attributes (checked against
+  + /// the resolved yoagent-state 0.5.2, not an older copy in the registry), so
+  + /// `artifacts` is always present — `[]` when empty rather than absent. That is
+  + /// what lets the #851 assertion below distinguish "recorded no artifact" from
+  + /// "recorded no patch".
+  + fn proposed_patches(state_dir: &Path) -> Vec<serde_json::Value> {
+  +     domain_events(state_dir)
+  +         .into_iter()
+  +         .filter(|(k, _)| k == "patch.proposed")
+  +         .map(|(_, p)| p)
+  +         .collect()
+  + }
+  + 
+  + /// The `artifacts` array of the one patch this session proposed.
+  + ///
+  + /// Panics unless exactly one patch landed — the anti-vacuous half of the #851
+  + /// assertion, so a session that recorded *no* patch can never satisfy "carries
+  ... (145 more lines)
+ ✓ (1m 40s)
+  + /// The payload of every `patch.proposed` event, in file order.
+  + ///
+  + /// `propose_patch` records `serde_json::to_value(&patch)` verbatim, and
+  + /// `StatePatch` carries no `skip_serializing_if` attributes (checked against
+  + /// the resolved yoagent-state 0.5.2, not an older copy in the registry), so
+  + /// `artifacts` is always present — `[]` when empty rather than absent. That is
+  + /// what lets the #851 assertion below distinguish "recorded no artifact" from
+  + /// "recorded no patch".
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build --featu… ✓ (21.4s)
+  2 tools completed in 2m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Featured build is green. Now running the new tests:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (463ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 3 green, including the pre-existing ordering test. Now the positive control — serially, in one sequential script so the two directions cannot race:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/gasp.… (15 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (10.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.6s (2 ✓)
+
+Control fires exactly as designed: the rejected guard FAILS, while the promoted near-miss guard and the ordering regression guard stay green — proving the guards test the pass-through, not the fix. Now restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gasp_backup.rs src/gasp.… ✓ (10.4s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, all 3 green. Positive control complete in both directions, run serially. Now the full gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (16.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 47s (2 ✓)
+
+Plain suite: 5299 passed, 0 failed. Now the featured clippy + test (CI runs both):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets --fea… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets --fea… ✓ (174ms)
+  2 tools completed in 2m 5s (1 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

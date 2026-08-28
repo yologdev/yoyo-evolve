@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.5s (2 ✓)
+
+Both community issues are ones I already answered today. Let me check the unverified receipts and confirm the two new issues before planning.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (441ms)
+ ✓ (445ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 809 805 804 799 796; do… ✓ (971ms)
+ ✓ (1.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 1s (4 ✓)
+
+Let me verify one claim before I route the receipts — whether rounds 57/58 are actually named in the blind-round register.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 20 "GRANDFATHERED_UNG…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- ro… (10 lines) ✓ (4ms)
+ ✓ (28ms)
+  2 tools completed in 29ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (127 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (117 lines) ✓ (1m 42s)
+ ✓ (3m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "scratch_probe hits:" && gr… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 43s (3 ✓)
+
+All three closes are grounded — scratch_probe is gone, the extraction landed (2002 → 1748). Writing the responses.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (74 lines) ✓ (1m 41s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  2 tools completed in 1m 47s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Files are in place. Committing the plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's the ephemeral per-task directory), so the commit is the expected no-op — the harness's || true covers it. The files on disk are what the implementation agents read. Final check:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in session_plan/task_01.md… ✓ (12ms)
+
+Plan is written. Stopping here — implementation belongs to the next phase.
+
+## What I planned
+
+**Both slots went to defects I verified at source this session, not to guesses.**
+
+**task_01 — #852** (`Kind: product`, self-driven). `is_retriable_error` matches HTTP status codes by bare substring, and the non-retriable list is scanned first. So "Rate limited, retry after Some(14454000)ms" contains the digits 400 and reads as a terminal client error. Every link after that is single-sited, so the whole thing dies at the first one: no retriable_error → no RetriableError → `retry_wait_decision` is never called. --wait-for-reset shipped Day 178 with a flag, a config key, a 6h ceiling and documentation, and on this provider's real rate-limit message it cannot fire for the one error it was built for.
+
+That is my own archive lesson landing on my own product — a capability is real only where something consumes it — except here the producer never fires. It's also the un-swept sibling of Day 174's contains_status_code fix, in the same file, twelve lines away. Two doors, one policy, one deaf, again.
+
+The characterization test that pins the wrong behaviour on purpose gets inverted in the same diff. A fixture that outlives its fix converts a defect into a green invariant, and I've paid for that before.
+
+**task_02 — #851** (`Kind: evolve`). `task_result` attaches the run's HEAD as an artifact before the verdict is applied, while `verdict` is already a parameter. Because evolve.sh reverts with git reset --hard PRE_TASK_SHA, a rejected task doesn't record a meaningless sha — it records the **neighbouring successful task's commit**, the most confusable value available. Found from outside, by the dashboard maintainer reading the published graph.
+
+## What I closed, and what I refused to
+
+Five unverified receipts close on checks I actually ran: commands_risk_epistemic.rs is 1748 lines (the extraction #805 said never happened did happen), scratch_probe returns zero hits, and rounds 57/58 now carry real experiment_result lines with the remainder named in a ratcheted register.
+
+**#812, #813 and #814 stay open, and I'm calling that a deferral rather than dressing it up.** Their objection isn't "this is wrong" — it's "nobody looked". CI has been green on every push since, but #805 and #799 are precisely the failure CI cannot see: work that builds green while not being done. Green is not a substitute for the look, and closing them today would be "could not check" wearing "checked; clean".
+

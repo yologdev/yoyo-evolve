@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code at the defect site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "contains_status_code" s… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '285,400p' src/prompt_ret…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '605,650p' src/prompt_ret… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '895,1010p' src/prompt_re… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '296,306p' src/prompt_ret… ✓ (3ms)
+  6 tools completed in 21.9s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+No edits yet — clean tree. Making the source change now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '298,302p' src/prompt_ret… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:296..376 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Now the fix — split the numeric entries out of both lists and route them through the existing digit-boundary matcher.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (52 → 82 lines)
+  + /// HTTP status codes that mean "this will not get better by retrying".
+  + ///
+  + /// Split out of the phrase list (#852) so every code is matched by
+  + /// [`contains_status_code`] — a digit boundary on both sides — rather than as a
+  + /// bare substring. Membership is unchanged; only *how a code is recognised*
+  + /// moved.
+  + const NON_RETRIABLE_STATUS_CODES: [&str; 5] = ["400", "401", "402", "403", "404"];
+  + 
+  + /// HTTP status codes that mean "transient, worth retrying". Same digit-boundary
+  + /// rule and the same reason as [`NON_RETRIABLE_STATUS_CODES`]: a code buried in
+  + /// a longer digit run is a false match in this direction too.
+  + const RETRIABLE_STATUS_CODES: [&str; 5] = ["429", "500", "502", "503", "504"];
+  + 
+    /// Classify whether an API error message looks transient (worth retrying).
+    /// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
+    /// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied,
+    /// billing/quota exhaustion.
+  + ///
+  + /// Status codes are matched with [`contains_status_code`], never `contains`
+  + /// (#852). The precedence is unchanged and load-bearing: the terminal family is
+  ... (66 more lines)
+ ✓ (1m 57s)
+  + /// HTTP status codes that mean "this will not get better by retrying".
+  + ///
+  + /// Split out of the phrase list (#852) so every code is matched by
+  + /// [`contains_status_code`] — a digit boundary on both sides — rather than as a
+  + /// bare substring. Membership is unchanged; only *how a code is recognised*
+  + /// moved.
+  + const NON_RETRIABLE_STATUS_CODES: [&str; 5] = ["400", "401", "402", "403", "404"];
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The source edit landed. Now checking exactly which tests moved — the characterization test should be the one failing, since it pins the pre-fix behaviour.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (224ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One failure, and it is exactly the characterization test that pins the defect — 111 other tests green, including every near-miss guard. Now inverting it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Recorded defect, pinned… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:955..1005 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (46 → 85 lines)
+  -     /// **Recorded defect, pinned rather than hidden — see #852.**
+  -     ///
+  -     /// This asserts *wrong* behaviour on purpose, which is normally forbidden
+  -     /// (a fixture row asserting a known-wrong output turns a defect into a
+  -     /// green invariant). It earns its place by naming the defect and its issue,
+  -     /// so the fix has to face this assertion and invert it: it is a ratchet,
+  -     /// not a fixture.
+  +     /// **#852 — the fix, and the ratchet that replaced the recorded defect.**
+        ///
+  -     /// The defect: status codes are matched by **bare substring**, the exact
+  +     /// This test used to assert *wrong* behaviour on purpose (a ratchet, not a
+  +     /// fixture): status codes were matched by **bare substring**, the exact
+        /// shape Day 174 fixed in the sibling `diagnose_api_error` by introducing
+        /// [`contains_status_code`] — never swept here. `14454000` contains `400`,
+  -     /// `"400"` is in the non-retriable list, and that list is scanned first, so
+  -     /// the real observed rate-limit message below classifies as **terminal**.
+  +     /// `"400"` was in the non-retriable list, and that list is scanned first, so
+  +     /// the real observed rate-limit message below classified as **terminal**.
+        ///
+  -     /// Why it matters: this is the exact string CLAUDE.md records as the
+  ... (93 more lines)
+ ✓ (2m 8s)
+  -     /// **Recorded defect, pinned rather than hidden — see #852.**
+  -     ///
+  -     /// This asserts *wrong* behaviour on purpose, which is normally forbidden
+  -     /// (a fixture row asserting a known-wrong output turns a defect into a
+  -     /// green invariant). It earns its place by naming the defect and its issue,
+  -     /// so the fix has to face this assertion and invert it: it is a ratchet,
+  -     /// not a fixture.
+  +     /// **#852 — the fix, and the ratchet that replaced the recorded defect.**
+  ... (13 more lines)
+  3 tools completed in 2m 42s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (190ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive control — neutering the matcher at the call site, run serially (a control that races another control is not a control).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt_retry.rs /tmp/pr_b… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (25.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.6s (2 ✓)
+
+Control fires exactly right: 2 failures, both digit-boundary assertions — and every near-miss guard stayed green, which is the half that matters (a control that also reddens the guards would mean they were testing the fix, not the pass-through). Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/pr_backup.rs src/prompt_… ✓ (25.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, 114 green. Now the CLAUDE.md bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Deliberately left alone… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars).
+  + and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars). **Superseded reading, recorded rather than erased (Day 181, #852) — and the sentence that misled is Day 174's own, four clauses up.** "All four sites now go through the pure `contains_status_code`" is **true**, and it is true *of `diagnose_api_error`*, which is the function it names; read as a statement about the **file** it is false, because the sibling `is_retriable_error` — same module, same t… [yoyo: 4209 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 54s)
+  - and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars).
+  + and both retry-prompt builders cap the interpolated error via `safe_truncate` (200 / 300 chars). **Superseded reading, recorded rather than erased (Day 181, #852) — and the sentence that misled is Day 174's own, four clauses up.** "All four sites now go through the pure `contains_status_code`" is **true**, and it is true *of `diagnose_api_error`*, which is the function it names; read as a statement about the **file** it is false, because the sibling `is_retriable_error` — same module, same t… [yoyo: 4209 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 21s (2 ✓)
+
+Now the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (3.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.4s)
+  2 tools completed in 20.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "(test… ✓ (1m 26s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5299 unit tests plus every integration binary. Checking the module-size gate didn't just warn its way past:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry.rs && car… ✓ (221ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry" tests/mod… ✓ (170ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 40.2s (2 ✓)
+
+2025 lines — 25 past the cap. The gate stays green (grace band), but that warning is exactly the kind nothing in the loop reads. And I created this overshoot — the file was 1956 and compliant before my diff, so the grace-band rationale ("a fix adding a handful of lines to an already-large module") doesn't really cover me. I'd rather get back under honestly than register fresh debt. My new test docs restate what CLAUDE.md now says at length — one statement, not two:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (85 → 78 lines)
+        /// **#852 — the fix, and the ratchet that replaced the recorded defect.**
+        ///
+        /// This test used to assert *wrong* behaviour on purpose (a ratchet, not a
+  -     /// fixture): status codes were matched by **bare substring**, the exact
+  -     /// shape Day 174 fixed in the sibling `diagnose_api_error` by introducing
+  -     /// [`contains_status_code`] — never swept here. `14454000` contains `400`,
+  -     /// `"400"` was in the non-retriable list, and that list is scanned first, so
+  -     /// the real observed rate-limit message below classified as **terminal**.
+  -     ///
+  -     /// Why it mattered: this is the exact string CLAUDE.md records as the
+  -     /// provider error that killed 2 of 4 gradeable post-#808 sessions. Because
+  -     /// `prompt.rs` sets `retriable_error` only under this predicate, the
+  -     /// message never became `PromptResult::RetriableError`, so
+  -     /// `retry_wait_decision` was never reached — meaning `--wait-for-reset`
+  -     /// could not fire for the one error shape it was built for, and ordinary
+  -     /// backoff was silently disabled too.
+  +     /// fixture): status codes were matched by bare substring, so `14454000`
+  +     /// contained `400`, `"400"` was scanned first, and the real rate-limit
+  +     /// message below classified as **terminal** — which left
+  +     /// `retry_wait_decision` unreachable and `--wait-for-reset` unable to fire
+  ... (19 more lines)
+ ✓ (2m 9s)
+        /// **#852 — the fix, and the ratchet that replaced the recorded defect.**
+        ///
+        /// This test used to assert *wrong* behaviour on purpose (a ratchet, not a
+  -     /// fixture): status codes were matched by **bare substring**, the exact
+  -     /// shape Day 174 fixed in the sibling `diagnose_api_error` by introducing
+  -     /// [`contains_status_code`] — never swept here. `14454000` contains `400`,
+  -     /// `"400"` was in the non-retriable list, and that list is scanned first, so
+  -     /// the real observed rate-limit message below classified as **terminal**.
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

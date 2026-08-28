@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to add the CLAUDE.md documentation. Let me first look at the actual code change and the existing bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git show…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1070,1200p' src/gasp.rs ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `gasp.rs`' CLAUDE.md…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'task-result was ported … ✓ (9ms)
+ ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==217' CLAUDE.md | grep -… ✓ (583ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- tests/gasp_cli_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/a… (59 lines) ✓ (23ms)
+  7 tools completed in 50.9s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#851' CLAUDE.md && wc -… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==217' CLAUDE.md | grep -… ✓ (11.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+Paragraph landed cleanly on the src/gasp.rs bullet. Now the gates:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (16.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '^test… ✓ (1m 11s)
+  3 tools completed in 2m 58s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp 2>&1 … ✓ (1m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --features gasp --tes… ✓ (444ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 32s (2 ✓)
+
+All green — 3 tests in gasp_cli_run_ordering (1 pre-existing ordering test + the 2 new both-direction artifact assertions). Committing the doc fix:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (38 lines) ✓ (31ms)
+
+Done. The evaluator's single FAIL was doc_sync; everything else was already green.
+
+What I changed: one paragraph appended to the src/gasp.rs bullet in CLAUDE.md (one line changed — that bullet is a single long line). No source or test edits; 59f41c1b's fix and assertions were correct and untouched.
+
+What the paragraph states, matching the task's ## Docs requirements:
+• The git-commit artifact is attached only for a promoted verdict.
+• An empty list is the honest reading of a reverted task, not a fallback — a sentinel would be a second thing every reader special-cases, the "placeholder that renders plausibly" shape (#843's /dev/null); base_project_ref still carries pre_sha.
+• `let promoted = … hoisted above StatePatch::new is the **single statement** read by the artifact, the eval status/score, the decision, the patch status and the record_failure` branch.
+• Why the sha was actively misleading: git reset --hard PRE_TASK_SHA puts HEAD back at the task's start, which in a two-task session is task 1's commit.
+• The assertions are on the emitted payload, extend the existing harness, run both directions with distinct PRE_SHA/POST_SHA, and carry an anti-vacuous exactly-one-patch.proposed guard.
+• The positive control and its serial execution.
+• History is not rewritten — day 173's patches keep their wrong artifacts and the dashboard drops them defensively.
+
+Verification run:
+• `cargo fmt -- --check` → clean
+• cargo clippy --all-targets -- -D warnings → clean
+• cargo build / cargo test → all suites ok, zero failures
+• cargo test --features gasp → all `ok; gasp_cli_run_ordering` 3/3 (pre-existing ordering test + the two artifact assertions), which is the run that matters since a plain `cargo test` compiles that #![cfg(feature = "gasp")] file into zero tests
+• tests/doc_version_claims.rs 5/5 — I added no `yoagent-version-claim marker and did not disturb the existing one on the tool_wrappers.rs` bullet
+
+  watch: no files changed this turn — skipping
+
