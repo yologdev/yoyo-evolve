@@ -1310,13 +1310,41 @@ def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) 
 # check could see it. What was missing was a CONSUMER that notices a channel
 # going quiet. This is that consumer.
 #
-# Three states, and ABSENT / UNREADABLE must never fold into each other:
+# FOUR states, and no two of them may fold into each other:
+#   RECORDED       the producer wrote a usage line here
+#   ABSENT         the session ran on a binary that COULD log usage, and did not
+#   UNREADABLE     *could not check* — the file would not open or would not parse
+#   NOT_MEASURABLE the session predates the producer, so it *could not have*
 # "the session ran and logged no usage" is an error, while "I could not read
 # the file" is *could not check* — collapsing them rebuilds the frozen-number
 # defect one layer down, which is the exact failure this detector exists for.
+#
+# NOT_MEASURABLE is the Day-181 correction. Shipped with three states, this
+# detector's first live render said "8 session(s) ran and logged NO usage line"
+# about eight sessions that predated the producer entirely — a false alarm in
+# the block where priority 0 is "fix CI failures, this overrides everything
+# else". Same class as the CI green-since probe: **"was red" must not read as
+# "is red"**. It also self-heals in ~10 sessions as the window slides, which is
+# worse rather than better — an alarm that decays on its own trains me to
+# discount the line permanently, right before a real freeze looks identical.
 USAGE_RECORDED = "recorded"
 USAGE_ABSENT = "absent"
 USAGE_UNREADABLE = "unreadable"
+USAGE_NOT_MEASURABLE = "not_measurable"
+
+# The #848 usage producer landed in 8a633cff, committed 2026-08-28T00:26:33Z.
+# Re-derive with: git log -1 --format=%cI 8a633cff
+#
+# A CONSTANT with its provenance in the comment, deliberately not a `git`
+# lookup: the harness checkout is shallow (already documented for
+# `git_added_ts`), so a `git show` on a sha can fail and would silently turn
+# the boundary into "unknown" — trading a false alarm for a silent one, which
+# is the direction I cannot see.
+#
+# Note the commit SUBJECT reads "Day 180 (23:26)" — that is the session label,
+# not the commit time. Keying on the journal heading would be off by an hour.
+USAGE_PRODUCER_LANDED_TS = "2026-08-28T00:26:33Z"
+USAGE_PRODUCER_SHA = "8a633cff"
 
 
 def classify_session_usage(lines) -> str:
@@ -1354,13 +1382,76 @@ def classify_session_usage(lines) -> str:
     return USAGE_ABSENT
 
 
+COMPACT_STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
+
+
+def compact_utc_stamp(s):
+    """Pure: normalise a UTC timestamp to the compact form YYYYMMDDTHHMMSSZ.
+
+    ONE statement of "what instant is this string", so nothing anywhere
+    re-derives it. Accepts both shapes that actually occur here: the compact
+    session-directory stamp (`20260828T020932Z`, SESSION_DIR_RE group 2) and
+    the ISO-8601 form git prints (`2026-08-28T00:26:33Z`).
+
+    Returns None for anything else — a malformed stamp must stay *unknown*,
+    never be coerced into a comparable value. Two normalised stamps compare
+    correctly with plain `<` because the compact Zulu form is fixed-width and
+    big-endian; no datetime parsing, so nothing here can raise.
+    """
+    if not isinstance(s, str):
+        return None
+    t = s.strip().replace("-", "").replace(":", "")
+    return t if COMPACT_STAMP_RE.match(t) else None
+
+
+def session_dir_stamp(name):
+    """Pure: the comparable instant of a session directory name.
+
+    `day-181-20260828T020932Z` -> `20260828T020932Z`. None when the name does
+    not match SESSION_DIR_RE or the stamp is malformed.
+    """
+    m = SESSION_DIR_RE.match(name or "")
+    if not m:
+        return None
+    return compact_utc_stamp(m.group(2))
+
+
+def apply_usage_boundary(verdict, session_ts, boundary_ts=USAGE_PRODUCER_LANDED_TS):
+    """Pure: demote an ABSENT verdict to NOT_MEASURABLE when the session
+    predates the producer. Everything else passes through unchanged.
+
+    Deliberately separate from `classify_session_usage`, which is a pure
+    function of file CONTENTS and knows nothing about time. Three rules, and
+    each of them is the whole correctness of this:
+
+    1. Only ABSENT is ever demoted. RECORDED passes through even if it somehow
+       predates the boundary — an observation beats a claim — and UNREADABLE
+       passes through too, because *could not check* is not the same fact as
+       *could not have*.
+    2. An unparseable or missing session timestamp is NOT demoted; it stays
+       ABSENT. Promoting an unknown into the comfortable bucket is the
+       absence-absorbed-by-a-convenient-neighbour defect, and it fails toward
+       silence, which is the direction I cannot see.
+    3. The boundary is STRICT-BEFORE. A session stamped exactly at the
+       boundary is measurable.
+    """
+    if verdict != USAGE_ABSENT:
+        return verdict
+    stamp = compact_utc_stamp(session_ts)
+    boundary = compact_utc_stamp(boundary_ts)
+    if stamp is None or boundary is None:
+        return verdict
+    return USAGE_NOT_MEASURABLE if stamp < boundary else verdict
+
+
 @dataclass
 class UsageCoverage:
-    """Four numbers that are never summed into each other."""
+    """Five numbers that are never summed into each other."""
 
     recorded: int = 0
     absent: int = 0
     unreadable: int = 0
+    not_measurable: int = 0
     examined: int = 0
 
 
@@ -1368,8 +1459,10 @@ def usage_coverage(verdicts) -> UsageCoverage:
     """Pure: fold per-session verdicts into a coverage tally.
 
     `examined` counts every session we looked at, including the unreadable
-    ones — a shrinking denominator inside my own meter is the defect this
-    whole family of checks exists to prevent.
+    and the not-measurable ones — a shrinking denominator inside my own meter
+    is the defect this whole family of checks exists to prevent. In
+    particular `not_measurable` is NEVER summed into `absent`: a session that
+    predates the producer did not fail to log, it could not have logged.
     """
     cov = UsageCoverage()
     for v in verdicts:
@@ -1378,6 +1471,8 @@ def usage_coverage(verdicts) -> UsageCoverage:
             cov.recorded += 1
         elif v == USAGE_ABSENT:
             cov.absent += 1
+        elif v == USAGE_NOT_MEASURABLE:
+            cov.not_measurable += 1
         else:
             cov.unreadable += 1
     return cov
@@ -1418,12 +1513,20 @@ def collect_usage_coverage(audit_dir: Path) -> UsageCoverage:
                             break
                         yield line
 
-            verdicts.append(classify_session_usage(_bounded()))
+            verdicts.append(
+                apply_usage_boundary(
+                    classify_session_usage(_bounded()), session_dir_stamp(child.name)
+                )
+            )
         except OSError as e:
             warn(f"skipped {audit}: {e}")
             # Could not open it at all — that is *could not check*, and it is
-            # counted rather than dropped.
-            verdicts.append(USAGE_UNREADABLE)
+            # counted rather than dropped. Routed through the same boundary
+            # call so the rule has ONE statement; it is a no-op here by
+            # `apply_usage_boundary`'s rule 1 (only ABSENT is ever demoted).
+            verdicts.append(
+                apply_usage_boundary(USAGE_UNREADABLE, session_dir_stamp(child.name))
+            )
         if len(verdicts) >= WINDOW_SESSIONS:
             break
     return usage_coverage(verdicts)
@@ -1436,10 +1539,19 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
     frozen number is not a zero and a non-zero check cannot see this. Frozen
     shows up as 0/N on the very next session; partial silence as k/N.
 
-    Anti-vacuous: `examined == 0` renders the could-not-check line, NEVER a
-    healthy "0 of 0". A detector that reports success on an empty scan is the
-    "cannot fail loudly" defect wearing the opposite sign, and it is quieter
-    than the bug it was built for.
+    Anti-vacuous, in BOTH denominators: `examined == 0` renders the
+    could-not-check line, NEVER a healthy "0 of 0" — and so does a window
+    whose sessions are ALL not-measurable, because "0 of 0 measurable
+    sessions" would reintroduce that exact defect one denominator down. A
+    detector that reports success on an empty scan is the "cannot fail
+    loudly" defect wearing the opposite sign, and it is quieter than the bug
+    it was built for.
+
+    `not_measurable` is reported as its OWN clause and is never summed into
+    `absent`, and it leaves the denominator: coverage is k of the sessions
+    that *could* have logged. A partially-measurable window is still real
+    data, so a non-zero `not_measurable` is not a refusal; a wholly
+    unmeasurable one is.
 
     Held to at most 3 lines: this renders before the epistemic block, which
     absorbs all truncation pressure and has been cut away once already.
@@ -1459,15 +1571,37 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
             "## Usage records: not checked — 0 sessions had an audit.jsonl to "
             "read. This is NOT 'no usage records missing'."
         )
+    measurable = cov.examined - cov.not_measurable
+    if measurable <= 0:
+        return (
+            f"## Usage records: not measurable — all {cov.examined} session(s) "
+            f"in the window predate the #848 producer ({USAGE_PRODUCER_SHA}). "
+            f"This is NOT 'no usage records missing'."
+        )
+    predate = (
+        f"{cov.not_measurable} session(s) predate the #848 producer "
+        f"({USAGE_PRODUCER_SHA}) and cannot be measured"
+    )
     if cov.absent == 0 and cov.unreadable == 0:
+        if cov.not_measurable == 0:
+            return (
+                f"## Usage records\n"
+                f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record "
+                f"(#848 channel is live)."
+            )
         return (
             f"## Usage records\n"
-            f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record "
-            f"(#848 channel is live)."
+            f"{cov.recorded} of {measurable} measurable sessions carry >=1 usage "
+            f"record (#848 channel is live).\n"
+            f"{predate}."
         )
     lines = [
         "## Usage records",
-        f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record.",
+        (
+            f"{cov.recorded} of {measurable} measurable sessions carry >=1 usage record."
+            if cov.not_measurable
+            else f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record."
+        ),
     ]
     detail = []
     if cov.absent:
@@ -1480,6 +1614,8 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
             f"{cov.unreadable} session(s) could not be read (not the same as "
             f"'no usage')"
         )
+    if cov.not_measurable:
+        detail.append(predate)
     lines.append("; ".join(detail) + ".")
     return "\n".join(lines)
 
@@ -1837,9 +1973,18 @@ def main() -> int:
     # honest but is not trajectory DATA, so it must not suppress the global
     # "(no trajectory data yet)" state below. `examined == 0` is one of those
     # could-not-check states, never a healthy 0-of-0.
+    #
+    # Day 181: a NON-ZERO `not_measurable` is deliberately NOT one of them. A
+    # partially-measurable window still carries real coverage data about the
+    # sessions that could have logged, so it stays data. A WHOLLY
+    # unmeasurable window (every session predates the producer) is a refusal
+    # and is counted as one — same anti-vacuous invariant as `examined == 0`,
+    # applied to the second denominator rather than a new policy.
     s = render_usage_coverage(usage_cov, audit_dir_state)
     usage_unknown = bool(s) and (
-        audit_dir_state != AUDIT_DIR_OK or usage_cov.examined == 0
+        audit_dir_state != AUDIT_DIR_OK
+        or usage_cov.examined == 0
+        or usage_cov.examined - usage_cov.not_measurable <= 0
     )
     if s:
         sections.append(s)
@@ -3712,6 +3857,159 @@ src/commands_config.rs
         "an unusable audit dir says outright it is not 'no records missing'",
         "NOT 'no usage records missing'"
         in render_usage_coverage(UsageCoverage(), AUDIT_DIR_UNUSABLE),
+    )
+
+    # --- The #848 producer boundary (Day 181) -----------------------------
+    # A session that PREDATES the producer did not fail to log; it could not
+    # have. Shipped without this, the detector's first live render alarmed
+    # about eight such sessions.
+    before = "20260827T221700Z"  # day-180, pre-producer
+    after = "20260828T020932Z"  # day-181, post-producer
+    at_boundary = "20260828T002633Z"  # exactly 8a633cff's commit instant
+
+    assert_eq(
+        "an ABSENT session predating the producer is NOT_MEASURABLE, not absent",
+        apply_usage_boundary(USAGE_ABSENT, before),
+        USAGE_NOT_MEASURABLE,
+    )
+    # Near-miss guard: the side that must NOT fire.
+    assert_eq(
+        "an ABSENT session after the producer stays ABSENT (a real alarm)",
+        apply_usage_boundary(USAGE_ABSENT, after),
+        USAGE_ABSENT,
+    )
+    # Rule 3: strict-before. Pin BOTH sides of the boundary.
+    assert_eq(
+        "a session stamped exactly at the boundary is measurable, not demoted",
+        apply_usage_boundary(USAGE_ABSENT, at_boundary),
+        USAGE_ABSENT,
+    )
+    assert_eq(
+        "one second before the boundary is demoted",
+        apply_usage_boundary(USAGE_ABSENT, "20260828T002632Z"),
+        USAGE_NOT_MEASURABLE,
+    )
+    # Rule 1: only ABSENT is ever demoted.
+    assert_eq(
+        "RECORDED predating the boundary passes through — observation beats claim",
+        apply_usage_boundary(USAGE_RECORDED, before),
+        USAGE_RECORDED,
+    )
+    assert_eq(
+        "UNREADABLE passes through — 'could not check' is not 'could not have'",
+        apply_usage_boundary(USAGE_UNREADABLE, before),
+        USAGE_UNREADABLE,
+    )
+    # Rule 2: an unknown stamp is NOT promoted into the comfortable bucket.
+    for label, bad in (
+        ("None", None),
+        ("empty", ""),
+        ("malformed", "not-a-stamp"),
+        ("wrong width", "2026828T02Z"),
+        ("non-string", 20260828),
+    ):
+        assert_eq(
+            f"an unparseable session stamp ({label}) stays ABSENT, never demoted",
+            apply_usage_boundary(USAGE_ABSENT, bad),
+            USAGE_ABSENT,
+        )
+
+    # The stamp normaliser accepts exactly the two shapes that occur.
+    assert_eq(
+        "the compact session stamp normalises to itself",
+        compact_utc_stamp(after),
+        "20260828T020932Z",
+    )
+    assert_eq(
+        "the ISO-8601 form git prints normalises to the compact form",
+        compact_utc_stamp(USAGE_PRODUCER_LANDED_TS),
+        "20260828T002633Z",
+    )
+    assert_eq(
+        "an offset-bearing stamp is unknown rather than coerced",
+        compact_utc_stamp("2026-08-28T00:26:33+00:00"),
+        None,
+    )
+    assert_eq(
+        "a session directory name yields its stamp",
+        session_dir_stamp("day-181-20260828T020932Z"),
+        "20260828T020932Z",
+    )
+    assert_eq(
+        "a directory name that is not a session yields None",
+        session_dir_stamp("transcripts"),
+        None,
+    )
+
+    # The fold keeps not_measurable distinct and never sums it into absent.
+    cov4 = usage_coverage(
+        [USAGE_RECORDED, USAGE_ABSENT, USAGE_UNREADABLE, USAGE_NOT_MEASURABLE, USAGE_NOT_MEASURABLE]
+    )
+    assert_eq(
+        "fold keeps recorded/absent/unreadable/not_measurable/examined distinct",
+        f"{cov4.recorded}/{cov4.absent}/{cov4.unreadable}/{cov4.not_measurable}/{cov4.examined}",
+        "1/1/1/2/5",
+    )
+
+    # The render: not-measurable leaves the denominator and gets its own clause.
+    boundary_render = render_usage_coverage(
+        UsageCoverage(recorded=2, not_measurable=6, examined=8), AUDIT_DIR_OK
+    )
+    assert_true(
+        "coverage is k of the MEASURABLE sessions, not of every session",
+        "2 of 2 measurable sessions carry >=1 usage record" in boundary_render,
+    )
+    assert_true(
+        "pre-producer sessions are named as their own clause, never as 'logged NO usage'",
+        f"6 session(s) predate the #848 producer ({USAGE_PRODUCER_SHA})"
+        in boundary_render
+        and "NO usage line" not in boundary_render,
+    )
+    assert_true(
+        "the boundary render stays within the 3-line budget",
+        len(boundary_render.splitlines()) <= 3,
+    )
+    # The live Day-181 shape: 2 recorded, 6 pre-producer, 2 genuinely absent.
+    live = render_usage_coverage(
+        UsageCoverage(recorded=2, absent=2, not_measurable=6, examined=10), AUDIT_DIR_OK
+    )
+    assert_true(
+        "a real absent count still alarms while pre-producer sessions do not",
+        "2 of 4 measurable sessions" in live
+        and "2 session(s) ran and logged NO usage line" in live
+        and "6 session(s) predate the #848 producer" in live,
+    )
+    assert_true(
+        "the mixed boundary render stays within the 3-line budget",
+        len(live.splitlines()) <= 3,
+    )
+    # Anti-vacuous in the SECOND denominator: a wholly pre-producer window is
+    # a refusal, never a healthy "0 of 0 measurable".
+    all_pre = render_usage_coverage(
+        UsageCoverage(not_measurable=9, examined=9), AUDIT_DIR_OK
+    )
+    assert_true(
+        "a wholly unmeasurable window refuses instead of rendering 0 of 0",
+        "not measurable" in all_pre
+        and "0 of 0" not in all_pre
+        and "NOT 'no usage records missing'" in all_pre,
+    )
+    # Near-miss guards: with no pre-producer sessions, every pre-existing
+    # branch is byte-identical. A discriminator tested only where it fires is
+    # vacuous green.
+    assert_eq(
+        "with not_measurable == 0 the healthy line is byte-identical",
+        render_usage_coverage(UsageCoverage(recorded=10, examined=10), AUDIT_DIR_OK),
+        "## Usage records\n10 of 10 sessions carry >=1 usage record (#848 channel is live).",
+    )
+    assert_eq(
+        "with not_measurable == 0 the absent line is byte-identical",
+        render_usage_coverage(
+            UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+        ),
+        "## Usage records\n7 of 10 sessions carry >=1 usage record.\n"
+        "3 session(s) ran and logged NO usage line — the #848 producer wrote "
+        "nothing there.",
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
