@@ -3495,20 +3495,30 @@ PYEOF
     fi
     # quiet mode: audit evidence feeds main sessions' self-assessment; a test
     # session must not leak into it
+    AUDIT_PUSH_LOG="/tmp/evolve-audit-push-log-$$"
+    : > "$AUDIT_PUSH_LOG"
     if [ "$QUIET_MODE" = false ] && git worktree add "$AUDIT_PUSH_WT" audit-log 2>/dev/null; then
         mkdir -p "$AUDIT_PUSH_WT/$SESSION_DIR"
         cp -R "$SESSION_STAGING/." "$AUDIT_PUSH_WT/$SESSION_DIR/" 2>/dev/null || true
+        # Each step names itself before running, and its output is captured
+        # rather than discarded. The old chain sent every step to /dev/null on
+        # the grounds that failure is non-fatal — true, but it also made an
+        # INTERMITTENT failure undiagnosable: day 181 07:39 lost its audit
+        # evidence and the log said only "push failed", with no way to tell
+        # whether the pull, the rebase or the push was at fault, or why.
+        # The diagnosis cannot ride the staging dir out (that is what failed to
+        # push), so it goes to the workflow log, which is always readable.
         if (
-            cd "$AUDIT_PUSH_WT" && \
-            git add . && \
-            git commit -m "audit: day $DAY ($SESSION_TIME)" 2>/dev/null && \
+            cd "$AUDIT_PUSH_WT" || { echo "STEP=cd"; exit 1; }
+            echo "STEP=add";    git add . || exit 1
+            echo "STEP=commit"; git commit -m "audit: day $DAY ($SESSION_TIME)" || exit 1
             # Pull-rebase before push to absorb a concurrent session's audit
             # commit (each session writes to its own day-N-<ts>/ subdir, so
             # rebase conflicts are essentially impossible — both touched only
-            # disjoint paths). 2>/dev/null because failure is non-fatal here.
-            git pull --rebase origin audit-log 2>/dev/null && \
-            git push origin audit-log 2>/dev/null
-        ); then
+            # disjoint paths).
+            echo "STEP=pull";   git pull --rebase origin audit-log || exit 1
+            echo "STEP=push";   git push origin audit-log || exit 1
+        ) > "$AUDIT_PUSH_LOG" 2>&1; then
             AUDIT_PUSH_OK=1
         fi
         git worktree remove --force "$AUDIT_PUSH_WT" 2>/dev/null || true
@@ -3522,20 +3532,48 @@ PYEOF
         # Reset failure counter on success
         echo 0 > "$AUDIT_FAIL_FILE" 2>/dev/null || true
     else
-        prev_fails=$(cat "$AUDIT_FAIL_FILE" 2>/dev/null || echo 0)
-        prev_fails=${prev_fails//[^0-9]/}
-        prev_fails=${prev_fails:-0}
-        new_fails=$((prev_fails + 1))
-        echo "$new_fails" > "$AUDIT_FAIL_FILE" 2>/dev/null || true
-        if [ "$new_fails" -ge 3 ]; then
-            echo "  ⚠⚠⚠ audit-log push has failed $new_fails consecutive sessions" >&2
-            echo "       skill-evolve cycles will run blind without this evidence stream" >&2
-            echo "       check: bot token branch-create permissions, push protection rules" >&2
-            echo "       reset the counter manually with: echo 0 > $AUDIT_FAIL_FILE" >&2
+        # Which step failed, and what git actually said. Without this an
+        # intermittent failure is undiagnosable — see the capture above.
+        AUDIT_FAILED_STEP=$(grep -oE "^STEP=[a-z]+" "$AUDIT_PUSH_LOG" 2>/dev/null | tail -1 | cut -d= -f2)
+        echo "  audit-log push FAILED at step: ${AUDIT_FAILED_STEP:-unknown}" >&2
+        echo "       this session's audit evidence (usage records included) is LOST" >&2
+        if [ -s "$AUDIT_PUSH_LOG" ]; then
+            echo "       --- last 15 lines of git output ---" >&2
+            grep -v "^STEP=" "$AUDIT_PUSH_LOG" 2>/dev/null | tail -15 | sed "s/^/       /" >&2
+            echo "       --- end ---" >&2
         else
-            echo "  audit-log push failed (attempt $new_fails of 3 before escalation)" >&2
+            echo "       (no git output captured — the worktree add itself may have failed)" >&2
+        fi
+        [ "${GITHUB_ACTIONS:-}" = "true" ] && \
+            echo "::warning::audit-log push failed at step ${AUDIT_FAILED_STEP:-unknown} — this session's audit evidence is lost"
+        # Consecutive-failure counting only means something where the counter
+        # survives. $AUDIT_FAIL_FILE is gitignored, so on an ephemeral CI runner
+        # it starts absent EVERY session — the old code read that as "attempt 1
+        # of 3" and escalated at 3, which could therefore never happen in the
+        # one place it mattered. Absence gets its own name instead of being
+        # reported as a first offence.
+        if [ -f "$AUDIT_FAIL_FILE" ]; then
+            prev_fails=$(cat "$AUDIT_FAIL_FILE" 2>/dev/null || echo 0)
+            prev_fails=${prev_fails//[^0-9]/}
+            prev_fails=${prev_fails:-0}
+            new_fails=$((prev_fails + 1))
+            echo "$new_fails" > "$AUDIT_FAIL_FILE" 2>/dev/null || true
+            if [ "$new_fails" -ge 3 ]; then
+                echo "  ⚠⚠⚠ audit-log push has failed $new_fails consecutive sessions" >&2
+                echo "       skill-evolve cycles will run blind without this evidence stream" >&2
+                echo "       check: bot token branch-create permissions, push protection rules" >&2
+                echo "       reset the counter manually with: echo 0 > $AUDIT_FAIL_FILE" >&2
+            else
+                echo "       ($new_fails consecutive failures on this runner)" >&2
+            fi
+        else
+            echo "0" > "$AUDIT_FAIL_FILE" 2>/dev/null || true
+            echo "       (no failure history on this runner — the counter is gitignored and" >&2
+            echo "        does not survive an ephemeral checkout, so consecutive-session" >&2
+            echo "        tracking is unavailable here. Treat every occurrence as serious.)" >&2
         fi
     fi
+    rm -f "$AUDIT_PUSH_LOG" 2>/dev/null || true
     rm -rf "$SESSION_STAGING"
 fi
 
