@@ -456,7 +456,14 @@ mod tests {
     /// Record a run with audit explicitly on — no process-global is touched,
     /// so these tests cannot race their ~5,000 siblings.
     fn record(usage: &yoagent::Usage, model: &str, ms: u64, turns: usize, is_error: bool) {
-        audit_log_usage_when(true, usage, model, Duration::from_millis(ms), turns, is_error);
+        audit_log_usage_when(
+            true,
+            usage,
+            model,
+            Duration::from_millis(ms),
+            turns,
+            is_error,
+        );
     }
 
     #[test]
@@ -488,7 +495,9 @@ mod tests {
             // even if the record were computed from the wrong fields.
             let expected = crate::format::estimate_cost(&usage, "claude-sonnet-4-5")
                 .expect("this model is priced");
-            let got = rec["cost_usd"].as_f64().expect("cost_usd should be a number");
+            let got = rec["cost_usd"]
+                .as_f64()
+                .expect("cost_usd should be a number");
             assert!(
                 (got - expected).abs() < 1e-12,
                 "cost_usd {got} != estimate_cost {expected}"
@@ -511,7 +520,11 @@ mod tests {
             record(&usage, model, 10, 1, false);
 
             let rec = audit_lines(dir).pop().expect("one record");
-            assert!(rec["cost_usd"].is_null(), "expected null, got {}", rec["cost_usd"]);
+            assert!(
+                rec["cost_usd"].is_null(),
+                "expected null, got {}",
+                rec["cost_usd"]
+            );
             // The token counts are still real and still recorded.
             assert_eq!(rec["input_tokens"], 1200);
         });
@@ -526,8 +539,13 @@ mod tests {
             // latter reads the shared `AUDIT_ENABLED` global. This test is
             // about the *line shape*, and `write_audit_entry` is what produces
             // it.
-            write_audit_entry("read_file", &serde_json::json!({"path": "src/main.rs"}), 12, true)
-                .expect("tool-call write");
+            write_audit_entry(
+                "read_file",
+                &serde_json::json!({"path": "src/main.rs"}),
+                12,
+                true,
+            )
+            .expect("tool-call write");
             record(&sample_usage(), "claude-sonnet-4-5", 1000, 2, false);
 
             let lines = audit_lines(dir);
@@ -604,8 +622,20 @@ mod tests {
         // fix: `print_usage` was suppressed by quiet mode, which `cli.rs`
         // auto-enables for every piped run, so the numbers never survived.
         let usage = sample_usage();
-        let a = usage_audit_record(&usage, "claude-sonnet-4-5", Duration::from_millis(5), 3, false);
-        let b = usage_audit_record(&usage, "claude-sonnet-4-5", Duration::from_millis(5), 3, false);
+        let a = usage_audit_record(
+            &usage,
+            "claude-sonnet-4-5",
+            Duration::from_millis(5),
+            3,
+            false,
+        );
+        let b = usage_audit_record(
+            &usage,
+            "claude-sonnet-4-5",
+            Duration::from_millis(5),
+            3,
+            false,
+        );
         for key in [
             "type",
             "model",
@@ -618,7 +648,10 @@ mod tests {
             "num_turns",
             "is_error",
         ] {
-            assert_eq!(a[key], b[key], "field `{key}` is not a pure function of the inputs");
+            assert_eq!(
+                a[key], b[key],
+                "field `{key}` is not a pure function of the inputs"
+            );
         }
     }
 
