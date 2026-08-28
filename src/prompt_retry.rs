@@ -295,18 +295,48 @@ pub fn retry_delay(attempt: u32) -> Duration {
 /// `retry after 1ms` cannot turn the retry loop into a hot loop.
 pub(crate) const MIN_RETRY_DELAY_MS: u64 = 500;
 
+/// HTTP status codes that mean "this will not get better by retrying".
+///
+/// Split out of the phrase list (#852) so every code is matched by
+/// [`contains_status_code`] — a digit boundary on both sides — rather than as a
+/// bare substring. Membership is unchanged; only *how a code is recognised*
+/// moved.
+const NON_RETRIABLE_STATUS_CODES: [&str; 5] = ["400", "401", "402", "403", "404"];
+
+/// HTTP status codes that mean "transient, worth retrying". Same digit-boundary
+/// rule and the same reason as [`NON_RETRIABLE_STATUS_CODES`]: a code buried in
+/// a longer digit run is a false match in this direction too.
+const RETRIABLE_STATUS_CODES: [&str; 5] = ["429", "500", "502", "503", "504"];
+
 /// Classify whether an API error message looks transient (worth retrying).
 /// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
 /// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied,
 /// billing/quota exhaustion.
+///
+/// Status codes are matched with [`contains_status_code`], never `contains`
+/// (#852). The precedence is unchanged and load-bearing: the terminal family is
+/// scanned in full first, so a message carrying both wins as terminal.
 pub fn is_retriable_error(error_msg: &str) -> bool {
     let lower = error_msg.to_lowercase();
 
+    // #852: a status code is only a status code when it is not part of a larger
+    // number. `error: Rate limited, retry after Some(14454000)ms` contains the
+    // digits `400`, and a bare `contains` read that real rate limit as a
+    // terminal 400 — which killed `--wait-for-reset` for the one error shape it
+    // was built for, since `retry_wait_decision` is only ever reached through a
+    // retriable classification. Requiring a digit boundary can only make
+    // matching *stricter*, so the sole classifications that move are ones where
+    // a code matched inside a longer number. Do not "simplify" this back to
+    // `contains`.
+    if NON_RETRIABLE_STATUS_CODES
+        .iter()
+        .any(|code| contains_status_code(&lower, code))
+    {
+        return false;
+    }
+
     // Don't retry auth, client, or billing/quota errors
     let non_retriable = [
-        "401",
-        "403",
-        "400",
         "authentication",
         "unauthorized",
         "forbidden",
@@ -315,7 +345,6 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "permission denied",
         "invalid_api_key",
         "not_found",
-        "404",
         // Billing / quota exhaustion — retrying won't help
         "insufficient_quota",
         "insufficient quota",
@@ -328,7 +357,6 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "budget exceeded",
         "quota exceeded",
         "payment required",
-        "402",
     ];
     for keyword in &non_retriable {
         if lower.contains(keyword) {
@@ -336,16 +364,18 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         }
     }
 
+    if RETRIABLE_STATUS_CODES
+        .iter()
+        .any(|code| contains_status_code(&lower, code))
+    {
+        return true;
+    }
+
     // Retry on transient errors
     let retriable = [
-        "429",
         "rate limit",
         "rate_limit",
         "too many requests",
-        "500",
-        "502",
-        "503",
-        "504",
         "internal server error",
         "bad gateway",
         "service unavailable",
@@ -925,50 +955,82 @@ mod tests {
         }
     }
 
-    /// **Recorded defect, pinned rather than hidden — see #852.**
+    /// **#852 — the fix, and the ratchet that replaced the recorded defect.**
     ///
-    /// This asserts *wrong* behaviour on purpose, which is normally forbidden
-    /// (a fixture row asserting a known-wrong output turns a defect into a
-    /// green invariant). It earns its place by naming the defect and its issue,
-    /// so the fix has to face this assertion and invert it: it is a ratchet,
-    /// not a fixture.
+    /// This test used to assert *wrong* behaviour on purpose (a ratchet, not a
+    /// fixture): status codes were matched by bare substring, so `14454000`
+    /// contained `400`, `"400"` was scanned first, and the real rate-limit
+    /// message below classified as **terminal** — which left
+    /// `retry_wait_decision` unreachable and `--wait-for-reset` unable to fire
+    /// for the one error shape it was built for. Full history in CLAUDE.md's
+    /// `prompt_retry.rs` bullet; the assertion is now inverted and the
+    /// `recorded_defect_` prefix is gone.
     ///
-    /// The defect: status codes are matched by **bare substring**, the exact
-    /// shape Day 174 fixed in the sibling `diagnose_api_error` by introducing
-    /// [`contains_status_code`] — never swept here. `14454000` contains `400`,
-    /// `"400"` is in the non-retriable list, and that list is scanned first, so
-    /// the real observed rate-limit message below classifies as **terminal**.
-    ///
-    /// Why it matters: this is the exact string CLAUDE.md records as the
-    /// provider error that killed 2 of 4 gradeable post-#808 sessions. Because
-    /// `prompt.rs` sets `retriable_error` only under this predicate, the
-    /// message never becomes `PromptResult::RetriableError`, so
-    /// `retry_wait_decision` is never reached — meaning `--wait-for-reset`
-    /// cannot fire for the one error shape it was built for, and ordinary
-    /// backoff is silently disabled too.
-    ///
-    /// Not fixed in the task that found it, deliberately: ten numeric entries
-    /// are matched this way and giving each a digit boundary flips retry
-    /// behaviour for every user in both directions — a product default that
-    /// must not be changed unverified.
+    /// The mechanism assertions are kept: they state *why* it classifies
+    /// correctly, so a regression cannot be mistaken for something about the
+    /// words "rate limited".
     #[test]
-    fn recorded_defect_status_code_substring_match_hides_a_real_rate_limit() {
+    fn status_code_in_a_longer_number_no_longer_hides_a_real_rate_limit() {
         let observed = "error: Rate limited, retry after Some(14454000)ms";
 
-        // The mechanism, asserted directly so the cause cannot be mistaken for
-        // something about the words "rate limited".
+        // The mechanism, asserted directly: the digits are still there, and the
+        // digit-boundary matcher is what refuses to read them as a status code.
         assert!(observed.contains("400"), "premise of #852 no longer holds");
         assert!(
             !contains_status_code(observed, "400"),
-            "the digit-boundary matcher already rejects this — #852 is a \
-             matter of routing is_retriable_error through it"
+            "the digit-boundary matcher must still reject a code inside a \
+             longer number — this is the whole mechanism of the #852 fix"
         );
 
-        // Current, wrong behaviour. When #852 lands this flips to `assert!`.
+        // Emission point: the `bool` a caller actually receives.
         assert!(
-            !is_retriable_error(observed),
-            "#852 appears to be fixed — invert this assertion and delete the \
-             `recorded_defect_` prefix"
+            is_retriable_error(observed),
+            "#852: a real rate limit must be retriable — otherwise \
+             retry_wait_decision is never reached and --wait-for-reset cannot fire"
+        );
+    }
+
+    /// The near-miss guard for #852, and the half that matters more than the
+    /// fix itself: the change is a *narrowing*, so every genuine standalone
+    /// status code must classify exactly as it did before. A discriminator
+    /// tested only on the side that fires is vacuous green — and this one moves
+    /// a retry default for every user, in both directions.
+    #[test]
+    fn genuine_standalone_terminal_status_codes_are_still_not_retriable() {
+        for msg in [
+            "HTTP 400 Bad Request",
+            "401 Unauthorized",
+            "402 Payment Required: your credit balance is too low",
+            "status=403 forbidden",
+            "(404) model not found",
+            "error 400: malformed body",
+            "402:",
+        ] {
+            assert!(
+                !is_retriable_error(msg),
+                "genuine terminal status code must stay non-retriable: {msg:?}"
+            );
+        }
+    }
+
+    /// The retriable side of the same narrowing, in both directions: a real
+    /// transient code still fires, and a code buried in a longer digit run no
+    /// longer fires spuriously. The last row used to classify as retriable
+    /// purely because `14290173` contains the digits `429`.
+    #[test]
+    fn retriable_status_codes_need_a_digit_boundary_too() {
+        assert!(
+            is_retriable_error("HTTP 429 Too Many Requests"),
+            "a genuine 429 must stay retriable"
+        );
+        assert!(
+            is_retriable_error("504"),
+            "a bare transient code must stay retriable"
+        );
+        assert!(
+            !is_retriable_error("request id 14290173"),
+            "#852 mirror: a transient code inside a longer number must not \
+             make an unrelated message retriable"
         );
     }
 
