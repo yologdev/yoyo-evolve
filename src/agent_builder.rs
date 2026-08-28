@@ -950,17 +950,14 @@ impl AgentConfig {
         // costs by ~90% for cached content.  CacheStrategy::Auto places cache
         // breakpoints automatically at system prompt, last tool, and the
         // second-to-last message.
-        agent = agent.with_cache_config(CacheConfig {
-            enabled: true,
-            strategy: CacheStrategy::Auto,
-        });
+        agent = agent.with_cache_config(CacheConfig::new());
 
         // Always set execution limits — use user's --max-turns or a generous default
-        agent = agent.with_execution_limits(ExecutionLimits {
-            max_turns: self.max_turns.unwrap_or(200),
-            max_total_tokens: 1_000_000,
-            ..ExecutionLimits::default()
-        });
+        agent = agent.with_execution_limits(
+            ExecutionLimits::default()
+                .with_max_turns(self.max_turns.unwrap_or(200))
+                .with_max_total_tokens(1_000_000),
+        );
 
         if let Some(max) = self.max_tokens {
             agent = agent.with_max_tokens(max);
@@ -1091,14 +1088,8 @@ impl AgentConfig {
                 &self.model,
             ))
             .with_api_key(&self.api_key)
-            .with_cache_config(CacheConfig {
-                enabled: true,
-                strategy: CacheStrategy::Auto,
-            })
-            .with_execution_limits(ExecutionLimits {
-                max_turns: 1,
-                ..ExecutionLimits::default()
-            });
+            .with_cache_config(CacheConfig::new())
+            .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         if let Some(temp) = self.temperature {
             agent.temperature = Some(temp);
@@ -1137,14 +1128,8 @@ impl AgentConfig {
                 architect_model,
             ))
             .with_api_key(&self.api_key)
-            .with_cache_config(CacheConfig {
-                enabled: true,
-                strategy: CacheStrategy::Auto,
-            })
-            .with_execution_limits(ExecutionLimits {
-                max_turns: 1,
-                ..ExecutionLimits::default()
-            });
+            .with_cache_config(CacheConfig::new())
+            .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         if let Some(temp) = self.temperature {
             agent.temperature = Some(temp);
@@ -3096,8 +3081,9 @@ mod tests {
     #[test]
     fn test_cache_config_values_match_expected() {
         // Verify that the CacheConfig we set has the exact fields we expect:
-        // enabled=true and strategy=Auto. This catches silent changes to yoagent
-        // defaults or accidental overwrites.
+        // enabled=true and strategy=Auto. The two field assertions below are the
+        // half that catches a silent change to yoagent's defaults — they name the
+        // values verbatim, so a default flipping to `enabled: false` fails here.
         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
         let agent = config.build_agent();
 
@@ -3105,12 +3091,14 @@ mod tests {
         assert!(cache.enabled, "caching must be enabled");
         assert_eq!(cache.strategy, CacheStrategy::Auto);
 
-        // Verify the explicit construction matches CacheConfig default
-        let expected = CacheConfig {
-            enabled: true,
-            strategy: CacheStrategy::Auto,
-        };
-        assert_eq!(agent.cache_config, expected);
+        // Verify build_agent did not override the default. Stated rather than
+        // implied: since yoagent 0.18 made `CacheConfig` `#[non_exhaustive]` we
+        // construct it with `CacheConfig::new()` rather than a struct literal, so
+        // BOTH sides of this equality move together if an upstream default
+        // changes — this assertion now proves "build_agent left the default
+        // alone", NOT "the default is what we think it is". The two field
+        // assertions above are what still pin the values.
+        assert_eq!(agent.cache_config, CacheConfig::new());
     }
 
     #[test]

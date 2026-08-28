@@ -949,7 +949,7 @@ async fn handle_prompt_events(
                         eprint!("{DIM}{delta}{RESET}");
                         let _ = io::stderr().flush();
                     }
-                    AgentEvent::AgentEnd { messages } => {
+                    AgentEvent::AgentEnd { messages, .. } => {
                         state.handle_agent_end(messages, model);
                     }
                     AgentEvent::InputRejected { reason } => {
@@ -1713,7 +1713,7 @@ async fn handle_stream_json_events(
                         collected_text.push_str(delta);
                         text_since_last_tool.push_str(delta);
                     }
-                    AgentEvent::AgentEnd { messages } => {
+                    AgentEvent::AgentEnd { messages, .. } => {
                         // Extract usage from assistant messages
                         for msg in messages {
                             if let AgentMessage::Llm(Message::Assistant {
@@ -2206,7 +2206,7 @@ mod tests {
     #[test]
     fn test_agent_event_agent_end_serializes_to_camel_case_type() {
         // Wire contract (DoD): last event is {"type":"agentEnd", ...}.
-        let event = AgentEvent::AgentEnd { messages: vec![] };
+        let event = AgentEvent::agent_end(vec![], Default::default());
         let json = serde_json::to_string(&event).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["type"], "agentEnd");
@@ -2501,7 +2501,8 @@ mod tests {
             .with_api_key("not-a-real-key");
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        tx.send(AgentEvent::AgentEnd { messages }).unwrap();
+        tx.send(AgentEvent::agent_end(messages, Default::default()))
+            .unwrap();
         drop(tx); // closing the channel ends the loop
 
         let changes = SessionChanges::new();

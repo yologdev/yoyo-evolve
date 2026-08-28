@@ -29,7 +29,7 @@
 //! *unreachable* — is what cost six sessions, and the correction is worth more
 //! than the tidy text.
 //!
-//! <!-- yoagent-version-claim: 0.16.6 -->
+//! <!-- yoagent-version-claim: 0.18.1 -->
 //!
 //! This paragraph used to say `task-result` was *unreachable* from yoyo,
 //! because it names `ProjectRef`, `ArtifactRef` and `PatchStatus` and "none of
@@ -1010,7 +1010,7 @@ pub(crate) async fn session_end(
 /// `tests/doc_version_claims.rs`. If upstream ever re-exports the store, this
 /// becomes false silently and the `*_in` bodies stay untested for no reason.
 ///
-/// <!-- yoagent-version-claim: 0.16.6 -->
+/// <!-- yoagent-version-claim: 0.18.1 -->
 ///
 /// `verdict` is compared against `"promoted"` exactly as the sidecar does —
 /// the two graphs must agree on what a promotion is, so this is deliberately a

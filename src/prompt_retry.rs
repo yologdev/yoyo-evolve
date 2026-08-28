@@ -32,9 +32,30 @@ pub enum StopHandling {
 
 /// Classify a terminal `stop_reason` for AgentEnd handling.
 ///
-/// The match is deliberately exhaustive (no wildcard): if yoagent adds a new
-/// `StopReason` variant, this fails to compile and forces an explicit retry
-/// decision instead of silently ignoring it.
+/// **Superseded guarantee, recorded rather than erased (Day 181, yoagent 0.18.1).**
+/// This doc used to read: *"The match is deliberately exhaustive (no wildcard): if
+/// yoagent adds a new `StopReason` variant, this fails to compile and forces an
+/// explicit retry decision instead of silently ignoring it."* That guarantee is
+/// **gone** and was not given up by choice — yoagent 0.17 marked `StopReason`
+/// `#[non_exhaustive]`, so a wildcard arm is now required to compile at all and a
+/// new upstream variant lands here **silently**. Nothing detects it; the arm below
+/// is a fallback, not a guard, and this paragraph exists so the next reader does
+/// not inherit a compile-time promise that no longer holds.
+///
+/// The wildcard routes to [`StopHandling::InspectError`], deliberately, and the
+/// other two were rejected for stated reasons rather than by elimination:
+/// - **Not `Ignore`** — that is "the turn finished cleanly". An unknown stop
+///   reason is precisely the case where that claim is unfounded, and reporting a
+///   dead turn as a clean one is the silent-wrong-op this repo keeps paying for.
+/// - **Not `RefusalNotice`** — it prints "refused this request … rephrase", a
+///   *confident wrong diagnosis* for a reason nobody has read (#710), and that
+///   substring is a grep CONTRACT the evolve harness reads (#686), so unknown
+///   reasons would pollute a signal that is supposed to mean one thing.
+/// - **`InspectError`** inspects `error_message`: a real message is diagnosed
+///   honestly, and an absent one surfaces as "ended with an error but no message
+///   — treating the response as incomplete" and sets `fatal_error`, which is
+///   surface-and-stop and is never auto-retried (#646). It invents no cause and
+///   burns no retry budget.
 pub fn classify_stop_reason(stop_reason: &StopReason) -> StopHandling {
     match stop_reason {
         StopReason::Error => StopHandling::InspectError,
@@ -42,6 +63,9 @@ pub fn classify_stop_reason(stop_reason: &StopReason) -> StopHandling {
         StopReason::Stop | StopReason::Length | StopReason::ToolUse | StopReason::Aborted => {
             StopHandling::Ignore
         }
+        // Forced by `#[non_exhaustive]` upstream — see the doc comment above for
+        // why an unknown reason is surfaced rather than ignored or named.
+        _ => StopHandling::InspectError,
     }
 }
 

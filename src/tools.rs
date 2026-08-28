@@ -1789,13 +1789,14 @@ mod tests {
                 }
             }) as yoagent::types::ProgressFn
         });
-        yoagent::types::ToolContext {
-            tool_call_id: "test-id".to_string(),
-            tool_name: "bash".to_string(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-            on_update,
-            on_progress,
-        }
+        // `ToolContext` is `#[non_exhaustive]` as of yoagent 0.18, so it is
+        // built through `new()` and the two callbacks are assigned after — the
+        // fields are still `pub`, and this keeps the same values the struct
+        // literal set.
+        let mut ctx = yoagent::types::ToolContext::new("test-id", "bash");
+        ctx.on_update = on_update;
+        ctx.on_progress = on_progress;
+        ctx
     }
 
     #[tokio::test]

@@ -585,13 +585,7 @@ mod tests {
     use super::*;
 
     fn test_tool_context() -> yoagent::types::ToolContext {
-        yoagent::types::ToolContext {
-            tool_call_id: "test".to_string(),
-            tool_name: "test".to_string(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-            on_update: None,
-            on_progress: None,
-        }
+        yoagent::types::ToolContext::new("test", "test")
     }
 
     #[test]

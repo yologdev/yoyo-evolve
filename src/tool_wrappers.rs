@@ -2081,13 +2081,7 @@ mod tests {
     }
 
     fn test_tool_context() -> yoagent::types::ToolContext {
-        yoagent::types::ToolContext {
-            tool_call_id: "test".to_string(),
-            tool_name: "test".to_string(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-            on_update: None,
-            on_progress: None,
-        }
+        yoagent::types::ToolContext::new("test", "test")
     }
 
     #[tokio::test]
@@ -4589,13 +4583,7 @@ mod fallback_sub_agent_tests {
     }
 
     pub(super) fn ctx() -> yoagent::types::ToolContext {
-        yoagent::types::ToolContext {
-            tool_call_id: "test".to_string(),
-            tool_name: "sub_agent".to_string(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-            on_update: None,
-            on_progress: None,
-        }
+        yoagent::types::ToolContext::new("test", "sub_agent")
     }
 
     pub(super) fn first_text(result: &yoagent::types::ToolResult) -> String {

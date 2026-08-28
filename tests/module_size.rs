@@ -137,7 +137,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
-    ("src/agent_builder.rs", 3314),
+    ("src/agent_builder.rs", 3312),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -306,7 +306,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // discriminator (verbatim message + counter unmoved vs hint + bump).
     // Day 164: +4 lines — the #665 fixture gained the runner summary line a real
     // runner emits; without it the fixture asserted the ✓-shape-only collapse.
-    ("src/tool_wrappers.rs", 4999),
+    ("src/tool_wrappers.rs", 4987),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the
@@ -316,7 +316,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
     // string became a call to safety::git_redirection_refusal_message); the
     // other +6 predates it and was already showing as unrecorded growth.
-    ("src/tools.rs", 3536),
+    ("src/tools.rs", 3537),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 3532),

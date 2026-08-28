@@ -258,7 +258,7 @@ fn collect_test_files(dir: &Path, root: &Path) -> Vec<(String, Option<String>)> 
 
     let mut out = Vec::new();
     for path in paths {
-        if path.is_dir() || !path.extension().is_some_and(|e| e == "rs") {
+        if path.is_dir() || path.extension().is_none_or(|e| e != "rs") {
             continue;
         }
         let content = std::fs::read_to_string(&path)
