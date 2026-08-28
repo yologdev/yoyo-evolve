@@ -1299,6 +1299,191 @@ def render_provider_health(sessions: int, hits: int, state: str = AUDIT_DIR_OK) 
     return f"## Provider/API health\n{sessions} sessions, {hits} provider error hit(s) in audit.jsonl."
 
 
+# --- Usage-record coverage (#848 follow-up) -------------------------------
+#
+# #848 landed the PRODUCER: `emit_output` writes one {"type":"usage", ...}
+# line per run into `.yoyo/audit.jsonl`, which `evolve.sh` pushes to the
+# audit-log branch. Nothing asked whether it is still producing.
+#
+# The defect that hid for 102 days was never a wrong number — the dashboard's
+# cost figure was frozen at $1,077.59, which is not a zero, so no non-zero
+# check could see it. What was missing was a CONSUMER that notices a channel
+# going quiet. This is that consumer.
+#
+# Three states, and ABSENT / UNREADABLE must never fold into each other:
+# "the session ran and logged no usage" is an error, while "I could not read
+# the file" is *could not check* — collapsing them rebuilds the frozen-number
+# defect one layer down, which is the exact failure this detector exists for.
+USAGE_RECORDED = "recorded"
+USAGE_ABSENT = "absent"
+USAGE_UNREADABLE = "unreadable"
+
+
+def classify_session_usage(lines) -> str:
+    """Pure: does this session's audit.jsonl carry at least one usage record?
+
+    `lines` is an iterable of raw JSONL strings. Returns one of
+    USAGE_RECORDED / USAGE_ABSENT / USAGE_UNREADABLE.
+
+    The predicate is `type == "usage"`, never "has a type" and never "is not
+    a tool call": #848's compatibility rule is that a line with NO `type` key
+    still means a tool call, because `write_audit_entry` deliberately emits
+    none. So a file of pure tool-call lines is ABSENT — the producer is silent
+    — and is emphatically not UNREADABLE.
+
+    Blank lines are not corruption (a trailing newline is normal JSONL), so
+    they are skipped without counting toward anything. A file with no
+    non-blank lines at all, and a file where every non-blank line fails to
+    parse, are both UNREADABLE: in neither case did we manage to look.
+    """
+    seen = 0
+    parsed = 0
+    for raw in lines:
+        if not str(raw).strip():
+            continue
+        seen += 1
+        try:
+            obj = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        parsed += 1
+        if isinstance(obj, dict) and obj.get("type") == "usage":
+            return USAGE_RECORDED
+    if seen == 0 or parsed == 0:
+        return USAGE_UNREADABLE
+    return USAGE_ABSENT
+
+
+@dataclass
+class UsageCoverage:
+    """Four numbers that are never summed into each other."""
+
+    recorded: int = 0
+    absent: int = 0
+    unreadable: int = 0
+    examined: int = 0
+
+
+def usage_coverage(verdicts) -> UsageCoverage:
+    """Pure: fold per-session verdicts into a coverage tally.
+
+    `examined` counts every session we looked at, including the unreadable
+    ones — a shrinking denominator inside my own meter is the defect this
+    whole family of checks exists to prevent.
+    """
+    cov = UsageCoverage()
+    for v in verdicts:
+        cov.examined += 1
+        if v == USAGE_RECORDED:
+            cov.recorded += 1
+        elif v == USAGE_ABSENT:
+            cov.absent += 1
+        else:
+            cov.unreadable += 1
+    return cov
+
+
+def collect_usage_coverage(audit_dir: Path) -> UsageCoverage:
+    """I/O half: classify the last N sessions' audit.jsonl files.
+
+    Walks the same `sessions/day-*/` directories `load_outcomes` already
+    walks — they are in the audit-log worktree the harness already fetched,
+    so this makes NO new network call and no new `gh` call. Reads are bounded
+    by AUDIT_FILE_SIZE_CAP exactly as `collect_provider_errors` bounds its
+    own, so a runaway audit.jsonl cannot be slurped whole.
+    """
+    if not audit_dir.exists() or not audit_dir.is_dir():
+        return UsageCoverage()
+    verdicts: list[str] = []
+    for child in sorted(audit_dir.iterdir(), key=lambda c: session_sort_key(c.name), reverse=True):
+        if not child.is_dir():
+            continue
+        audit = child / "audit.jsonl"
+        if not audit.is_file():
+            continue
+        try:
+            size = audit.stat().st_size
+            if size > AUDIT_FILE_SIZE_CAP:
+                warn(
+                    f"{audit} is {size} bytes (>{AUDIT_FILE_SIZE_CAP}); "
+                    f"scanning first {AUDIT_FILE_SIZE_CAP}B only"
+                )
+
+            def _bounded(path=audit):
+                with path.open(encoding="utf-8", errors="replace") as f:
+                    read = 0
+                    for line in f:
+                        read += len(line)
+                        if read > AUDIT_FILE_SIZE_CAP:
+                            break
+                        yield line
+
+            verdicts.append(classify_session_usage(_bounded()))
+        except OSError as e:
+            warn(f"skipped {audit}: {e}")
+            # Could not open it at all — that is *could not check*, and it is
+            # counted rather than dropped.
+            verdicts.append(USAGE_UNREADABLE)
+        if len(verdicts) >= WINDOW_SESSIONS:
+            break
+    return usage_coverage(verdicts)
+
+
+def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
+    """Render coverage — k of N sessions carrying >= 1 usage record.
+
+    COVERAGE, never magnitude: no token total and no dollar figure, because a
+    frozen number is not a zero and a non-zero check cannot see this. Frozen
+    shows up as 0/N on the very next session; partial silence as k/N.
+
+    Anti-vacuous: `examined == 0` renders the could-not-check line, NEVER a
+    healthy "0 of 0". A detector that reports success on an empty scan is the
+    "cannot fail loudly" defect wearing the opposite sign, and it is quieter
+    than the bug it was built for.
+
+    Held to at most 3 lines: this renders before the epistemic block, which
+    absorbs all truncation pressure and has been cut away once already.
+    """
+    if state == AUDIT_DIR_UNSET:
+        return (
+            "## Usage records: not checked — YOYO_AUDIT_DIR is unset, so there "
+            "is no audit-log to scan (normal for a hand-run). Not a clean bill."
+        )
+    if state == AUDIT_DIR_UNUSABLE:
+        return (
+            "## Usage records: not checked — YOYO_AUDIT_DIR is set but is not a "
+            "readable directory. This is NOT 'no usage records missing'."
+        )
+    if cov.examined == 0:
+        return (
+            "## Usage records: not checked — 0 sessions had an audit.jsonl to "
+            "read. This is NOT 'no usage records missing'."
+        )
+    if cov.absent == 0 and cov.unreadable == 0:
+        return (
+            f"## Usage records\n"
+            f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record "
+            f"(#848 channel is live)."
+        )
+    lines = [
+        "## Usage records",
+        f"{cov.recorded} of {cov.examined} sessions carry >=1 usage record.",
+    ]
+    detail = []
+    if cov.absent:
+        detail.append(
+            f"{cov.absent} session(s) ran and logged NO usage line — the #848 "
+            f"producer wrote nothing there"
+        )
+    if cov.unreadable:
+        detail.append(
+            f"{cov.unreadable} session(s) could not be read (not the same as "
+            f"'no usage')"
+        )
+    lines.append("; ".join(detail) + ".")
+    return "\n".join(lines)
+
+
 # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
 
 # 3, not 5: the section renders last and absorbs all truncation pressure —
@@ -1574,6 +1759,9 @@ def main() -> int:
     sessions_audited, provider_hits = (
         collect_provider_errors(audit_dir) if audit_dir is not None else (0, 0)
     )
+    usage_cov = (
+        collect_usage_coverage(audit_dir) if audit_dir is not None else UsageCoverage()
+    )
     ci_scan = collect_failed_ci_fingerprints(repo)
     # One shared instant for the CI section, so the rendered verdict and the
     # stderr receipt are provably about the same moment rather than two clocks.
@@ -1644,12 +1832,28 @@ def main() -> int:
     provider_unknown = bool(s) and audit_dir_state != AUDIT_DIR_OK
     if s:
         sections.append(s)
+    # #848 follow-up: is the usage channel still producing? Same rule as
+    # `ci_unknown` / `provider_unknown` above — a "could not check" line is
+    # honest but is not trajectory DATA, so it must not suppress the global
+    # "(no trajectory data yet)" state below. `examined == 0` is one of those
+    # could-not-check states, never a healthy 0-of-0.
+    s = render_usage_coverage(usage_cov, audit_dir_state)
+    usage_unknown = bool(s) and (
+        audit_dir_state != AUDIT_DIR_OK or usage_cov.examined == 0
+    )
+    if s:
+        sections.append(s)
     # Always rendered when any signal exists (it has its own honest fallback
     # line) so the planner sees the epistemic view even when it's starving.
     # Skipped only when there is no trajectory data at all AND no epistemic
     # data — preserving the honest global "(no trajectory data yet)" state.
     epistemic_entries, epistemic_never = collect_epistemic_blind_spots()
-    data_sections = len(sections) - (1 if ci_unknown else 0) - (1 if provider_unknown else 0)
+    data_sections = (
+        len(sections)
+        - (1 if ci_unknown else 0)
+        - (1 if provider_unknown else 0)
+        - (1 if usage_unknown else 0)
+    )
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
 
@@ -3391,6 +3595,124 @@ src/commands_config.rs
     assert_eq("resolve: /dev/null yields no path", f"{st}/{p}", f"{AUDIT_DIR_UNUSABLE}/None")
     st, p = resolve_audit_dir("/tmp")
     assert_eq("resolve: a real directory yields that path", f"{st}/{p}", f"{AUDIT_DIR_OK}//tmp")
+
+    # --- Usage-record coverage (#848 follow-up) ---------------------------
+    # The predicate is `type == "usage"`, never "has a type": a line with NO
+    # type key is a tool call by #848's own compatibility rule, so a file of
+    # pure tool-call lines is ABSENT (the producer is silent) and must not be
+    # mistaken for UNREADABLE.
+    tool_call = '{"tool":"read_file","duration_ms":12,"success":true}'
+    usage_line = '{"type":"usage","model":"claude-opus-5","input_tokens":10,"cost_usd":0.4}'
+
+    assert_eq(
+        "one usage line among tool calls classifies RECORDED (the real shape)",
+        classify_session_usage([tool_call, usage_line, tool_call]),
+        USAGE_RECORDED,
+    )
+    assert_eq(
+        "tool-call lines with no `type` key classify ABSENT, not UNREADABLE",
+        classify_session_usage([tool_call, tool_call]),
+        USAGE_ABSENT,
+    )
+    assert_eq(
+        "a line with a non-usage type is still ABSENT",
+        classify_session_usage(['{"type":"error","msg":"x"}']),
+        USAGE_ABSENT,
+    )
+    assert_eq(
+        "every non-blank line unparseable classifies UNREADABLE",
+        classify_session_usage(["not json at all", "{oops"]),
+        USAGE_UNREADABLE,
+    )
+    assert_eq(
+        "an empty file is UNREADABLE (we never managed to look), not ABSENT",
+        classify_session_usage([]),
+        USAGE_UNREADABLE,
+    )
+    # Blank lines are not corruption and a trailing newline is normal JSONL.
+    assert_eq(
+        "blank lines and a trailing newline do not change a RECORDED verdict",
+        classify_session_usage(["", usage_line, "   ", "\n"]),
+        USAGE_RECORDED,
+    )
+    assert_eq(
+        "blank lines and a trailing newline do not change an ABSENT verdict",
+        classify_session_usage(["", tool_call, "\n"]),
+        USAGE_ABSENT,
+    )
+    assert_eq(
+        "a file of nothing but blank lines is UNREADABLE, not ABSENT",
+        classify_session_usage(["", "  ", "\n"]),
+        USAGE_UNREADABLE,
+    )
+
+    # The fold keeps four distinct numbers; nothing is summed into anything.
+    cov = usage_coverage(
+        [USAGE_RECORDED, USAGE_RECORDED, USAGE_RECORDED, USAGE_ABSENT, USAGE_UNREADABLE]
+    )
+    assert_eq(
+        "fold keeps recorded/absent/unreadable/examined distinct",
+        f"{cov.recorded}/{cov.absent}/{cov.unreadable}/{cov.examined}",
+        "3/1/1/5",
+    )
+    assert_eq(
+        "an unreadable session still counts toward examined (no shrinking denominator)",
+        usage_coverage([USAGE_UNREADABLE]).examined,
+        1,
+    )
+
+    # Anti-vacuous: an empty scan is could-not-check, NEVER a healthy 0 of 0.
+    empty_render = render_usage_coverage(UsageCoverage(), AUDIT_DIR_OK)
+    assert_true(
+        "examined == 0 renders could-not-check, not a healthy 0 of 0",
+        "not checked" in empty_render and "0 of 0" not in empty_render,
+    )
+    assert_true(
+        "the empty-scan line refuses to read as a clean bill",
+        "NOT 'no usage records missing'" in empty_render,
+    )
+    # Near-miss guard: the side that must NOT fire. A discriminator tested
+    # only where it fires is vacuous green.
+    healthy = render_usage_coverage(UsageCoverage(recorded=10, examined=10), AUDIT_DIR_OK)
+    assert_true(
+        "an all-recorded fold renders the healthy line",
+        "10 of 10 sessions carry >=1 usage record" in healthy,
+    )
+    assert_true(
+        "the healthy line claims nothing is missing and does not refuse",
+        "NO usage line" not in healthy and "not checked" not in healthy,
+    )
+    absent_render = render_usage_coverage(
+        UsageCoverage(recorded=7, absent=3, examined=10), AUDIT_DIR_OK
+    )
+    assert_true(
+        "an absent count is named out loud as sessions that logged nothing",
+        "3 session(s) ran and logged NO usage line" in absent_render,
+    )
+    assert_true(
+        "coverage is reported as k of N, never as a token total or a dollar figure",
+        "7 of 10" in absent_render
+        and "$" not in absent_render
+        and "token" not in absent_render,
+    )
+    mixed = render_usage_coverage(
+        UsageCoverage(recorded=6, absent=3, unreadable=1, examined=10), AUDIT_DIR_OK
+    )
+    assert_true(
+        "absent and unreadable are reported separately, never summed",
+        "3 session(s) ran and logged NO usage line" in mixed
+        and "1 session(s) could not be read" in mixed,
+    )
+    # The audit-dir refusals reuse #843's three states verbatim.
+    assert_true(
+        "an unset audit dir refuses rather than reporting coverage",
+        "not checked" in render_usage_coverage(UsageCoverage(), AUDIT_DIR_UNSET),
+    )
+    assert_true(
+        "an unusable audit dir says outright it is not 'no records missing'",
+        "NOT 'no usage records missing'"
+        in render_usage_coverage(UsageCoverage(), AUDIT_DIR_UNUSABLE),
+    )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
