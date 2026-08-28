@@ -1095,8 +1095,26 @@ async fn task_result_in<S: EventStore>(
         commit: Some(pre_sha.to_string()),
         worktree: None,
     });
-    patch.artifacts =
-        vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)];
+    // #851: the commit artifact is attached ONLY for a promoted verdict, and it
+    // reads the same `promoted` binding the status, the eval and the decision
+    // below read — one statement of the rule, so the artifact and the status
+    // cannot disagree about the same task.
+    //
+    // Why an empty vec rather than a sentinel: `scripts/evolve.sh` reverts a
+    // failed task with `git reset --hard PRE_TASK_SHA`, so by the time this runs
+    // HEAD is back where the task started — which, in a two-task session whose
+    // first task shipped, *is task 1's commit*. A rejected patch therefore did
+    // not record a meaningless sha, it recorded the most confusable value
+    // available (day 173: patches `_1` and `_2` both carrying `fb60556e`).
+    // "No artifact" is the true statement — a reverted task produced nothing —
+    // and a placeholder would be one more thing every reader must special-case.
+    // `base_project_ref` above still records `pre_sha`, so the patch keeps
+    // saying where it started from.
+    patch.artifacts = if promoted {
+        vec![ArtifactRef::new("git-commit", format!("{repo}@{post_sha}")).with_hash(post_sha)]
+    } else {
+        Vec::new()
+    };
     let patch_id = state.propose_patch(patch).await?;
     state
         .link(

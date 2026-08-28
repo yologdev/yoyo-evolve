@@ -126,6 +126,169 @@ fn domain_events(state_dir: &Path) -> Vec<(String, serde_json::Value)> {
         .collect()
 }
 
+/// The payload of every `patch.proposed` event, in file order.
+///
+/// `propose_patch` records `serde_json::to_value(&patch)` verbatim, and
+/// `StatePatch` carries no `skip_serializing_if` attributes (checked against
+/// the resolved yoagent-state 0.5.2, not an older copy in the registry), so
+/// `artifacts` is always present — `[]` when empty rather than absent. That is
+/// what lets the #851 assertion below distinguish "recorded no artifact" from
+/// "recorded no patch".
+fn proposed_patches(state_dir: &Path) -> Vec<serde_json::Value> {
+    domain_events(state_dir)
+        .into_iter()
+        .filter(|(k, _)| k == "patch.proposed")
+        .map(|(_, p)| p)
+        .collect()
+}
+
+/// The `artifacts` array of the one patch this session proposed.
+///
+/// Panics unless exactly one patch landed — the anti-vacuous half of the #851
+/// assertion, so a session that recorded *no* patch can never satisfy "carries
+/// no artifact" by having nothing to carry.
+fn sole_patch_artifacts(state_dir: &Path) -> Vec<serde_json::Value> {
+    let patches = proposed_patches(state_dir);
+    assert_eq!(
+        patches.len(),
+        1,
+        "expected exactly one `patch.proposed` — no patch means the artifact \
+         assertion below would pass vacuously: {patches:?}"
+    );
+    patches[0]
+        .get("artifacts")
+        .and_then(|a| a.as_array())
+        .unwrap_or_else(|| panic!("patch.proposed has no `artifacts` array: {}", patches[0]))
+        .clone()
+}
+
+/// `session-start` then one `task-result` with the given verdict, against a
+/// fresh scratch repo. Returns the state dir's guard so the caller can read the
+/// log before it is cleaned up.
+fn run_task_result(verdict: &str, run_id: &str) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    scratch_repo(dir);
+
+    let start = gasp_call(
+        dir,
+        &[
+            "session-start",
+            "--run-id",
+            run_id,
+            "--day",
+            "181",
+            "--task",
+            "artifact verdict test",
+        ],
+    );
+    assert!(
+        start.status.success(),
+        "session-start failed: {}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+
+    // `task-result` resumes the open run, so `session-start` above is required.
+    let result = gasp_call(
+        dir,
+        &[
+            "task-result",
+            "--run-id",
+            run_id,
+            "--num",
+            "1",
+            "--title",
+            "artifact verdict task",
+            "--verdict",
+            verdict,
+            "--pre-sha",
+            PRE_SHA,
+            "--post-sha",
+            POST_SHA,
+            "--repo",
+            "yologdev/yoyo-evolve",
+            "--reason",
+            "verdict artifact test",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "task-result ({verdict}) failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    tmp
+}
+
+/// Distinct on purpose: an assertion can name *which* sha it found, so a patch
+/// that recorded the base commit as its artifact is not mistaken for a pass.
+const PRE_SHA: &str = "aaaaaaa1111111111111111111111111111aaaa1";
+const POST_SHA: &str = "bbbbbbb2222222222222222222222222222bbbb2";
+
+/// #851 — a rejected verdict attaches NO commit artifact.
+///
+/// The defect: the artifact was attached unconditionally, above the
+/// `update_patch_status(… Rejected …)` that follows. `scripts/evolve.sh`
+/// reverts a failed task with `git reset --hard PRE_TASK_SHA`, so HEAD at this
+/// point is the *previous* task's commit — day 173 has patches `_1` and `_2`
+/// both carrying `fb60556e`, i.e. a thrown-away task claiming the commit of the
+/// one beside it that shipped.
+#[test]
+fn rejected_verdict_records_no_commit_artifact() {
+    let tmp = run_task_result("rejected", "run_gasp_artifact_rejected");
+    let artifacts = sole_patch_artifacts(tmp.path());
+
+    assert!(
+        artifacts.is_empty(),
+        "a rejected task produced nothing, so its patch must carry no artifact \
+         — got {artifacts:?}"
+    );
+
+    // The patch still says where it started from, so dropping the artifact
+    // loses no information a reader had before.
+    let patch = &proposed_patches(tmp.path())[0];
+    let base = patch
+        .get("base_project_ref")
+        .unwrap_or_else(|| panic!("no base_project_ref: {patch}"));
+    assert_eq!(
+        base.get("commit").and_then(|c| c.as_str()),
+        Some(PRE_SHA),
+        "base_project_ref must still record pre_sha: {base}"
+    );
+}
+
+/// The near-miss guard: a promoted verdict is byte-identical to before.
+///
+/// A discriminator tested only on the side that fires is vacuous green, and
+/// this one has a live wrong-value case to prove against — so the *kept* half
+/// is asserted down to the sha, not merely "non-empty".
+#[test]
+fn promoted_verdict_still_records_the_commit_artifact() {
+    let tmp = run_task_result("promoted", "run_gasp_artifact_promoted");
+    let artifacts = sole_patch_artifacts(tmp.path());
+
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "a promoted task must record exactly one commit artifact: {artifacts:?}"
+    );
+    let artifact = &artifacts[0];
+    assert_eq!(
+        artifact.get("kind").and_then(|k| k.as_str()),
+        Some("git-commit"),
+        "artifact kind: {artifact}"
+    );
+    assert_eq!(
+        artifact.get("hash").and_then(|h| h.as_str()),
+        Some(POST_SHA),
+        "the artifact must carry the post-task sha, not the base: {artifact}"
+    );
+    assert_eq!(
+        artifact.get("uri").and_then(|u| u.as_str()),
+        Some(format!("yologdev/yoyo-evolve@{POST_SHA}").as_str()),
+        "artifact uri: {artifact}"
+    );
+}
+
 /// The `id` of every task node created, in file order.
 fn task_created_ids(state_dir: &Path) -> Vec<String> {
     domain_events(state_dir)
