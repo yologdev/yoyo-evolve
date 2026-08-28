@@ -888,27 +888,63 @@ pub(crate) async fn session_end(
     // does not have — the same free-string treatment `record_run_finished` gives
     // it a few lines down.
     //
-    // **Fail-soft, and this is measured rather than defensive**: `update_task_status`
-    // hard-errors with `node not found` when the node is absent, and propagating
-    // that with `?` would abort `session_end` *before* `commit_run` — no boundary
-    // commit, the whole session's state lost, which is the #831 failure mode
-    // exactly. The node is absent whenever `session-start` ran on a build older
-    // than this one, so an in-flight session upgraded mid-flight would lose
-    // everything. This task is additive: the run tier must close whether or not
-    // the node exists. The failure is *named* on stderr rather than swallowed —
-    // a silent degradation is the bug.
-    if let Err(e) = session
+    // **Superseded claim, recorded rather than erased (#849).** This comment used
+    // to read: "*Fail-soft, and this is measured rather than defensive*:
+    // `update_task_status` hard-errors with `node not found` when the node is
+    // absent … The failure is *named* on stderr rather than swallowed — a silent
+    // degradation is the bug." **That was false, and the live
+    // `yologdev/yoyo-gasp` graph is what proved it** (7/7 → 5/7 conformant,
+    // `fold failed: node not found: task_<run>_session`, after #847 deployed
+    // mid-session: `session-start` ran on the old binary, `session-end` on the
+    // new one). In `yoagent-state` 0.5.0, `update_task_status` (`state.rs:457`)
+    // records the `task.status_changed` event **first, unconditionally**, then
+    // applies the `UpdateNode` op, and performs **no node-existence check
+    // anywhere**. So the `if let Err(…)` below was dead twice over: the append
+    // had already happened by the time any `Err` could return, and the error
+    // most likely never returned at all — the corruption surfaced later, at
+    // *fold* time, in a different process. Nothing was named on stderr, because
+    // nothing errored.
+    //
+    // **The transferable shape: a guard on the *result* cannot protect a side
+    // effect that happens before the result.** For an append-only event store,
+    // catching the error does not unwrite the event. So the check is on the
+    // **call** — does the node exist? — not on its return value. `get_node` is
+    // the shape yoagent's own `gasp.rs:182` uses for the same question, and the
+    // shape `ensure_goal` above already uses in this very file.
+    //
+    // The `Err` arm is **kept beside it, not replaced**: "the node was absent"
+    // and "the update errored" are different facts with different remedies, and
+    // folding them would be the absence-absorbed-by-a-convenient-neighbour
+    // defect. A skipped close is announced too — a silent skip is the whole
+    // point of #849.
+    //
+    // The run tier closes either way: propagating with `?` would abort
+    // `session_end` *before* `commit_run` — no boundary commit, the whole
+    // session's state lost, which is the #831 failure mode exactly.
+    let session_node = session_task_node_id(run_id);
+    if session
         .state()
-        .update_task_status(
-            TaskId::new(session_task_node_id(run_id)),
-            TaskStatus::Done,
-            Some(outcome.to_string()),
-        )
+        .get_node(NodeId::new(session_node.as_str()))
         .await
+        .is_some()
     {
+        if let Err(e) = session
+            .state()
+            .update_task_status(
+                TaskId::new(session_node.as_str()),
+                TaskStatus::Done,
+                Some(outcome.to_string()),
+            )
+            .await
+        {
+            eprintln!(
+                "gasp: could not close the session node {session_node}: {e} (the run still closes)"
+            );
+        }
+    } else {
         eprintln!(
-            "gasp: could not close the session node {}: {e} (the run still closes)",
-            session_task_node_id(run_id)
+            "gasp: session node {session_node} does not exist — skipping its close (the run still \
+             closes). Expected when `session-start` ran on a build older than #847."
         );
     }
     session
