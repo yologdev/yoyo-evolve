@@ -157,6 +157,38 @@ on the first turn with 'Tool names must be unique'."
     )
 }
 
+/// Pure: the message printed when a failed connect forced an agent rebuild and
+/// took previously-established connections down with it (#842).
+///
+/// `build_agent()` returns a **fresh** agent carrying zero MCP connections and
+/// zero OpenAPI tools, so every server connected before the failure is gone —
+/// and the counters that were tracking them are now lying. The old text said
+/// only "previous connections lost"; it never said **how many**, and the count
+/// is the thing that was wrong.
+///
+/// `None` when `lost == 0`: a first-server failure drops nothing, there is no
+/// true sentence to print, and that path stays byte-identical to before. That
+/// is also the common case — one misconfigured server and nothing before it.
+///
+/// Glyph-free under `is_plain_output()`, matching `project_mcp_refusal_message`
+/// and `collision_guard_skipped_message`.
+pub(crate) fn connections_lost_note(kind: &str, lost: u32, plain: bool) -> Option<String> {
+    if lost == 0 {
+        return None;
+    }
+    let marker = if plain { "" } else { "⚠ " };
+    let dash = if plain { ":" } else { " —" };
+    let plural = if lost == 1 { "" } else { "s" };
+    let verb = if lost == 1 { "was" } else { "were" };
+    Some(format!(
+        "{marker}{kind}: the agent was rebuilt after that failure{dash} \
+{lost} previously-connected server{plural} {verb} dropped and {} no longer counted. \
+Fix the failing server and restart to get {} back.",
+        if lost == 1 { "is" } else { "are" },
+        if lost == 1 { "it" } else { "them" }
+    ))
+}
+
 /// Connect to external servers (MCP and OpenAPI) and return the updated agent
 /// plus the count of successfully connected MCP and OpenAPI servers.
 ///
@@ -232,9 +264,17 @@ pub(crate) async fn connect_external_servers(
             }
             Err(e) => {
                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
-                // Agent was consumed on error — rebuild it with previous MCP connections lost
+                // Agent was consumed on error — rebuild it. The rebuilt agent
+                // carries ZERO MCP connections, so every server connected
+                // before this point is gone and `mcp_count` was still counting
+                // them (#842). Build the note before resetting, or it reports 0.
                 agent = agent_config.build_agent();
+                let note = connections_lost_note("mcp", mcp_count, is_plain_output());
+                mcp_count = 0;
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+                if let Some(note) = note {
+                    eprintln!("{YELLOW}  {note}{RESET}");
+                }
             }
         }
     }
@@ -296,8 +336,15 @@ pub(crate) async fn connect_external_servers(
                     "{RED}  ✗ mcp: failed to connect to '{}': {e}{RESET}",
                     server_cfg.name
                 );
+                // Same rebuild, same loss, same reset — one statement of the
+                // rule per loop, never two copies that agree today (#842).
                 agent = agent_config.build_agent();
+                let note = connections_lost_note("mcp", mcp_count, is_plain_output());
+                mcp_count = 0;
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+                if let Some(note) = note {
+                    eprintln!("{YELLOW}  {note}{RESET}");
+                }
             }
         }
     }
@@ -317,9 +364,22 @@ pub(crate) async fn connect_external_servers(
             }
             Err(e) => {
                 eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
-                // Agent was consumed on error — rebuild it
+                // Agent was consumed on error — rebuild it. #842 claimed this
+                // loop "does not rebuild the agent, so its count stays honest";
+                // that is false, and it is worse than the two above: a fresh
+                // agent carries neither OpenAPI tools NOR the MCP connections
+                // made earlier in this same function, so BOTH counters are
+                // lying from here on. Reset both.
                 agent = agent_config.build_agent();
+                let openapi_note =
+                    connections_lost_note("openapi", openapi_count, is_plain_output());
+                let mcp_note = connections_lost_note("mcp", mcp_count, is_plain_output());
+                openapi_count = 0;
+                mcp_count = 0;
                 eprintln!("{DIM}  openapi: agent rebuilt (previous connections lost){RESET}");
+                for note in [openapi_note, mcp_note].into_iter().flatten() {
+                    eprintln!("{YELLOW}  {note}{RESET}");
+                }
             }
         }
     }
@@ -2663,6 +2723,105 @@ mod tests {
         assert!(
             src.matches(&msg_fn).count() >= 3,
             "expected the message fn's definition plus a call in each of the two loops"
+        );
+    }
+
+    /// Table test for the #842 honest-count note. `None` at zero is the
+    /// byte-identical common path (a first-server failure drops nothing).
+    #[test]
+    fn connections_lost_note_table() {
+        // lost == 0 → nothing true to say, and the pre-#842 output is unchanged.
+        assert_eq!(connections_lost_note("mcp", 0, false), None);
+        assert_eq!(connections_lost_note("mcp", 0, true), None);
+        assert_eq!(connections_lost_note("openapi", 0, false), None);
+
+        // Singular and plural both name the number — the count is the thing
+        // that was wrong, so "some connections lost" is not good enough.
+        let one = connections_lost_note("mcp", 1, false).expect("1 lost must speak");
+        assert!(one.contains('1'), "must name how many: {one}");
+        assert!(one.contains("server was"), "singular agreement: {one}");
+        assert!(!one.contains("servers"), "no plural leak: {one}");
+
+        let many = connections_lost_note("mcp", 3, false).expect("3 lost must speak");
+        assert!(many.contains('3'), "must name how many: {many}");
+        assert!(many.contains("servers were"), "plural agreement: {many}");
+
+        // The kind is carried, so an openapi failure does not report as mcp.
+        let oa = connections_lost_note("openapi", 2, false).expect("must speak");
+        assert!(oa.starts_with('⚠'), "non-plain keeps its marker: {oa}");
+        assert!(oa.contains("openapi:"), "must name its own kind: {oa}");
+        assert!(!oa.contains("mcp"), "must not mislabel the kind: {oa}");
+
+        // Plain output is glyph-free, and the plain branch must differ or the
+        // `plain` parameter is vacuous — but the payload must survive.
+        let plain = connections_lost_note("mcp", 2, true).expect("must speak");
+        for glyph in ['⚠', '—', '•', '✓', '✗'] {
+            assert!(
+                !plain.contains(glyph),
+                "plain output must carry no glyph '{glyph}': {plain}"
+            );
+        }
+        let fancy = connections_lost_note("mcp", 2, false).expect("must speak");
+        assert_ne!(plain, fancy, "the plain branch must differ");
+        assert!(
+            plain.contains('2'),
+            "stripping glyphs must not strip payload"
+        );
+    }
+
+    /// Deliberately **weak** source-level guard. `connect_external_servers` is
+    /// `async` and spawns real MCP/OpenAPI processes, so no test drives it.
+    /// This proves each rebuild arm's counter reset is *present*; it can never
+    /// prove the reset fires. Same discipline the `format/mod.rs` wrapper
+    /// guards state about themselves.
+    #[test]
+    fn every_rebuild_arm_resets_the_counter_it_invalidated() {
+        let src = include_str!("agent_builder.rs");
+        // Needles assembled at runtime so this test cannot match itself.
+        let rebuild = format!("agent_config.build{}agent();", "_");
+        let mcp_reset = format!("mcp{}count = 0;", "_");
+        let oa_reset = format!("openapi{}count = 0;", "_");
+        let note_fn = format!("connections{}lost{}note(", "_", "_");
+
+        // Slice this function's body — `build_agent()` is called from several
+        // other places in this file, and the claim here is only about the
+        // three connect loops.
+        let start_marker = format!("async fn connect{}external{}servers(", "_", "_");
+        let start = src.find(&start_marker).expect("function must exist");
+        let end_marker = format!("fn insert{}client{}headers(", "_", "_");
+        let end = src[start..]
+            .find(&end_marker)
+            .expect("following function must exist")
+            + start;
+        let src = &src[start..end];
+
+        // Three rebuild sites inside connect_external_servers: the --mcp loop,
+        // the [mcp_servers.*] loop, and the OpenAPI loop. If a fourth appears,
+        // this count fails and whoever added it must decide what it invalidates.
+        assert_eq!(
+            src.matches(&rebuild).count(),
+            3,
+            "expected exactly three agent-rebuild sites in the connect loops"
+        );
+        // Every one of the three resets mcp_count: a fresh agent carries zero
+        // MCP connections regardless of which loop noticed the failure.
+        assert_eq!(
+            src.matches(&mcp_reset).count(),
+            3,
+            "each rebuild arm must reset mcp_count — a rebuilt agent has none"
+        );
+        // The OpenAPI loop is the only one that can invalidate openapi_count.
+        assert_eq!(
+            src.matches(&oa_reset).count(),
+            1,
+            "the OpenAPI rebuild arm must reset openapi_count"
+        );
+        // One call per invalidated counter (mcp ×3, openapi ×1). The fn's
+        // definition sits above this slice, so only call sites are counted.
+        assert_eq!(
+            src.matches(&note_fn).count(),
+            4,
+            "expected one honest-count note per invalidated counter"
         );
     }
 
