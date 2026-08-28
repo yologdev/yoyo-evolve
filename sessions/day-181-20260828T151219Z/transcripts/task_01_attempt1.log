@@ -1,0 +1,351 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with the trace — step 0 — before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "RetriableError" src/ -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_retriable_error" sr… ✓ (9ms)
+ ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,880p src/prompt.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "retriable_error" src/p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 720,800p src/prompt.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:726..796 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1120..1180 ✓ (1ms)
+  7 tools completed in 16.8s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,360p' src/prompt_ret… ✓ (3ms)
+ ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:2775..2820  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_agent_end\|St… ✓ (1ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Message::Assistant" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn classify_stop_reaso… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && V=$(ls -d ~/.cargo/registry/src/… ✓ (6ms)
+  7 tools completed in 25.7s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -d ~/.cargo/registry/src/*/yo… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && D=$(ls -d ~/.cargo/registry/src/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && D=$(ls -d ~/.cargo/registry/src/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry.rs src/pr… ✓ (5ms)
+  4 tools completed in 30.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs:185..260 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Trace is complete and unambiguous. Now the edits — starting with the work-site doc comment that records it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (5 → 42 lines)
+    /// v2.1.234 ships this behaviour default-ON with an opt-out. A process that can
+    /// silently sleep for hours is not a product-safe default (#448), so yoyo ships
+    /// it default-OFF and opt-in.
+  + ///
+  + /// # Why there is no terminal-error check here (Day 181 — traced, not assumed)
+  + ///
+  + /// Claude Code v2.1.24x later shipped *"persistent retry mode now fails
+  + /// immediately on organization spend-limit and out-of-credits errors instead of
+  + /// waiting indefinitely for a reset"*. That is the expensive failure: an
+  + /// out-of-credits error **never clears**, so sleeping [`MAX_RESET_WAIT`]
+  + /// against it is a silent hang, and an opted-in user reads it as the flag
+  + /// working. This function has no such check — and that is correct, because the
+  + /// guard is **upstream and total**. Traced rather than reasoned about:
+  + ///
+  + /// 1. `PromptResult::RetriableError` is constructed at exactly **one** non-test
+  + ///    site in `src/`: `PromptEventState::into_result` in `prompt.rs`. Every
+  + ///    other occurrence of the name is a `match` pattern or a test.
+  + /// 2. That construction fires only when `PromptEventState::retriable_error` is
+  + ///    `Some`, and that field is assigned at exactly **one** non-test site,
+  + ///    inside an `else if is_retriable_error(err_msg)` arm.
+  ... (21 more lines)
+ ✓ (1m 54s)
+    /// v2.1.234 ships this behaviour default-ON with an opt-out. A process that can
+    /// silently sleep for hours is not a product-safe default (#448), so yoyo ships
+    /// it default-OFF and opt-in.
+  + ///
+  + /// # Why there is no terminal-error check here (Day 181 — traced, not assumed)
+  + ///
+  + /// Claude Code v2.1.24x later shipped *"persistent retry mode now fails
+  + /// immediately on organization spend-limit and out-of-credits errors instead of
+  ... (13 more lines)
+
+Now the classifier tests in prompt_retry.rs — both directions.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,845p' src/prompt_ret… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (2 → 100 lines)
+            assert!(!is_retriable_error("Stream ended: no more data"));
+  +     }
+  + 
+  +     /// Day 181: the terminal billing/quota family must never be retriable.
+  +     ///
+  +     /// This is the property `--wait-for-reset` rests on. Opted in,
+  +     /// `retry_wait_decision_with` will sleep up to `MAX_RESET_WAIT` (6h) inside
+  +     /// one retry — and an out-of-credits error **never clears**, so sleeping
+  +     /// against it is a silent hang rather than a delay. There is deliberately
+  +     /// no terminal check at the wait layer (one policy, one statement); the
+  +     /// whole safety of that choice is that this classifier refuses first.
+  +     ///
+  +     /// Asserts the **strings**, not a count: a count passes while the list is
+  +     /// silently rewritten.
+  +     #[test]
+  +     fn terminal_billing_and_quota_errors_are_never_retriable() {
+  +         // Bare keywords, exactly as the non-retriable list spells them.
+  +         for msg in [
+  +             "insufficient_quota",
+  +             "insufficient quota",
+  ... (80 more lines)
+ ✓ (1m 40s)
+            assert!(!is_retriable_error("Stream ended: no more data"));
+  +     }
+  + 
+  +     /// Day 181: the terminal billing/quota family must never be retriable.
+  +     ///
+  +     /// This is the property `--wait-for-reset` rests on. Opted in,
+  +     /// `retry_wait_decision_with` will sleep up to `MAX_RESET_WAIT` (6h) inside
+  +     /// one retry — and an out-of-credits error **never clears**, so sleeping
+  ... (13 more lines)
+  2 tools completed in 1m 59s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (192ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The near-miss guard caught something — and it's a real defect, not a bad test. Let me verify the mechanism precisely.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn contains_status_code… ✓ (3ms)
+ ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.2s (2 ✓)
+
+Confirmed — and it's bigger than what I was sent for. Filing it to the scheduler surface first (prose-only findings don't get fixed; three rounds of evidence on that).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (82 lines) ✓ (891ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #852. Now the near-miss guard stays honest, and the finding becomes a ratchet rather than a silent wrong-output fixture.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (19 → 65 lines)
+        fn genuine_rate_limit_and_transient_errors_are_still_retriable() {
+            for msg in [
+  -             // The real observed shape from this repo's own provider errors.
+  -             "error: Rate limited, retry after Some(14454000)ms",
+                "429 Too Many Requests",
+                "rate_limit_error",
+  +             "Rate limited, please slow down",
+                "Overloaded",
+                "503 Service Unavailable",
+                "502 Bad Gateway",
+  ···
+                    "transient error must stay retriable: {msg:?}"
+                );
+            }
+  +     }
+  + 
+  +     /// **Recorded defect, pinned rather than hidden — see #852.**
+  +     ///
+  +     /// This asserts *wrong* behaviour on purpose, which is normally forbidden
+  +     /// (a fixture row asserting a known-wrong output turns a defect into a
+  ... (42 more lines)
+ ✓ (1m 51s)
+        fn genuine_rate_limit_and_transient_errors_are_still_retriable() {
+            for msg in [
+  -             // The real observed shape from this repo's own provider errors.
+  -             "error: Rate limited, retry after Some(14454000)ms",
+                "429 Too Many Requests",
+                "rate_limit_error",
+  +             "Rate limited, please slow down",
+                "Overloaded",
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (189ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" src/prompt.r… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.6s (2 ✓)
+
+Now the source-level guard the doc comment promises — the pin that makes the trace durable.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,340p' src/prompt_ret… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (4 → 68 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// The pin behind `retry_wait_decision_with`'s "no terminal check here"
+  +     /// paragraph (Day 181).
+  +     ///
+  +     /// That argument rests on two structural facts in `prompt.rs`, and neither
+  +     /// was asserted anywhere before this test: `PromptResult::RetriableError`
+  +     /// is constructed at exactly one non-test site, and the field it reads is
+  +     /// assigned at exactly one non-test site, gated on `is_retriable_error`.
+  +     /// A second, ungated assignment site would open a path from a terminal
+  +     /// billing error straight into a 6-hour sleep — silently, since nothing
+  +     /// else in the tree would notice.
+  +     ///
+  +     /// **Deliberately weak, and its own doc says so:** this is a text scan, not
+  +     /// a control-flow analysis. It proves the gate is *present and singular*,
+  +     /// never that it fires — the same discipline the `format/mod.rs` wrapper
+  +     /// guards state about themselves. Needles are assembled at runtime so this
+  +     /// test cannot match itself.
+  ... (48 more lines)
+ ✓ (1m 43s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// The pin behind `retry_wait_decision_with`'s "no terminal check here"
+  +     /// paragraph (Day 181).
+  +     ///
+  +     /// That argument rests on two structural facts in `prompt.rs`, and neither
+  ... (13 more lines)
+  2 tools completed in 1m 57s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5298 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_anthropic_preset_claude_opus_5_hits_fleet_arm ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ....
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Guard fired on my own assertion — the construction needle also matches match patterns. My assertion was wrong, not the code. Measuring before rewriting:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (19 → 34 lines)
+            let construction = format!("PromptResult::{} {{", "RetriableError");
+            let assignment = format!("self.{} = Some(", "retriable_error");
+            let gate = format!("is_{}(", "retriable_error");
+  +         let field_read = format!("= self.{} {{", "retriable_error");
+    
+  +         // The construction needle deliberately is NOT counted: it also matches
+  +         // the three `match` *patterns* that consume the variant, and a text
+  +         // scan cannot tell a pattern from a construction. What is checkable —
+  +         // and is the actual reachability chain — is that the variant is built
+  +         // from exactly one field read, which is fed by exactly one gated write.
+  +         let reads: Vec<_> = prod.match_indices(&field_read).collect();
+            assert_eq!(
+  -             prod.matches(&construction).count(),
+  +             reads.len(),
+                1,
+  -             "expected exactly one non-test construction of {construction:?} in prompt.rs — \
+  -              a second one needs its own trace before --wait-for-reset can be trusted"
+  +             "expected exactly one non-test read of the retriable_error field in prompt.rs; \
+  +              found {} — each feeds a RetriableError and needs its own trace",
+  +             reads.len()
+  ... (10 more lines)
+ ✓ (1m 49s)
+            let construction = format!("PromptResult::{} {{", "RetriableError");
+            let assignment = format!("self.{} = Some(", "retriable_error");
+            let gate = format!("is_{}(", "retriable_error");
+  +         let field_read = format!("= self.{} {{", "retriable_error");
+    
+  +         // The construction needle deliberately is NOT counted: it also matches
+  +         // the three `match` *patterns* that consume the variant, and a text
+  +         // scan cannot tell a pattern from a construction. What is checkable —
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (186ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 9s (3 ✓)
+
+Green. Now the positive controls — run rather than assumed, and serially (parallel file-mutating controls raced once and one falsely passed).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt_retry.rs /tmp/pr.b… ✓ (24.5s)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That failure is the positive control succeeding — I broke "spending limit" on purpose. Restoring, and noting what it revealed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/pr.bak src/prompt_retry.… ✓ (24.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 passed — but it revealed something worth recording. Now control 2, on the source guard:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt.rs /tmp/p.bak && s… ✓ (24.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fired with the exact receipts. Restoring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/p.bak src/prompt.rs && g… ✓ (10ms)
+
+Now recording what control 1 actually revealed — the bare-string table is weaker than it looks.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (4 → 12 lines)
+        /// Asserts the **strings**, not a count: a count passes while the list is
+        /// silently rewritten.
+  +     ///
+  +     /// **What this table alone does *not* prove, measured by positive control
+  +     /// rather than assumed:** `is_retriable_error` falls through to `false`, so
+  +     /// deleting a terminal string leaves most of these rows still green — the
+  +     /// message simply stops matching anything and lands on the default. Breaking
+  +     /// `"spending limit"` killed only *one* test, and it was
+  +     /// [`terminal_family_wins_when_a_message_carries_both`], not this one. That
+  +     /// test is the load-bearing half of the pair; this one guards the vocabulary.
+        #[test]
+        fn terminal_billing_and_quota_errors_are_never_retriable() {
+ ✓ (1m 49s)
+        /// Asserts the **strings**, not a count: a count passes while the list is
+        /// silently rewritten.
+  +     ///
+  +     /// **What this table alone does *not* prove, measured by positive control
+  +     /// rather than assumed:** `is_retriable_error` falls through to `false`, so
+  +     /// deleting a terminal string leaves most of these rows still green — the
+  +     /// message simply stops matching anything and lands on the default. Breaking
+  +     /// `"spending limit"` killed only *one* test, and it was
+  ... (4 more lines)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

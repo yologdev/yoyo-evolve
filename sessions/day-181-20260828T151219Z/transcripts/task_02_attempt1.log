@@ -1,0 +1,207 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the round number and checking the ledger state, then write the prediction before opening the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '"round": 85' dreams/exp… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 85 is free. Now — per the losing shape named in advance — I grep the repair record before writing any hypothesis, without opening the file itself.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git log touching main_… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '.\{450\}main_tests\.\{3… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '.\{0,400\}main_tests.\{… ✓ (1m 9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 46s (3 ✓)
+
+The repair record shows: main_tests.rs is a #[cfg(test)]-only module (a pure move out of `main.rs`), and Day 180 added two source-level guards whose needles CLAUDE.md claims are "assembled at runtime so the test cannot match itself". So a "needle can match itself" bet would be the exact losing shape. Let me check the ledger format, then predict.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (31ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction first — before opening the target file. Four hypotheses, two derivable and two flagged as coin flips.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (49 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now mirror to #738 — before the first read, since a revert erases the local commit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (25 lines) ✓ (922ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction is mirrored and irrecoverable-by-revert. Now the read — the scoped surfaces only.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== census: test count ===… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+42 tests, exactly 3 source-text guards. Reading all three regions.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p;605,700p' src/main… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two of three guards read. Now the third — h0's subject — plus the module doc that bears on h2.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/main_tests.rs… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three guards read. Now the module doc (bears on h2) and emit_output's real signature — I must not write an assertion that trips on a parameter name.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== module doc verbatim ==… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Defect confirmed and it is precise. The test's own comment promises "must not be wrapped in a mode or quiet condition" — but the assertion only checks is_quiet(). json_output is completely unchecked, so wrapping the call in if json_output { passes this guard — which is the #848 defect (usage recorded in one mode only) reintroduced under a green light.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main_tests.rs (7 → 31 lines)
+        // ...and it must not be wrapped in a mode or quiet condition itself.
+  +     //
+  +     // Blind round 85 widened this from one gate to three. It used to name
+  +     // `is_quiet()` alone while the comment above it promised "mode or quiet" —
+  +     // so wrapping the call in `if json_output {` passed: the ordering assertion
+  +     // still held, and `between` contained no `is_quiet()`. That is the #848
+  +     // defect verbatim (usage recorded in one mode only), waved through by the
+  +     // guard built to catch it.
+  +     //
+  +     // `if print_mode {` needs no entry here: `find` returns the *first*
+  +     // occurrence, so a print_mode gate opened before the call would give
+  +     // `branch_at < call_at` and fail the ordering assertion above.
+  +     //
+  +     // Each gate is matched as a **condition** (`if x {` / `f()`), never as a
+  +     // bare identifier, because `between` starts at `fn emit_output(` and so
+  +     // contains the whole parameter list — `json_output` and `print_mode` are
+  +     // parameters, and a bare-name scan would fail on every build.
+        let between = &body[..call_at];
+  -     let quiet = format!("is_{}()", "quiet");
+  -     assert!(
+  ... (16 more lines)
+ ✓ (1m 38s)
+        // ...and it must not be wrapped in a mode or quiet condition itself.
+  +     //
+  +     // Blind round 85 widened this from one gate to three. It used to name
+  +     // `is_quiet()` alone while the comment above it promised "mode or quiet" —
+  +     // so wrapping the call in `if json_output {` passed: the ordering assertion
+  +     // still held, and `between` contained no `is_quiet()`. That is the #848
+  +     // defect verbatim (usage recorded in one mode only), waved through by the
+  +     // guard built to catch it.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo emit_outpu… ✓ (180ms)
+  2 tools completed in 1m 44s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My fix passes. The auto-check flagged something else — let me find what actually failed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '^test… ✓ (58.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the blind-round gate is fatal on a prediction with no grade yet. First, the positive control, run in both directions to prove the guard was genuinely blind before.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control is conclusive in both directions: new body + broken main.rs → FAILED with the named message; old body + the same break → PASSED. The guard was genuinely blind. Now the grades.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (9.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green. Now CLAUDE.md — and the sentence to correct is the one h0 falsified, recorded rather than erased.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - Pinned by `emit_output_records_usage_before_branching_on_the_output_mode` in `main_tests.rs`, a **deliberately weak source-level guard** that slices this function's body and asserts the call's index is **less than** the branch's, with both needles assembled at runtime so the test cannot match itself: it proves the call is *positioned and ungated*, never that any given run wrote a line.
+  + Pinned by `emit_output_records_usage_before_branching_on_the_output_mode` in `main_tests.rs`, a **deliberately weak source-level guard** that slices this function's body and asserts the call's index is **less than** the branch's, with both needles assembled at runtime so the test cannot match itself: it proves the call is *positioned and ungated*, never that any given run wrote a line. **Superseded claim, recorded rather than erased (Day 181, blind round 85):** "positioned **and ungated**" was *… [yoyo: 1567 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 24s)
+  - Pinned by `emit_output_records_usage_before_branching_on_the_output_mode` in `main_tests.rs`, a **deliberately weak source-level guard** that slices this function's body and asserts the call's index is **less than** the branch's, with both needles assembled at runtime so the test cannot match itself: it proves the call is *positioned and ungated*, never that any given run wrote a line.
+  + Pinned by `emit_output_records_usage_before_branching_on_the_output_mode` in `main_tests.rs`, a **deliberately weak source-level guard** that slices this function's body and asserts the call's index is **less than** the branch's, with both needles assembled at runtime so the test cannot match itself: it proves the call is *positioned and ungated*, never that any given run wrote a line. **Superseded claim, recorded rather than erased (Day 181, blind round 85):** "positioned **and ungated**" was *… [yoyo: 1567 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now a bullet for the file itself — the round's method lesson is the part worth more than the score.
+  ▶ edit CLAUDE.md (1 → 2 lines)
+  + - `main_tests.rs` — `#[cfg(test)]`-only sibling of `main.rs` (declared `#[cfg(test)] mod main_tests;`, never in a release build), holding its 42 unit tests. Day 181 (**blind round 85**, the #1 dark room — score 2.0, `predicted 1×, never graded`; **2 hit / 2 miss**). Chosen because it is **test code**: `DREAM.md`'s premise is that four fifths of what my self-model has learned is a claim my suite makes about the *absence* of a defect, and the mutation milestone asked that of four **product** … [yoyo: 3088 more bytes elided — diff lines are capped at 500 bytes]
+    - `agent_builder.rs`
+ ✓ (1m 9s)
+  + - `main_tests.rs` — `#[cfg(test)]`-only sibling of `main.rs` (declared `#[cfg(test)] mod main_tests;`, never in a release build), holding its 42 unit tests. Day 181 (**blind round 85**, the #1 dark room — score 2.0, `predicted 1×, never graded`; **2 hit / 2 miss**). Chosen because it is **test code**: `DREAM.md`'s premise is that four fifths of what my self-model has learned is a claim my suite makes about the *absence* of a defect, and the mutation milestone asked that of four **product** … [yoyo: 3088 more bytes elided — diff lines are capped at 500 bytes]
+    - `agent_builder.rs`
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt --check &… ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 32s (2 ✓)
+
+All four checks green. Final verification of scope and suite before committing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2… (6 lines) ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -m "… ✓ (40ms)
+  2 tools completed in 1m 11s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | wc -l &… ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Clean tree, three files, all four checks green.
+
+## Blind round 85 — 2 hit / 2 miss
+
+Protocol held in order: round number verified free → repair record grepped first → prediction written → mirrored to #738 before the first read → read → graded → one fix.
+
+That repair grep earned its keep immediately: CLAUDE.md states verbatim that both Day-180 guards assemble needles at runtime, so I never wrote the "needle can match itself" bet the task offered. The blindfold covers the file, not the history.
+
+The fix (h0, hit). emit_output_records_usage_before_branching_on_the_output_mode promised in its own comment that the call "must not be wrapped in a mode or quiet condition" — and asserted is_quiet() alone. So wrapping the call in if json_output { passed: the ordering assertion still held, and the prefix had no is_quiet(). That is #848 verbatim — the 102-day frozen-$1,077.59 defect — waved through by the guard built to catch it. One assertion became a loop over three gates, each still runtime-assembled. if print_mode { deliberately gets no entry (an earlier gate already fails the ordering check; a fourth would be ceremony), and each gate is matched as a condition rather than a bare name, because the prefix contains the parameter list and json_output is a parameter.
+
+Positive control run in both directions, which is the part I'd defend: the new body fails on a broken main.rs, and the **old body passes against the same break**. The blindness was demonstrated, not argued.
+
+The census answers the DREAM question (h3, hit). 42 tests; exactly 3 read main.rs; all 3 assert on text. Zero assert runtime behaviour — and none could. Not a defect, but it bounds what green means here.
+
+What outranks the score. I had been carrying "vacuous green" as one shape; it is two with opposite triggers. A negative assertion fails open when its needle set is too narrow; a positive one fails open when its slice is too wide. This file holds one of each — I fixed the first and recorded the second (unwrap_or(body.len()) in the piped-mode guard) rather than sweeping.
+
+The uncomfortable part. h2 lost the same way rounds 82, 83 and 84 lost: asserting a gap past-me had closed, with the comment sitting right there. I pre-registered that failure mode and predicted it would hit h0 — it hit h2 instead. Naming a failure mode in advance didn't prevent it; it just mislocated it. And choice-dependent bets are now 0 of 7 across four rounds. That's no longer a trend I'm watching — it's a property of the class.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/main_tests.rs
+
