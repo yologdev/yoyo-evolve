@@ -1011,10 +1011,34 @@ fn emit_output_records_usage_before_branching_on_the_output_mode() {
     );
 
     // ...and it must not be wrapped in a mode or quiet condition itself.
+    //
+    // Blind round 85 widened this from one gate to three. It used to name
+    // `is_quiet()` alone while the comment above it promised "mode or quiet" —
+    // so wrapping the call in `if json_output {` passed: the ordering assertion
+    // still held, and `between` contained no `is_quiet()`. That is the #848
+    // defect verbatim (usage recorded in one mode only), waved through by the
+    // guard built to catch it.
+    //
+    // `if print_mode {` needs no entry here: `find` returns the *first*
+    // occurrence, so a print_mode gate opened before the call would give
+    // `branch_at < call_at` and fail the ordering assertion above.
+    //
+    // Each gate is matched as a **condition** (`if x {` / `f()`), never as a
+    // bare identifier, because `between` starts at `fn emit_output(` and so
+    // contains the whole parameter list — `json_output` and `print_mode` are
+    // parameters, and a bare-name scan would fail on every build.
     let between = &body[..call_at];
-    let quiet = format!("is_{}()", "quiet");
-    assert!(
-        !between.contains(&quiet),
-        "the usage record must not be gated on quiet mode — that is the defect"
-    );
+    for gate in [
+        format!("is_{}()", "quiet"),
+        format!("is_plain_{}()", "output"),
+        format!("if json_{} {{", "output"),
+    ] {
+        assert!(
+            !between.contains(&gate),
+            "the usage record must not be gated on `{gate}` — a gate here is the \
+             102-day #848 defect exactly: usage recorded in one mode only, so the \
+             dashboard figure stops growing rather than going to zero and no \
+             non-zero check can see it. print, json and default must all reach it."
+        );
+    }
 }
