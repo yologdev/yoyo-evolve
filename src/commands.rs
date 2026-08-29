@@ -311,7 +311,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "evolution" => Some("[count]"),
         "extended" | "ext" => Some("<prompt>"),
         "plan" => Some("on | off | open | close | show | apply | clear | status | step | [--deep] <task>"),
-        "tree" => Some("[path] [--depth N]"),
+        "tree" => Some("[depth]"),
         "index" => Some("[path]"),
         "history" => hint_from!(HISTORY_SUBCOMMANDS),
         _ => None,
