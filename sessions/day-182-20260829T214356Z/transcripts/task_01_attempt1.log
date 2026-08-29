@@ -1,0 +1,277 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — measure before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_git' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("git")' s… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,240p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("git")' s… ✓ (3ms)
+ ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 26.4s (4 ✓)
+
+Now the honest denominator — separating production bypasses from test-only ones:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,105p' src/git.rs && e… ✓ (5ms)
+ ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.7s (2 ✓)
+
+Measurements in hand. Step 0.1: 4 Command::new("git") sites in src/git.rs — and the guard runs before the Command in all three that have one. Step 0.2: 71 sites repo-wide, so 67 outside the chokepoint — 11 production, 56 test-only. Reading confirmed; no helper injects quotepath today. Writing the failing test first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'tem… (4 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '915,935p' src/git.rs ✓ (2ms)
+ ✓ (17ms)
+  2 tools completed in 18ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming. First, let me check whether anything landed before I was cut off.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — nothing landed. Writing the tests first so I see them fail before the fix exists.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (6 → 119 lines)
+            // Sanity check: run_git with a safe command still works
+            let result = run_git(&["--version"]);
+            assert!(result.is_ok());
+  +     }
+  + 
+  +     /// Build a throwaway repo in `root`. Shells git **directly** on purpose:
+  +     /// `run_git`'s destructive guard is the thing we must not disturb, and
+  +     /// every other scratch-repo test in this crate does the same.
+  +     fn init_scratch_repo(root: &std::path::Path) {
+  +         let out = std::process::Command::new("git")
+  +             .arg("-C")
+  +             .arg(root)
+  +             .args(["init", "--quiet"])
+  +             .output()
+  +             .expect("git init should run");
+  +         assert!(out.status.success(), "git init failed in scratch repo");
+  +     }
+  + 
+  +     /// Stage everything. `ls-files` reads the **index**, which `git add`
+  +     /// populates — so no `git commit`, and therefore no `user.email`/`user.name`
+  ... (97 more lines)
+ ✓ (1m 20s)
+            // Sanity check: run_git with a safe command still works
+            let result = run_git(&["--version"]);
+            assert!(result.is_ok());
+  +     }
+  + 
+  +     /// Build a throwaway repo in `root`. Shells git **directly** on purpose:
+  +     /// `run_git`'s destructive guard is the thing we must not disturb, and
+  +     /// every other scratch-repo test in this crate does the same.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests added. Confirming they fail for the right reason before writing the fix:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git::tests… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git::tests… ✓ (189ms)
+  2 tools completed in 2.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming. Let me capture the failure precisely, then apply the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo git::tests… ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Defect reproduced verbatim: "src/n\303\244me.rs" — quoted and octal-escaped. And note the near-miss guard passed before the fix, which is exactly the pass-through baseline I need. Now the injection:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (6 → 43 lines)
+        } else {
+            None
+        }
+  + }
+  + 
+  + /// Git **quotes and octal-escapes** every non-ASCII character in the paths it
+  + /// prints, because `core.quotepath` defaults to *on*. A file named `src/näme.rs`
+  + /// comes back from `ls-files` / `status --porcelain` / `diff` as the literal
+  + /// bytes `"src/n\303\244me.rs"` — surrounding quotes included — which no
+  + /// consumer in this crate can use as a path.
+  + ///
+  + /// #863 was filed against one caller (`/tree`, where the `/`-split produced a
+  + /// phantom `"src/` directory beside the real `src/`). It is the **third**
+  + /// appearance of this class: #829 fixed it inside `git_commit_msg.rs`, #863
+  + /// filed it inside `commands_tree.rs`, both one-site. The mechanism belongs to
+  + /// *git's output*, not to any one command, so the flag is stated once — here,
+  + /// at the chokepoint every helper in this module already funnels through.
+  + const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
+  + 
+  + /// Build a `git` command carrying yoyo's standard global flags.
+  ... (21 more lines)
+ ✓ (13.0s)
+        } else {
+            None
+        }
+  + }
+  + 
+  + /// Git **quotes and octal-escapes** every non-ASCII character in the paths it
+  + /// prints, because `core.quotepath` defaults to *on*. A file named `src/näme.rs`
+  + /// comes back from `ls-files` / `status --porcelain` / `diff` as the literal
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Definition without its consumer — my own rule, caught by clippy. Wiring all four sites now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (10 → 10 lines)
+  -     match std::process::Command::new("git").args(args).output() {
+  +     match git_command().args(args).output() {
+            Ok(output) if output.status.success() => {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+ ✓ (1m 21s)
+  -     match std::process::Command::new("git").args(args).output() {
+  +     match git_command().args(args).output() {
+            Ok(output) if output.status.success() => {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (6 → 1 lines)
+  -     match std::process::Command::new("git")
+  -         .arg("-C")
+  -         .arg(dir)
+  -         .args(args)
+  -         .output()
+  -     {
+  +     match git_command().arg("-C").arg(dir).args(args).output() {
+ ✓ (1m 21s)
+  -     match std::process::Command::new("git")
+  -         .arg("-C")
+  -         .arg(dir)
+  -         .args(args)
+  -         .output()
+  -     {
+  +     match git_command().arg("-C").arg(dir).args(args).output() {
+  2 tools completed in 2m 45s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two sites left. Let me check current state and finish them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (4 → 4 lines)
+  -     std::process::Command::new("git")
+  +     git_command()
+            .args(args)
+            .output()
+            .map_err(|e| format!("git not found: {e}"))
+ ✓ (1m 20s)
+  -     std::process::Command::new("git")
+  +     git_command()
+            .args(args)
+            .output()
+            .map_err(|e| format!("git not found: {e}"))
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/git.rs (4 → 1 lines)
+  -     match std::process::Command::new("git")
+  -         .args(["commit", "-m", message])
+  -         .output()
+  -     {
+  +     match git_command().args(["commit", "-m", message]).output() {
+ ✓ (1m 30s)
+  -     match std::process::Command::new("git")
+  -         .args(["commit", "-m", message])
+  -         .output()
+  -     {
+  +     match git_command().args(["commit", "-m", message]).output() {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 58s (3 ✓)
+
+All four sites wired. Running the full gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 31s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5342 passed, 0 failed, clippy clean. Now the positive control, serially (one mutation, run, restore — never batched):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/git.rs && sed -i 's|^ … ✓ (21.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired **exactly right*: 1 failure — the fix test — while all 177 others stayed green, including both near-miss guards and the destructive-guard panic tests. And note the source-level guard passed while neutered*: that is its documented limit demonstrated live (it proves routing, never that the flag reaches the wire). Restoring:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|^    // NEUTERED FOR P… ✓ (20.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored: 178 passed, 0 failed. Now verifying the fix reaches the reported specimen, and gathering the exact bypass list for filing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== /t… (4 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+/tree reaches git::run_git(&["ls-files"]) — the chokepoint. The specimen is fixed without touching `commands_tree.rs` at all, which is the whole argument for the sweep. Now the exact bypass list for filing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (4 lines) ✓ (18ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all 11. Filing the bypass issue (step 0.2's requirement — a central fix that silently leaves N sites uncovered while claiming "all sites" is the exact claim my archive forbids):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (44 lines) ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Filed as #864. Now the CLAUDE.md bullet — finding the right insertion point:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `git' CLAUDE.md && e… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No git.rs bullet exists yet — only its child git_commit_msg.rs. Adding one directly above it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (14 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Final full gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/git.rs && cargo fmt &&… ✓ (1m 15s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
