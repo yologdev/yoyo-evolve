@@ -1844,9 +1844,30 @@ fn subject_without_sha(message: &str) -> &str {
 /// - If `scripts/evolve.sh` changes its wording, this list stops covering the
 ///   new phrasing with no error anywhere — pollution returns quietly.
 ///
-/// `test_is_mechanical_commit_covers_harness_vocabulary` pins the vocabulary
-/// so drift shows up as a failing test rather than as recall pollution nobody
-/// reads. Substring match, case-insensitive: the subjects arrive prefixed with
+/// **Superseded claim, recorded rather than erased (Day 182, #857).** This
+/// comment used to read: "`test_is_mechanical_commit_covers_harness_vocabulary`
+/// pins the vocabulary so drift shows up as a failing test rather than as
+/// recall pollution nobody reads." That test **structurally cannot** do it — it
+/// is a loop over hand-written literals asserting the list agrees with itself,
+/// reading no authority at all (no `include_str!`, no `CARGO_MANIFEST_DIR`, no
+/// read of `scripts/evolve.sh`). It pins this function's own *behaviour* and
+/// nothing else, which is worth keeping, and it is kept verbatim.
+///
+/// The drift it promised to catch had **already happened** and nothing noticed:
+/// the harness now emits a bare `assessment` where this list still carries
+/// `assessment (draft)` (live instance `2d31726f Day 181 (13:56): assessment`),
+/// and `update day counter` was never covered at all (`95f053c8`).
+///
+/// The authority is now read by the sibling
+/// `test_evolve_sh_commit_subjects_are_covered_or_registered`, which extracts
+/// every `git commit -m` template from `scripts/evolve.sh` and requires each to
+/// be matched here **or** named in `REGISTERED_UNMATCHED_SUBJECTS` with a
+/// reason — the `ROUTED_SUBCOMMANDS` / `GLOBAL_SETTERS` shape, which is a
+/// hand-written list *plus* a second test tied to reality. Its stated limit:
+/// it matches literal, non-interpolated fragments only, so a subject built
+/// entirely from shell variables is invisible to it.
+///
+/// Substring match, case-insensitive: the subjects arrive prefixed with
 /// a short hash and a `Day N (HH:MM):` stamp.
 fn is_mechanical_commit(subject: &str) -> bool {
     /// Subjects observed in this repo's `git log` today. Not a general
@@ -6111,5 +6132,348 @@ src/help_data.rs
                 "real work must keep its corroborating power: {subject}"
             );
         }
+    }
+
+    /// Every `git commit -m` template in `scripts/evolve.sh` whose literal text
+    /// `is_mechanical_commit` does **not** match, each with the reason that is
+    /// acceptable. The gate below does not forbid an uncovered subject — it
+    /// forbids an **unnamed** one, so this list's size IS the finding.
+    ///
+    /// Keyed on the verbatim template, so a reworded subject in `evolve.sh`
+    /// fails the gate rather than silently leaving the filter behind. It can
+    /// only shrink: a registered template that becomes covered is also fatal.
+    const REGISTERED_UNMATCHED_SUBJECTS: &[(&str, &str)] = &[
+        (
+            "Day $DAY ($SESSION_TIME): assessment",
+            "DRIFT, and it already happened: the vocabulary carries the older \
+             `assessment (draft)` / `docs(assessment)` wording while the harness \
+             now emits a bare `assessment`. Live instance in this repo's history: \
+             `2d31726f Day 181 (13:56): assessment`. Retuning the vocabulary is \
+             deliberately out of scope for #857, which adds the detector only.",
+        ),
+        (
+            "$msg",
+            "Fully interpolated — the safety-commit path builds its subject at \
+             runtime, so there is no literal fragment to match. Invisible to a \
+             literal extractor by construction, which is the gate's stated limit.",
+        ),
+        (
+            "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM)",
+            "CORRECT BY DESIGN, not debt: this is a delivered task commit and it \
+             MUST stay non-mechanical, or a genuine repair loses its corroborating \
+             power. The plain `(Task N)` suffix is deliberately not matched by \
+             `has_retry_suffix` (only `(Task N,` — the retry marker — is).",
+        ),
+        (
+            "Day $DAY ($SESSION_TIME): fix build errors",
+            "DRIFT: build-fix commits were never in the vocabulary. Out of scope \
+             for #857 (detector only), and recorded here rather than absorbed.",
+        ),
+        (
+            "Day $DAY ($SESSION_TIME): revert session changes (could not fix build)",
+            "DRIFT: the whole-session revert commit was never in the vocabulary. \
+             Note it is separately caught by `message_claims_revert`'s first-token \
+             anchor, so tier 1 sees it — but as an ACCUSER, not as bookkeeping.",
+        ),
+        (
+            "Day $DAY: update day counter",
+            "DRIFT: never covered. Live instance: `95f053c8 Day 182: update day \
+             counter`. It touches only DAY_COUNT, never a `src/` path, so \
+             `classify_broke_files` drops it on the `src/` filter anyway — the \
+             miss is real but currently harmless.",
+        ),
+        (
+            "audit: day $DAY ($SESSION_TIME)",
+            "Not main-history: this commit is made inside the `audit-log` branch \
+             worktree, which `classify_broke_files` never reads. Named rather \
+             than silently skipped, because the extractor cannot tell which \
+             branch a `git commit` lands on.",
+        ),
+    ];
+
+    /// Read the authority — `scripts/evolve.sh` — through `CARGO_MANIFEST_DIR`,
+    /// never a relative path (the process CWD is global; #780 spent two tasks
+    /// removing chdirs). A missing or unreadable script is a **loud** failure:
+    /// "could not check" must not read as "checked; clean".
+    fn read_evolve_sh() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/evolve.sh");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "could not read the authority at {}: {e}\n\
+                 This gate cannot verify that `is_mechanical_commit` still covers the \
+                 harness vocabulary without it. Failing loudly rather than passing on \
+                 an unread file.",
+                path.display()
+            )
+        })
+    }
+
+    /// Every double-quoted argument of a `git commit -m` in the script, in
+    /// source order, deduplicated. Honours `\"` so an escaped quote cannot end
+    /// a template early.
+    fn extract_commit_templates(script: &str) -> Vec<String> {
+        // Assembled at runtime purely for symmetry with the repo's other source
+        // scanners; self-match is not a risk here, since the subject read is
+        // `scripts/evolve.sh` and never this file.
+        let needle = format!("git commit {}m \"", '-');
+        let mut out: Vec<String> = Vec::new();
+        let mut rest = script;
+        while let Some(pos) = rest.find(&needle) {
+            let after = &rest[pos + needle.len()..];
+            let mut template = String::new();
+            let mut chars = after.char_indices();
+            let mut end = None;
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some((_, esc)) = chars.next() {
+                            template.push(esc);
+                        }
+                    }
+                    '"' => {
+                        end = Some(i);
+                        break;
+                    }
+                    _ => template.push(c),
+                }
+            }
+            match end {
+                Some(i) => {
+                    if !out.contains(&template) {
+                        out.push(template);
+                    }
+                    rest = &after[i..];
+                }
+                // Unterminated quote: stop rather than guess.
+                None => break,
+            }
+        }
+        out
+    }
+
+    /// The literal, non-interpolated runs of a shell double-quoted string —
+    /// the only text that is guaranteed to survive into the emitted subject.
+    /// Splits at `$VAR`, `${...}`, `$(...)` and `$((...))`; empty runs dropped.
+    fn shell_literal_runs(template: &str) -> Vec<String> {
+        let b: Vec<char> = template.chars().collect();
+        let mut runs = Vec::new();
+        let mut cur = String::new();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                '\\' if i + 1 < b.len() => {
+                    cur.push(b[i + 1]);
+                    i += 2;
+                }
+                '$' => {
+                    if !cur.is_empty() {
+                        runs.push(std::mem::take(&mut cur));
+                    }
+                    let mut j = i + 1;
+                    if b.get(j) == Some(&'(') {
+                        // `$(...)` and `$((...))` alike: walk to the matching close.
+                        let mut depth = 0usize;
+                        while j < b.len() {
+                            if b[j] == '(' {
+                                depth += 1;
+                            } else if b[j] == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    j += 1;
+                                    break;
+                                }
+                            }
+                            j += 1;
+                        }
+                    } else if b.get(j) == Some(&'{') {
+                        while j < b.len() && b[j] != '}' {
+                            j += 1;
+                        }
+                        j += 1;
+                    } else {
+                        while j < b.len() && (b[j].is_alphanumeric() || b[j] == '_') {
+                            j += 1;
+                        }
+                    }
+                    i = j;
+                }
+                c => {
+                    cur.push(c);
+                    i += 1;
+                }
+            }
+        }
+        if !cur.is_empty() {
+            runs.push(cur);
+        }
+        runs
+    }
+
+    /// A literal run is a substring of every subject the template can emit, so
+    /// a match on any run proves a match on the emitted subject.
+    fn template_is_covered(template: &str) -> bool {
+        shell_literal_runs(template)
+            .iter()
+            .any(|run| is_mechanical_commit(run))
+    }
+
+    /// The authority-reading half `test_is_mechanical_commit_covers_harness_vocabulary`
+    /// never had (#857): compare the vocabulary against what `scripts/evolve.sh`
+    /// actually emits, so a reworded subject fails a test instead of silently
+    /// un-covering the corroboration filter.
+    #[test]
+    fn test_evolve_sh_commit_subjects_are_covered_or_registered() {
+        use std::io::Write as _;
+
+        let script = read_evolve_sh();
+        let templates = extract_commit_templates(&script);
+
+        // Anti-vacuous: a scanner that finds nothing and passes is the defect
+        // this gate exists to catch, wearing the opposite sign.
+        assert!(
+            !templates.is_empty(),
+            "extraction found ZERO `git commit -m` templates in scripts/evolve.sh.\n\
+             That is not a clean bill — it means the extractor stopped matching \
+             (reworded invocation, different quoting, moved file). Fix the \
+             extractor; do not delete this assertion."
+        );
+
+        let mut unnamed = Vec::new();
+        let mut covered_but_registered = Vec::new();
+        for t in &templates {
+            let registered = REGISTERED_UNMATCHED_SUBJECTS.iter().any(|(k, _)| k == t);
+            match (template_is_covered(t), registered) {
+                (false, false) => unnamed.push(t.clone()),
+                // Ratchet: the debt was paid, so delete the entry.
+                (true, true) => covered_but_registered.push(t.clone()),
+                _ => {}
+            }
+        }
+        // Ratchet, other direction: a registered template that no longer exists.
+        let vanished: Vec<&str> = REGISTERED_UNMATCHED_SUBJECTS
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| !templates.iter().any(|t| t == k))
+            .collect();
+
+        assert!(
+            unnamed.is_empty(),
+            "scripts/evolve.sh emits commit subject(s) that `is_mechanical_commit` \
+             does not match and nothing names:\n{}\n\n\
+             Two remedies. Either teach `MECHANICAL_SUBJECTS` the new wording, or \
+             paste the literal register line(s) into REGISTERED_UNMATCHED_SUBJECTS \
+             with a reason:\n{}",
+            unnamed
+                .iter()
+                .map(|t| format!("  {t:?}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            unnamed
+                .iter()
+                .map(|t| format!("        ({t:?}, \"why this is acceptable\"),"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        assert!(
+            covered_but_registered.is_empty(),
+            "register entr(ies) now MATCHED by `is_mechanical_commit` — the debt is \
+             paid, delete them from REGISTERED_UNMATCHED_SUBJECTS:\n{}",
+            covered_but_registered
+                .iter()
+                .map(|t| format!("  {t:?}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        assert!(
+            vanished.is_empty(),
+            "register entr(ies) no longer present in scripts/evolve.sh — the \
+             subject was reworded or removed, so delete or update them:\n{}",
+            vanished
+                .iter()
+                .map(|t| format!("  {t:?}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+
+        // Printed on every PASSING run through a raw stderr handle: libtest's
+        // capture hook discards `eprintln!` output from passing tests, and a
+        // gate whose limits are invisible reads as stronger than it is.
+        let mut err = std::io::stderr();
+        let _ = writeln!(
+            err,
+            "\n[is_mechanical_commit authority scan] {} `git commit -m` template(s) in \
+             scripts/evolve.sh: {} covered, {} registered as named exceptions.\n\
+             Limits: (1) it matches LITERAL, non-interpolated fragments only, so a \
+             subject built entirely from shell variables (e.g. \"$msg\") is invisible \
+             to it — \"could not check\" is not \"checked; clean\"; (2) it is a text \
+             scan, not a shell parser, so a subject assembled outside a `git commit -m \
+             \"...\"` invocation is not seen; (3) it proves the vocabulary still \
+             COVERS what the harness emits, never that the coverage is correct.",
+            templates.len(),
+            templates.len() - REGISTERED_UNMATCHED_SUBJECTS.len(),
+            REGISTERED_UNMATCHED_SUBJECTS.len(),
+        );
+    }
+
+    #[test]
+    fn test_shell_literal_runs_and_coverage_table() {
+        // (template, expected literal runs, expected coverage)
+        let cases: &[(&str, &[&str], bool)] = &[
+            (
+                "Day $DAY ($SESSION_TIME): cargo fmt",
+                &["Day ", " (", "): cargo fmt"],
+                true,
+            ),
+            // The live drift instance: `assessment` alone matches neither
+            // `assessment (draft)` nor `docs(assessment)`.
+            (
+                "Day $DAY ($SESSION_TIME): assessment",
+                &["Day ", " (", "): assessment"],
+                false,
+            ),
+            // `$((...))` arithmetic is skipped whole, not treated as literal.
+            (
+                "Day $DAY: bump skill-evolve counter ($((skill_counter + 1)))",
+                &["Day ", ": bump skill-evolve counter (", ")"],
+                true,
+            ),
+            // Near-miss guard: an ordinary DELIVERY subject must stay uncovered,
+            // or a genuine repair loses its corroborating power.
+            (
+                "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM)",
+                &["Day ", " (", "): ", " (Task ", ")"],
+                false,
+            ),
+            // Fully interpolated: no literal survives at all.
+            ("$msg", &[], false),
+            ("${BRACED}x", &["x"], false),
+        ];
+        for (template, want_runs, want_covered) in cases {
+            let runs = shell_literal_runs(template);
+            assert_eq!(runs, *want_runs, "literal runs for {template:?}");
+            assert_eq!(
+                template_is_covered(template),
+                *want_covered,
+                "coverage for {template:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_commit_templates_table() {
+        let script = "  git add -A && git commit -m \"Day $DAY: cargo fmt\" || true\n\
+                      echo 'no commit here'\n\
+                      git commit -m \"a \\\"quoted\\\" subject\"\n";
+        assert_eq!(
+            extract_commit_templates(script),
+            vec![
+                "Day $DAY: cargo fmt".to_string(),
+                "a \"quoted\" subject".to_string(),
+            ]
+        );
+        // Near-miss guard: prose mentioning the command yields nothing.
+        assert!(extract_commit_templates("run git commit later\n").is_empty());
+        // The real authority yields a non-empty set (guards the needle itself).
+        assert!(!extract_commit_templates(&read_evolve_sh()).is_empty());
     }
 }
