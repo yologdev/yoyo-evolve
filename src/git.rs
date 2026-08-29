@@ -91,6 +91,43 @@ fn destructive_guard<'a>(args: &'a [&'a str], cwd: &std::path::Path) -> Option<&
     }
 }
 
+/// Git **quotes and octal-escapes** every non-ASCII character in the paths it
+/// prints, because `core.quotepath` defaults to *on*. A file named `src/näme.rs`
+/// comes back from `ls-files` / `status --porcelain` / `diff` as the literal
+/// bytes `"src/n\303\244me.rs"` — surrounding quotes included — which no
+/// consumer in this crate can use as a path.
+///
+/// #863 was filed against one caller (`/tree`, where the `/`-split produced a
+/// phantom `"src/` directory beside the real `src/`). It is the **third**
+/// appearance of this class: #829 fixed it inside `git_commit_msg.rs`, #863
+/// filed it inside `commands_tree.rs`, both one-site. The mechanism belongs to
+/// *git's output*, not to any one command, so the flag is stated once — here,
+/// at the chokepoint every helper in this module already funnels through.
+const QUOTEPATH_OFF: [&str; 2] = ["-c", "core.quotepath=off"];
+
+/// Build a `git` command carrying yoyo's standard global flags.
+///
+/// **Two constraints, both load-bearing — do not "simplify" either away.**
+///
+/// 1. `-c` is a git *global* and must precede the subcommand. Same rule
+///    `apply_patch_in` already follows for `-C`: `git apply -C<n>` (context
+///    lines) is an entirely different flag from the global `git -C <dir>`.
+/// 2. The injection happens **here, at construction — never in the callers, and
+///    never ahead of `destructive_guard`.** That guard reads the caller's `args`
+///    to decide whether a destructive subcommand is aimed at the real project
+///    root; injecting first would make `args[0]` our own `"-c"` rather than the
+///    caller's verb. (Measured while landing this: `resolve_git_invocation`
+///    already steps over `-c` and its value, so the guard would in fact survive
+///    — but relying on that would make a safety property depend on a detail of
+///    an unrelated parser, and a guard that reads the world after its own action
+///    is blinded by that action.) Caller signatures are unchanged: 117 call
+///    sites, zero edits.
+fn git_command() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(QUOTEPATH_OFF);
+    cmd
+}
+
 /// Run a git command with the given args.
 /// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
 /// This is the common path for most git invocations — use raw `Command` only
@@ -111,7 +148,7 @@ pub fn run_git(args: &[&str]) -> Result<String, String> {
             );
         }
     }
-    match std::process::Command::new("git").args(args).output() {
+    match git_command().args(args).output() {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -134,12 +171,7 @@ pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, St
             cmd
         );
     }
-    match std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-    {
+    match git_command().arg("-C").arg(dir).args(args).output() {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -165,7 +197,7 @@ pub fn run_git_output(args: &[&str]) -> Result<std::process::Output, String> {
             );
         }
     }
-    std::process::Command::new("git")
+    git_command()
         .args(args)
         .output()
         .map_err(|e| format!("git not found: {e}"))
@@ -184,10 +216,7 @@ pub fn get_staged_diff() -> Option<String> {
 
 /// Run `git commit -m "<message>"` and return (success, output_text).
 pub fn run_git_commit(message: &str) -> (bool, String) {
-    match std::process::Command::new("git")
-        .args(["commit", "-m", message])
-        .output()
-    {
+    match git_command().args(["commit", "-m", message]).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1630,6 +1659,122 @@ stash@{1}: On feature: def5678 wip stuff";
         // Sanity check: run_git with a safe command still works
         let result = run_git(&["--version"]);
         assert!(result.is_ok());
+    }
+
+    /// Build a throwaway repo in `root`. Shells git **directly** on purpose:
+    /// `run_git`'s destructive guard is the thing we must not disturb, and
+    /// every other scratch-repo test in this crate does the same.
+    fn init_scratch_repo(root: &std::path::Path) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["init", "--quiet"])
+            .output()
+            .expect("git init should run");
+        assert!(out.status.success(), "git init failed in scratch repo");
+    }
+
+    /// Stage everything. `ls-files` reads the **index**, which `git add`
+    /// populates — so no `git commit`, and therefore no `user.email`/`user.name`
+    /// config is needed for these fixtures.
+    fn stage_all(root: &std::path::Path) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["add", "-A"])
+            .output()
+            .expect("git add should run");
+        assert!(out.status.success(), "git add failed in scratch repo");
+    }
+
+    /// #863: git quotes **and** octal-escapes non-ASCII characters in the paths
+    /// it prints, because `core.quotepath` defaults to *on*. `src/näme.rs` comes
+    /// back as the literal bytes `"src/n\303\244me.rs"` — quoted, escaped, and
+    /// unusable as a path by every consumer that reads git's output.
+    ///
+    /// Emission point: the `String` a caller of `run_git_in_dir` receives, never
+    /// the argv one layer below.
+    #[test]
+    fn run_git_in_dir_returns_non_ascii_paths_raw_not_quotepath_escaped() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        init_scratch_repo(root);
+
+        // Anti-vacuous: a transcription slip that quietly made this ASCII would
+        // let the test pass by agreeing with itself.
+        let name = "näme.rs";
+        assert!(
+            name.bytes().any(|b| b >= 0x80),
+            "fixture filename must carry a non-ASCII byte or this test is vacuous"
+        );
+
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src").join(name), "// hi\n").expect("write fixture");
+        stage_all(root);
+
+        // Whole-string equality, never `contains`: a partial assertion is a
+        // green light over the fragment it does not inspect.
+        let out = run_git_in_dir(root, &["ls-files"]).expect("ls-files should succeed");
+        assert_eq!(
+            out, "src/näme.rs",
+            "non-ASCII path must come back raw; git's default quoting yields the \
+             literal bytes \"src/n\\303\\244me.rs\", which no consumer can use"
+        );
+    }
+
+    /// The near-miss guard, and the whole regression surface. A path containing
+    /// a plain **space** is *not* quoted by git, so it is the case that proves
+    /// this change is a pure narrowing rather than a new rendering.
+    #[test]
+    fn run_git_in_dir_leaves_ascii_and_spaced_paths_byte_identical() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        init_scratch_repo(root);
+
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src").join("plain.rs"), "// a\n").expect("write plain");
+        std::fs::write(root.join("src").join("two words.rs"), "// b\n").expect("write spaced");
+        stage_all(root);
+
+        let out = run_git_in_dir(root, &["ls-files"]).expect("ls-files should succeed");
+        assert_eq!(
+            out, "src/plain.rs\nsrc/two words.rs",
+            "ASCII and space-carrying paths must be byte-identical to before"
+        );
+    }
+
+    /// Deliberately **weak**, and it says so: this proves every git invocation in
+    /// the production half of this module is *routed* through the one builder,
+    /// never that the flag reaches the wire. The behavioural half is the two
+    /// tempdir tests above; `run_git`, `run_git_output` and `run_git_commit`
+    /// resolve against the **process** cwd, and moving that is process-global
+    /// (#780), so they cannot be driven from a test without corrupting siblings.
+    #[test]
+    fn every_git_invocation_in_this_module_goes_through_the_shared_builder() {
+        let src = include_str!("git.rs");
+        // Needles assembled at runtime so this test cannot match itself.
+        let raw = format!("Command{}new(\"git\")", "::");
+        let marker = format!("#[cfg(test)]\nmod {}", "tests");
+        let prod = src
+            .split(&marker)
+            .next()
+            .expect("split yields a first half");
+
+        assert_eq!(
+            prod.matches(&raw).count(),
+            1,
+            "every git invocation must go through the one builder; a second raw \
+             `{raw}` in the production half is a helper that skipped it"
+        );
+        assert_eq!(
+            prod.matches("core.quotepath=off").count(),
+            1,
+            "the flag must be stated exactly once — two copies is how they drift"
+        );
+        assert!(
+            prod.matches("git_command()").count() >= 4,
+            "all four helpers must build their command through git_command()"
+        );
     }
 
     #[test]
