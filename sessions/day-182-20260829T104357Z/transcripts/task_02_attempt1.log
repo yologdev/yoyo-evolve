@@ -1,0 +1,221 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the defect and reading the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn test_is_mechanical_c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1830,1900p' src/commands… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Confirmed — zero authority reads. Now let me see the doc comment and the actual authority.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_mechanical_commit" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE 'git commit' scripts/ev… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 51.5s (2 ✓)
+
+Zero authority reads confirmed. Now the key question — what does evolve.sh actually emit today?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 1257 1536 1701 1833 292…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== do these subjects appe… ✓ (5ms)
+ ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.7s (2 ✓)
+
+**Live drift confirmed, not hypothetical** — 2d31726f Day 181 (13:56): assessment is in real history, and the vocabulary only has assessment (draft) / docs(assessment). Let me verify precisely and prototype the extraction:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (38 lines) ✓ (24ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The prototype works: 13 templates, 6 covered, 7 unmatched — and two of the unmatched are live drift in real history (assessment, update day counter). The preferred outcome is achievable. Writing the authority-reading gate now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"real work must keep it… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1836,1850p' src/commands… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1840..1854 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5.7s (3 ✓)
+
+Now the doc-comment correction (superseded claim recorded, not erased):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 25 lines)
+  - /// `test_is_mechanical_commit_covers_harness_vocabulary` pins the vocabulary
+  - /// so drift shows up as a failing test rather than as recall pollution nobody
+  - /// reads. Substring match, case-insensitive: the subjects arrive prefixed with
+  + /// **Superseded claim, recorded rather than erased (Day 182, #857).** This
+  + /// comment used to read: "`test_is_mechanical_commit_covers_harness_vocabulary`
+  + /// pins the vocabulary so drift shows up as a failing test rather than as
+  + /// recall pollution nobody reads." That test **structurally cannot** do it — it
+  + /// is a loop over hand-written literals asserting the list agrees with itself,
+  + /// reading no authority at all (no `include_str!`, no `CARGO_MANIFEST_DIR`, no
+  + /// read of `scripts/evolve.sh`). It pins this function's own *behaviour* and
+  + /// nothing else, which is worth keeping, and it is kept verbatim.
+  + ///
+  + /// The drift it promised to catch had **already happened** and nothing noticed:
+  + /// the harness now emits a bare `assessment` where this list still carries
+  + /// `assessment (draft)` (live instance `2d31726f Day 181 (13:56): assessment`),
+  + /// and `update day counter` was never covered at all (`95f053c8`).
+  + ///
+  + /// The authority is now read by the sibling
+  + /// `test_evolve_sh_commit_subjects_are_covered_or_registered`, which extracts
+  + /// every `git commit -m` template from `scripts/evolve.sh` and requires each to
+  ... (8 more lines)
+ ✓ (1m 51s)
+  - /// `test_is_mechanical_commit_covers_harness_vocabulary` pins the vocabulary
+  - /// so drift shows up as a failing test rather than as recall pollution nobody
+  - /// reads. Substring match, case-insensitive: the subjects arrive prefixed with
+  + /// **Superseded claim, recorded rather than erased (Day 182, #857).** This
+  + /// comment used to read: "`test_is_mechanical_commit_covers_harness_vocabulary`
+  + /// pins the vocabulary so drift shows up as a failing test rather than as
+  + /// recall pollution nobody reads." That test **structurally cannot** do it — it
+  + /// is a loop over hand-written literals asserting the list agrees with itself,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the main deliverable — the authority-reading gate:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (4 → 347 lines)
+                    "real work must keep its corroborating power: {subject}"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Every `git commit -m` template in `scripts/evolve.sh` whose literal text
+  +     /// `is_mechanical_commit` does **not** match, each with the reason that is
+  +     /// acceptable. The gate below does not forbid an uncovered subject — it
+  +     /// forbids an **unnamed** one, so this list's size IS the finding.
+  +     ///
+  +     /// Keyed on the verbatim template, so a reworded subject in `evolve.sh`
+  +     /// fails the gate rather than silently leaving the filter behind. It can
+  +     /// only shrink: a registered template that becomes covered is also fatal.
+  +     const REGISTERED_UNMATCHED_SUBJECTS: &[(&str, &str)] = &[
+  +         (
+  +             "Day $DAY ($SESSION_TIME): assessment",
+  +             "DRIFT, and it already happened: the vocabulary carries the older \
+  +              `assessment (draft)` / `docs(assessment)` wording while the harness \
+  +              now emits a bare `assessment`. Live instance in this repo's history: \
+  +              `2d31726f Day 181 (13:56): assessment`. Retuning the vocabulary is \
+  ... (327 more lines)
+ ✓ (1m 52s)
+                    "real work must keep its corroborating power: {subject}"
+  +             );
+  +         }
+  +     }
+  + 
+  +     /// Every `git commit -m` template in `scripts/evolve.sh` whose literal text
+  +     /// `is_mechanical_commit` does **not** match, each with the reason that is
+  +     /// acceptable. The gate below does not forbid an uncovered subject — it
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the module-size register (the file grew substantially):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < src/commands_risk.rs && … ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_risk.rs", 6029),
+  +     ("src/commands_risk.rs", 6479),
+ ✓ (1m 13s)
+  -     ("src/commands_risk.rs", 6029),
+  +     ("src/commands_risk.rs", 6479),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  3 tools completed in 1m 20s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Now — did cargo fmt move the line count, and do the new tests pass?
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < src/commands_risk.rs; ca… ✓ (308ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes, limits print on a passing run, numbers correct. Now the positive controls — run serially (my archive's rule: two file-mutating controls in one parallel block raced once and one falsely passed):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (33 lines) ✓ (1m 35s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three controls fire; restore is green. Full suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f /tmp/cr.bak && cargo build… ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5327 passed, 0 failed. Now CLAUDE.md:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'It stays \*\*unfixed\*\… ✓ (46ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Extremely low on budget — one surgical CLAUDE.md edit recording the outcome, then commit:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - It stays **unfixed**, which is a different word from unfiled.
+  + It stays **unfixed**, which is a different word from unfiled. **Superseded the next session, Day 182 (#857) — recorded rather than erased, and note the pattern held exactly as predicted: the finding routed to the scheduler surface was fixed by the very next session, while the two days it sat in prose alone bought nothing.** The **preferred** outcome landed, not the fallback: `test_is_mechanical_commit_covers_harness_vocabulary` was **kept verbatim** as the behaviour pin (it is not worthless … [yoyo: 4771 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 10s)
+  - It stays **unfixed**, which is a different word from unfiled.
+  + It stays **unfixed**, which is a different word from unfiled. **Superseded the next session, Day 182 (#857) — recorded rather than erased, and note the pattern held exactly as predicted: the finding routed to the scheduler surface was fixed by the very next session, while the two days it sat in prose alone bought nothing.** The **preferred** outcome landed, not the fallback: `test_is_mechanical_commit_covers_harness_vocabulary` was **kept verbatim** as the behaviour pin (it is not worthless … [yoyo: 4771 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < src/commands_risk.rs && … ✓ (1.5s)
+  2 tools completed in 1m 17s (2 ✓)
+
+Committed. Here's what happened.
+
+## The preferred outcome landed — and the drift it was supposed to catch had already happened
+
+I reproduced the defect first: sed | grep -cE "include_str!|CARGO_MANIFEST_DIR|evolve\.sh|read_to_string" over test_is_mechanical_commit_covers_harness_vocabulary returns 0. A loop over hand-written literals asserting a list agrees with itself, under a doc comment promising drift "shows up as a failing test."
+
+Then I read the authority, and it was worse than the issue claimed. scripts/evolve.sh emits 13 git commit -m templates. Only 6 are covered. Two of the misses are in live history right now:
+
+• 2d31726f Day 181 (13:56): assessment — the vocabulary carries `assessment (draft); the harness dropped the (draft)` and nothing noticed.
+• `95f053c8 Day 182: update day counter` — never covered at all.
+
+Plus fix build errors and revert session changes (could not fix build). **The exact drift the comment promised to catch already happened, and the test stayed green through it.**
+
+## What I built
+
+test_evolve_sh_commit_subjects_are_covered_or_registered, in the shape the repo's five other gates use. The hard part was extraction, not assertion: subjects are built with shell interpolation, so I reduce each template to its literal runs (splitting at $VAR/${...}/$(...)/$((...))) and ask whether is_mechanical_commit matches any. That's sound in exactly one direction, which is the direction I need — a literal run is a substring of every subject the template can emit.
+
+Fatal on the unnamed case with both remedies printed verbatim; a register for named exceptions; a two-direction ratchet. The gate does not forbid an uncovered subject, it forbids an unnamed one.
+
+## Two things I refused to smooth over
+
+The register is not uniform debt, and saying it was would be its own dishonesty. `$task_title (Task $TASK_NUM) is *correct by design* — a delivery commit must stay non-mechanical or a real repair loses its corroborating power. $msg` is invisible by construction. Calling those "debt" would read as a to-do list where three entries are load-bearing design.
+
+I changed no vocabulary. Fixing the four drifted subjects in the same breath would have made the register's size unreadable as a measurement — and the register's size is the finding.
+
+Controls run serially (my own archive: two file-mutating controls in one parallel block raced once, and one falsely passed). All four fired: pasteable remedy, anti-vacuous branch, ratchet, restore-green.
+
+Three limits print on every passing run through a raw stderr handle, because libtest eats macro output from passing tests and a gate whose limits are invisible reads as stronger than it is. The sharpest one: it proves the vocabulary still covers what the harness emits, never that the coverage is correct.
+
+6029 → 6479 in the register, same commit. #739 died to four lines; this started 86 in.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
