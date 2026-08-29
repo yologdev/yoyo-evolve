@@ -293,11 +293,30 @@ pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
         }
         // Pattern 3: `thread 'test_name' panicked at ...`
         else if line.contains("thread '") && line.contains("panicked at") {
+            let (file, file_line) = match modern_panic_location(line) {
+                Some((f, l)) => (Some(f), Some(l)),
+                None => (None, None),
+            };
+
+            // A modern panic header carries only the location; the assertion
+            // itself is on the FOLLOWING line. Without it the fix agent is told
+            // that a test panicked and not what the assertion was.
+            let mut message = line.trim().to_string();
+            if file.is_some() {
+                if let Some(detail) = lines.get(i + 1) {
+                    let detail = detail.trim();
+                    if !detail.is_empty() && !detail.starts_with("note:") {
+                        message.push(' ');
+                        message.push_str(detail);
+                    }
+                }
+            }
+
             errors.push(CompilerError {
                 code: None,
-                message: line.trim().to_string(),
-                file: None,
-                line: None,
+                message,
+                file,
+                line: file_line,
                 category: ErrorCategory::TestAssertion,
             });
         }
@@ -306,6 +325,35 @@ pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
     }
 
     errors
+}
+
+/// Extract `(file, line)` from the location tail of a **modern** (Rust 1.65+)
+/// panic header, e.g. `thread 'tests::t' (4861) panicked at src/main.rs:7:9:`.
+///
+/// Returns `None` for the pre-1.65 shape
+/// (`thread 'x' panicked at 'assertion failed', src/lib.rs:99:9`), which carries
+/// **no trailing colon**. That discriminator is the whole reason the legacy path
+/// stays byte-identical: the old format put the message in quotes and the
+/// location last, the new one puts the location in the header and the message on
+/// the next line.
+///
+/// Both the line and the column must parse as integers, so a message that merely
+/// happens to end in `:` cannot be mistaken for a location.
+fn modern_panic_location(line: &str) -> Option<(String, u32)> {
+    let rest = line.trim_end().strip_suffix(':')?;
+    let tail = rest.rsplit_once("panicked at ")?.1.trim();
+    // A quoted tail is the legacy shape's message, not a path.
+    if tail.is_empty() || tail.starts_with('\'') {
+        return None;
+    }
+    let mut parts = tail.rsplitn(3, ':');
+    parts.next()?.parse::<u32>().ok()?; // column
+    let line_no = parts.next()?.parse::<u32>().ok()?;
+    let file = parts.next()?;
+    if file.is_empty() {
+        return None;
+    }
+    Some((file.to_string(), line_no))
 }
 
 /// Look ahead from line `start` for a `  --> path:line:col` location line.
@@ -2732,6 +2780,78 @@ mod tests {
         let errors = parse_rust_errors(output);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].category, ErrorCategory::TestAssertion);
+    }
+
+    /// Captured VERBATIM from a real `cargo test` failure (rustc 1.65+ format),
+    /// not hand-typed. Round 81's own losing bet asserted an external tool's
+    /// output format without running it once; this fixture is the correction.
+    ///
+    /// The modern header carries the location and puts the assertion on the
+    /// NEXT line. Before this fix both were thrown away: `file`/`line` were
+    /// `None` while `src/main.rs:7:9` sat right there in the header, so
+    /// `extract_error_source_context` could pull no source, and the fix agent
+    /// was told a test panicked but never what the assertion was.
+    #[test]
+    fn parse_rust_errors_modern_panic_carries_location_and_assertion() {
+        let output = "thread 'tests::t' (4861) panicked at src/main.rs:7:9:\n\
+                      assertion `left == right` failed: math is broken\n  \
+                      left: 4\n right: 5\n\
+                      note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n";
+        let errors = parse_rust_errors(output);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].category, ErrorCategory::TestAssertion);
+        assert_eq!(errors[0].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(errors[0].line, Some(7));
+        assert!(
+            errors[0]
+                .message
+                .contains("assertion `left == right` failed: math is broken"),
+            "the assertion text must reach the fix agent: {:?}",
+            errors[0].message
+        );
+    }
+
+    /// Near-miss guard: the pre-1.65 shape must stay BYTE-IDENTICAL. A
+    /// discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn parse_rust_errors_legacy_panic_shape_is_byte_identical() {
+        let output = "thread 'tests::my_test' panicked at 'assertion failed: `(left == right)`\n  left: `1`,\n right: `2`', src/lib.rs:99:9\n";
+        let errors = parse_rust_errors(output);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].file, None, "legacy shape must not gain a file");
+        assert_eq!(errors[0].line, None, "legacy shape must not gain a line");
+        assert_eq!(
+            errors[0].message,
+            "thread 'tests::my_test' panicked at 'assertion failed: `(left == right)`"
+        );
+    }
+
+    #[test]
+    fn modern_panic_location_table() {
+        // Fires: real modern headers, with and without the thread id.
+        assert_eq!(
+            modern_panic_location("thread 'tests::t' (4861) panicked at src/main.rs:7:9:"),
+            Some(("src/main.rs".to_string(), 7))
+        );
+        assert_eq!(
+            modern_panic_location("thread 'main' panicked at src/a/b.rs:120:5:"),
+            Some(("src/a/b.rs".to_string(), 120))
+        );
+        // Must NOT fire: legacy shape (no trailing colon), quoted tail,
+        // non-numeric line/col, and a message that merely ends in a colon.
+        assert_eq!(
+            modern_panic_location("thread 'x' panicked at 'assertion failed', src/lib.rs:99:9"),
+            None
+        );
+        assert_eq!(
+            modern_panic_location("thread 'x' panicked at 'boom':"),
+            None
+        );
+        assert_eq!(modern_panic_location("thread 'x' panicked at wat:"), None);
+        assert_eq!(
+            modern_panic_location("thread 'x' panicked at src/a.rs:oops:9:"),
+            None
+        );
     }
 
     #[test]
