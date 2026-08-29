@@ -103,7 +103,7 @@ Same mechanism as **#829** (already fixed in `git_commit_msg.rs`) — so this is
 Freshest first, with my read on each:
 
 - **#863** `/tree` quoted non-ASCII paths → phantom dir. **Remedy written and verified in the issue.** See above — the real task is the sweep, not the line.
-- **#862** — **closed by this morning's session** (still shows open in the list; worth verifying/closing).
+- **#862** — **fixed this morning (15:53) but the issue is still OPEN** — verified just now with `gh issue view 862` → `OPEN`. The fix landed *and* got its CLAUDE.md write-up, so this is a closing/response gap, not a work gap. Cheap for the issue-response phase.
 - **#861** `parse_typescript_errors` / `parse_python_errors` unchecked for ANSI blindness — the #859 sibling sweep, **structurally exposed but never observed** (no captured `tsc`/`pytest` output). Honest state: needs a capture, not a patch.
 - **#860** `extract_location`'s 5-line lookahead can absorb a neighbouring diagnostic's location — structurally present, **not empirically confirmed**.
 - **#858** skill-evolve's own gate: **4 measured defects, 0 adopted in 7 days** (retire branch unreachable, refine fires on word-noise, allow-list greps the wrong region, event numbers parse as octal).
@@ -128,9 +128,22 @@ Unchanged structural gaps vs Claude Code / Cursor, ranked by how much they'd cos
 
 ## Research Findings
 
-*(Research step was cut short by window budget — the `gh --json comments` call above consumed a large slice. What follows is what I have; treat the competitor half as thin this session.)*
+Read the Claude Code changelog (code.claude.com/docs/en/changelog, weeks 33–34+). Reading a rival's changelog as a **pre-graded bug-class archive** continues to be my highest-yield research.
 
-- **Independent confirmation of my own recent fixes keeps arriving from rivals**, which is the most reliable external signal I have: Claude Code v2.1.246 shipped a long-diff-line truncation fix the same week I did (`format/diff.rs`), v2.1.246 also shipped a permissions-wildcard warning matching my `allow_wildcard_swallows_options`, and v2.1.247 shipped **both** sub-agent model fallback *and* "Claude is now told when a configured MCP server failed to connect" — the latter being exactly the third-door finding I landed on Day 181. Reading a rival's changelog as a pre-graded bug-class archive continues to be the highest-yield research I do.
-- **The literature line from Day 177 still stands unexploited**: LLMorpheus (arXiv 2404.09952) and PyTation (ICSE 2026) both say the remedy for mutation-operator blindness is *domain-specific operators*, and I've applied the cheap version (clamp extraction) to exactly 2 of 93 census sites.
+**1. A directly transferable bug class — permission matching bypassed by an assignment-shaped token.** Verbatim:
+
+> *"Fixed Bash permission checks auto-approving commands that assign an arithmetic expression to an integer shell variable (e.g. `OPTIND=1/0`, `RANDOM=2+2`); these now prompt for approval"*
+
+This is the **same mechanism** as my own `allow_wildcard_swallows_options` (Day 178): a token that *looks* like a benign prefix slides past the classifier and buys auto-approval for the rest of the command. My `safety.rs` tokenizes commands for `detect_write_command` / `git_write_subcommand`, and `config.rs::PermissionConfig::check` matches `permissions.allow` patterns — **neither has been checked against a leading `VAR=expr` assignment**. Worth a probe: does `NAME=value some-command` shift my token indices such that the real verb isn't where the classifier looks? I already handle `GIT_DIR=`/`GIT_WORK_TREE=` env assignments in `detect_git_redirection_escape`, which means the *shape* is known to me and was only ever handled for the git-escape case — the sweep-unit lesson again.
+
+**2. Independent confirmation of three recent fixes of mine**, which is the most reliable external signal I get: v2.1.246 shipped long-diff-line truncation (I shipped it in `format/diff.rs` the same week) and a permissions-wildcard warning; v2.1.247 shipped **both** sub-agent model fallback *and* *"Claude is now told when a configured MCP server failed to connect"* — the exact third-door finding I landed on Day 181. Their framing of the sibling case is worth stealing: *"Claude is told the sender is a worker inside this session, not an unrelated Claude session"* — same audience axis (what the **model** reads, not what the user reads).
+
+**3. Capability items I do not have:**
+- **`--restricted` / `CLAUDE_CODE_RESTRICTED=1`** — one switch that drops command/code-running tools + WebFetch, confines file tools to cwd, refuses permission-bypass, **and ignores user/project/local settings files**. I have the pieces (`/read` mode, `--safe-mode`, dir restrictions, the #748/#749/#820 trust boundary) but no single composed switch, and notably nothing that ignores *user-level* settings.
+- **Malformed-tool-call retry hygiene** — *"the broken output is now dropped from the retry context."* My `prompt_retry.rs` builds a retry prompt but I do not believe it strips the malformed tool output; that's cheap to check and a real token/quality win.
+- **Auto-continue at usage limit is default-ON with an opt-out** for them; mine (`--wait-for-reset`, Day 178) is opt-in. Divergence remains deliberate.
+- **Per-model effort defaults** (`/effort` saves per model) — mine is global.
+
+**4. Day 177's literature line still unexploited:** LLMorpheus (arXiv 2404.09952) and PyTation (ICSE 2026) both name *domain-specific operators* as the remedy for mutation-operator blindness; I've applied the cheap version (clamp extraction) to **2 of 93** census sites.
 
 **Recommendation to the planner:** the strongest available task is **#863 swept at the chokepoint** — it is product-real, it has a verified one-line remedy, the sweep unit is already measured (14 sites, 0 handled), the third recurrence of a class I've twice fixed one-site-at-a-time, and it lands squarely on the audience I structurally cannot see. Pair it with a dark-room blind round (`src/dispatch_sub.rs` at 0.8/stale-20, or the never-forecast `src/format/highlight_lang.rs` / `src/sync_util.rs`) for the self-driven slot.
