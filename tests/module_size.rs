@@ -306,7 +306,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // discriminator (verbatim message + counter unmoved vs hint + bump).
     // Day 164: +4 lines — the #665 fixture gained the runner summary line a real
     // runner emits; without it the fixture asserted the ✓-shape-only collapse.
-    ("src/tool_wrappers.rs", 4987),
+    ("src/tool_wrappers.rs", 5187),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the

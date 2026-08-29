@@ -1364,6 +1364,78 @@ pub(crate) fn fallback_switch_note(primary: &str, fallback: &str) -> String {
     )
 }
 
+/// The note prepended to a sub-agent result that yoagent cut short, or `None`
+/// when the result finished normally.
+///
+/// **Where the marker comes from.** yoagent's own loop appends a stop marker to
+/// the text it returns when a run ends on a *bound* rather than on the model
+/// finishing: `extract_final_text` folds `stopped_notice` in as
+/// `"{text}\n\n{stop}"`, where the marker is `format!("{AGENT_STOPPED_PREFIX}
+/// {reason}]")` and the reason comes from `ExecutionTracker::check_limits()`
+/// (e.g. `"Max turns reached (25/25)"`). Hitting `max_turns` is a bound, not a
+/// failure, so the call returns **`Ok`** — which is why every `Err`-branching
+/// decorator beside this one is structurally blind to it.
+/// <!-- yoagent-version-claim: 0.18.1 -->
+///
+/// The prefix is used **by reference** rather than re-spelled, so an upstream
+/// rename is a compile error here instead of a silently dead match.
+///
+/// `None` means the caller returns the result byte-identically — every
+/// sub-agent that finished normally, and the whole regression surface.
+pub(crate) fn sub_agent_partial_notice(text: &str) -> Option<String> {
+    if !text.contains(yoagent::agent_loop::AGENT_STOPPED_PREFIX) {
+        return None;
+    }
+    Some(
+        "[yoyo: this sub-agent result is PARTIAL — the subtask was stopped by a run bound \
+         (its turn/token/time limit), not by finishing. This is not a failure of the \
+         delegated work and not a provider error; the sub-agent was still mid-task. Do not \
+         treat the text below as a completed answer — re-dispatch with a narrower subtask \
+         if you need the rest.]\n\n"
+            .to_string(),
+    )
+}
+
+/// Prepend the partial-result annotation to an `Ok` sub-agent result when
+/// yoagent's stop marker is present.
+///
+/// Only the `Ok` path reaches here, and that is deliberate rather than an
+/// oversight: `LOOP_ABORT_PREFIX` *starts with* the same `"[Agent stopped:"`
+/// bytes, but yoagent's `extract_error` turns a loop abort into a
+/// `ToolError::Failed`, so it never arrives as `Ok` and needs no second handler.
+/// <!-- yoagent-version-claim: 0.18.1 -->
+fn annotate_if_partial(result: yoagent::types::ToolResult) -> yoagent::types::ToolResult {
+    let joined = result
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            yoagent::types::Content::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Guard first, and it short-circuits — the same rule `RecoveryHintTool`
+    // (#710) and both Day-180 decorators follow. A deliberate refusal dressed
+    // in partial-result scaffolding reads as a malfunction.
+    if is_deterministic_refusal(&joined) {
+        return result;
+    }
+
+    let Some(note) = sub_agent_partial_notice(&joined) else {
+        return result;
+    };
+
+    // Its own block at index 0, never a splice into an existing one:
+    // `content` may carry non-text blocks and a `Vec` insert cannot mangle them.
+    let mut content = result.content;
+    content.insert(0, yoagent::types::Content::Text { text: note });
+    yoagent::types::ToolResult {
+        content,
+        details: result.details,
+    }
+}
+
 /// Wraps the `sub_agent` tool so a **first-call model-availability failure**
 /// costs one retry on the session's fallback model instead of killing the
 /// subtask outright.
@@ -1586,9 +1658,11 @@ impl AgentTool for DiagnosticSubAgentTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         let err = match self.inner.execute(params, ctx).await {
-            // The entire regression surface: every user who never sees a
-            // sub-agent fail gets a byte-identical result.
-            Ok(result) => return Ok(result),
+            // A result that finished normally is byte-identical — the entire
+            // regression surface. A result yoagent cut short on a bound comes
+            // back as `Ok` too, so it is annotated here rather than in the
+            // `Err` arm below, which is structurally blind to it.
+            Ok(result) => return Ok(annotate_if_partial(result)),
             Err(e) => e,
         };
 
@@ -4983,5 +5057,131 @@ mod diagnostic_sub_agent_tests {
         assert_eq!(tool.name(), "sub_agent");
         assert_eq!(tool.label(), "sub_agent");
         assert_eq!(tool.description(), "counting stub");
+    }
+
+    // --- the Ok path: a run cut short by a bound ---
+
+    /// The marker shape is captured from yoagent's own source rather than
+    /// hand-typed: `check_limits()` builds `"Max turns reached ({turns}/{max})"`
+    /// and the loop wraps it as `"[Agent stopped: {reason}]"`.
+    /// <!-- yoagent-version-claim: 0.18.1 -->
+    const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
+
+    /// `CountingStub::ok` takes a `&'static str`, and every fixture here is
+    /// built from `STOP_MARKER` at runtime so the marker has one spelling.
+    /// Leaking a few test bytes beats a second hand-typed copy that can drift.
+    fn leaked(s: String) -> &'static str {
+        Box::leak(s.into_boxed_str())
+    }
+
+    #[test]
+    fn partial_notice_table() {
+        // Fires: the real marker, alone and folded after prose the way
+        // `extract_final_text` folds it.
+        for text in [
+            STOP_MARKER,
+            &format!("partial analysis of the parser\n\n{STOP_MARKER}"),
+            "[Agent stopped: Max tokens reached (1000/1000)]",
+        ] {
+            assert!(
+                sub_agent_partial_notice(text).is_some(),
+                "should be flagged partial: {text}"
+            );
+        }
+
+        // Does not fire. The prose rows are the ones that matter: a sub-agent
+        // that *writes about* being stopped has not been stopped.
+        for text in [
+            "subtask done",
+            "",
+            "the agent stopped after three turns and reported success",
+            "I checked whether the agent stopped early — it did not.",
+            "Agent stopped: no bracket here",
+        ] {
+            assert_eq!(
+                sub_agent_partial_notice(text),
+                None,
+                "must NOT be flagged partial: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_notice_states_the_three_things_the_raw_marker_does_not() {
+        let note = sub_agent_partial_notice(STOP_MARKER).expect("marker fires");
+        assert!(note.contains("PARTIAL"), "names the state: {note}");
+        assert!(
+            note.contains("not a failure") && note.contains("not a provider error"),
+            "refuses the wrong diagnosis: {note}"
+        );
+        assert!(
+            note.contains("re-dispatch"),
+            "names the actionable consequence: {note}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_result_cut_short_by_a_bound_is_annotated_at_block_zero() {
+        let body = leaked(format!("partial analysis of the parser\n\n{STOP_MARKER}"));
+        let (inner, calls) = CountingStub::ok(body);
+        let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.content.len(), 2, "one block added, none replaced");
+        assert!(
+            first_text(&result).contains("PARTIAL"),
+            "the annotation is block 0: {:?}",
+            first_text(&result)
+        );
+
+        // The original text survives unmodified, marker included: this
+        // annotates, it does not rewrite.
+        match &result.content[1] {
+            yoagent::types::Content::Text { text } => assert_eq!(text, &body),
+            other => panic!("original block must survive intact: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ordinary_success_is_byte_identical_and_gains_no_block() {
+        // The near-miss guard. A discriminator tested only on the side that
+        // fires is vacuous green, and this is the side every user is on.
+        let (inner, calls) = CountingStub::ok("subtask done");
+        let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+        let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.content.len(), 1, "no block added");
+        assert_eq!(
+            first_text(&result),
+            "subtask done",
+            "whole-string equality, not a contains"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_on_the_ok_path_is_returned_verbatim_even_carrying_the_marker() {
+        // Guard-first, and it short-circuits: a deliberate refusal must never
+        // be dressed in partial-result scaffolding, whatever else the text
+        // happens to contain.
+        for stem in [
+            REFUSAL_STEM_MODE_ACTIVE,
+            REFUSAL_STEM_SESSION_CAP,
+            REFUSAL_STEM_PATH_DENIED,
+        ] {
+            let refusal = leaked(format!(
+                "read mode{stem}write_file is refused\n\n{STOP_MARKER}"
+            ));
+            let (inner, _) = CountingStub::ok(refusal);
+            let tool = DiagnosticSubAgentTool::new(inner, LABEL);
+
+            let result = tool.execute(serde_json::json!({}), ctx()).await.unwrap();
+
+            assert_eq!(result.content.len(), 1, "no block added to a refusal");
+            assert_eq!(first_text(&result), refusal, "refusal survives verbatim");
+        }
     }
 }
