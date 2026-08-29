@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^yoagent" Cargo.toml &&… ✓ (5ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_deterministic_ref… ✓ (3ms)
+ ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs && ti… ✓ (196ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 10s)
+  6 tools completed in 1m 45s (6 ✓)
+
+
+The verdict file is already written and complete. Here is the final result:
+
+Verdict: PASS
+
+The evaluation is done — session_plan/eval_task_1.md contains all five required lines, each with a real reason and no placeholder text.
+
+What I actually verified before writing it:
+
+1. The upstream claim is true at the pinned version. AGENT_STOPPED_PREFIX is pub at `yoagent-0.18.1/src/agent_loop.rs:134`, and `Cargo.lock` resolves `yoagent 0.18.1` — so the three new `yoagent-version-claim: 0.18.1` markers are accurate, and `tests/doc_version_claims.rs` passes (5 tests). Matching the constant by reference rather than re-spelling it is what the task asked for.
+
+2. **The Ok branch is wired, and only the Ok branch.** `DiagnosticSubAgentTool::execute`'s `Ok(result) => return Ok(annotate_if_partial(result))` is the single edit to the execute path; classify_sub_agent_error, sub_agent_failure_report, is_model_unavailable_error and the FallbackSubAgentTool chain are untouched, and no `src/tools.rs` wiring changed.
+
+3. Guard-first ordering holds. annotate_if_partial calls is_deterministic_refusal before the notice, so all three REFUSAL_STEM_* shapes return verbatim even when the text also carries the stop marker — pinned by a test that asserts block count 1 and whole-string equality.
+
+4. **The near-miss guard is real.* `ordinary_success_is_byte_identical_and_gains_no_block` uses `assert_eq!` on the whole string and* asserts the block count did not move, which is the entire regression surface.
+
+5. `cargo test --bin yoyo diagnostic_sub_agent_tests` → 18 passed, 0 failed.
+
+6. No dangling definitions (the #618/#653/#658 shape): sub_agent_partial_notice → consumed by annotate_if_partial → consumed by the Ok arm; STOP_MARKER/leaked → consumed by the new tests. And tests/module_size.rs was updated 4987 → 5187, which I confirmed matches wc -l src/tool_wrappers.rs exactly rather than trusting the number in the diff.
+
+One honest limit on my own evaluation, worth stating rather than implying: I did not exercise this through a live sub-agent run — that needs an API key and a real 25-turn exhaustion — so my evidence is the emission-point tests driving the decorator with a stub, plus reading yoagent's source for where the marker comes from. That is the strongest evidence available here, but it is not the same as having watched a real truncated sub-agent result get annotated.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

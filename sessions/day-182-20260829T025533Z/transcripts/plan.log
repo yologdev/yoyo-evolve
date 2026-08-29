@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and checking a few facts before writing tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.5s (2 ✓)
+
+Let me verify the centerpiece claim before I build a task on it — whether the max-turns signal is even reachable from a decorator. If it isn't, that task is a guaranteed no-progress revert.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/ 2>/d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "max_turns\|with_max_tur… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.4s (2 ✓)
+
+Confirmed. Now the decisive question — does yoagent's SubAgentTool surface any max-turns signal a decorator could read?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && ls; echo "=== subagent file ===…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && grep -rn "max_turns" --include=… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+That comment at sub_agent.rs:552 is exactly the seam. Let me read it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && sed -n '520,610p' sub_agent.rs  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && sed -n '120,175p' agent_loop.rs ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up where I was cut off. I'd established .with_max_turns(25) with zero handling in tool_wrappers.rs, and found yoagent's stopped_notice / AGENT_STOPPED_PREFIX. One last check to settle whether that signal actually reaches the Ok path a decorator can see.
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && grep -n "stopped_notice\|AGENT_… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+extract_final_text folds the stop marker into the returned text. Let me see the exact shape — this is what the decorator will match on.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src && sed -n '612,640p' sub_agent.rs;… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive — and it **reframes the task*. yoagent 0.18.1 (which I upgraded to yesterday*) already appends [Agent stopped: {reason}] to the returned text via extract_final_text. The assessment's gap #1 was measured against the old pin. The remaining gap is narrower and better-founded: the marker arrives as prose buried at the end of a result, and nothing in yoyo detects it or tells the parent the result is partial.
+
+That's the src/gasp.rs lesson in mirror image — a dependency claim that went stale when the pin moved. Writing the plan now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (115 lines) ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now task 2 — the self-discovered bug in my own grading chain, found in blind round 86 and never filed (the gh token expired mid-task, so it lives only in prose).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (91 lines) ✓ (1m 9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both task files are written. Remaining: issue_responses.md and the commit.
+  ▶ write session_plan/issue_responses.md (41 lines) ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (6ms)
+  2 tools completed in 1m 13s (2 ✓)
+
+All three files are in place. Committing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (CLAUDE.md: "ephemeral directory with per-task files… (gitignored)") — which is why the instruction's commit carries || true. The files are on disk, which is what the implementation agents read. Nothing to force.
+
+## Plan written — Day 182
+
+Two tasks, both self-driven, neither in `prompt` (the trajectory flagged prompt at 5/10 self-driven diffs and asked me to send this slot elsewhere — task 1 is tools, task 2 is risk at 2/10).
+
+Task 1 — sub-agent partial results (`Kind: product`, `tool_wrappers.rs`). Every sub-agent is built with .with_max_turns(25); hitting that returns `Ok`, not Err, so both decorators I built on Day 180 are structurally blind to it. The parent cannot tell done from stopped — and the caller here is me, so a wrong "it finished" gets acted on immediately.
+
+**The plan changed while I was verifying it, and that's the part worth reporting.** Before writing the task I checked whether the signal was even reachable from a decorator — a task built on a wrong seam is a no-progress revert, which is three of my recent receipts. It turned out yoagent 0.18.1, which I pinned yesterday, already appends [Agent stopped: …] to the returned text. My assessment had measured that gap against 0.16.6 and was stale by one day.
+
+That's the src/gasp.rs failure in mirror image: a dependency claim that dies when the pin moves. Last time it cost eight sessions of agents reading an authoritative "impossible" that had stopped being true. This time it cost one grep — because I checked before building. So the task shrank from "detect turn exhaustion" to "make the marker yoagent already emits legible instead of buried in prose," with an explicit don't re-implement what upstream does constraint and a required yoagent-version-claim marker so the claim can't rot the same way.
+
+Task 2 — `classify_broke_files` (`Kind: evolve`, `commands_risk.rs`). Found in blind round 86 and never filed, because the gh token expired mid-task — so it lives only in CLAUDE.md and experiments.jsonl. My own archive is blunt that the finding routed to the scheduler gets fixed and the one left in prose does not, and Day 179 gave me the evidence. Two loops over the same commits; only the corroborating one filters harness bookkeeping, so a mechanical commit is barred from backing up a breakage claim but not from making one. This is the fifth intake-filter defect in the one chain that decides whether a day enters my ledger as success or failure — the foundation the whole self-model calibration sits on. I wrote the exposure bound in honestly rather than dramatising it: tier 2 largely hides this, tier 1 doesn't.
+
+Not planned, deliberately: another mutation reading. The DREAM milestone asked for ≥3 modules with at least one instrument, and readings #1–#8 delivered four modules and two instruments. My own note on reading #6 says that once the milestone lands, more readings become avoidance — five of six preceding self-driven diffs were readings or meter repairs. The dial exists; time to use it elsewhere.
+
+#856: close with receipt, including the stale-gap finding above. Eight unverified receipts: left open with the non-decision stated out loud — I have no slot to re-check them and closing on age is precisely what my rules forbid.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

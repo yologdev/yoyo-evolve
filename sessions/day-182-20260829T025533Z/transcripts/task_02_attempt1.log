@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual function to verify the defect before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn classify_broke_files…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_mechanical_commit… ✓ (6ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1740..1870 ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1900..2010 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.1s (4 ✓)
+
+Confirmed: the touches loop guards at line 1951; the broke loop at 1965 does not. Now let me see the existing test shapes.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "classify_broke_files" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct CommitEntry" -A … ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: defect confirmed. Let me read the round-86 test block to match its fixture shape.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3805..3925 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the shapes. Writing the tests first, before touching the function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1869,1901p' src/commands… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+entry is module-scoped so order doesn't matter. Adding the three tests now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 67 lines)
+  +     /// Day 182, found by blind round 86 — `classify_broke_files` runs TWO loops
+  +     /// over the same entries and only one of them filtered harness bookkeeping.
+  +     /// The `touches` loop (tier-2 corroboration) opened with
+  +     /// `if is_mechanical_commit(...) { continue; }`; the `broke` loop that
+  +     /// actually books a file as breakage had no such check. So a harness-written
+  +     /// commit was barred from CORROBORATING a claim but not from MAKING one.
+  +     ///
+  +     /// Pinned at the EMISSION POINT — the `HashSet` a caller receives, never
+  +     /// `is_mechanical_commit` one layer below.
+  +     ///
+  +     /// The fixture is what `git revert` writes verbatim when the harness's own
+  +     /// `cargo fmt` commit is undone: `Revert "<original subject>"`. It leads
+  +     /// with the verb, so it trips tier 1, which skips corroboration entirely —
+  +     /// and a fmt commit touches exactly the `src/` files the task touched, so
+  +     /// every one of them was booked as breakage on a single mechanical touch.
+  +     #[test]
+  +     fn test_mechanical_commit_cannot_accuse_through_tier_one() {
+  +         let entries = vec![entry(
+  +             "aaa1111 Revert \"Day 163 (10:25): cargo fmt\"",
+  +             &["src/commands_todo.rs"],
+  ... (47 more lines)
+ ✓ (1m 39s)
+  +     /// Day 182, found by blind round 86 — `classify_broke_files` runs TWO loops
+  +     /// over the same entries and only one of them filtered harness bookkeeping.
+  +     /// The `touches` loop (tier-2 corroboration) opened with
+  +     /// `if is_mechanical_commit(...) { continue; }`; the `broke` loop that
+  +     /// actually books a file as breakage had no such check. So a harness-written
+  +     /// commit was barred from CORROBORATING a claim but not from MAKING one.
+  +     ///
+  +     /// Pinned at the EMISSION POINT — the `HashSet` a caller receives, never
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me confirm the new test fails for the right reason (red before green):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (6.6s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The test-first state is exactly right: the defect test is RED, both near-miss guards GREEN. Now the one-line fix.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 18 lines)
+        let mut broke = std::collections::HashSet::new();
+        for entry in entries {
+  +         // Day 182 (found by blind round 86): the SAME guard the `touches` loop
+  +         // above already carries. Harness bookkeeping was barred from
+  +         // CORROBORATING a breakage claim and not from MAKING one — one
+  +         // asymmetry away from the revert-anchor defect round 86 had just fixed,
+  +         // in the same function. Tier 2 mostly hid it (a mechanical commit's own
+  +         // files still need `touches >= 2`, and mechanical entries never raise
+  +         // `touches`, so it cannot manufacture its own corroboration); tier 1 did
+  +         // not, because a revert claim skips corroboration entirely. `git revert`
+  +         // of the harness's own `cargo fmt` commit writes `Revert "... cargo
+  +         // fmt"`, which leads with the verb and names exactly the `src/` files
+  +         // the task touched. One predicate, one statement — deliberately not a
+  +         // second filter or a variant of it.
+  +         if is_mechanical_commit(&entry.message) {
+  +             continue;
+  +         }
+            let is_revert = message_claims_revert(&entry.message);
+ ✓ (2m 2s)
+        let mut broke = std::collections::HashSet::new();
+        for entry in entries {
+  +         // Day 182 (found by blind round 86): the SAME guard the `touches` loop
+  +         // above already carries. Harness bookkeeping was barred from
+  +         // CORROBORATING a breakage claim and not from MAKING one — one
+  +         // asymmetry away from the revert-anchor defect round 86 had just fixed,
+  +         // in the same function. Tier 2 mostly hid it (a mechanical commit's own
+  +         // files still need `touches >= 2`, and mechanical entries never raise
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (3.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 15s (2 ✓)
+
+All 136 pass, and every pre-existing test passed unedited — no fixture was adjusted. Now the positive control, run serially. Control 1: neuter the new guard only.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (14 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_r… ✓ (30.5s)
+  2 tools completed in 33.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control is exact: exactly 1 failure (the defect test), both near-miss guards green. Now restore — serially, second control.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cr_backup.rs src/command… ✓ (27.2s)
+
+Restored and green. Now the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (25.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 18s (2 ✓)
+
+Full suite green: 5321 passed. Now the docs — locating the round-86 finding text in CLAUDE.md:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unpredicted finding, wh… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The bullet is one long line. Two surgical edits — first, appending the Day-182 fix right after the round-86 finding (recording rather than erasing):
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - One asymmetry away from the defect just fixed, in the same function, and I had bet on the *predicate* rather than on the *loop that consumes it*.
+  + One asymmetry away from the defect just fixed, in the same function, and I had bet on the *predicate* rather than on the *loop that consumes it*. **Superseded the same finding, Day 182 — fixed, and the exposure bound is stated rather than dramatised.** The `broke` loop now opens with the **same** `is_mechanical_commit` guard the `touches` loop already carried — one predicate, one statement, deliberately not a second filter or a variant of it. **The bound, honestly: tier 2 largely hid this an… [yoyo: 2123 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 21s)
+  - One asymmetry away from the defect just fixed, in the same function, and I had bet on the *predicate* rather than on the *loop that consumes it*.
+  + One asymmetry away from the defect just fixed, in the same function, and I had bet on the *predicate* rather than on the *loop that consumes it*. **Superseded the same finding, Day 182 — fixed, and the exposure bound is stated rather than dramatised.** The `broke` loop now opens with the **same** `is_mechanical_commit` guard the `touches` loop already carried — one predicate, one statement, deliberately not a second filter or a variant of it. **The bound, honestly: tier 2 largely hid this an… [yoyo: 2123 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the second edit — marking the "NOT fixed / NOT filed" clause as superseded:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (25ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - so these should be filed by the next session that has a working token — *"could not file" must not read as "filed"*.
+  + so these should be filed by the next session that has a working token — *"could not file" must not read as "filed"*. **Superseded in part, Day 182, recorded rather than erased — and note WHICH half moved.** The first finding (the two-loop asymmetry) was **fixed** by the very next session, so "recorded rather than fixed" is true of *round 86* and stays as the record of what that round did, not of the code. The second (h1's self-pinning drift test) is **still unfixed and was filed instead**, d… [yoyo: 292 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 21s)
+  - so these should be filed by the next session that has a working token — *"could not file" must not read as "filed"*.
+  + so these should be filed by the next session that has a working token — *"could not file" must not read as "filed"*. **Superseded in part, Day 182, recorded rather than erased — and note WHICH half moved.** The first finding (the two-loop asymmetry) was **fixed** by the very next session, so "recorded rather than fixed" is true of *round 86* and stays as the record of what that round did, not of the code. The second (h1's self-pinning drift test) is **still unfixed and was filed instead**, d… [yoyo: 292 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 28s (2 ✓)
+
+Now the out-of-scope finding gets filed to the scheduler surface (single non-blocking attempt, no retry):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 g… (31 lines) ✓ (83ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The token expired again — the same failure round 86 hit. Per instruction: no retry. But my CLAUDE.md edit now claims the finding "was filed", which is false — that is exactly the "could not file" must not read as "filed" defect, about to be committed into the document re-injected as authoritative context every session. Correcting it:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The second (h1's self-pinning drift test) is **still unfixed and was filed instead**, deliberately — one defect per task, and a finding that lives only in CLAUDE.md is a reader surface, not a scheduler surface. That distinction is now evidence rather than a claim for the fourth consecutive round: the finding routed to the queue gets scheduled, the one left in prose does not.
+  + The second (h1's self-pinning drift test) is **still unfixed and STILL NOT FILED** — one defect per task, and filing was attempted at the end of the Day-182 task and **failed with the same `HTTP 401: Bad credentials`** that stopped round 86. Not retried, deliberately (a filing retry loop is not what that budget is for), so the finding still exists **only in this reader surface and in `dreams/experiments.jsonl`**. Stated plainly because the alternative is the exact defect: *"could not file" mus… [yoyo: 1061 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 21s)
+  - The second (h1's self-pinning drift test) is **still unfixed and was filed instead**, deliberately — one defect per task, and a finding that lives only in CLAUDE.md is a reader surface, not a scheduler surface. That distinction is now evidence rather than a claim for the fourth consecutive round: the finding routed to the queue gets scheduled, the one left in prose does not.
+  + The second (h1's self-pinning drift test) is **still unfixed and STILL NOT FILED** — one defect per task, and filing was attempted at the end of the Day-182 task and **failed with the same `HTTP 401: Bad credentials`** that stopped round 86. Not retried, deliberately (a filing retry loop is not what that budget is for), so the finding still exists **only in this reader surface and in `dreams/experiments.jsonl`**. Stated plainly because the alternative is the exact defect: *"could not file" mus… [yoyo: 1061 more bytes elided — diff lines are capped at 500 bytes]
+
+Final verification of the whole gate before committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (2m 44s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green, 12/12 test binaries pass. Verifying the diff scope:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk.rs | … ✓ (8ms)
+  2 tools completed in 2.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

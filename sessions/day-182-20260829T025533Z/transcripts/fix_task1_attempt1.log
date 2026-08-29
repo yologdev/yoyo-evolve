@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing documentation. Let me first look at what actually shipped in the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1370,1450p' src/tool_wra… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1355 && NR<=1385' src/t… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (21ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:1366..1411 ✓ (1ms)
+  5 tools completed in 12.2s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "yoagent-version-claim"… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5060,5072p' src/tool_wra… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rc "yoagent-version-claim:… ✓ (6ms)
+  5 tools completed in 27.3s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5060,5187p' src/tool_wra… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:5148..5188 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.9s (2 ✓)
+
+Now let me run the positive control so the doc claim is grounded in an observation rather than an assumption.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (13 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo tool_wrapp… ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.4s (2 ✓)
+
+Exactly the 3 annotation tests went red; all near-miss guards and the Err-path tests stayed green. Now restoring (serially, not in parallel):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw_backup.rs src/tool_wr… ✓ (8ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo tool_wrapp… ✓ (23.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control run in both directions, serially. Now the documentation — the one thing the evaluator flagged.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails exactly **4** tests — all four annotation tests — while every pass-through, refusal, label, classifier and identity guard stays green. <!-- yoagent-version-claim: 0.18.1 -->
+  + **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails exactly **4** tests — all four annotation tests — while every pass-through, refusal, label, classifier and identity guard stays green. <!-- yoagent-version-claim: 0.18.1 --> **Day 182 — the same wrapper now reads the `Ok` path too, because a sub-agent cut short by its turn budget was returning a truncated answer that looked finished.** `src/tools.rs:1381` builds every sub-… [yoyo: 4613 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 33s)
+  - **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails exactly **4** tests — all four annotation tests — while every pass-through, refusal, label, classifier and identity guard stays green. <!-- yoagent-version-claim: 0.18.1 -->
+  + **Positive control run rather than assumed:** neutering `sub_agent_failure_report` to return its input unchanged fails exactly **4** tests — all four annotation tests — while every pass-through, refusal, label, classifier and identity guard stays green. <!-- yoagent-version-claim: 0.18.1 --> **Day 182 — the same wrapper now reads the `Ok` path too, because a sub-agent cut short by its turn budget was returning a truncated answer that looked finished.** `src/tools.rs:1381` builds every sub-… [yoyo: 4613 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (20ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - There are currently **four** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and two in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet and on the `prompt.rs` bullet (the #856 claim that an alternating `[a, b, a, b]` loop is **not** caught by yoagent's consecutive-identical-call guard) — this sentence read **two** for a day after the third landed, i.e. the stale-… [yoyo: 62 more bytes elided — diff lines are capped at 500 bytes]
+  + There are currently **seven** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test), **three in `src/tool_wrappers.rs`** (Day 182 — the `sub_agent_partial_notice` doc explaining where the stop marker comes from, the `annotate_if_partial` doc explaining why `LOOP_ABORT_PREFIX` cannot reach the `Ok` path, and the test-side `STOP_MARKER` const captured from yoagent's own sourc… [yoyo: 427 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 10s)
+  - There are currently **four** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test) and two in `CLAUDE.md` itself, on the `tool_wrappers.rs` bullet and on the `prompt.rs` bullet (the #856 claim that an alternating `[a, b, a, b]` loop is **not** caught by yoagent's consecutive-identical-call guard) — this sentence read **two** for a day after the third landed, i.e. the stale-… [yoyo: 62 more bytes elided — diff lines are capped at 500 bytes]
+  + There are currently **seven** live markers: two in `src/gasp.rs` (the `task-result` reachability paragraph, and the `MemoryEventStore` claim that is the stated reason no `*_in` body has a behavioural test), **three in `src/tool_wrappers.rs`** (Day 182 — the `sub_agent_partial_notice` doc explaining where the stop marker comes from, the `annotate_if_partial` doc explaining why `LOOP_ABORT_PREFIX` cannot reach the `Ok` path, and the test-side `STOP_MARKER` const captured from yoagent's own sourc… [yoyo: 427 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "live markers:" && grep -rh… ✓ (225ms)
+  4 tools completed in 3m 1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (58.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/testout.t… ✓ (1m 10s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 21s (3 ✓)
+
+All green — 5318 passed, 0 failed. Let me confirm the diff scope:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (13ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Only CLAUDE.md changed — exactly the gap. Committing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAU… (27 lines) ✓ (25ms)
+
+Done. The evaluator's single FAIL was doc_sync — the code was correct and complete, but CLAUDE.md (named in the task's Files line, with its own ## Docs section) was never touched.
+
+What I fixed:
+
+1. The `tool_wrappers.rs` bullet now carries the Day-182 paragraph covering all five things the task required, plus the mechanism:
+   • What fires — yoagent's own AGENT_STOPPED_PREFIX marker, matched by reference so an upstream rename is a compile error rather than a dead match; nothing detects truncation on the yoyo side, the existing marker is made unmissable.
+   • What is byte-identical — None → the result is returned untouched, every normally-finishing sub-agent, the whole regression surface.
+   • The refusal short-circuit — all three REFUSAL_STEM_* returned verbatim *even when the text also carries the marker*.
+   • The `Err` path is unchanged — classify_sub_agent_error / sub_agent_failure_report / the FallbackSubAgentTool precedence chain, tests unedited.
+   • **The limit, stated plainly** — this makes truncation legible, it does not resume the work; the remainder is still missing and the parent still has to decide.
+
+2. Corrected a stale count in the gate's own description — it read "four live markers" and there are seven (the code half added three in src/tool_wrappers.rs). That sentence going stale is precisely the shape tests/doc_version_claims.rs exists to catch, so the drift is recorded rather than silently overwritten.
+
+Verification, run rather than assumed:
+• Positive control, **serially (not in one parallel block): neutering `sub_agent_partial_notice` to always return `None` reddened exactly 3** tests — the two notice tests and the block-zero annotation test — while all 145 others, including both near-miss guards and every Err-path diagnostic test, stayed green. Restored → 148/148.
+• 7 markers confirmed by grep; doc_version_claims 5/5 (my text sits after a mid-line marker, which the Day-180 --> fix handles correctly).
+• cargo fmt / clippy -D warnings / build clean; 5318 tests passing, 0 failed.
+
+One thing I deliberately did not do: the run prints 5 non-fatal module-size warnings (cli.rs, commands_project.rs, format/mod.rs, prompt_retry.rs, safety.rs). All are pre-existing drift inside the grace band and none is tool_wrappers.rs — the code commit paid its own register entry. Paying off unrelated drift in an eval-fix would be scope creep.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

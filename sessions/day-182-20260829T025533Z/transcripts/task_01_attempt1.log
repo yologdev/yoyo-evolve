@@ -1,0 +1,292 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code in src/tool_wrappers.rs — specifically DiagnosticSubAgentTool and its neighbours.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DiagnosticSubAgentTool\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^yoagent" Cargo.toml &&… ✓ (7ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Cargo.lock confirms 0.18.1. Now let me read the decorator itself.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1340,1400p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1425,1480p' src/tool_wra… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1478,1625p' src/tool_wra… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.9s (3 ✓)
+
+Let me verify yoagent's actual source (never trust a doc claim) and how refusals are emitted.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src 2>/dev/null && grep -rn "AGENT_STO…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1100p' src/tool_wra… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me re-orient: check working-tree state and confirm the yoagent Ok-path mechanism.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src 2>/dev/null && sed -n '545,600p' s… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Working tree clean, no edits yet. Let me confirm the fold and the exact max_turns reason string, then write the test first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src 2>/dev/null && sed -n '612,626p' s… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.18.1/src 2>/dev/null && sed -n '1174,1184p'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4724,4760p' src/tool_wra… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.2s (3 ✓)
+
+Confirmed the real reason string is Max turns reached (25/25) — not the turns 25 >= max_turns 25 shape the task file guessed. Fixture captured from source, not hand-typed. Let me check the stub helper, then write.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod fallback_sub_agent_… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything I need. Writing the code now — pure function first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1455,1470p' src/tool_wra… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+`yoagent::agent_loop::AGENT_STOPPED_PREFIX` is importable — better than a local const: a rename upstream becomes a **compile error**, not a silent miss. Writing the pure function now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 73 lines)
+  + /// The note prepended to a sub-agent result that yoagent cut short, or `None`
+  + /// when the result finished normally.
+  + ///
+  + /// **Where the marker comes from.** yoagent's own loop appends a stop marker to
+  + /// the text it returns when a run ends on a *bound* rather than on the model
+  + /// finishing: `extract_final_text` folds `stopped_notice` in as
+  + /// `"{text}\n\n{stop}"`, where the marker is `format!("{AGENT_STOPPED_PREFIX}
+  + /// {reason}]")` and the reason comes from `ExecutionTracker::check_limits()`
+  + /// (e.g. `"Max turns reached (25/25)"`). Hitting `max_turns` is a bound, not a
+  + /// failure, so the call returns **`Ok`** — which is why every `Err`-branching
+  + /// decorator beside this one is structurally blind to it.
+  + /// <!-- yoagent-version-claim: 0.18.1 -->
+  + ///
+  + /// The prefix is used **by reference** rather than re-spelled, so an upstream
+  + /// rename is a compile error here instead of a silently dead match.
+  + ///
+  + /// `None` means the caller returns the result byte-identically — every
+  + /// sub-agent that finished normally, and the whole regression surface.
+  + pub(crate) fn sub_agent_partial_notice(text: &str) -> Option<String> {
+  +     if !text.contains(yoagent::agent_loop::AGENT_STOPPED_PREFIX) {
+  ... (53 more lines)
+ ✓ (14.8s)
+  + /// The note prepended to a sub-agent result that yoagent cut short, or `None`
+  + /// when the result finished normally.
+  + ///
+  + /// **Where the marker comes from.** yoagent's own loop appends a stop marker to
+  + /// the text it returns when a run ends on a *bound* rather than on the model
+  + /// finishing: `extract_final_text` folds `stopped_notice` in as
+  + /// `"{text}\n\n{stop}"`, where the marker is `format!("{AGENT_STOPPED_PREFIX}
+  + /// {reason}]")` and the reason comes from `ExecutionTracker::check_limits()`
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the rule from my own notes — definition without consumer. Wiring the Ok arm now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (6 → 8 lines)
+            let err = match self.inner.execute(params, ctx).await {
+  -             // The entire regression surface: every user who never sees a
+  -             // sub-agent fail gets a byte-identical result.
+  -             Ok(result) => return Ok(result),
+  +             // A result that finished normally is byte-identical — the entire
+  +             // regression surface. A result yoagent cut short on a bound comes
+  +             // back as `Ok` too, so it is annotated here rather than in the
+  +             // `Err` arm below, which is structurally blind to it.
+  +             Ok(result) => return Ok(annotate_if_partial(result)),
+                Err(e) => e,
+            };
+ ✓ (1m 50s)
+            let err = match self.inner.execute(params, ctx).await {
+  -             // The entire regression surface: every user who never sees a
+  -             // sub-agent fail gets a byte-identical result.
+  -             Ok(result) => return Ok(result),
+  +             // A result that finished normally is byte-identical — the entire
+  +             // regression surface. A result yoagent cut short on a bound comes
+  +             // back as `Ok` too, so it is annotated here rather than in the
+  +             // `Err` arm below, which is structurally blind to it.
+  ... (3 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests. Appending to the existing diagnostic_sub_agent_tests module.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (9 → 126 lines)
+            assert_eq!(tool.name(), "sub_agent");
+            assert_eq!(tool.label(), "sub_agent");
+            assert_eq!(tool.description(), "counting stub");
+  +     }
+  + 
+  +     // --- the Ok path: a run cut short by a bound ---
+  + 
+  +     /// The marker shape is captured from yoagent's own source rather than
+  +     /// hand-typed: `check_limits()` builds `"Max turns reached ({turns}/{max})"`
+  +     /// and the loop wraps it as `"[Agent stopped: {reason}]"`.
+  +     /// <!-- yoagent-version-claim: 0.18.1 -->
+  +     const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
+  + 
+  +     #[test]
+  +     fn partial_notice_table() {
+  +         // Fires: the real marker, alone and folded after prose the way
+  +         // `extract_final_text` folds it.
+  +         for text in [
+  +             STOP_MARKER,
+  +             &format!("partial analysis of the parser\n\n{STOP_MARKER}"),
+  ... (102 more lines)
+ ✓ (12.9s)
+            assert_eq!(tool.name(), "sub_agent");
+            assert_eq!(tool.label(), "sub_agent");
+            assert_eq!(tool.description(), "counting stub");
+  +     }
+  + 
+  +     // --- the Ok path: a run cut short by a bound ---
+  + 
+  +     /// The marker shape is captured from yoagent's own source rather than
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CountingStub::ok needs &'static str. A tiny test-local leak keeps a single spelling of the marker rather than duplicating it.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 8 lines)
+        const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
+  + 
+  +     /// `CountingStub::ok` takes a `&'static str`, and every fixture here is
+  +     /// built from `STOP_MARKER` at runtime so the marker has one spelling.
+  +     /// Leaking a few test bytes beats a second hand-typed copy that can drift.
+  +     fn leaked(s: String) -> &'static str {
+  +         Box::leak(s.into_boxed_str())
+  +     }
+ ✓ (12.9s)
+        const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
+  + 
+  +     /// `CountingStub::ok` takes a `&'static str`, and every fixture here is
+  +     /// built from `STOP_MARKER` at runtime so the marker has one spelling.
+  +     /// Leaking a few test bytes beats a second hand-typed copy that can drift.
+  +     fn leaked(s: String) -> &'static str {
+  +         Box::leak(s.into_boxed_str())
+  +     }
+
+Now the two call sites use the helper.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 2 lines)
+  -         let body = format!("partial analysis of the parser\n\n{STOP_MARKER}");
+  -         let (inner, calls) = CountingStub::ok(&body);
+  +         let body = leaked(format!("partial analysis of the parser\n\n{STOP_MARKER}"));
+  +         let (inner, calls) = CountingStub::ok(body);
+ ✓ (12.8s)
+  -         let body = format!("partial analysis of the parser\n\n{STOP_MARKER}");
+  -         let (inner, calls) = CountingStub::ok(&body);
+  +         let body = leaked(format!("partial analysis of the parser\n\n{STOP_MARKER}"));
+  +         let (inner, calls) = CountingStub::ok(body);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 4 lines)
+  -             let refusal = format!("read mode{stem}write_file is refused\n\n{STOP_MARKER}");
+  -             let (inner, _) = CountingStub::ok(&refusal);
+  +             let refusal = leaked(format!(
+  +                 "read mode{stem}write_file is refused\n\n{STOP_MARKER}"
+  +             ));
+  +             let (inner, _) = CountingStub::ok(refusal);
+ ✓ (1m 49s)
+  -             let refusal = format!("read mode{stem}write_file is refused\n\n{STOP_MARKER}");
+  -             let (inner, _) = CountingStub::ok(&refusal);
+  +             let refusal = leaked(format!(
+  +                 "read mode{stem}write_file is refused\n\n{STOP_MARKER}"
+  +             ));
+  +             let (inner, _) = CountingStub::ok(refusal);
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 8s (2 ✓)
+
+Compiles. Running the full gate explicitly.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 10s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5318 unit tests pass; the module-size gate fired (I added ~190 lines to an already-registered module). It prints the exact remedy line.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (199ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate did its job — the growth is deliberate (the new Ok branch belongs in the file that already owns every sub-agent decorator; the task explicitly forbids a new decorator). Acknowledging it in the register.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tool_wrappers.rs"'… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/tool_wrappers.rs", 4987),
+  +     ("src/tool_wrappers.rs", 5187),
+ ✓ (1m 10s)
+  -     ("src/tool_wrappers.rs", 4987),
+  +     ("src/tool_wrappers.rs", 5187),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 9s)
+  3 tools completed in 2m 24s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive control — run, not assumed, and serially (my own lesson: a parallel pair raced once and one falsely passed).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tool_… (15 lines) ✓ (23.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired exactly right: 3 annotation tests red, and every near-miss guard green (that's the direction that matters — the guards test the pass-through, not the fix). Restoring, then control 2 serially.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw.bak src/tool_wrappers… ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, 18/18. Control 2 (serially): neuter the refusal short-circuit, to prove that guard test isn't vacuous.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly one test red — the guard is load-bearing, its test not vacuous. Restoring and verifying the version-claim gate (I added markers).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/tw.bak src/tool_wrappers… ✓ (9.7s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
