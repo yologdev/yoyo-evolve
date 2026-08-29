@@ -396,6 +396,60 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "-V",
 ];
 
+/// Every flag that consumes the token after it as its value.
+///
+/// Read by `check_flag_values`, `warn_unknown_flags` and `collect_positional_args`
+/// — all three take it as a parameter, so this const is the one statement of the
+/// rule rather than three copies that agree today.
+///
+/// **Why a missing entry is a silent wrong-op, not a cosmetic gap** (#862): the
+/// scan skips the token a value-taking flag consumes. A flag *absent* from this
+/// list is treated as boolean, so the next token is examined on its own — and if
+/// that token is another flag, the parser (`collect_repeatable_flag`,
+/// `args.iter().position`) swallows it as the value anyway. `--model` then never
+/// fires and `warn_unknown_flags` cannot warn, because from its point of view
+/// nothing was skipped and nothing was unknown. Silent wrong-op plus silent no-op.
+///
+/// **Adding an entry is a narrowing, never a behaviour change for working
+/// invocations.** Today a following *non-flag* token is simply ignored by this
+/// scan — the same outcome as consuming it. The only inputs whose treatment moves
+/// are ones where the following token starts with `-`, which today is swallowed
+/// in silence and afterwards is reported. Nothing that works today stops working.
+///
+/// Tied to `--help` by `every_flag_documented_with_a_value_is_scanned_for_one`,
+/// which reads `help::cli_help_text()` directly rather than trusting this list.
+pub(crate) const FLAGS_NEEDING_VALUES: &[&str] = &[
+    "--model",
+    "--editor-model",
+    "--provider",
+    "--base-url",
+    "--thinking",
+    "--max-tokens",
+    "--max-turns",
+    "--temperature",
+    "--skills",
+    "--system",
+    "--system-file",
+    "--prompt",
+    "-p",
+    "--output",
+    "-o",
+    "--api-key",
+    "--mcp",
+    "--openapi",
+    "--allow",
+    "--deny",
+    "--allow-dir",
+    "--deny-dir",
+    "--image",
+    "--context-strategy",
+    "--context-window",
+    "--fallback",
+    "--allowed-tools",
+    "--disallowed-tools",
+    "--output-format",
+];
+
 /// Collect positional arguments that aren't flags, flag values, or known subcommands.
 ///
 /// Walks `args` (skipping `args[0]` — the binary name) and collects any token
@@ -1567,36 +1621,8 @@ directory ({e}); this run is trusted, later runs will not be."
     }
 
     // Validate that flags requiring values actually have them
-    let flags_needing_values = [
-        "--model",
-        "--editor-model",
-        "--provider",
-        "--base-url",
-        "--thinking",
-        "--max-tokens",
-        "--max-turns",
-        "--temperature",
-        "--skills",
-        "--system",
-        "--system-file",
-        "--prompt",
-        "-p",
-        "--output",
-        "-o",
-        "--api-key",
-        "--mcp",
-        "--openapi",
-        "--allow",
-        "--deny",
-        "--allow-dir",
-        "--deny-dir",
-        "--image",
-        "--context-strategy",
-        "--context-window",
-        "--fallback",
-        "--disallowed-tools",
-    ];
-    for issue in check_flag_values(args, &flags_needing_values) {
+    let flags_needing_values = FLAGS_NEEDING_VALUES;
+    for issue in check_flag_values(args, flags_needing_values) {
         match issue {
             FlagIssue::FlagLike { flag, next } => {
                 eprintln!("{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'");
@@ -1615,7 +1641,7 @@ directory ({e}); this run is trusted, later runs will not be."
     }
 
     // Warn about unknown flags
-    warn_unknown_flags(args, &flags_needing_values);
+    warn_unknown_flags(args, flags_needing_values);
 
     // Parse prompt and image flags early so we can validate --image before API key check
     let mut prompt_arg = flag_value(args, &["--prompt", "-p"]);
@@ -1623,7 +1649,7 @@ directory ({e}); this run is trusted, later runs will not be."
     // Support bare positional prompts: `yoyo "fix this bug"` without --prompt.
     // Only if --prompt/-p wasn't explicitly provided.
     if prompt_arg.is_none() {
-        let positional = collect_positional_args(args, &flags_needing_values);
+        let positional = collect_positional_args(args, flags_needing_values);
         if !positional.is_empty() {
             prompt_arg = Some(positional.join(" "));
         }
@@ -1961,6 +1987,333 @@ directory ({e}); this run is trusted, later runs will not be."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// True if `flag` appears in `text` as a whole token — neither side may be a
+    /// character that would make it part of a longer flag.
+    ///
+    /// `KNOWN_FLAGS` holds at least 8 strict-prefix pairs (`--allow` <
+    /// `--allow-dir`, `--output` < `--output-format`, `--continue` <
+    /// `--continue-on-silence`, `--trust-project` < `--trust-project-always`, …),
+    /// so a bare `contains` would read `--allow` as documented-with-a-placeholder
+    /// on the strength of `--allow-dir <d>`. Same reasoning as `help_mentions` in
+    /// `src/help.rs`, plus a **left** boundary it does not need: this scanner also
+    /// walks short aliases, and `-p` is a substring of `--prompt`.
+    fn flag_token_positions(text: &str, flag: &str) -> Vec<usize> {
+        text.match_indices(flag)
+            .filter(|(i, _)| {
+                let left_ok = match text[..*i].chars().next_back() {
+                    None => true,
+                    Some(c) => !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+                };
+                let right_ok = match text[i + flag.len()..].chars().next() {
+                    None => true,
+                    Some(c) => !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+                };
+                left_ok && right_ok
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// True if `--help` documents `flag` carrying a value placeholder — the
+    /// `<...>` shape used by `--model <name>`, `--allowed-tools <names>`, etc.
+    ///
+    /// Two documented shapes count, and only these two: `--flag <ph>` and the
+    /// alias form `--flag, -f <ph>` (`--prompt, -p <t>`). The `<` must be the
+    /// first non-space character after the flag (or after its alias), so a
+    /// description that happens to contain angle brackets cannot promote a
+    /// boolean flag — `--continue, -c    Resume last saved session` is correctly
+    /// read as taking no value.
+    fn documented_with_value_placeholder(text: &str, flag: &str) -> bool {
+        flag_token_positions(text, flag).into_iter().any(|i| {
+            let mut tail = &text[i + flag.len()..];
+            // Optional short-alias form: `, -p`
+            if let Some(rest) = tail.strip_prefix(", ") {
+                let rest = rest.trim_start();
+                if let Some(after_dash) = rest.strip_prefix('-') {
+                    let alias_len = after_dash
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .count();
+                    if alias_len > 0 {
+                        tail = &after_dash[alias_len..];
+                    }
+                }
+            }
+            let trimmed = tail.trim_start_matches(' ');
+            // Something must have separated them, and the next char is `<`.
+            trimmed.len() < tail.len() && trimmed.starts_with('<')
+        })
+    }
+
+    #[test]
+    fn placeholder_detector_reads_both_documented_shapes_and_no_others() {
+        // The plain shape, and the alias shape where the placeholder trails the
+        // short alias rather than the long flag.
+        assert!(documented_with_value_placeholder(
+            "  --model <name>    Model to use",
+            "--model"
+        ));
+        assert!(documented_with_value_placeholder(
+            "  --prompt, -p <t>  Run a single prompt",
+            "--prompt"
+        ));
+        assert!(documented_with_value_placeholder(
+            "  --prompt, -p <t>  Run a single prompt",
+            "-p"
+        ));
+        // Near-miss guards: a boolean flag must not read as value-taking, since a
+        // discriminator tested only on the side that fires is vacuous green.
+        assert!(!documented_with_value_placeholder(
+            "  --continue, -c    Resume last saved session",
+            "--continue"
+        ));
+        assert!(!documented_with_value_placeholder(
+            "  --no-tools        Disable all tools (chat-only mode)",
+            "--no-tools"
+        ));
+        // The prefix hazard, in both directions.
+        assert!(!documented_with_value_placeholder(
+            "  --allow-dir <d>   Restrict file access",
+            "--allow"
+        ));
+        assert!(!documented_with_value_placeholder(
+            "  --output-format <fmt>  Output format: text, json",
+            "--output"
+        ));
+        // A flag named only in prose carries no placeholder there.
+        assert!(!documented_with_value_placeholder(
+            "                    others (repeatable; conflicts with --disallowed-tools)",
+            "--disallowed-tools"
+        ));
+    }
+
+    /// Flags documented in `--help` with a value placeholder that are deliberately
+    /// **not** scanned by `check_flag_values`, each with the reason.
+    ///
+    /// This is a debt register, not absolution: an entry does not make the flag
+    /// scanned, it records by hand that the gap is known. The gate does not forbid
+    /// the gap — it forbids an *unnamed* one (Day-166 module-size lesson: a gate
+    /// whose only remedy is a whole-task revert eats the correct work sitting beside
+    /// the violation). It can only shrink; the ratchet in
+    /// `every_flag_documented_with_a_value_is_scanned_for_one` makes *improving*
+    /// a failure too, so a flag that gets added to `FLAGS_NEEDING_VALUES` must have
+    /// its entry deleted in the same diff.
+    const FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED: &[(&str, &str)] = &[];
+
+    /// The authority-reading guard for `FLAGS_NEEDING_VALUES` (#862).
+    ///
+    /// The list is hand-written, and until Day 182 **nothing** tied it to
+    /// reality — the same `ROUTED_SUBCOMMANDS` / `GLOBAL_SETTERS` /
+    /// `MECHANICAL_SUBJECTS` shape, minus the second test that keeps those
+    /// honest. `--allowed-tools` and `--output-format` were both documented with
+    /// a placeholder, both genuinely consumed a value at parse time, and both
+    /// were missing, so `yoyo --allowed-tools --model gpt-5` swallowed `--model`
+    /// in silence.
+    ///
+    /// `help::cli_help_text()` is called for real rather than text-scanned: a
+    /// scan of the source would pin what the code *looks like*, this pins what a
+    /// user actually reads.
+    ///
+    /// Three branches, the third running the opposite way from the first:
+    /// unnamed gap → fatal with both remedies verbatim; registered flag that is
+    /// now scanned or has vanished → fatal (the ratchet); nothing found at all →
+    /// fatal (anti-vacuous — a scanner that finds nothing and passes is this
+    /// very defect wearing the opposite sign, and quieter than the bug).
+    ///
+    /// **Stated limit:** this checks a documented-value flag is *scanned*, never
+    /// that the value it receives is *valid*. Presence is mechanically
+    /// checkable; correctness is not.
+    #[test]
+    fn every_flag_documented_with_a_value_is_scanned_for_one() {
+        let text = crate::help::cli_help_text();
+
+        for (flag, reason) in FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED {
+            assert!(
+                !reason.trim().is_empty(),
+                "register entry for {flag} has an empty reason — an unnamed debt \
+                 wearing a name is not a name"
+            );
+        }
+
+        let mut documented_with_value: Vec<&str> = Vec::new();
+        let mut unnamed_gaps: Vec<&str> = Vec::new();
+        for flag in KNOWN_FLAGS {
+            if !documented_with_value_placeholder(&text, flag) {
+                continue;
+            }
+            documented_with_value.push(flag);
+            if FLAGS_NEEDING_VALUES.contains(flag) {
+                continue;
+            }
+            if FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED
+                .iter()
+                .any(|(f, _)| f == flag)
+            {
+                continue;
+            }
+            unnamed_gaps.push(flag);
+        }
+
+        // Branch 3 (anti-vacuous), asserted before the others so a broken
+        // detector fails as itself rather than as a clean bill of health.
+        assert!(
+            !documented_with_value.is_empty(),
+            "no flag in KNOWN_FLAGS reads as documented-with-a-value — the \
+             placeholder detector or cli_help_text() is broken, and a scanner \
+             that finds nothing and passes is exactly the defect this guards"
+        );
+
+        // Branch 1: an unnamed gap.
+        assert!(
+            unnamed_gaps.is_empty(),
+            "flag(s) {unnamed_gaps:?} are documented in --help with a value \
+             placeholder but are not in FLAGS_NEEDING_VALUES, so the next token \
+             on the command line is swallowed in silence (#862).\n\
+             Fix it either way:\n  \
+             1. add the flag to FLAGS_NEEDING_VALUES in src/cli.rs, or\n  \
+             2. paste this line into FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED: \
+             (\"{first}\", \"why this flag is deliberately not scanned\")",
+            first = unnamed_gaps.first().copied().unwrap_or("--flag")
+        );
+
+        // Branch 2: the ratchet. An exception list only pays itself down if
+        // *improving* is a failure too.
+        for (flag, _) in FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED {
+            assert!(
+                KNOWN_FLAGS.contains(flag),
+                "registered flag {flag} is no longer in KNOWN_FLAGS — delete its \
+                 FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED entry"
+            );
+            assert!(
+                !FLAGS_NEEDING_VALUES.contains(flag),
+                "registered flag {flag} is now in FLAGS_NEEDING_VALUES — the debt \
+                 is paid, delete its FLAGS_DOCUMENTED_WITH_VALUE_BUT_NOT_SCANNED entry"
+            );
+        }
+    }
+
+    /// The two flags #862 named, pinned by name so a future edit that drops
+    /// either one fails as itself rather than as an anonymous census delta.
+    #[test]
+    fn the_two_flags_that_swallowed_the_next_flag_are_scanned() {
+        for flag in ["--allowed-tools", "--output-format"] {
+            assert!(
+                FLAGS_NEEDING_VALUES.contains(&flag),
+                "{flag} takes a value at parse time and is documented with one, \
+                 so it must be scanned — without it `yoyo {flag} --model x` \
+                 swallows --model in silence (#862)"
+            );
+        }
+        // Emission point: the issue's own reproduction. `--model` must survive.
+        let args: Vec<String> = ["yoyo", "--allowed-tools", "--model", "gpt-5"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let issues = check_flag_values(&args, FLAGS_NEEDING_VALUES);
+        assert_eq!(
+            issues,
+            vec![FlagIssue::FlagLike {
+                flag: "--allowed-tools".to_string(),
+                next: "--model".to_string(),
+            }],
+            "the swallow must be reported, naming both the flag and what it ate"
+        );
+    }
+
+    /// Near-miss guards. A flag taking no value must not be scanned for one, and
+    /// an ordinary invocation must still parse clean — this file's whole history
+    /// is discriminators pointed at the wrong input.
+    #[test]
+    fn value_less_flags_are_not_scanned_and_normal_invocations_stay_clean() {
+        for flag in [
+            "--trust-project-always",
+            "--wait-for-reset",
+            "--continue-on-silence",
+            "--no-tools",
+            "--screen-reader",
+        ] {
+            assert!(
+                !FLAGS_NEEDING_VALUES.contains(&flag),
+                "{flag} takes no value — scanning it would consume the token \
+                 after it and break a working invocation"
+            );
+        }
+        let args: Vec<String> = [
+            "yoyo",
+            "--allowed-tools",
+            "bash,read_file",
+            "--model",
+            "x",
+            "--output-format",
+            "json",
+            "--wait-for-reset",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            check_flag_values(&args, FLAGS_NEEDING_VALUES),
+            vec![],
+            "a normal invocation must report nothing"
+        );
+        // And the values are still reachable — the scan skipping a token must
+        // not change what the parser sees.
+        assert_eq!(
+            flag_value(&args, &["--model"]).as_deref(),
+            Some("x"),
+            "--model must still fire when it follows a value-taking flag"
+        );
+        assert_eq!(
+            flag_value(&args, &["--output-format"]).as_deref(),
+            Some("json")
+        );
+    }
+
+    /// The census, reported in both directions with denominators (#862 step 1).
+    ///
+    /// Direction B is **measurement only**: a value-taking flag documented
+    /// without a placeholder is a real possibility, and enforcing it needs its
+    /// own enumeration. It is printed, never gated on.
+    #[test]
+    fn flag_value_census_is_reported_in_both_directions() {
+        let text = crate::help::cli_help_text();
+        let mut direction_a: Vec<&str> = Vec::new();
+        let mut direction_b: Vec<&str> = Vec::new();
+        let mut documented_with_value = 0usize;
+        for flag in KNOWN_FLAGS {
+            let has_placeholder = documented_with_value_placeholder(&text, flag);
+            let scanned = FLAGS_NEEDING_VALUES.contains(flag);
+            if has_placeholder {
+                documented_with_value += 1;
+                if !scanned {
+                    direction_a.push(flag);
+                }
+            } else if scanned {
+                direction_b.push(flag);
+            }
+        }
+        // Raw stderr: libtest's capture hook discards macro output from *passing*
+        // tests, and a census that only prints when it fails teaches nothing.
+        use std::io::Write;
+        let mut err = std::io::stderr();
+        let _ = writeln!(
+            err,
+            "flag-value census: {} flags in KNOWN_FLAGS, {} scanned for values, \
+             {documented_with_value} documented with a value placeholder; \
+             direction A (documented, not scanned) = {} {direction_a:?}; \
+             direction B (scanned, not documented with a placeholder) = {} \
+             {direction_b:?} [measured, not gated]",
+            KNOWN_FLAGS.len(),
+            FLAGS_NEEDING_VALUES.len(),
+            direction_a.len(),
+            direction_b.len(),
+        );
+        assert!(
+            documented_with_value > 0,
+            "census found nothing — the detector is broken"
+        );
+    }
 
     #[test]
     fn test_auto_discovery_sources_order_is_lowest_precedence_first() {

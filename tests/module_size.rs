@@ -151,7 +151,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // (`--trust-project-always`), its two announcement builders, and their tests.
     // Acknowledged, not absorbed: this crossed the 100-line drift grace band, which
     // is the gate working as designed.
-    ("src/cli.rs", 4967),
+    ("src/cli.rs", 5349),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
