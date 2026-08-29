@@ -211,6 +211,77 @@ fn categorize_message(msg: &str) -> ErrorCategory {
     ErrorCategory::Other
 }
 
+/// Strip ANSI escape sequences from a single line of tool output.
+///
+/// **Why this exists (#859).** [`parse_rust_errors`] anchors two of its three
+/// patterns with `strip_prefix("error[")` / `strip_prefix("error: ")`. An escape
+/// sequence in front of the word `error` defeats an anchor where a `contains()`
+/// would survive it — so a user with `color = "always"` in `.cargo/config.toml`,
+/// or `CARGO_TERM_COLOR=always` in CI, got **zero** parsed compiler errors and a
+/// fix prompt with no `--> file:line`, no source context and no category hint.
+/// The asymmetry is what made it confusing rather than merely broken: pattern 3
+/// (test panics) uses `contains()`, so coloured *panics* parsed while coloured
+/// *compile errors* did not.
+///
+/// **Scope, measured rather than assumed** (cargo 1.98.0 / rustc 1.98.0,
+/// `CARGO_TERM_COLOR=always cargo build 2>&1 | cat > file`, a deliberate
+/// `E0308`): the capture carried **49 escape bytes, all 49 of them CSI**
+/// (`ESC [` … final byte in `0x40..=0x7E`, i.e. the SGR colour form), **zero**
+/// OSC (`ESC ]`) and zero other `ESC` forms — and CSI-stripping the coloured
+/// capture produced output **byte-identical** to the `CARGO_TERM_COLOR=never`
+/// twin. So this handles CSI and nothing else.
+///
+/// **What it deliberately does NOT handle, stated rather than implied:** OSC-8
+/// terminal hyperlinks (`ESC ]8;;…`) are **not** stripped, because they were not
+/// observed — newer rustc may wrap error codes in them, and a branch no fixture
+/// exercises is a claim no test can grade. If they ever appear, an `ESC ]` will
+/// survive into the message; it will not panic and it will not swallow the line.
+///
+/// An **unterminated** CSI at end of line (no final byte) drops the escape
+/// introducer and keeps the remaining bytes, rather than swallowing the rest of
+/// the line silently — a truncated capture should lose the escape, not the text.
+///
+/// A line with no `ESC` is returned **borrowed and byte-identical**, so the
+/// common path — every user who has never set `color = "always"` — allocates
+/// nothing and parses exactly as it did before.
+///
+/// No `&str` is ever indexed at a byte offset that could fall inside a `char`
+/// (rule #250): the scan walks `char_indices`, and every slice boundary is
+/// either a `char` boundary reported by that iterator or the position just past
+/// an ASCII escape byte, which is a `char` boundary by construction.
+pub fn strip_ansi_escapes(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains('\u{1b}') {
+        return std::borrow::Cow::Borrowed(line);
+    }
+
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.char_indices();
+    while let Some((_, ch)) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        // ESC seen. A CSI is `ESC [` <params> <final byte 0x40..=0x7E>.
+        match chars.next() {
+            Some((_, '[')) => {
+                // Consume up to and including the final byte. If the line ends
+                // first the sequence is unterminated: we have already dropped
+                // `ESC [` and simply keep whatever followed.
+                for (_, c) in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // Any other ESC form (including OSC `ESC ]`) is not a class we
+            // observed; drop the ESC itself and keep the rest verbatim.
+            Some((_, other)) => out.push(other),
+            None => {}
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Parse Rust compiler/clippy/test output into structured [`CompilerError`]s.
 ///
 /// Recognises patterns like:
@@ -223,7 +294,15 @@ fn categorize_message(msg: &str) -> ErrorCategory {
 /// follow each diagnostic.
 pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
     let mut errors: Vec<CompilerError> = Vec::new();
-    let lines: Vec<&str> = output.lines().collect();
+    // #859: strip ANSI **once**, here, so all three patterns and every helper
+    // that reads `lines` (notably `extract_location`, whose `--> ` anchor is
+    // equally defeated by a colour code) inherit it — never per-pattern.
+    // `trim_start` rides along because the anchors below are not merely
+    // uncoloured-only, they are column-0-only; an indented diagnostic is cheap
+    // to survive. On uncoloured input every `Cow` is `Borrowed`, so this is
+    // byte-identical to the previous `output.lines().collect()`.
+    let stripped: Vec<std::borrow::Cow<'_, str>> = output.lines().map(strip_ansi_escapes).collect();
+    let lines: Vec<&str> = stripped.iter().map(|c| c.as_ref().trim_start()).collect();
 
     let mut i = 0;
     while i < lines.len() {
@@ -445,6 +524,13 @@ fn categorize_ts_message(msg: &str) -> ErrorCategory {
 /// - **tsc**: `src/file.ts(line,col): error TS2345: message`
 /// - **eslint**: `src/file.ts:line:col: error message [rule-name]`
 /// - **jest/vitest**: `FAIL src/file.test.ts` + assertion messages
+///
+/// **NOT swept for ANSI (#859), deliberately — see follow-up issue.** The Rust
+/// parser strips CSI escapes because a coloured `error[` defeated its anchored
+/// `strip_prefix`; this parser is left alone because it reads a *different
+/// tool's* output and no capture of that tool's coloured form was taken. A
+/// sweep transfers the fix and silently drops the burden of proof, so the gap
+/// is named here and filed rather than guessed at.
 pub fn parse_typescript_errors(output: &str) -> Vec<CompilerError> {
     let mut errors: Vec<CompilerError> = Vec::new();
 
@@ -604,6 +690,13 @@ fn categorize_python_message(msg: &str) -> ErrorCategory {
 /// - **pytest**: `FAILED tests/test_foo.py::test_bar - ErrorType: message`
 /// - **mypy**: `src/foo.py:42: error: message`
 /// - **traceback**: `File "foo.py", line 42, in func_name` (extracts last frame)
+///
+/// **NOT swept for ANSI (#859), deliberately — see follow-up issue.** The Rust
+/// parser strips CSI escapes because a coloured `error[` defeated its anchored
+/// `strip_prefix`; this parser is left alone because it reads a *different
+/// tool's* output and no capture of that tool's coloured form was taken. A
+/// sweep transfers the fix and silently drops the burden of proof, so the gap
+/// is named here and filed rather than guessed at.
 pub fn parse_python_errors(output: &str) -> Vec<CompilerError> {
     let mut errors: Vec<CompilerError> = Vec::new();
     let lines: Vec<&str> = output.lines().collect();
@@ -2706,6 +2799,173 @@ mod tests {
     // -----------------------------------------------------------------------
     // Structured Rust compiler error parsing tests
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // #859: ANSI-coloured cargo output must parse identically to uncoloured.
+    //
+    // Both fixtures below were CAPTURED VERBATIM from a real scratch crate
+    // (cargo 1.98.0 / rustc 1.98.0, a deliberate E0308), the coloured one with
+    // `CARGO_TERM_COLOR=always cargo build 2>&1 | cat > file` and the plain one
+    // with `CARGO_TERM_COLOR=never`. They are not hand-typed: round 81 and
+    // round 87 each lost a bet by asserting an external tool's output format
+    // without running it once.
+    // -----------------------------------------------------------------------
+
+    /// The real coloured capture, escape bytes and all.
+    const ANSI_E0308_CAPTURE: &str = "\x1b[1m\x1b[92m   Compiling\x1b[0m ansi_probe v0.1.0 (/tmp/ansi_probe)\n\
+\x1b[1m\x1b[91merror[E0308]\x1b[0m\x1b[1m: mismatched types\x1b[0m\n\
+ \x1b[1m\x1b[94m--> \x1b[0msrc/main.rs:2:18\n\
+  \x1b[1m\x1b[94m|\x1b[0m\n\
+\x1b[1m\x1b[94m2\x1b[0m \x1b[1m\x1b[94m|\x1b[0m     let x: i32 = \"not an int\";\n\
+  \x1b[1m\x1b[94m|\x1b[0m            \x1b[1m\x1b[94m---\x1b[0m   \x1b[1m\x1b[91m^^^^^^^^^^^^\x1b[0m \x1b[1m\x1b[91mexpected `i32`, found `&str`\x1b[0m\n\
+  \x1b[1m\x1b[94m|\x1b[0m            \x1b[1m\x1b[94m|\x1b[0m\n\
+  \x1b[1m\x1b[94m|\x1b[0m            \x1b[1m\x1b[94mexpected due to this\x1b[0m\n\
+\n\
+\x1b[1mFor more information about this error, try `rustc --explain E0308`.\x1b[0m\n\
+\x1b[1m\x1b[91merror\x1b[0m: could not compile `ansi_probe` (bin \"ansi_probe\") due to 1 previous error\n\
+";
+
+    /// The same build, `CARGO_TERM_COLOR=never`.
+    const PLAIN_E0308_CAPTURE: &str = "   Compiling ansi_probe v0.1.0 (/tmp/ansi_probe)\n\
+error[E0308]: mismatched types\n\
+ --> src/main.rs:2:18\n\
+  |\n\
+2 |     let x: i32 = \"not an int\";\n\
+  |            ---   ^^^^^^^^^^^^ expected `i32`, found `&str`\n\
+  |            |\n\
+  |            expected due to this\n\
+\n\
+For more information about this error, try `rustc --explain E0308`.\n\
+error: could not compile `ansi_probe` (bin \"ansi_probe\") due to 1 previous error\n\
+";
+
+    #[test]
+    fn parse_rust_errors_ansi_coloured_matches_the_uncoloured_twin_859() {
+        // Sanity: the fixture really does carry escapes, or this test is
+        // vacuous green over a fixture that lost them in transcription.
+        assert!(
+            ANSI_E0308_CAPTURE.contains('\u{1b}'),
+            "coloured fixture must actually contain ESC bytes"
+        );
+        assert!(
+            !PLAIN_E0308_CAPTURE.contains('\u{1b}'),
+            "plain fixture must not contain ESC bytes"
+        );
+
+        let coloured = parse_rust_errors(ANSI_E0308_CAPTURE);
+        let plain = parse_rust_errors(PLAIN_E0308_CAPTURE);
+
+        // The defect: this was 0 before the fix while `plain` was 1.
+        assert_eq!(
+            plain.len(),
+            1,
+            "uncoloured capture should yield exactly one error"
+        );
+        assert_eq!(
+            coloured.len(),
+            plain.len(),
+            "coloured output must yield the same number of errors as uncoloured"
+        );
+
+        for (c, p) in coloured.iter().zip(plain.iter()) {
+            assert_eq!(c.code, p.code, "code must match the uncoloured twin");
+            assert_eq!(c.message, p.message, "message must match");
+            assert_eq!(c.file, p.file, "file must match");
+            assert_eq!(c.line, p.line, "line must match");
+            assert_eq!(c.category, p.category, "category must match");
+        }
+
+        // And the values themselves, so a regression that broke BOTH fixtures
+        // identically could not pass by agreeing with itself.
+        assert_eq!(coloured[0].code.as_deref(), Some("E0308"));
+        assert_eq!(coloured[0].message, "mismatched types");
+        assert_eq!(coloured[0].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(coloured[0].line, Some(2));
+        assert_eq!(coloured[0].category, ErrorCategory::Type);
+
+        // The stored message goes into an API prompt: no escape bytes there.
+        assert!(
+            !coloured[0].message.contains('\u{1b}'),
+            "stored message must not carry escape codes into the fix prompt"
+        );
+    }
+
+    /// Near-miss guard: uncoloured input must be BYTE-IDENTICAL to before.
+    ///
+    /// A discriminator tested only on the side that fires is vacuous green, and
+    /// this parser's whole history is discriminators pointed at the wrong input.
+    #[test]
+    fn parse_rust_errors_uncoloured_input_is_unchanged_859() {
+        let output = "error[E0382]: borrow of moved value: `x`\n  \
+                      --> src/main.rs:10:5\n";
+        let errors = parse_rust_errors(output);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code.as_deref(), Some("E0382"));
+        assert_eq!(errors[0].message, "borrow of moved value: `x`");
+        assert_eq!(errors[0].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(errors[0].line, Some(10));
+        assert_eq!(errors[0].category, ErrorCategory::Borrow);
+    }
+
+    #[test]
+    fn strip_ansi_escapes_table_859() {
+        use std::borrow::Cow;
+
+        // 1. No ESC -> byte-identical AND borrowed (the common path must not
+        //    allocate). Asserted with assert_eq! on the whole string, never a
+        //    `contains`.
+        for plain in [
+            "error[E0308]: mismatched types",
+            "",
+            "  --> src/main.rs:2:18",
+            "thread 'tests::t' (4861) panicked at src/main.rs:7:9:",
+            "let s = \"a [1m b\";",
+        ] {
+            let got = strip_ansi_escapes(plain);
+            assert_eq!(got, plain, "uncoloured line must be byte-identical");
+            assert!(
+                matches!(got, Cow::Borrowed(_)),
+                "uncoloured line must borrow, not allocate: {plain:?}"
+            );
+        }
+
+        // 2. CSI/SGR, the one class actually observed in cargo output.
+        let cases: &[(&str, &str)] = &[
+            (
+                "\u{1b}[1m\u{1b}[91merror[E0308]\u{1b}[0m\u{1b}[1m: mismatched types\u{1b}[0m",
+                "error[E0308]: mismatched types",
+            ),
+            (
+                " \u{1b}[1m\u{1b}[94m--> \u{1b}[0msrc/main.rs:2:18",
+                " --> src/main.rs:2:18",
+            ),
+            ("\u{1b}[0m", ""),
+            ("\u{1b}[38;5;9mred\u{1b}[0m", "red"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(&strip_ansi_escapes(input), want, "CSI strip: {input:?}");
+        }
+
+        // 3. Unterminated CSI at end of line: must not panic and must not
+        //    swallow the line. We drop the `ESC [` introducer and keep the rest.
+        assert_eq!(&strip_ansi_escapes("tail\u{1b}["), "tail");
+        assert_eq!(&strip_ansi_escapes("tail\u{1b}"), "tail");
+        assert_eq!(&strip_ansi_escapes("a\u{1b}[38;5"), "a");
+
+        // 4. A non-CSI ESC form (e.g. OSC) is NOT a class we observed. It must
+        //    degrade quietly rather than eat the line.
+        let osc = strip_ansi_escapes("\u{1b}]8;;http://x\u{7}link");
+        assert!(
+            osc.contains("link"),
+            "non-CSI ESC must not swallow the line"
+        );
+
+        // 5. Multi-byte input must survive (rule #250 - no raw byte indexing).
+        assert_eq!(
+            &strip_ansi_escapes("\u{1b}[1m\u{1f419} octopus\u{1b}[0m"),
+            "\u{1f419} octopus"
+        );
+    }
 
     #[test]
     fn parse_rust_errors_borrow_checker() {
