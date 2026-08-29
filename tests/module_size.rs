@@ -279,7 +279,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // would also be refused. The message belongs beside the detector whose
     // reason string it classifies; splitting them would create the second
     // matcher this deliberately avoids.
-    ("src/safety.rs", 3908),
+    ("src/safety.rs", 4116),
     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
     // wizard becomes the second and third consumer of the #735 shadow/demotion
     // guard family (which had exactly one: `/config set`), so both of its save

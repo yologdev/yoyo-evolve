@@ -3908,3 +3908,209 @@ mod tests {
         assert!(detect_git_redirection_escape("echo '✓ git -C /x'", &root).is_none());
     }
 }
+
+#[cfg(test)]
+mod assignment_prefix_guards {
+    //! Day 182: does a leading shell assignment (`FOO=1 git commit`) walk past
+    //! `/read` mode? Measured first, and the answer is **no** — the dated
+    //! table lives in CLAUDE.md under `safety.rs`. These guards pin that
+    //! answer, because before this module exactly one prefixed shape
+    //! (`FOO=1 tee /tmp/x`) was covered anywhere, in a bulk `is_some()` list.
+    //!
+    //! The mechanism being pinned is the command-word search in
+    //! [`detect_write_command`]:
+    //! `tokens.find(|t| !COMMAND_WRAPPERS.contains(t) && !t.contains('='))`.
+    //! A token carrying `=` is stepped over, so `git`/`touch` is still found,
+    //! and `git_write_subcommand` receives an argv already positioned past
+    //! `git` — which is why #838's subcommand rule runs normally under a
+    //! prefix. The destructive classifier is unaffected for a different
+    //! reason: it matches substrings at word boundaries rather than
+    //! tokenizing, so a prefix is simply more text to its left.
+    //!
+    //! That rule is deliberately **broader than the shell's**: it skips any
+    //! token containing `=`, not only a valid `NAME=value`. Both edges it
+    //! over-reads (`--flag=value`, `=foo`) are pinned below and both err
+    //! toward *over*-blocking, which is the safe direction for a read-mode
+    //! guard. It was left exactly as it is: no measured defect licenses
+    //! rewriting a security control.
+    //!
+    //! **Stated limit, so "could not check" cannot read as "checked; clean":
+    //! this is a TOKEN-prefix rule, not a shell.** A command word reached
+    //! through a variable (`$CMD commit`), through a shell alias, or through
+    //! `$(...)`/backtick substitution is invisible to it.
+
+    use super::*;
+
+    /// Assembled at runtime: yoyo's own bash guard refuses this literal as a
+    /// command, so keeping it out of the source keeps the file editable
+    /// through a shell.
+    const RM: &str = "rm";
+
+    /// The heart of it. Asserting **prefixed == unprefixed** is strictly
+    /// stronger than `is_some()`: it fails both when a prefix *hides* a write
+    /// and when a prefix *invents* one.
+    #[test]
+    fn a_leading_assignment_never_changes_the_write_verdict() {
+        let pairs: Vec<(String, String)> = vec![
+            // The #838 path, and the shape this task was opened for.
+            ("git commit -m 'x'".into(), "FOO=1 git commit -m 'x'".into()),
+            // Multiple prefixes, which is still legal POSIX.
+            ("git push".into(), "A=1 B=2 git push".into()),
+            // The changelog's own example: an integer-ish shell variable.
+            ("git commit -m x".into(), "OPTIND=1 git commit -m x".into()),
+            // Plain write verbs from WRITE_VERBS.
+            ("touch a".into(), "FOO=1 touch a".into()),
+            // Wrapper *and* prefix together.
+            ("sudo touch a".into(), "FOO=1 sudo touch a".into()),
+            // Verbs whose write-ness is decided by their own arguments.
+            ("dd of=/tmp/x".into(), "FOO=1 dd of=/tmp/x".into()),
+            ("sed -i s/a/b/ f".into(), "FOO=1 sed -i s/a/b/ f".into()),
+            // Near-miss side: reads must stay reads under a prefix.
+            ("git status".into(), "FOO=1 git status".into()),
+            ("cargo test".into(), "FOO=1 cargo test".into()),
+            ("ls".into(), "FOO=1 ls".into()),
+        ];
+        for (bare, prefixed) in &pairs {
+            assert_eq!(
+                detect_write_command(bare),
+                detect_write_command(prefixed),
+                "a leading assignment changed the verdict: {bare:?} vs {prefixed:?}"
+            );
+        }
+    }
+
+    /// Near-miss guards, and they are the half that matters: `/read` mode is
+    /// useless if it blocks reading the repo. A discriminator tested only on
+    /// the side that fires is vacuous green.
+    #[test]
+    fn prefixed_read_only_commands_are_still_not_writes() {
+        for cmd in [
+            "FOO=1 cargo test",
+            "FOO=1 git status",
+            "FOO=1 ls",
+            "FOO=1 git log --oneline",
+            "A=1 B=2 git diff",
+        ] {
+            assert_eq!(
+                detect_write_command(cmd),
+                None,
+                "read-only command was refused under a prefix: {cmd:?}"
+            );
+        }
+    }
+
+    /// The unprefixed baselines are untouched by anything in this module —
+    /// asserted verbatim rather than with `contains`, so a reworded reason
+    /// cannot pass by being merely similar.
+    #[test]
+    fn unprefixed_838_baselines_are_byte_identical() {
+        assert_eq!(
+            detect_write_command("git commit -m 'x'").as_deref(),
+            Some("`git commit` writes to the repository")
+        );
+        assert_eq!(
+            detect_write_command("A=1 B=2 git push").as_deref(),
+            Some("`git push` writes to the repository")
+        );
+        assert_eq!(
+            detect_write_command("FOO=1 touch a").as_deref(),
+            Some("`touch` writes to the filesystem")
+        );
+        assert_eq!(detect_write_command("git status"), None);
+        assert_eq!(detect_write_command("cargo test"), None);
+    }
+
+    /// An assignment is only special **before** the command word. Once a real
+    /// command word is seen, a later `FOO=1` is an ordinary argument and the
+    /// verdict must not move.
+    #[test]
+    fn an_assignment_after_the_command_word_is_just_an_argument() {
+        assert_eq!(
+            detect_write_command("git commit FOO=1").as_deref(),
+            Some("`git commit` writes to the repository")
+        );
+        assert_eq!(detect_write_command("git status FOO=1"), None);
+    }
+
+    /// The destructive branch of `ReadModeGuardTool`'s bash check, which a
+    /// command can be caught by instead. It tokenizes nothing, so a prefix is
+    /// just more text to the left of a word boundary.
+    #[test]
+    fn a_leading_assignment_never_changes_the_destructive_verdict() {
+        let bare_root = format!("{RM} -rf /");
+        let bare_home = format!("{RM} -rf ~");
+        let pairs = [
+            (bare_root.clone(), format!("FOO=1 {bare_root}")),
+            (bare_root.clone(), format!("A=1 B=2 {bare_root}")),
+            (bare_home.clone(), format!("FOO=1 {bare_home}")),
+            // Near-miss: an innocent command stays innocent under a prefix.
+            ("cargo test".into(), "FOO=1 cargo test".into()),
+            ("git status".into(), "FOO=1 git status".into()),
+        ];
+        for (bare, prefixed) in &pairs {
+            assert_eq!(
+                analyze_bash_command(bare),
+                analyze_bash_command(prefixed),
+                "a leading assignment changed the destructive verdict: {bare:?}"
+            );
+        }
+        // Anti-vacuous: the fixture really does trip the classifier, so the
+        // equality above is not two `None`s agreeing with each other.
+        assert!(analyze_bash_command(&bare_root).is_some());
+    }
+
+    /// Recorded because it *looks* like a hole and is not. `rm` is
+    /// deliberately absent from `WRITE_VERBS` — deletion is the destructive
+    /// classifier's job — and a scratch path is not a system target, so both
+    /// classifiers return `None` here **with or without** a prefix. The
+    /// prefix changes nothing; measuring the unprefixed twin is what settles
+    /// it, rather than reading the prefixed row alone and inventing a hole.
+    #[test]
+    fn a_scratch_path_delete_is_not_a_hole_it_is_unclassified_either_way() {
+        let bare = format!("{RM} -rf /tmp/yoyo-probe");
+        let prefixed = format!("FOO=1 {bare}");
+        assert_eq!(detect_write_command(&bare), None);
+        assert_eq!(detect_write_command(&prefixed), None);
+        assert_eq!(analyze_bash_command(&bare), None);
+        assert_eq!(analyze_bash_command(&prefixed), None);
+    }
+
+    /// The two shapes the `contains('=')` rule reads more broadly than a
+    /// shell would. Neither is a valid assignment — `--flag=value` leads with
+    /// `-`, and `=foo` has no name — yet both are stepped over. Pinned as
+    /// **observed**, not as endorsed: both directions here err toward
+    /// over-blocking, which is the safe direction for a read-mode guard.
+    #[test]
+    fn the_rule_is_broader_than_the_shells_and_over_blocks_on_both_edges() {
+        assert_eq!(
+            detect_write_command("--flag=value touch a").as_deref(),
+            Some("`touch` writes to the filesystem")
+        );
+        assert_eq!(
+            detect_write_command("=foo touch a").as_deref(),
+            Some("`touch` writes to the filesystem")
+        );
+        // Fail-closed shape: a bare assignment with no command word at all
+        // reaches no verb and is not a write.
+        assert_eq!(detect_write_command("FOO=1"), None);
+    }
+
+    /// Cross-module, measured and deliberately **not** changed: the
+    /// `permissions.allow` glob matcher errs the *opposite* way to the read
+    /// guard. A leading assignment makes the command fail to match `git *`,
+    /// so it is **not** auto-approved and falls through to the normal
+    /// confirmation prompt — graceful degradation, the safe direction. This
+    /// pins the reading so a later session does not re-derive it.
+    #[test]
+    fn an_assignment_prefix_makes_permissions_allow_fall_through_not_approve() {
+        let pc = crate::config::PermissionConfig {
+            allow: vec!["git *".to_string()],
+            deny: vec![],
+        };
+        // Near-miss guard: the unprefixed command really is auto-approved,
+        // so the `None` below is a refusal to match and not an empty config.
+        assert_eq!(pc.check("git commit -m x"), Some(true));
+        assert_eq!(pc.check("FOO=1 git commit -m x"), None);
+        assert_eq!(pc.check("A=1 B=2 git push"), None);
+    }
+}
