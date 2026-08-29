@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — capture real ANSI output rather than assuming its shape.
+  ▶ $ mkdir -p /tmp/ansi_probe && cd /tmp/ansi_probe && cargo init… (7 lines) ✓ (785ms)
+  ▶ $ cd /tmp/ansi_probe && CARGO_TERM_COLOR=always cargo build 2>&1 | cat > /tmp/ansi… ✓ (430ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.0s (2 ✓)
+
+Reproduced — ANSI is present in piped output. Now let me check exactly which escape classes appear, and capture the uncoloured twin.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/ansi_probe && CARGO_TERM_COLOR=never cargo build 2>&… (18 lines) ✓ (77ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured: 49 ESC bytes, all CSI, zero OSC-8. Let me verify the strip is exactly byte-identical to the uncoloured twin, and record versions.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/ansi_probe && python3 - <<'EOF' (11 lines) ✓ (52ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is settled and the result is strong: all 49 escapes are CSI, zero OSC-8, and CSI-stripping the coloured output is byte-identical to the uncoloured twin. Let me record that and read the parser.
+  ▶ shared_state ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors" -… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '299,340p' src/watch.rs; … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 28.4s (3 ✓)
+
+Now let me write the stripper. First, the exact insertion point and existing imports:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use " src/watch.rs; ec… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One existing fixture has an indented error[E0308] — trim_start could change its result. Let me check before writing anything.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2925,2965p' src/watch.rs ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That fixture uses Rust's \-newline continuation, so both error[ are at column 0 — trim_start is safe. Now the stripper:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (1 → 72 lines)
+  + /// Strip ANSI escape sequences from a single line of tool output.
+  + ///
+  + /// **Why this exists (#859).** [`parse_rust_errors`] anchors two of its three
+  + /// patterns with `strip_prefix("error[")` / `strip_prefix("error: ")`. An escape
+  + /// sequence in front of the word `error` defeats an anchor where a `contains()`
+  + /// would survive it — so a user with `color = "always"` in `.cargo/config.toml`,
+  + /// or `CARGO_TERM_COLOR=always` in CI, got **zero** parsed compiler errors and a
+  + /// fix prompt with no `--> file:line`, no source context and no category hint.
+  + /// The asymmetry is what made it confusing rather than merely broken: pattern 3
+  + /// (test panics) uses `contains()`, so coloured *panics* parsed while coloured
+  + /// *compile errors* did not.
+  + ///
+  + /// **Scope, measured rather than assumed** (cargo 1.98.0 / rustc 1.98.0,
+  + /// `CARGO_TERM_COLOR=always cargo build 2>&1 | cat > file`, a deliberate
+  + /// `E0308`): the capture carried **49 escape bytes, all 49 of them CSI**
+  + /// (`ESC [` … final byte in `0x40..=0x7E`, i.e. the SGR colour form), **zero**
+  + /// OSC (`ESC ]`) and zero other `ESC` forms — and CSI-stripping the coloured
+  + /// capture produced output **byte-identical** to the `CARGO_TERM_COLOR=never`
+  + /// twin. So this handles CSI and nothing else.
+  + ///
+  ... (52 more lines)
+ ✓ (16.4s)
+  + /// Strip ANSI escape sequences from a single line of tool output.
+  + ///
+  + /// **Why this exists (#859).** [`parse_rust_errors`] anchors two of its three
+  + /// patterns with `strip_prefix("error[")` / `strip_prefix("error: ")`. An escape
+  + /// sequence in front of the word `error` defeats an anchor where a `contains()`
+  + /// would survive it — so a user with `color = "always"` in `.cargo/config.toml`,
+  + /// or `CARGO_TERM_COLOR=always` in CI, got **zero** parsed compiler errors and a
+  + /// fix prompt with no `--> file:line`, no source context and no category hint.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Definition without a consumer — my own rule. Wiring it now, at the single line-loop entry point:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 11 lines)
+    pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
+        let mut errors: Vec<CompilerError> = Vec::new();
+  -     let lines: Vec<&str> = output.lines().collect();
+  +     // #859: strip ANSI **once**, here, so all three patterns and every helper
+  +     // that reads `lines` (notably `extract_location`, whose `--> ` anchor is
+  +     // equally defeated by a colour code) inherit it — never per-pattern.
+  +     // `trim_start` rides along because the anchors below are not merely
+  +     // uncoloured-only, they are column-0-only; an indented diagnostic is cheap
+  +     // to survive. On uncoloured input every `Cow` is `Borrowed`, so this is
+  +     // byte-identical to the previous `output.lines().collect()`.
+  +     let stripped: Vec<std::borrow::Cow<'_, str>> = output.lines().map(strip_ansi_escapes).collect();
+  +     let lines: Vec<&str> = stripped.iter().map(|c| c.as_ref().trim_start()).collect();
+ ✓ (1m 55s)
+    pub fn parse_rust_errors(output: &str) -> Vec<CompilerError> {
+        let mut errors: Vec<CompilerError> = Vec::new();
+  -     let lines: Vec<&str> = output.lines().collect();
+  +     // #859: strip ANSI **once**, here, so all three patterns and every helper
+  +     // that reads `lines` (notably `extract_location`, whose `--> ` anchor is
+  +     // equally defeated by a colour code) inherit it — never per-pattern.
+  +     // `trim_start` rides along because the anchors below are not merely
+  +     // uncoloured-only, they are column-0-only; an indented diagnostic is cheap
+  ... (4 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch:: 2>… ✓ (933ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 14s (2 ✓)
+
+All 112 pre-existing watch tests pass unchanged. Now the tests — generating the fixture from the real captured bytes rather than hand-typing it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (21ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the literals. Let me write the tests programmatically to avoid transcription error:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct CompilerError" -… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CompilerError has no PartialEq, so I'll compare field-by-field:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (149 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch:: 2>… ✓ (27.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.3s (2 ✓)
+
+115 pass (112 pre-existing + 3 new). Now the positive control, run serially — neuter the stripper and confirm exactly the right tests go red:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/watch… (18 lines) ✓ (27.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired exactly right: exactly 2 tests red — both coloured-path tests — while all 113 others stayed green, including the near-miss guard and all 112 pre-existing tests. Restoring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/watch_backup.rs src/watc… ✓ (27.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, 115/115 green. Now the register — 3889 vs recorded 3652 is +237, past the fatal grace band:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/watch.rs"' tests/m… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/watch.rs", 3652),
+  +     ("src/watch.rs", 3889),
+ ✓ (1m 36s)
+  -     ("src/watch.rs", 3652),
+  +     ("src/watch.rs", 3889),
+  2 tools completed in 1m 40s (2 ✓)
+
+Now the code comment naming the two sibling parsers as unswept, rather than sweeping them silently:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub fn parse_typescrip… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '523,528p' src/watch.rs; … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (11.9s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/watch.rs", 3889),
+  +     ("src/watch.rs", 3912),
+ ✓ (1m 51s)
+  -     ("src/watch.rs", 3889),
+  +     ("src/watch.rs", 3912),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (370ms)
+  4 tools completed in 2m 16s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
