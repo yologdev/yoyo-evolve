@@ -1,0 +1,272 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to ground the task in what's actually there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "flags_needing_values" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_mentions\|SHORT_AL… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1625p src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1645,1740p src/help.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -- "--allowed-tools\|--o…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 400,560p src/cli.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -- "\"  --" src/help.rs … ✓ (4ms)
+  7 tools completed in 20.9s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs && grep -n '"sr… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me make the source change — hoist the list to a module-level const and add the two missing flags.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (31 → 3 lines)
+        // Validate that flags requiring values actually have them
+  -     let flags_needing_values = [
+  -         "--model",
+  -         "--editor-model",
+  -         "--provider",
+  -         "--base-url",
+  -         "--thinking",
+  -         "--max-tokens",
+  -         "--max-turns",
+  -         "--temperature",
+  -         "--skills",
+  -         "--system",
+  -         "--system-file",
+  -         "--prompt",
+  -         "-p",
+  -         "--output",
+  -         "-o",
+  -         "--api-key",
+  -         "--mcp",
+  -         "--openapi",
+  ... (13 more lines)
+ ✓ (13.9s)
+        // Validate that flags requiring values actually have them
+  -     let flags_needing_values = [
+  -         "--model",
+  -         "--editor-model",
+  -         "--provider",
+  -         "--base-url",
+  -         "--thinking",
+  -         "--max-tokens",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 326,340p src/cli.rs && ec… ✓ (6ms)
+  2 tools completed in 18.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 392,402p src/cli.rs ✓ (3ms)
+  ▶ edit src/cli.rs (8 → 75 lines)
+        "-h",
+        "--version",
+        "-V",
+  + ];
+  + 
+  + /// Every flag that consumes the token after it as its value.
+  + ///
+  + /// Read by `check_flag_values`, `warn_unknown_flags` and `collect_positional_args`
+  + /// — all three take it as a parameter, so this const is the one statement of the
+  + /// rule rather than three copies that agree today.
+  + ///
+  + /// **Why a missing entry is a silent wrong-op, not a cosmetic gap** (#862): the
+  + /// scan skips the token a value-taking flag consumes. A flag *absent* from this
+  + /// list is treated as boolean, so the next token is examined on its own — and if
+  + /// that token is another flag, the parser (`collect_repeatable_flag`,
+  + /// `args.iter().position`) swallows it as the value anyway. `--model` then never
+  + /// fires and `warn_unknown_flags` cannot warn, because from its point of view
+  + /// nothing was skipped and nothing was unknown. Silent wrong-op plus silent no-op.
+  + ///
+  + /// **Adding an entry is a narrowing, never a behaviour change for working
+  ... (53 more lines)
+ ✓ (15.6s)
+        "-h",
+        "--version",
+        "-V",
+  + ];
+  + 
+  + /// Every flag that consumes the token after it as its value.
+  + ///
+  + /// Read by `check_flag_values`, `warn_unknown_flags` and `collect_positional_args`
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1650,1670{s/warn_unknown… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 38.2s (3 ✓)
+
+Now the drift guard — the consumer of the register, in cli.rs's test module.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (6 → 320 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// True if `flag` appears in `text` as a whole token — neither side may be a
+  +     /// character that would make it part of a longer flag.
+  +     ///
+  +     /// `KNOWN_FLAGS` holds at least 8 strict-prefix pairs (`--allow` <
+  +     /// `--allow-dir`, `--output` < `--output-format`, `--continue` <
+  +     /// `--continue-on-silence`, `--trust-project` < `--trust-project-always`, …),
+  +     /// so a bare `contains` would read `--allow` as documented-with-a-placeholder
+  +     /// on the strength of `--allow-dir <d>`. Same reasoning as `help_mentions` in
+  +     /// `src/help.rs`, plus a **left** boundary it does not need: this scanner also
+  +     /// walks short aliases, and `-p` is a substring of `--prompt`.
+  +     fn flag_token_positions(text: &str, flag: &str) -> Vec<usize> {
+  +         text.match_indices(flag)
+  +             .filter(|(i, _)| {
+  +                 let left_ok = match text[..*i].chars().next_back() {
+  +                     None => true,
+  +                     Some(c) => !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+  ... (300 more lines)
+ ✓ (15.6s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     /// True if `flag` appears in `text` as a whole token — neither side may be a
+  +     /// character that would make it part of a longer flag.
+  +     ///
+  +     /// `KNOWN_FLAGS` holds at least 8 strict-prefix pairs (`--allow` <
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.8s (2 ✓)
+
+Clippy is green. Now let's see the census — this is the deliverable.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo cli::tests… ✓ (1m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo flag_value… ✓ (147ms)
+  2 tools completed in 1m 12s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census: 60 flags, 29 scanned, 29 documented with a placeholder, direction A = 0, direction B = 0. Now the positive controls — serially, one file-mutating control at a time.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (4 lines) ✓ (24.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A passing control is a failed control. Let me check whether the edit actually landed before concluding anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff /tmp/cli.bak src/cli.rs; ec… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control mutated the wrong list — it hit KNOWN_FLAGS (line 386), not FLAGS_NEEDING_VALUES (line 447). An unrun control, not a pass. Restoring and targeting the right line.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.bak src/cli.rs && se… ✓ (23.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control (a) fires correctly — fatal, names the flag, prints both remedies verbatim. Now the exact flag the task named:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.… (6 lines) ✓ (1m 8s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control (a) proven: exactly 2 tests red (drift guard + by-name pin), 233 green including every near-miss. Restore, then control (b) — the anti-vacuous branch.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.… (9 lines) ✓ (1m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control (b) proven. Restore, then prove the third branch — the ratchet — since shipping an unverified branch is the exact trap.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.… (5 lines) ✓ (24.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.… (5 lines) ✓ (25.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 57.4s (2 ✓)
+
+All four branches proven. Restore and run the full gate.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.bak src/cli.rs && wc… ✓ (1m 52s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5336 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired exactly as the task file predicted — the register must be paid, not absorbed.
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 4967),
+  +     ("src/cli.rs", 5349),
+ ✓ (1m 43s)
+  -     ("src/cli.rs", 4967),
+  +     ("src/cli.rs", 5349),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 31s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 20s (2 ✓)
+
+All four checks green. Now the end-to-end proof with the real binary — the issue's own reproduction:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ec… ✓ (912ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== near-miss: normal invo… ✓ (770ms)
+  2 tools completed in 10.1s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/cli.rs
+
