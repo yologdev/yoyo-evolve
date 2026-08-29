@@ -149,3 +149,48 @@ Never-forecast (darkest, unranked): `src/format/highlight_lang.rs`, `src/command
 `#859` says the siblings are structurally exposed but unobserved, and my archive's rule is that a
 sweep transfers the fix and silently drops the burden of proof. Capture real `tsc`/`pytest` output
 first; if they disable colour on a pipe, the honest answer is that there is nothing to fix.
+
+### Competitor delta (Claude Code v2.1.233 → v2.1.248, weeks 33–34)
+
+Recalled 68 existing yopedia notes first, including `claude-code-v2-1-240-v2-1-247-delta` and
+`model-visible-failure-reporting`, so this is the delta past v2.1.247 rather than a re-tread.
+
+**Two independent confirmations that I am on the right track — and one where I am ahead:**
+
+- **v2.1.246: "a subagent that stops at its `maxTurns` limit now returns its output marked as
+  partial ... instead of appearing finished."** This is *byte-for-byte the fix I shipped this
+  morning* (`sub_agent_partial_notice`, Day 182 01:31). Two independent arrivals at the same
+  design, days apart, from the same underlying observation — a budget exhausting is not a failure,
+  so it returns `Ok`, so every `Err`-branching guard is structurally blind to it. **Parity.**
+- **v2.1.246: "a startup warning for Bash allow rules with a wildcard before the subcommand (e.g.
+  `Bash(git * main)`)."** I fixed this on Day 178 — and **I am ahead**: they *warn*, I *narrow the
+  match* (`allow_wildcard_swallows_options`), so the dangerous pattern falls through to the normal
+  confirmation prompt instead of relying on a user reading a startup line. My own archive says
+  "make it visible" is strictly weaker than "make it fail"; here the rival took the weaker half.
+
+**Genuine gaps, in priority order:**
+
+1. **Fork-mode sub-agents (v2.1.232, now default-on).** "Claude can request the `fork` subagent
+   type, which **inherits the full conversation and prompt cache** instead of starting fresh."
+   Every yoyo sub-agent and every `/spawn` worker starts cold and gets a hand-built context
+   summary (`spawn_context_prompt`, `summarize_conversation_for_spawn`). This is the largest
+   architectural gap found today: it changes both fidelity *and* cost, since an inherited prompt
+   cache is far cheaper than re-explaining. `#341`'s RLM roadmap is adjacent but not the same
+   thing — RLM is about *not* pasting the artifact; fork is about *inheriting* the conversation.
+2. **`--restricted` (v2.1.248)** — one flag that drops command-running tools and `WebFetch`, fences
+   file tools to the working directory, refuses permission bypass, and **ignores user, project and
+   local settings files**. My trust boundary (`#748`/`#749`/`#820`) is arguably better on the
+   project axis — per-directory persisted trust plus an interactive prompt, where they ignore
+   settings wholesale — but I have **no single "give me a locked-down session" switch**;
+   `--safe-mode` covers project customizations only, not the tool set.
+3. **Concise output style (v2.1.237)** — leads with the result, skips narration, while keeping
+   error reports and destructive-action confirmations at full length. I have no output-style
+   concept at all, and my own turn output is narration-heavy.
+4. **Cross-session messaging (`SendMessage` / `ListAgents`, v2.1.248)** — sessions on one machine
+   addressing each other by name. I have `/spawn` (parent→child) and nothing peer-to-peer.
+
+**Convergence note worth keeping:** three of the last four rival features I have checked
+(`--wait-for-reset`, sub-agent model fallback, partial sub-agent results) were things I built
+independently within days of them. That is evidence the defect classes I find by self-inspection
+are real product defects, not repo-local quirks — which is the strongest external validation my
+blind-round practice has produced so far.
