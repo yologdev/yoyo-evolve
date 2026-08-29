@@ -543,8 +543,20 @@ fn categorize_ts_message(msg: &str) -> ErrorCategory {
 pub fn parse_typescript_errors(output: &str) -> Vec<CompilerError> {
     let mut errors: Vec<CompilerError> = Vec::new();
 
-    for line in output.lines() {
-        let trimmed = line.trim();
+    for raw_line in output.lines() {
+        // #861: strip ANSI *before* any anchor below runs. `tsc` emits CSI
+        // colour codes whenever it believes it is talking to a terminal —
+        // `"pretty": true` in tsconfig.json, `FORCE_COLOR`, or a real TTY —
+        // and an escape sitting in front of an anchored token defeats every
+        // `strip_prefix` / `starts_with` / `find` in this loop. Applied at
+        // this ONE site rather than per-pattern so every helper reading these
+        // lines inherits it: a per-pattern fix restores the error and still
+        // loses the `file`/`line`, because the location anchors are defeated
+        // by exactly the same mechanism. This is #859's reasoning verbatim,
+        // one parser over. A line with no ESC returns `Cow::Borrowed` and is
+        // byte-identical, which is the entire regression surface.
+        let stripped_line = strip_ansi_escapes(raw_line);
+        let trimmed = stripped_line.trim();
 
         // Pattern 1: tsc format — `path(line,col): error TSxxxx: message`
         // Also matches: `path(line,col): warning TSxxxx: message`
@@ -582,6 +594,59 @@ pub fn parse_typescript_errors(output: &str) -> Vec<CompilerError> {
                                 message: msg.to_string(),
                                 file: Some(file),
                                 line: line_num,
+                                category,
+                            });
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pattern 1b: tsc --pretty format — `path:line:col - error TSxxxx: message`
+        // Structurally different from Pattern 1: the location is
+        // colon-separated rather than parenthesised, and the separator before
+        // the severity word is ` - `, not `): `. This is what a user gets with
+        // `"pretty": true` in tsconfig.json (a common setting), with
+        // FORCE_COLOR set, or on a real TTY. Measured Day 182: stripping ANSI
+        // alone still yielded ZERO errors from this shape, so the escapes and
+        // the line shape are two independent defects and both are needed.
+        if let Some((sep_pos, sep)) = trimmed
+            .find(" - error ")
+            .map(|i| (i, " - error "))
+            .or_else(|| trimmed.find(" - warning ").map(|i| (i, " - warning ")))
+        {
+            let loc = &trimmed[..sep_pos];
+            let rest = &trimmed[sep_pos + sep.len()..];
+            if let Some(colon) = rest.find(": ") {
+                let code_part = &rest[..colon];
+                if code_part.starts_with("TS") {
+                    let msg = rest[colon + 2..].trim();
+                    // `file:line:col` — split from the RIGHT so a Windows
+                    // drive letter (`C:\src\app.ts:1:7`) keeps its own colon.
+                    let mut loc_parts = loc.rsplitn(3, ':');
+                    let col = loc_parts.next().and_then(|s| s.trim().parse::<u32>().ok());
+                    let line_num = loc_parts.next().and_then(|s| s.trim().parse::<u32>().ok());
+                    let file = loc_parts.next().map(|s| s.trim().to_string());
+                    // Require BOTH numbers to parse: that is what stops an
+                    // ordinary prose line containing " - error TS" from being
+                    // mistaken for a diagnostic.
+                    if let (Some(_), Some(line_num), Some(file)) = (col, line_num, file) {
+                        if !file.is_empty() {
+                            let category = {
+                                let cat = categorize_ts_code(code_part);
+                                if cat == ErrorCategory::Other {
+                                    categorize_ts_message(msg)
+                                } else {
+                                    cat
+                                }
+                            };
+
+                            errors.push(CompilerError {
+                                code: Some(code_part.to_string()),
+                                message: msg.to_string(),
+                                file: Some(file),
+                                line: Some(line_num),
                                 category,
                             });
                             continue;
@@ -3375,6 +3440,146 @@ src/api.ts(20,7): error TS6133: 'unused' is declared but its value is never read
         assert_eq!(errors[1].category, ErrorCategory::Syntax);
         // TS6133 → Unused
         assert_eq!(errors[2].category, ErrorCategory::Unused);
+    }
+
+    /// Real `tsc --noEmit` output, piped (no TTY). Captured verbatim on
+    /// 2026-08-29 from TypeScript 7.0.2 / node v22.23.2. This is the shape
+    /// yoyo's own watch loop sees, and it carries NO escape bytes.
+    const TSC_PLAIN_CAPTURE: &str = "bad.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\nbad.ts(2,33): error TS2322: Type 'number' is not assignable to type 'string'.\n";
+
+    /// Real `tsc --pretty --noEmit` output, captured verbatim in the same run.
+    /// `FORCE_COLOR=1 tsc --noEmit` produced a byte-identical string. Note the
+    /// line shape differs from the plain capture (`file:line:col - error` vs
+    /// `file(line,col): error`) *and* it carries CSI colour codes — two
+    /// independent defects, which is why both halves of the #861 fix exist.
+    const TSC_PRETTY_CAPTURE: &str = "\x1b[96mbad.ts\x1b[0m:\x1b[93m1\x1b[0m:\x1b[93m7\x1b[0m - \x1b[91merror\x1b[0m\x1b[90m TS2322: \x1b[0mType 'string' is not assignable to type 'number'.\n\n\x1b[7m1\x1b[0m const n: number = \"hello\";\n\x1b[7m \x1b[0m \x1b[91m      ~\x1b[0m\n\n\x1b[96mbad.ts\x1b[0m:\x1b[93m2\x1b[0m:\x1b[93m33\x1b[0m - \x1b[91merror\x1b[0m\x1b[90m TS2322: \x1b[0mType 'number' is not assignable to type 'string'.\n\n\x1b[7m2\x1b[0m function f(a: number): string { return a; }\n\x1b[7m \x1b[0m \x1b[91m                                ~~~~~~\x1b[0m\n\n\nFound 2 errors in the same file, starting at: bad.ts\x1b[90m:1\x1b[0m\n\n";
+
+    /// #861: the coloured/pretty capture must parse. Before this fix it
+    /// yielded ZERO errors, so `build_watch_fix_prompt` handed the fix agent a
+    /// blank page — and `scripts/evolve.sh` then spends up to 10 more attempts
+    /// on that blank page. Asserted at the emission point (the
+    /// `Vec<CompilerError>` a caller receives), never on the stripper below.
+    #[test]
+    fn parse_typescript_errors_reads_the_real_pretty_coloured_capture() {
+        // Anti-vacuous: a transcription slip that dropped the escapes would
+        // make this test pass by agreeing with itself.
+        assert!(
+            TSC_PRETTY_CAPTURE.contains('\u{1b}'),
+            "fixture must really carry escape bytes, or it proves nothing"
+        );
+
+        let errors = parse_typescript_errors(TSC_PRETTY_CAPTURE);
+        assert_eq!(errors.len(), 2, "should parse both errors: {errors:?}");
+
+        assert_eq!(errors[0].code.as_deref(), Some("TS2322"));
+        assert_eq!(errors[0].file.as_deref(), Some("bad.ts"));
+        assert_eq!(errors[0].line, Some(1));
+        assert_eq!(
+            errors[0].message,
+            "Type 'string' is not assignable to type 'number'."
+        );
+        assert_eq!(errors[0].category, ErrorCategory::Type);
+
+        assert_eq!(errors[1].code.as_deref(), Some("TS2322"));
+        assert_eq!(errors[1].file.as_deref(), Some("bad.ts"));
+        assert_eq!(errors[1].line, Some(2));
+        assert_eq!(
+            errors[1].message,
+            "Type 'number' is not assignable to type 'string'."
+        );
+
+        // No escape byte may survive into any stored field: these go straight
+        // into an API prompt, where escapes are pure token waste.
+        for e in &errors {
+            assert!(
+                !e.message.contains('\u{1b}'),
+                "escape leaked into message: {:?}",
+                e.message
+            );
+            assert!(
+                !e.file.as_deref().unwrap_or("").contains('\u{1b}'),
+                "escape leaked into file: {:?}",
+                e.file
+            );
+            assert!(
+                !e.code.as_deref().unwrap_or("").contains('\u{1b}'),
+                "escape leaked into code: {:?}",
+                e.code
+            );
+        }
+    }
+
+    /// Near-miss guard, and the half that matters: the plain piped capture is
+    /// the path yoyo actually takes and was ALREADY correct before #861. It
+    /// must stay byte-identical — a discriminator tested only on the side that
+    /// fires is vacuous green.
+    #[test]
+    fn parse_typescript_errors_plain_capture_is_byte_identical() {
+        assert!(
+            !TSC_PLAIN_CAPTURE.contains('\u{1b}'),
+            "the piped capture must NOT carry escapes, or it is not the plain shape"
+        );
+
+        let errors = parse_typescript_errors(TSC_PLAIN_CAPTURE);
+        assert_eq!(errors.len(), 2, "should parse both errors: {errors:?}");
+        assert_eq!(errors[0].code.as_deref(), Some("TS2322"));
+        assert_eq!(errors[0].file.as_deref(), Some("bad.ts"));
+        assert_eq!(errors[0].line, Some(1));
+        assert_eq!(
+            errors[0].message,
+            "Type 'string' is not assignable to type 'number'."
+        );
+        assert_eq!(errors[1].line, Some(2));
+        assert_eq!(
+            errors[1].message,
+            "Type 'number' is not assignable to type 'string'."
+        );
+    }
+
+    /// The two captures describe the same two errors, so the parser must agree
+    /// about them. Strictly stronger than either test alone: this fails both
+    /// when colour HIDES an error and when the pretty branch INVENTS one.
+    #[test]
+    fn parse_typescript_errors_pretty_and_plain_agree() {
+        let plain = parse_typescript_errors(TSC_PLAIN_CAPTURE);
+        let pretty = parse_typescript_errors(TSC_PRETTY_CAPTURE);
+        assert_eq!(
+            plain.len(),
+            pretty.len(),
+            "same errors, different rendering: {plain:?} vs {pretty:?}"
+        );
+        for (p, c) in plain.iter().zip(pretty.iter()) {
+            assert_eq!(p.code, c.code);
+            assert_eq!(p.file, c.file);
+            assert_eq!(p.line, c.line);
+            assert_eq!(p.message, c.message);
+            assert_eq!(p.category, c.category);
+        }
+    }
+
+    /// The pretty branch must not fire on prose that merely contains the
+    /// marker: both location numbers have to parse. Near-miss guard against
+    /// the over-matching direction.
+    #[test]
+    fn parse_typescript_errors_pretty_branch_needs_real_line_and_col() {
+        let not_a_diagnostic = "see also:foo:bar - error TS9999: this is prose\n";
+        let errors = parse_typescript_errors(not_a_diagnostic);
+        assert!(
+            errors.is_empty(),
+            "prose must not parse as a diagnostic: {errors:?}"
+        );
+    }
+
+    /// A Windows path keeps its drive-letter colon: the location is split from
+    /// the right, so `C:\src\app.ts:12:5` yields the whole path as the file.
+    #[test]
+    fn parse_typescript_errors_pretty_windows_path_keeps_drive_letter() {
+        let output = "C:\\src\\app.ts:12:5 - error TS2304: Cannot find name 'Foo'.\n";
+        let errors = parse_typescript_errors(output);
+        assert_eq!(errors.len(), 1, "should parse one error: {errors:?}");
+        assert_eq!(errors[0].file.as_deref(), Some("C:\\src\\app.ts"));
+        assert_eq!(errors[0].line, Some(12));
+        assert_eq!(errors[0].code.as_deref(), Some("TS2304"));
     }
 
     // -----------------------------------------------------------------------
