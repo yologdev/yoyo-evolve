@@ -237,6 +237,15 @@ fn categorize_message(msg: &str) -> ErrorCategory {
 /// exercises is a claim no test can grade. If they ever appear, an `ESC ]` will
 /// survive into the message; it will not panic and it will not swallow the line.
 ///
+/// **The sibling parsers are NOT swept, deliberately (#861).**
+/// [`parse_typescript_errors`] and [`parse_python_errors`] anchor the same way
+/// (`strip_prefix`/`starts_with` on a trimmed line), so they are structurally
+/// exposed to the same mechanism — but that is read off the source, **not
+/// observed**: no capture of `tsc`, `eslint`, `pytest` or `mypy` output exists,
+/// and several tools disable colour on a pipe by default, which is exactly why
+/// it is worth checking rather than assuming. A sweep would transfer the fix and
+/// silently drop the burden of proof, so the gap is filed as #861 instead.
+///
 /// An **unterminated** CSI at end of line (no final byte) drops the escape
 /// introducer and keeps the remaining bytes, rather than swallowing the rest of
 /// the line silently — a truncated capture should lose the escape, not the text.
