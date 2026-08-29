@@ -1963,6 +1963,21 @@ fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<St
 
     let mut broke = std::collections::HashSet::new();
     for entry in entries {
+        // Day 182 (found by blind round 86): the SAME guard the `touches` loop
+        // above already carries. Harness bookkeeping was barred from
+        // CORROBORATING a breakage claim and not from MAKING one — one
+        // asymmetry away from the revert-anchor defect round 86 had just fixed,
+        // in the same function. Tier 2 mostly hid it (a mechanical commit's own
+        // files still need `touches >= 2`, and mechanical entries never raise
+        // `touches`, so it cannot manufacture its own corroboration); tier 1 did
+        // not, because a revert claim skips corroboration entirely. `git revert`
+        // of the harness's own `cargo fmt` commit writes `Revert "... cargo
+        // fmt"`, which leads with the verb and names exactly the `src/` files
+        // the task touched. One predicate, one statement — deliberately not a
+        // second filter or a variant of it.
+        if is_mechanical_commit(&entry.message) {
+            continue;
+        }
         let is_revert = message_claims_revert(&entry.message);
         if !is_revert && !message_claims_repair(&entry.message) {
             continue;
@@ -3866,6 +3881,77 @@ src/plain rs file.rs
                  needs no second touch); got {broke:?}"
             );
         }
+    }
+
+    /// Day 182, found by blind round 86 — `classify_broke_files` runs TWO loops
+    /// over the same entries and only one of them filtered harness bookkeeping.
+    /// The `touches` loop (tier-2 corroboration) opened with
+    /// `if is_mechanical_commit(...) { continue; }`; the `broke` loop that
+    /// actually books a file as breakage had no such check. So a harness-written
+    /// commit was barred from CORROBORATING a claim but not from MAKING one.
+    ///
+    /// Pinned at the EMISSION POINT — the `HashSet` a caller receives, never
+    /// `is_mechanical_commit` one layer below.
+    ///
+    /// The fixture is what `git revert` writes verbatim when the harness's own
+    /// `cargo fmt` commit is undone: `Revert "<original subject>"`. It leads
+    /// with the verb, so it trips tier 1, which skips corroboration entirely —
+    /// and a fmt commit touches exactly the `src/` files the task touched, so
+    /// every one of them was booked as breakage on a single mechanical touch.
+    #[test]
+    fn test_mechanical_commit_cannot_accuse_through_tier_one() {
+        let entries = vec![entry(
+            "aaa1111 Revert \"Day 163 (10:25): cargo fmt\"",
+            &["src/commands_todo.rs"],
+        )];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            !broke.contains("src/commands_todo.rs"),
+            "harness bookkeeping is barred from corroborating a breakage claim, so it must \
+             not be able to MAKE one either; got {broke:?}"
+        );
+    }
+
+    /// Near-miss guard 1 for the test above: the SAME file and the same single
+    /// touch, differing only in whether the subject is harness bookkeeping. A
+    /// discriminator tested only on the side that fires is vacuous green, and
+    /// tier 1 is the branch that must not regress — a genuine revert is still
+    /// breakage evidence on its own.
+    #[test]
+    fn test_a_real_revert_still_accuses_on_a_single_touch() {
+        let entries = vec![entry(
+            "aaa1111 Revert \"Day 163 (10:25): add the todo list verb\"",
+            &["src/commands_todo.rs"],
+        )];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.contains("src/commands_todo.rs"),
+            "a genuine revert of real work is tier-1 evidence needing no second touch; \
+             got {broke:?}"
+        );
+    }
+
+    /// Near-miss guard 2: the tier-2 path is untouched. Two real (non-mechanical)
+    /// commits touch the file and one claims a repair, so corroboration is met
+    /// and the file is still booked. This fix is a NARROWING of who may accuse;
+    /// it changes nothing about the corroboration threshold.
+    #[test]
+    fn test_tier_two_corroboration_still_books_a_real_repair() {
+        let entries = vec![
+            entry(
+                "0000aaa Day 163 (09:00): add the parser",
+                &["src/parser.rs"],
+            ),
+            entry(
+                "abc1234 Day 163 (10:25): fix: handle empty input",
+                &["src/parser.rs"],
+            ),
+        ];
+        let broke = classify_broke_files(&entries);
+        assert!(
+            broke.contains("src/parser.rs"),
+            "two real commits, one claiming a repair, still corroborate; got {broke:?}"
+        );
     }
 
     #[test]
