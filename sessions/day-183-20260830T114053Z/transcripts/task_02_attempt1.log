@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the error-classification chain before writing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/prompt_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry.rs\|prompt… ✓ (2ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Let me read the actual classification chain.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,340p' src/prompt.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error\|… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '845,915p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,420p' src/prompt_ret… ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:846..916  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:398..458 ✓ (1ms)
+ ✓ (2ms)
+  6 tools completed in 12.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read the chain. Now let me look at the existing emission-point test helper so my table can use the real path.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2612,2740p' src/prompt.r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the measurement. Let me gather real observed strings from the sources the task names.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== PR… (17 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "stream ended\|unexpect… ✓ (28ms)
+ ✓ (144ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== PROVIDER_ERROR_RE ==="… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YA=$(ls -d ~/.cargo/registry/src… ✓ (13ms)
+  4 tools completed in 14.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'name = "yoagent"' Carg… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YA=~/.cargo/registry/src/index.c… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.2s (2 ✓)
+
+I have the authority now. yoagent 0.18.1's ProviderError is the producer (agent_loop.rs:1139 → error_message: Some(e.to_string())), and CLAUDE.md's verbatim Rate limited, retry after Some(14454000)ms matches its #[error(...)] exactly — that cross-check confirms the chain. Let me write the measurement as a pinned table test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YA=~/.cargo/registry/src/index.c… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Stop condition looks met — but let me prove it by running the table rather than reasoning. Writing the measurement as a pinned test at the emission point:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_benign_stream_e… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll add the table test at the emission point.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (5 → 142 lines)
+            assert!(state.fatal_error.is_none());
+            assert!(matches!(state.into_result(), PromptResult::Done { .. }));
+  +     }
+  + 
+  +     /// Name the `PromptResult` variant so the table below can `assert_eq!` on a
+  +     /// verdict instead of a `matches!` that silently accepts the wrong arm.
+  +     fn result_label(r: &PromptResult) -> &'static str {
+  +         match r {
+  +             PromptResult::Done { .. } => "Done",
+  +             PromptResult::RetriableError { .. } => "RetriableError",
+  +             PromptResult::FatalError { .. } => "FatalError",
+  +             PromptResult::ContextOverflow { .. } => "ContextOverflow",
+  +         }
+  +     }
+  + 
+  +     /// Classify one `StopReason::Error` shape at the emission point — the
+  +     /// `PromptResult` a caller of `handle_agent_end` receives, never a
+  +     /// predicate one layer below.
+  +     fn classify_shape(error_message: Option<&str>) -> &'static str {
+  +         let mut state = state_for_test();
+  ... (122 more lines)
+ ✓ (1m 47s)
+            assert!(state.fatal_error.is_none());
+            assert!(matches!(state.into_result(), PromptResult::Done { .. }));
+  +     }
+  + 
+  +     /// Name the `PromptResult` variant so the table below can `assert_eq!` on a
+  +     /// verdict instead of a `matches!` that silently accepts the wrong arm.
+  +     fn result_label(r: &PromptResult) -> &'static str {
+  +         match r {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --bin yoy… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --bin yoy… ✓ (156ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 58s (3 ✓)
+
+The table passes — truncation lands in `RetriableError`, not fatal. Now the second test:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --bin yoy… ✓ (129ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both green. A table that passes first try must be proven capable of failing — running the positive control, serially (one file mutation at a time):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (10 lines) ✓ (24.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fires with the right receipt. Now — with the control still applied — confirm the near-miss guards stay green (the direction that proves they test the pass-through):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --bin yoy… ✓ (131ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5 near-miss guards stay green under the control — exactly the right direction. Restoring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/pr.bak src/prompt_retry.… ✓ (24.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored byte-identically. Now the landmine — the module-size gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/prompt_r… ✓ (9.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired exactly as warned, with its pasteable remedy. Applying it (prompt_retry.rs is unchanged at 2042 — restored byte-identically):
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/prompt.rs", 3372),
+  +     ("src/prompt.rs", 3509),
+ ✓ (1m 22s)
+  -     ("src/prompt.rs", 3372),
+  +     ("src/prompt.rs", 3509),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 cargo test --test mo… ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Gate green. Let me confirm zero warnings actually emitted (those matches were test names), then run the full gates:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- gate stderr (should be… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo clippy --all-t… ✓ (14.9s)
+  2 tools completed in 18.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
