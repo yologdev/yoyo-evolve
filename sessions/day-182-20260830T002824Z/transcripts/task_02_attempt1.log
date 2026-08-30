@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by re-deriving the numbers myself — the issue's scope has already been wrong once.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("git")' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("git")' s… ✓ (10ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Let me look at a sibling gate for shape, and determine which sites are in test regions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/orphan_modules.rs te…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (5 lines) ✓ (8ms)
+ ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (4 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (76ms)
+  4 tools completed in 16.0s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (7ms)
+ ✓ (78ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Clean tree — nothing written yet. Let me get the full site list with enclosing functions and the reason each bypasses.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (77ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk -F'|' '{printf "%02d >> %s @… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.0s (2 ✓)
+
+11 bypasses + 1 chokepoint. Let me read each site to write honest reasons.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1275,1310p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== search 128-142" && sed… ✓ (7ms)
+ ✓ (7ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1280,1300p' src/commands… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '8,20p' src/git.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.8s (2 ✓)
+
+Now I have everything. Writing the gate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (652 lines) ✓ (295ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (1 → 1 lines)
+  -         let v = classify(&[s.clone()], &[]);
+  +         let v = classify(std::slice::from_ref(&s), &[]);
+ ✓ (1m 1s)
+  -         let v = classify(&[s.clone()], &[]);
+  +         let v = classify(std::slice::from_ref(&s), &[]);
+  2 tools completed in 1m 6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (257ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fires correctly — both branches. Two fixes: paths must be repo-relative, and the register key is (path, fn) so a fn with two sites needs one entry covering both.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (2 → 3 lines)
+  - fn scan_src(root: &Path) -> Scan {
+  + fn scan_src(repo_root: &Path) -> Scan {
+  +     let root = repo_root.join("src");
+        let needle = git_command_needle();
+ ✓ (1m 1s)
+  - fn scan_src(root: &Path) -> Scan {
+  + fn scan_src(repo_root: &Path) -> Scan {
+  +     let root = repo_root.join("src");
+        let needle = git_command_needle();
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (1 → 1 lines)
+  -     let mut stack = vec![root.to_path_buf()];
+  +     let mut stack = vec![root.clone()];
+ ✓ (1m 0s)
+  -     let mut stack = vec![root.to_path_buf()];
+  +     let mut stack = vec![root.clone()];
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (3 → 6 lines)
+                files += 1;
+  -             let rel = path.to_string_lossy().replace('\\', "/");
+  -             let rel = rel.trim_start_matches("./").to_string();
+  +             let rel = path
+  +                 .strip_prefix(repo_root)
+  +                 .unwrap_or(&path)
+  +                 .to_string_lossy()
+  +                 .replace('\\', "/");
+ ✓ (1m 1s)
+                files += 1;
+  -             let rel = path.to_string_lossy().replace('\\', "/");
+  -             let rel = rel.trim_start_matches("./").to_string();
+  +             let rel = path
+  +                 .strip_prefix(repo_root)
+  +                 .unwrap_or(&path)
+  +                 .to_string_lossy()
+  +                 .replace('\\', "/");
+  3 tools completed in 3m 9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'scan_src\|CARGO_MANIFES… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (2 → 2 lines)
+  -     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+  -     let scan = scan_src(&root);
+  +     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+  +     let scan = scan_src(root);
+ ✓ (1m 13s)
+  -     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+  -     let scan = scan_src(&root);
+  +     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+  +     let scan = scan_src(root);
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 18s (2 ✓)
+
+Now the register: the key is (path, fn), so a fn with two sites needs one entry covering both. Merging the six commands_search.rs entries into three.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (37 → 22 lines)
+  -     (
+  -         "src/commands_search.rs",
+  -         "run_grep (is-inside-work-tree probe)",
+  -         "a .status() probe with both stdout and stderr nulled; the chokepoint has no \
+  -          status-only helper and no stdio control, and routing it through .output() would \
+  -          change what the probe costs and what it captures.",
+  -     ),
+  -     (
+  -         "src/commands_search.rs",
+  -         "run_grep (git grep builder)",
+  -         "builds its argv incrementally (cmd.arg(..) under conditionals for -i, -c, pattern \
+  -          and path), which the chokepoint's &[&str] arg-slice signature cannot express \
+  -          without materialising every combination.",
+  -     ),
+  -     (
+  -         "src/commands_search.rs",
+  -         "run_grep_count (is-inside-work-tree probe)",
+  -         "same .status() probe with nulled stdio as run_grep's; no status-only chokepoint \
+  -          helper exists.",
+  -     ),
+  ... (30 more lines)
+ ✓ (1m 23s)
+  -     (
+  -         "src/commands_search.rs",
+  -         "run_grep (is-inside-work-tree probe)",
+  -         "a .status() probe with both stdout and stderr nulled; the chokepoint has no \
+  -          status-only helper and no stdio control, and routing it through .output() would \
+  -          change what the probe costs and what it captures.",
+  -     ),
+  -     (
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (252ms)
+  2 tools completed in 1m 26s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green, and the census prints on a passing run. Let me make the census report both numbers (11 sites named by 8 entries) since one entry covers every site in its fn.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (22 → 26 lines)
+            "\ngit-chokepoint gate census (Day 182, 2026-08-29):\n  \
+             {} files scanned under src/\n  \
+             {} total Command::new(\"git\") sites\n  \
+  -          {} in non-test regions ({} at the src/git.rs chokepoint, {} registered bypasses)\n  \
+  +          {} in non-test regions: {} at the src/git.rs chokepoint, {} bypass sites named by \
+  +          {} register entries\n  \
+             {} in test regions ({} of them production code placed after a test module)\n\
+             limits: (1) textual match only — a git invocation built through a variable, a \
+             PathBuf or an env-driven path is invisible; (2) it cannot tell a harmful bypass \
+             from a harmless one, which is why every register entry carries a human-written \
+             reason; (3) files are truncated at the module-level #[cfg(test)] mod marker, so \
+  -          production code after that module is unscanned.\n\
+  +          production code after that module is unscanned; (4) the key is (path, fn), so one \
+  +          entry covers EVERY site in that fn — a second bypass added to an already-registered \
+  +          fn is inherited silently.\n\
+             it enumerates the bypasses; it does not fix them (#864 stays open on the per-site \
+             work).",
+            scan.files,
+  ···
+            scan.non_test_sites.len(),
+  ... (6 more lines)
+ ✓ (1m 23s)
+            "\ngit-chokepoint gate census (Day 182, 2026-08-29):\n  \
+             {} files scanned under src/\n  \
+             {} total Command::new(\"git\") sites\n  \
+  -          {} in non-test regions ({} at the src/git.rs chokepoint, {} registered bypasses)\n  \
+  +          {} in non-test regions: {} at the src/git.rs chokepoint, {} bypass sites named by \
+  +          {} register entries\n  \
+             {} in test regions ({} of them production code placed after a test module)\n\
+             limits: (1) textual match only — a git invocation built through a variable, a \
+  ... (13 more lines)
+
+Now the four positive controls, one at a time. Control 1: delete a register entry → branch 1 fatal.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp tests/git… (11 lines) ✓ (556ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired — branch 1, pasteable remedy, repo-relative path. Restore, then control 2 (ratchet).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate.bak tests/git_choke… ✓ (504ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (544ms)
+  2 tools completed in 4.8s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5356 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_struct_...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That failure is control 2 firing exactly as designed — the bogus entry I injected. Restoring and confirming green.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate.bak tests/git_choke… ✓ (552ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Backup is post-census-edit. Control 3: an entry with an empty reason → fatal.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (508ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 3 fired on both guards. Restore, then control 4: neuter the scanner → anti-vacuous branch.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate… (8 lines) ✓ (483ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four controls fired for their stated reasons, run serially. Restoring.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/gate.bak tests/git_choke… ✓ (1.7s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

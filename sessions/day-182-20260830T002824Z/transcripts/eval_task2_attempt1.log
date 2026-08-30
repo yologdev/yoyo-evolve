@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_chokepoint" CLAUDE.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 --name-only… ✓ (4ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 13.2s (4 ✓)
+
+CLAUDE.md was not touched. Let me verify the gate itself works and check the census.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo test --test gi… ✓ (250ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate works correctly (census: 94 files, 70 sites, 11 bypasses named by 8 entries, all 13 tests green including both fatal branches against fabricated inputs). But CLAUDE.md is entirely untouched — grep git_chokepoint CLAUDE.md returns nothing, and the commit contains only one file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 22s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_2.md … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_2.md. Evaluation complete — no code modified.
+
+## Verdict: FAIL
+
+What I verified:
+
+| Check | Result | Evidence |
+|---|---|---|
+| intent_alignment | PASS | Ran cargo test --test git_chokepoint → 13/13 green |
+| forgotten_touchpoints | PASS | Every new item consumed in-file; no cross-file changes |
+| doc_sync | FAIL | grep git_chokepoint CLAUDE.md → nothing; commit is 1 file |
+| product_surface | N/A | tests/ only, src/ untouched |
+
+The gate itself is good work. It matches the spec closely:
+• Two opposite branches (Unregistered / `RegisteredDebtPaid) plus EmptyReason`
+• Anti-vacuous total_sites > 0 asserted first
+• Pure classify() with all I/O in scan_src — both fatal branches proven against fabricated inputs
+• Needle and #[cfg(test)] marker assembled at runtime (cannot self-match)
+• Truncation correctly keyed on *attribute line + column-0 mod*, pinned by a test — this is the subtle one the task warned about, and it's right (a bare `#[cfg(test)]` split would blank `src/git.rs` at line 8 and make the chokepoint exemption vacuous)
+• No brace-scanner copy (#835 respected)
+• Census printed through a raw stderr handle: **94 files, 70 sites, 1 chokepoint, 11 bypasses, 58 test-region, 0 after-test-module**
+
+It even discloses an honest limit the task didn't ask for — limit (4), that the (path, fn) key means 8 entries cover 11 sites, so a second bypass in an already-registered fn is inherited silently.
+
+Why it still fails: the task named exactly two files and dedicated Step 4 to CLAUDE.md. That step was skipped entirely. This isn't cosmetic in this repo — CLAUDE.md is re-injected as authoritative context every session, all seven sibling gates are documented there, and the dated census now lives only in the stderr of a passing test. That is precisely the "visible but never read" failure mode documented for tests/module_size.rs branch 2, which cost eight days of silent drift.
+
+The remedy is small: one paragraph beside the seven siblings carrying the measured reason (#863's 14 free consumers vs 11 silent bypasses), the two directions, the dated census, and the three stated limits — plus the honest note that this enumerates the bypasses and #864 stays open on the per-site work.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
