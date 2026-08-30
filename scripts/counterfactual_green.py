@@ -33,14 +33,39 @@ verbatim (`score < 0.3` was unreachable, so `retire` never fired across 16 event
 state below therefore carries its own self-test row: reachability is *asserted*, not
 assumed.
 
-FIVE STATES, NONE FOLDED INTO ANOTHER
--------------------------------------
+SIX STATES, NONE FOLDED INTO ANOTHER
+------------------------------------
 `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
 tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
 (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
-here), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), which is never
-folded into any verdict — the same refusal the pre-push hook and `CiScan`'s could-not-run
-branch already make.
+here), `BASELINE_RED` (see below), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout
+failure), which is never folded into any verdict — the same refusal the pre-push hook and
+`CiScan`'s could-not-run branch already make.
+
+THE BASELINE GATE, AND WHY IT IS NOT OPTIONAL
+---------------------------------------------
+The first version of this tool ran pre-task `tests/` against post-task `src/` and read the
+result. It never established that those pre-task tests passed against pre-task `src/`.
+Without that baseline an `UNEARNED` verdict is **unfalsifiable**: a flaky test, environment
+drift, a feature-gated file or a shallow-clone artifact produces exactly the same red as a
+genuine unearned green, and it would have been published as a finding.
+
+So the parent is run **whole** first — pre-task `tests/` AND pre-task `src/` — through the
+same worktree, the same `cargo test`, the same `CARGO_TARGET_DIR`. If it is not a control
+run the same way, it is not a control. A red baseline short-circuits: the counterfactual is
+skipped entirely and the verdict is `BASELINE_RED`, which is a third fact distinct from
+both neighbours — `UNEARNED` means the code fails an assertion it started with,
+`COULD_NOT_CHECK` means the machinery broke, and `BASELINE_RED` means the machinery worked
+fine and **the reference point is broken**, so nothing can be concluded either way.
+
+This is the dominant documented failure mode of the method, not a hypothetical: arXiv
+2606.16062 audited an LLM-judge loop reporting 10 of 11 tasks fixed, and Docker
+re-verification of 8 sampled cases found **6 invalid — the generated tests did not run on
+the gold solution at all**. Their sentence is the one that matters: *"The judge correctly
+read the test code and reasoned about what it would check **if it ran**."* Their gold-sanity
+gate caught a 61.9% per-augmentation defect rate the judge had missed. Applied here it is
+my own rule — *"could not check" must never read as "checked; clean"* — one layer below
+where I had already applied it.
 
 THREE LANDMINES, EACH FATAL IF IGNORED
 --------------------------------------
@@ -104,9 +129,14 @@ EARNED = "EARNED"
 UNEARNED = "UNEARNED"
 INCONCLUSIVE = "INCONCLUSIVE"
 COULD_NOT_CHECK = "COULD_NOT_CHECK"
+BASELINE_RED = "BASELINE_RED"
 
-# The four a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
-RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK)
+# The five a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK, BASELINE_RED)
+
+# Internal sentinel, deliberately NOT a run verdict: the baseline passed, so the
+# comparison is licensed and the counterfactual may proceed. It never reaches a report.
+BASELINE_OK = "BASELINE_OK"
 
 # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
 TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
@@ -176,6 +206,52 @@ def classify_counterfactual(exit_code: int, output: str) -> str:
         return UNEARNED
     if TEST_RESULT_OK_RE.search(output):
         return EARNED
+    return COULD_NOT_CHECK
+
+
+def classify_baseline(exit_code: int, output: str) -> str:
+    """Classify the BASELINE run: parent `tests/` against parent `src/`, whole.
+
+    WHY A BASELINE AT ALL
+    ---------------------
+    Without it an UNEARNED verdict is **unfalsifiable**. The counterfactual runs pre-task
+    `tests/` against post-task `src/` and reads the result — but a flaky test, environment
+    drift, a feature-gated file or a shallow-clone artifact produces exactly the same red
+    as a genuine unearned green, and nothing here could tell them apart. Establishing that
+    the reference point is itself green is what converts "the tests fail" into "the tests
+    fail *because of the code change*".
+
+    This is independently the dominant failure mode of the whole method. arXiv 2606.16062
+    audited an LLM-judge loop reporting 10 of 11 tasks fixed; Docker re-verification of 8
+    sampled cases found **6 invalid — the generated tests did not run on the gold solution
+    at all**. Their sentence is the one that matters: *"The judge correctly read the test
+    code and reasoned about what it would check **if it ran**."* Their gold-sanity gate
+    caught a 61.9% per-augmentation defect rate the judge had missed.
+
+    It is also my own standing rule — *"could not check" must never read as "checked;
+    clean"* — applied one layer below where I had already applied it.
+
+    THREE OUTCOMES, AND THE COMPILE-VS-ASSERT SPLIT IS THE SAME ONE AS ABOVE
+    -----------------------------------------------------------------------
+    1. A compile error => COULD_NOT_CHECK, **not** BASELINE_RED. A build that did not
+       finish cannot have run the assertions it is being judged on, so this is the
+       machinery failing, not the reference point being broken. Same discriminator, same
+       reason, as `classify_counterfactual`'s rule 1.
+    2. `test result: FAILED`, or a non-zero exit with no compile error => BASELINE_RED.
+       The machinery worked and the reference point is broken: nothing can be concluded
+       about this commit in **either** direction.
+    3. Exit 0 with at least one `test result: ok.` => BASELINE_OK, the comparison is
+       licensed. Exit 0 with no test-result line at all => COULD_NOT_CHECK, because a run
+       that compiled and executed zero tests is not a green baseline; it is no baseline.
+    """
+    if has_compile_error(output):
+        return COULD_NOT_CHECK
+    if TEST_RESULT_FAILED_RE.search(output):
+        return BASELINE_RED
+    if exit_code != 0:
+        return BASELINE_RED
+    if TEST_RESULT_OK_RE.search(output):
+        return BASELINE_OK
     return COULD_NOT_CHECK
 
 
@@ -333,9 +409,18 @@ def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, 
 
 
 def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
-    """Build post-src/ + pre-tests/ in a scratch worktree and run cargo test.
+    """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
 
     Returns (verdict, detail). Every landmine from the module doc is enforced here.
+
+    ORDER IS THE DESIGN: the baseline runs FIRST, and a red baseline short-circuits.
+    That is correct (there is nothing to learn from comparing against a broken reference)
+    and it is the cost control — it skips the expensive second cargo invocation on exactly
+    the commits that cannot answer either way.
+
+    The baseline is the parent commit **whole** — pre-task `tests/` AND pre-task `src/` —
+    run through the same worktree, the same `cargo test`, the same `CARGO_TARGET_DIR`. If
+    it is not a control run the same way, it is not a control.
     """
     rc, out = run_cmd(["git", "-C", root, "rev-parse", f"{sha}^"], timeout=60)
     if rc != 0:
@@ -349,18 +434,47 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
         return COULD_NOT_CHECK, f"git diff failed (rc={rc})"
     changed = top_level_test_files(out.splitlines())
     if not changed:
+        # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
+        # baseline is needed and none is run — there is no comparison to license.
         return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
 
     # LANDMINE 1: a scratch worktree under mkdtemp, never the live tree, never the repo.
     tmp = tempfile.mkdtemp(prefix="yoyo-counterfactual-")
     wt = os.path.join(tmp, "wt")
-    target = os.path.join(tmp, "target")  # LANDMINE 2: our own CARGO_TARGET_DIR
+    # LANDMINE 2: our own CARGO_TARGET_DIR, shared across BOTH runs of this commit so the
+    # second build is warm. Kept out of the repo's own target/ — #832: a nested cargo
+    # build over the shared target/debug/yoyo clobbers the binary every integration test
+    # resolves through env!("CARGO_BIN_EXE_yoyo"), and it reddened main for three sessions
+    # while reading as flakiness.
+    target = os.path.join(tmp, "target")
+    env = dict(os.environ)
+    env["CARGO_TARGET_DIR"] = target
+    env.pop("RUSTFLAGS", None)
+
+    def summarise(text: str) -> str:
+        tail = "\n".join(
+            ln for ln in text.splitlines() if ln.startswith(("test result:", "error"))
+        )
+        return tail[-1200:] if tail else text.strip()[-400:]
+
     try:
+        # The worktree starts AT THE PARENT, so the first thing it can run is the control.
         rc, out = run_cmd(
-            ["git", "-C", root, "worktree", "add", "--detach", wt, sha], timeout=300
+            ["git", "-C", root, "worktree", "add", "--detach", wt, parent], timeout=300
         )
         if rc != 0:
             return COULD_NOT_CHECK, f"worktree add failed (rc={rc}): {out.strip()[:200]}"
+
+        # ---- BASELINE: parent tests against parent src, whole. ------------------------
+        rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
+        baseline = classify_baseline(rc, out)
+        if baseline != BASELINE_OK:
+            return baseline, "BASELINE (parent whole): " + summarise(out)
+
+        # ---- COUNTERFACTUAL: post-task src/, pre-task tests/. -------------------------
+        rc, out = run_cmd(["git", "-C", wt, "checkout", "--detach", sha], timeout=120)
+        if rc != 0:
+            return COULD_NOT_CHECK, f"checkout of {sha[:8]} failed: {out.strip()[:200]}"
 
         # Lay the PRE-task tests back over the POST-task src/.
         rc, out = run_cmd(
@@ -371,15 +485,9 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
             # a brand-new test file, which is not a counterfactual question at all.
             return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
 
-        env = dict(os.environ)
-        env["CARGO_TARGET_DIR"] = target
-        env.pop("RUSTFLAGS", None)
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         verdict = classify_counterfactual(rc, out)
-        tail = "\n".join(
-            ln for ln in out.splitlines() if ln.startswith(("test result:", "error"))
-        )
-        return verdict, (tail[-1200:] if tail else out.strip()[-400:])
+        return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
     finally:
         # LANDMINE 1, the other half: always give the worktree back.
         run_cmd(["git", "-C", root, "worktree", "remove", "--force", wt], timeout=120)
@@ -414,11 +522,21 @@ read as "checked; clean"):
      are exactly what an honest API rename produces, and exactly what a hidden break
      produces. The state exists because the two are indistinguishable from here, not
      because the run was sloppy.
-  5. IT SEES ONLY SURVIVING HISTORY. scripts/evolve.sh reverts a failed task with
+  5. A BASELINE_RED CONCLUDES NOTHING, IN EITHER DIRECTION. It says the parent commit's
+     own tests do not pass against the parent commit's own src/ — so the reference point
+     is broken and the comparison is void. It is NOT a weak UNEARNED and NOT a machinery
+     failure; those are COULD_NOT_CHECK. Read it as "this commit is unmeasurable here".
+  6. A SMALL GAP IS NOT PROOF OF COMPLIANCE. Copied verbatim from SpecBench (arXiv
+     2605.21384), whose held-out axis catches what a backward counterfactual structurally
+     cannot: the pre-task tests never composed the NEW features either, so
+     feature-isolation failures are invisible to this method. A green counterfactual says
+     the old assertions still hold; it says nothing about whether the new behaviour was
+     specified correctly.
+  7. IT SEES ONLY SURVIVING HISTORY. scripts/evolve.sh reverts a failed task with
      `git reset --hard PRE_TASK_SHA`, so an unearned green inside a REVERTED task is
      invisible forever — and the sessions most likely to contain the behaviour are the
      ones whose evidence was destroyed. A clean census is a statement about survivors.
-  6. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
+  8. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
      the whole reachable log can span a day or two rather than the weeks a commit count
      suggests. The window line above states the depth measured; read it, don't infer it.
 """
@@ -623,6 +741,110 @@ def run_self_tests():
     # -- non-zero exit with no marker at all is UNEARNED, not silently clean -------------
     v = classify_counterfactual(1, "some unhelpful output\n")
     check("bare non-zero exit is UNEARNED", v == UNEARNED, v)
+
+    # -- THE BASELINE GATE ---------------------------------------------------------------
+    # Without a baseline an UNEARNED is unfalsifiable: a flaky test, environment drift or
+    # a shallow-clone artifact produces exactly the same red as a genuine unearned green.
+    # Table-driven over fabricated exit codes and captured output, same as its sibling.
+    baseline_table = [
+        # (name, rc, output, expected)
+        (
+            "green baseline licenses the comparison",
+            0,
+            "running 42 tests\ntest result: ok. 42 passed; 0 failed\n",
+            BASELINE_OK,
+        ),
+        (
+            "red baseline is BASELINE_RED",
+            101,
+            "running 42 tests\n"
+            "thread 'x' panicked at src/a.rs:1:1:\nassertion failed\n"
+            "test result: FAILED. 41 passed; 1 failed; 0 ignored\n",
+            BASELINE_RED,
+        ),
+        (
+            "bare non-zero baseline exit is BASELINE_RED",
+            1,
+            "some unhelpful output\n",
+            BASELINE_RED,
+        ),
+        # A baseline that will not COMPILE is the machinery failing, not the reference
+        # point being broken. Same compile-vs-assert discriminator as the counterfactual
+        # half, and for the same reason: a build that did not finish cannot have run the
+        # assertions it is being judged on.
+        (
+            "baseline that fails to compile is COULD_NOT_CHECK, not BASELINE_RED",
+            101,
+            "error[E0425]: cannot find function `foo` in this scope\n"
+            "error: could not compile `yoyo` (bin \"yoyo\" test) due to 1 previous error\n",
+            COULD_NOT_CHECK,
+        ),
+        (
+            "compile error beats a FAILED line in the baseline too",
+            101,
+            "test result: FAILED. 11 passed; 1 failed\n"
+            "error[E0432]: unresolved import `crate::gone`\n",
+            COULD_NOT_CHECK,
+        ),
+        # Anti-vacuous: a run that compiled and executed zero tests is not a green
+        # baseline, it is no baseline.
+        (
+            "baseline that ran zero tests is COULD_NOT_CHECK, not OK",
+            0,
+            "   Compiling yoyo v0.1.0\n    Finished test profile\n",
+            COULD_NOT_CHECK,
+        ),
+        # An indented rustc-looking string inside a panic is test output, not a build
+        # failure — the column-0 anchor, exercised on this side of the split too.
+        (
+            "indented E-code in a baseline panic is still BASELINE_RED",
+            101,
+            "thread 't' panicked at tests/a.rs:9:5:\n"
+            "  expected error[E0425] in the message but found none\n"
+            "test result: FAILED. 2 passed; 1 failed\n",
+            BASELINE_RED,
+        ),
+    ]
+    for name, rc_, out_, expected in baseline_table:
+        got_ = classify_baseline(rc_, out_)
+        check(f"baseline: {name}", got_ == expected, got_)
+
+    # A red baseline must NEVER be reported as UNEARNED. That conflation is the whole
+    # defect this gate closes: it would publish an environment artifact as a finding.
+    red = classify_baseline(101, "test result: FAILED. 41 passed; 1 failed\n")
+    check("red baseline is not UNEARNED", red != UNEARNED, red)
+    check("red baseline is not COULD_NOT_CHECK", red != COULD_NOT_CHECK, red)
+    check("BASELINE_OK is not a run verdict", BASELINE_OK not in RUN_VERDICTS)
+    check("BASELINE_RED is a run verdict", BASELINE_RED in RUN_VERDICTS)
+    check(
+        "six distinct states",
+        len({NO_TEST_CHANGE, EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK,
+             BASELINE_RED}) == 6,
+    )
+
+    # NEAR-MISS GUARD, and it is the half that matters: a GREEN baseline followed by a RED
+    # counterfactual must STILL classify UNEARNED. The gate must not eat the finding it
+    # exists to protect. A discriminator tested only on the side that fires is vacuous
+    # green, and this row is the side that must NOT fire.
+    green_baseline = classify_baseline(0, "test result: ok. 42 passed; 0 failed\n")
+    red_counterfactual = classify_counterfactual(
+        101,
+        "running 42 tests\n"
+        "thread 'x' panicked at tests/git_chokepoint.rs:1:1:\nassertion failed\n"
+        "test result: FAILED. 41 passed; 1 failed\n",
+    )
+    check("near-miss: baseline green", green_baseline == BASELINE_OK, green_baseline)
+    check(
+        "near-miss: green baseline + red counterfactual is STILL UNEARNED",
+        red_counterfactual == UNEARNED,
+        red_counterfactual,
+    )
+    # ...and the same pair still reaches EARNED when the counterfactual is green, so the
+    # gate is not silently converting every verdict into itself.
+    check(
+        "near-miss: green baseline + green counterfactual is still EARNED",
+        classify_counterfactual(0, "test result: ok. 42 passed; 0 failed\n") == EARNED,
+    )
 
     # -- has_compile_error, directly -----------------------------------------------------
     check("compile marker found", has_compile_error("error[E0001]: bad\n"))
