@@ -191,18 +191,25 @@ fn scan_block_comments(
 
         // A `//` line comment swallows the rest of the line; leave it as code so the
         // per-line highlighter dims it exactly as it does today.
-        if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
-            break;
-        }
-
-        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
-            if seg_start < i {
-                segments.push((SegmentKind::Code, seg_start, i));
+        //
+        // Gated on the language since #865: `//` is Python's floor-division operator, so
+        // an ungated `break` here would stop the scan at `a // b` and miss a `"""` that
+        // opens later on the same line. A no-op for rust/js/go/c, which are the only
+        // languages that reached this code before.
+        if supports_block_comments(norm) {
+            if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+                break;
             }
-            seg_start = i;
-            state.block_comment_depth = 1;
-            i += 2;
-            continue;
+
+            if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                if seg_start < i {
+                    segments.push((SegmentKind::Code, seg_start, i));
+                }
+                seg_start = i;
+                state.block_comment_depth = 1;
+                i += 2;
+                continue;
+            }
         }
 
         // Rust: a bare `'` is a lifetime tick, not a literal opener (#759).
@@ -232,6 +239,24 @@ fn scan_block_comments(
             if let Some(escapes) = backtick_strings(norm) {
                 let delim = StringDelim::Backtick { escapes };
                 match close_open_string(chars, i + 1, delim) {
+                    Some(end) => i = end,
+                    None => {
+                        state.open_string = Some(delim);
+                        i = len;
+                    }
+                }
+                continue;
+            }
+        }
+
+        // Python `"""…"""` / `'''…'''`: spans lines (#865). Checked *before* the generic
+        // quote branch below, which would otherwise read the first two chars of `"""` as
+        // an empty string and let the third open a runaway single-quote literal.
+        if triple_quote_strings(norm) && (chars[i] == '"' || chars[i] == '\'') {
+            let quote = chars[i];
+            if chars.get(i + 1) == Some(&quote) && chars.get(i + 2) == Some(&quote) {
+                let delim = StringDelim::TripleQuote { quote };
+                match close_open_string(chars, i + 3, delim) {
                     Some(end) => i = end,
                     None => {
                         state.open_string = Some(delim);
@@ -342,7 +367,12 @@ pub fn highlight_code_line_with(lang: &str, line: &str, state: &mut HighlightSta
         }
     };
 
-    if !supports_block_comments(norm) {
+    // Languages with neither block comments nor triple-quoted literals have no
+    // cross-line construct to carry, so they take the stateless fast path. Python is
+    // deliberately *not* in that set since #865: it has no `/* … */`, but a docstring
+    // spans lines, and this early return used to reset `open_string` and so made the
+    // stateful path structurally unreachable for it.
+    if !supports_block_comments(norm) && !triple_quote_strings(norm) {
         state.block_comment_depth = 0;
         state.open_string = None;
         return highlight_normalized(norm, line);
@@ -1663,8 +1693,7 @@ mod tests {
     /// The stateless path stays byte-identical for literals that open and close on one
     /// line — the load-bearing promise that adding a carried fact changed nothing.
     #[test]
-    fn single_line_raw_and_backtick_literals_are_byte_identical() {
-        for (lang, line) in [
+    fn single_line_raw_and_backtick_literals_are_byte_identical() {        for (lang, line) in [
             ("rust", "let s = r#\"a }\"#; let n = 1;"),
             ("rust", "let s = r\"plain\"; let n = 1;"),
             ("js", "const s = `a ${b} c`; const n = 1;"),
@@ -1761,3 +1790,4 @@ mod tests {
         );
     }
 }
+

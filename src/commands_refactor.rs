@@ -123,6 +123,17 @@ pub(crate) enum StringDelim {
     /// scanner and never sets it; it lives here because the *closer* rule belongs beside
     /// its two siblings rather than in a second scanner.
     Backtick { escapes: bool },
+    /// A Python triple-quoted literal (`"""…"""` or `'''…'''`), which spans lines and
+    /// honours `\` escapes, so a `\"""` does not close it. `quote` carries which of the
+    /// two delimiters opened it, because `'''` must not be closed by `"""`.
+    ///
+    /// Produced only by `format::highlight` (#865), for the same reason as [`Backtick`]:
+    /// Rust has no triple-quoted literal, so [`significant_braces`] can never open one.
+    /// The *closer* rule lives here beside its three siblings rather than in a second
+    /// scanner — two copies of a delimiter rule is how #759 outlived #770 by a day.
+    ///
+    /// [`Backtick`]: StringDelim::Backtick
+    TripleQuote { quote: char },
 }
 
 /// The facts [`significant_braces`] must carry from one line to the next.
@@ -179,6 +190,24 @@ pub(crate) fn close_open_string(chars: &[char], from: usize, delim: StringDelim)
                     j += 2;
                 } else if chars[j] == '`' {
                     return Some(j + 1);
+                } else {
+                    j += 1;
+                }
+            }
+            None
+        }
+        StringDelim::TripleQuote { quote } => {
+            while j < chars.len() {
+                if chars[j] == '\\' {
+                    // Python honours escapes inside a triple-quoted literal, so a
+                    // `\"""` does not close it. A trailing `\` escapes the newline,
+                    // which just means the literal is still open — j runs off the end.
+                    j += 2;
+                } else if chars[j] == quote
+                    && chars.get(j + 1) == Some(&quote)
+                    && chars.get(j + 2) == Some(&quote)
+                {
+                    return Some(j + 3);
                 } else {
                     j += 1;
                 }

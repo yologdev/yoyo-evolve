@@ -379,3 +379,19 @@ pub(super) fn backtick_strings(norm: &str) -> Option<bool> {
         _ => None,
     }
 }
+
+/// Does this language have **triple-quoted** literals (`"""…"""` / `'''…'''`) that span
+/// lines?
+///
+/// Deliberately separate from [`multiline_strings`] rather than folded into it, because
+/// the two ask different questions and the older one is *correct* for Python: a bare
+/// `"…"` really does not span lines there. #865 was not a wrong row — it was a table with
+/// no **vocabulary** for triple quotes at all, so a docstring body rendered as executable
+/// code (a `#` opened an inline comment, `return` highlighted as a keyword).
+///
+/// Python only, on purpose. A row nothing exercises is a claim no test can grade, so
+/// widening this to another language belongs in the task that brings that language's
+/// fixtures with it.
+pub(super) fn triple_quote_strings(norm: &str) -> bool {
+    norm == "python"
+}
