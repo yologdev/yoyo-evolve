@@ -75,6 +75,29 @@ const SAFETY_CHECKS: &[SafetyCheck] = &[
     check_archive_extraction_to_system,
 ];
 
+/// The shell operators that end one command segment and begin the next.
+///
+/// One statement, three consumers: `check_bare_truncation` (which splits a
+/// command into segments), `check_tee_to_sensitive_paths` and
+/// `check_symlink_attack` (which stop collecting argument tokens at a
+/// separator). Before Day 183 each site spelled the set out for itself and
+/// they disagreed: the two token sites named all four, while
+/// `check_bare_truncation` named only `;` and `&&`, so
+/// `git status || > important.txt` went unflagged while its `&&` twin was
+/// caught. A twin asymmetry inside one enumeration is invisible on a read
+/// precisely because the twins are there — hence one const rather than four
+/// lists that happen to agree today.
+///
+/// Deliberately **not** the wider char class `detect_write_command` splits on
+/// (`[';', '|', '&', '\n', '(', ')', '`']`). That set answers a different
+/// question — "where could a new command word start?" — and adding `(`/`)`/
+/// backtick here would read `echo $(foo) > bar` as a *bare* truncation, which
+/// it is not: a confidently wrong diagnosis in a user-facing warning is worse
+/// than a missing one. The bare `&` (background) separator is likewise left
+/// out, so this const changes no site's behaviour except the one that was
+/// short.
+const COMMAND_SEPARATORS: &[&str] = &[";", "&&", "||", "|"];
+
 /// Analyze a bash command for potentially dangerous patterns.
 /// Returns `Some(reason)` if the command looks destructive.
 pub fn analyze_bash_command(command: &str) -> Option<String> {
@@ -1121,8 +1144,16 @@ fn check_critical_file_permissions(cmd: &str, _cmd_lower: &str) -> Option<String
 /// the file to zero bytes. This is an easy mistake that destroys data silently.
 /// We only flag this for non-temporary, non-devnull paths.
 fn check_bare_truncation(cmd: &str, _cmd_lower: &str) -> Option<String> {
-    // Check each command segment (separated by ; or &&)
-    let segments: Vec<&str> = cmd.split(';').flat_map(|s| s.split("&&")).collect();
+    // Check each command segment. Day 183: this split named only `;` and `&&`
+    // while its two sibling sites named all four, so a bare truncation after
+    // `||` or `|` was silently unflagged. Widening — the safe direction for a
+    // guard, since over-blocking costs a confirmation prompt and
+    // under-blocking costs the file.
+    let mut segments: Vec<&str> = vec![cmd];
+    for sep in COMMAND_SEPARATORS {
+        let next: Vec<&str> = segments.iter().flat_map(|s| s.split(*sep)).collect();
+        segments = next;
+    }
     for segment in &segments {
         let trimmed = segment.trim();
         // A bare truncation starts with > (but not >>)
@@ -1345,8 +1376,8 @@ fn check_tee_to_sensitive_paths(cmd: &str, _cmd_lower: &str) -> Option<String> {
                 if token.starts_with('-') {
                     continue;
                 }
-                // Stop at pipe or semicolon (tee's output files come before these)
-                if *token == "|" || *token == ";" || *token == "&&" || *token == "||" {
+                // Stop at a command separator (tee's output files come before)
+                if COMMAND_SEPARATORS.contains(token) {
                     break;
                 }
                 // Check against sensitive paths
@@ -1528,7 +1559,7 @@ fn check_symlink_attack(cmd: &str, _cmd_lower: &str) -> Option<String> {
         // Collect all tokens until a command separator
         let tokens: Vec<&str> = after
             .split_whitespace()
-            .take_while(|t| *t != ";" && *t != "&&" && *t != "||" && *t != "|")
+            .take_while(|t| !COMMAND_SEPARATORS.contains(t))
             .collect();
 
         // Check if -s flag is present (symbolic link)
@@ -4112,5 +4143,149 @@ mod assignment_prefix_guards {
         assert_eq!(pc.check("git commit -m x"), Some(true));
         assert_eq!(pc.check("FOO=1 git commit -m x"), None);
         assert_eq!(pc.check("A=1 B=2 git push"), None);
+    }
+}
+
+/// Day 183: shell-operator agreement across this file's segmenting checks.
+///
+/// `src/safety.rs` enumerates command separators in four places, and until
+/// Day 183 they did not agree. These guards pin the agreement in both
+/// directions: an operator must never hide a finding, and must never invent
+/// one.
+#[cfg(test)]
+mod command_separator_guards {
+    use super::*;
+
+    // ---------------------------------------------------------------------
+    // Day 183: shell-operator agreement across this file's segmenting checks.
+    //
+    // `src/safety.rs` enumerates command separators in four places. Three name
+    // all four operators; `check_bare_truncation` named only `;` and `&&`.
+    // Measured 2026-08-30 (both classifiers, verbatim):
+    //
+    //   git status && > important.txt  -> Some("Bare file truncation: ...")
+    //   git status || > important.txt  -> None            <-- the gap
+    //   echo hi ; > important.txt      -> Some("Bare file truncation: ...")
+    //   cargo test | > important.txt   -> None            <-- the gap
+    //
+    // Same destruction, one operator apart. The near-miss guards below matter
+    // as much as the fix: `/read` mode is useless if it blocks reading the
+    // repo, and this file's history is discriminators pointed at the wrong
+    // input, so every fix row is paired with commands that must stay silent.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn bare_truncation_is_caught_after_every_command_separator() {
+        let control = analyze_bash_command("git status && > important.txt");
+        // Anti-vacuous: the covered twin must really fire, or every equality
+        // below would be satisfied by two `None`s agreeing about nothing.
+        assert!(
+            control.is_some(),
+            "control row must flag the `&&` form, or the equalities are vacuous"
+        );
+        assert!(
+            control.as_deref().unwrap().contains("truncation"),
+            "control must be the bare-truncation finding, got {control:?}"
+        );
+
+        for joined in [
+            "git status || > important.txt",
+            "echo hi ; > important.txt",
+            "cargo test | > important.txt",
+        ] {
+            assert_eq!(
+                analyze_bash_command(joined),
+                control,
+                "`{joined}` must classify exactly as its `&&` twin does"
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_command_is_caught_after_every_command_separator() {
+        // Regression guard: the destructive-pattern classifier matches at word
+        // boundaries rather than segmenting, so it was never operator-sensitive
+        // and must stay that way.
+        let control = analyze_bash_command("git status && rm -rf /");
+        assert!(
+            control.is_some(),
+            "control row must flag the `&&` form, or the equalities are vacuous"
+        );
+        for joined in [
+            "git status || rm -rf /",
+            "echo hi ; rm -rf /",
+            "cargo test | rm -rf /",
+        ] {
+            assert_eq!(
+                analyze_bash_command(joined),
+                control,
+                "`{joined}` must classify exactly as its `&&` twin does"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_joined_write_matches_its_covered_twin() {
+        // `detect_write_command` splits on a char class, so it already covers
+        // all four operators. Pinned so a future "tidy-up" cannot narrow it.
+        let groups: &[(&str, [&str; 3])] = &[
+            (
+                "git status && touch a",
+                [
+                    "git status || touch a",
+                    "echo hi ; touch a",
+                    "cargo test | touch a",
+                ],
+            ),
+            (
+                "git status && git commit -m x",
+                [
+                    "git status || git commit -m x",
+                    "echo hi ; git commit -m x",
+                    "cargo test | git commit -m x",
+                ],
+            ),
+        ];
+        for (control_cmd, variants) in groups {
+            let control = detect_write_command(control_cmd);
+            assert!(
+                control.is_some(),
+                "`{control_cmd}` must be detected as a write, or the \
+                 equalities below are vacuous"
+            );
+            for joined in variants {
+                assert_eq!(
+                    detect_write_command(joined),
+                    control,
+                    "`{joined}` must classify exactly as its `&&` twin does"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn command_separators_do_not_invent_findings_in_ordinary_commands() {
+        // The half that matters: reading the repo must stay unblocked, and an
+        // operator inside quotes must not split anything.
+        for benign in [
+            "cargo test",
+            "git status",
+            "ls",
+            "echo hi ; ls",
+            "git status || ls",
+            "cargo test | grep foo",
+            "echo \"a || touch b\"",
+        ] {
+            assert_eq!(
+                analyze_bash_command(benign),
+                None,
+                "`{benign}` must not be flagged as destructive"
+            );
+            assert_eq!(
+                detect_write_command(benign),
+                None,
+                "`{benign}` must not be flagged as a write"
+            );
+        }
     }
 }
