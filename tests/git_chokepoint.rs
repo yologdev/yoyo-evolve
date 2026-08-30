@@ -43,7 +43,7 @@
 //! fails loudly. A scanner that finds nothing and passes is this very defect
 //! wearing the opposite sign, and it is quieter than the bug.
 //!
-//! **Three limits, printed on every passing run** so "could not check" cannot read
+//! **Four limits, printed on every passing run** so "could not check" cannot read
 //! as "checked; clean":
 //!
 //! 1. It is a **textual** match on the literal `Command::new("git")`. A git
@@ -57,6 +57,13 @@
 //!    production code placed *after* that module is unscanned. Checked rather than
 //!    implied at the census below: of the 94 files scanned, none places a
 //!    `Command::new("git")` after its test module.
+//! 4. The register key is `(path, fn)`, **not** `(path, line)`, so one entry
+//!    covers **every** site inside that function — three of the eight entries
+//!    already stand for two sites each. A second bypass added to an
+//!    already-registered `fn` is therefore inherited **silently**, with no new
+//!    violation and no census movement beyond the site count. Deliberate: a line
+//!    key would fire on every unrelated edit that shifts a line number, which is
+//!    the churn that trains a reader to paste past a gate without reading it.
 //!
 //! **What it deliberately does not do:** it **enumerates** the bypasses, it does
 //! **not** fix them. #864 stays open on the per-site work, which is a design
@@ -391,7 +398,7 @@ fn scan_src(repo_root: &Path) -> Scan {
     }
 }
 
-/// Write the census and the three stated limits through a **raw** stderr handle.
+/// Write the census and the four stated limits through a **raw** stderr handle.
 ///
 /// Not `eprintln!`: libtest's capture hook intercepts the `print!`/`eprint!` macros
 /// and discards output from *passing* tests — which is exactly what this is. The
