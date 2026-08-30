@@ -33,14 +33,22 @@ verbatim (`score < 0.3` was unreachable, so `retire` never fired across 16 event
 state below therefore carries its own self-test row: reachability is *asserted*, not
 assumed.
 
-SIX STATES, NONE FOLDED INTO ANOTHER
-------------------------------------
+SEVEN STATES, NONE FOLDED INTO ANOTHER
+--------------------------------------
 `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
 tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
 (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
-here), `BASELINE_RED` (see below), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout
-failure), which is never folded into any verdict — the same refusal the pre-push hook and
-`CiScan`'s could-not-run branch already make.
+here), `BASELINE_RED` (see below), `REGISTER_DRIFT` (#867 — every failing test lives in a
+file whose pre->post diff was pure register bookkeeping, so the red was manufactured by
+the overlay; VOID, not clean, and never counted in either column), and `COULD_NOT_CHECK`
+(worktree/checkout/cargo/timeout failure), which is never folded into any verdict — the
+same refusal the pre-push hook and `CiScan`'s could-not-run branch already make.
+
+This heading read "SIX STATES" for one session after `REGISTER_DRIFT` landed, and "FIVE
+STATES" for one session after `BASELINE_RED` landed. A hand-maintained count beside a
+machine-maintained tuple goes stale silently in exactly one direction — downward — so
+`len(RUN_VERDICTS)` is what the self-tests assert and what `--test` prints; this prose is
+a reader's summary of it and never the authority.
 
 THE BASELINE GATE, AND WHY IT IS NOT OPTIONAL
 ---------------------------------------------
