@@ -127,14 +127,42 @@ pub fn find_files(pattern: &str) -> Vec<FindMatch> {
 }
 
 /// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
+///
+/// Thin wrapper over [`list_project_files_in`] resolving against the process
+/// working directory. Byte-identical to the pre-#864 behaviour for every caller.
 pub(crate) fn list_project_files() -> Vec<String> {
+    list_project_files_in(".")
+}
+
+/// The dir-taking seam behind [`list_project_files`], so the list can be driven
+/// against a scratch repo without moving the **process** working directory —
+/// which is global, and which #780 spent two tasks removing from tests. Same
+/// shape as `suggest_related_files_in` / `apply_patch_in` / `existing_config_paths_in`.
+///
+/// **#864 — routed through the chokepoint.** The `ls-files` call used to shell
+/// git directly through a raw `std::process::Command`, so it received nothing
+/// applied at the `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863),
+/// tomorrow whatever else lands there. Consequence, measured: a project file named
+/// `src/näme.rs` came back as the literal bytes `"src/n\303\244me.rs"`,
+/// surrounding quotes and octal escapes included, which no consumer can use as a
+/// path. This list is `/context`'s file set and `auto_context_for_prompt`'s
+/// candidate set, so it was a product-visible defect.
+///
+/// **Why `run_git_output` and not `run_git_in_dir`, which the register named.**
+/// `run_git_in_dir` trims the *whole* stdout blob before returning it, so a first
+/// entry whose name begins with a space (git sorts `0x20` ahead of everything, and
+/// does **not** quote a space) would come back with that space stripped — trading
+/// one mangled path for another inside the very function that exists to stop path
+/// mangling. `run_git_output` returns the raw `Output`, so the parse below stays
+/// untrimmed and byte-exact; the `-C` global rides in the arg slice exactly as it
+/// did before, and `git_command()` prepends the chokepoint flags. `ls-files` is not
+/// in `DESTRUCTIVE_GIT_COMMANDS`, so the `#[cfg(test)]` guard is a no-op here.
+pub(crate) fn list_project_files_in(root: &str) -> Vec<String> {
+    let root_path = std::path::Path::new(root);
     // Use git toplevel to avoid CWD-dependency (prevents flaky tests when
     // another test calls set_current_dir during parallel execution).
-    if let Ok(toplevel) = crate::git::run_git(&["rev-parse", "--show-toplevel"]) {
-        if let Ok(output) = std::process::Command::new("git")
-            .args(["-C", &toplevel, "ls-files"])
-            .output()
-        {
+    if let Ok(toplevel) = crate::git::run_git_in_dir(root_path, &["rev-parse", "--show-toplevel"]) {
+        if let Ok(output) = crate::git::run_git_output(&["-C", &toplevel, "ls-files"]) {
             if output.status.success() {
                 let text = String::from_utf8_lossy(&output.stdout);
                 let files: Vec<String> = text
@@ -149,7 +177,7 @@ pub(crate) fn list_project_files() -> Vec<String> {
         }
     }
     // Fallback: original CWD-based behavior
-    if let Ok(text) = crate::git::run_git(&["ls-files"]) {
+    if let Ok(text) = crate::git::run_git_in_dir(root_path, &["ls-files"]) {
         let files: Vec<String> = text
             .lines()
             .filter(|l| !l.is_empty())
@@ -163,7 +191,7 @@ pub(crate) fn list_project_files() -> Vec<String> {
     // Last resort: recursive listing of current directory (respecting common ignores).
     // Depth 4 is plenty for a non-git fallback — depth 8 was excessive and caused hangs
     // when run from ~ (see issue #333).
-    walk_directory(".", 4)
+    walk_directory(root, 4)
 }
 
 /// Maximum number of files returned by `walk_directory`. Prevents hangs when
@@ -3131,6 +3159,130 @@ src/b.rs:20:match two";
             files.iter().any(|f| f == "Cargo.toml"),
             "list_project_files should include Cargo.toml; got {} files",
             files.len()
+        );
+    }
+
+    /// Scratch git repo for the #864 path-quoting guards. Raw `Command` on
+    /// purpose: this is a test region (the chokepoint gate truncates each file at
+    /// its module-level `#[cfg(test)] mod` marker), and setup must not inherit
+    /// yoyo's own globals — the whole point is to observe what plain git emits.
+    fn init_scratch_repo_for_listing(root: &std::path::Path) {
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "yoyo-test"],
+        ] {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(&args)
+                .status()
+                .expect("git must be on PATH for this test")
+                .success();
+            assert!(ok, "scratch repo setup failed for {args:?}");
+        }
+    }
+
+    fn stage_all_for_listing(root: &std::path::Path) {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["add", "-A"])
+            .status()
+            .expect("git add")
+            .success();
+        assert!(ok, "git add -A failed in scratch repo");
+    }
+
+    /// #864: `list_project_files` shelled `git` directly, so it received nothing
+    /// applied at the `src/git.rs` chokepoint — including `-c core.quotepath=off`
+    /// (#863). A project file with a non-ASCII name therefore came back as the
+    /// literal bytes `"src/n\303\244me.rs"`, surrounding quotes and octal escapes
+    /// included, which no consumer can use as a path. This list is `/context`'s
+    /// file set and `auto_context_for_prompt`'s candidate set, so the fix is
+    /// product-visible.
+    ///
+    /// Asserted at the **emission point** — the `Vec` a caller receives — never on
+    /// the git invocation one layer below.
+    #[test]
+    fn list_project_files_returns_non_ascii_paths_raw_not_quotepath_escaped() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        init_scratch_repo_for_listing(root);
+
+        // Anti-vacuous: a transcription slip that quietly made this ASCII would
+        // let the test pass by agreeing with itself.
+        let name = "näme.rs";
+        assert!(
+            name.bytes().any(|b| b >= 0x80),
+            "fixture filename must carry a non-ASCII byte or this test is vacuous"
+        );
+
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src").join(name), "// hi\n").expect("write fixture");
+        stage_all_for_listing(root);
+
+        let files = list_project_files_in(root.to_str().expect("utf8 tempdir"));
+        assert_eq!(
+            files,
+            vec!["src/näme.rs".to_string()],
+            "non-ASCII path must reach the caller raw; git's default quoting yields \
+             the literal bytes \"src/n\\303\\244me.rs\", which no consumer can use"
+        );
+    }
+
+    /// The near-miss guard, and the whole regression surface. Git does **not**
+    /// quote a plain space, so an ASCII path and a space-carrying path must be
+    /// byte-identical to before — which is exactly what makes this a pure
+    /// narrowing rather than a new rendering. A discriminator tested only on the
+    /// side that fires is vacuous green.
+    #[test]
+    fn list_project_files_leaves_ascii_and_spaced_paths_byte_identical() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        init_scratch_repo_for_listing(root);
+
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src").join("plain.rs"), "// a\n").expect("write plain");
+        std::fs::write(root.join("src").join("two words.rs"), "// b\n").expect("write spaced");
+        stage_all_for_listing(root);
+
+        let files = list_project_files_in(root.to_str().expect("utf8 tempdir"));
+        assert_eq!(
+            files,
+            vec!["src/plain.rs".to_string(), "src/two words.rs".to_string()],
+            "ASCII and space-carrying paths must be byte-identical to before"
+        );
+    }
+
+    /// The reason this conversion routes through `run_git_output` rather than
+    /// `run_git_in_dir`, which is what `REGISTERED_GIT_BYPASSES` claimed was an
+    /// exact duplicate. `run_git_in_dir` trims the whole stdout blob, so a first
+    /// entry beginning with a space loses it — git sorts `0x20` ahead of
+    /// everything and does not quote a space. Pinned here so a later
+    /// "simplification" to `run_git_in_dir` fails instead of silently trading one
+    /// mangled path for another.
+    #[test]
+    fn list_project_files_preserves_a_leading_space_in_the_first_entry() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        init_scratch_repo_for_listing(root);
+
+        let name = " leading.rs";
+        assert!(
+            name.starts_with(' '),
+            "fixture must begin with a space or this test is vacuous"
+        );
+        std::fs::write(root.join(name), "// c\n").expect("write leading-space file");
+        std::fs::write(root.join("zzz.rs"), "// d\n").expect("write second file");
+        stage_all_for_listing(root);
+
+        let files = list_project_files_in(root.to_str().expect("utf8 tempdir"));
+        assert_eq!(
+            files,
+            vec![" leading.rs".to_string(), "zzz.rs".to_string()],
+            "a leading space in the first entry must survive; whole-blob trimming \
+             would strip it and name a file that does not exist"
         );
     }
 

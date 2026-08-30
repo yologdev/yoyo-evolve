@@ -58,7 +58,7 @@
 //!    implied at the census below: of the 94 files scanned, none places a
 //!    `Command::new("git")` after its test module.
 //! 4. The register key is `(path, fn)`, **not** `(path, line)`, so one entry
-//!    covers **every** site inside that function — three of the eight entries
+//!    covers **every** site inside that function — three of the seven entries
 //!    already stand for two sites each. A second bypass added to an
 //!    already-registered `fn` is therefore inherited **silently**, with no new
 //!    violation and no census movement beyond the site count. Deliberate: a line
@@ -106,14 +106,6 @@ const REGISTERED_GIT_BYPASSES: &[(&str, &str, &str)] = &[
         "needs .stderr(Stdio::null()) so a repo with fewer than 5 commits fails silently \
          instead of printing to the user's terminal; no chokepoint helper exposes stdio \
          control.",
-    ),
-    (
-        "src/commands_search.rs",
-        "list_project_files",
-        "NO structural blocker — this duplicates run_git_in_dir(toplevel, [\"ls-files\"]) \
-         exactly and is a genuine conversion candidate. Registered rather than fixed \
-         because #864 is scoped to enumeration; converting a site and building the gate in \
-         one task is how a verified narrow change becomes an unverified wide one.",
     ),
     (
         "src/commands_search.rs",
@@ -412,7 +404,7 @@ fn write_census(scan: &Scan) {
         .count();
     let _ = writeln!(
         err,
-        "\ngit-chokepoint gate census (Day 182, 2026-08-29):\n  \
+        "\ngit-chokepoint gate census (Day 183, 2026-08-30):\n  \
          {} files scanned under src/\n  \
          {} total Command::new(\"git\") sites\n  \
          {} in non-test regions: {} at the src/git.rs chokepoint, {} bypass sites named by \

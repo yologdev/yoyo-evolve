@@ -212,7 +212,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // terminator and honest loser-branches (a value-taking flag with no usable
     // value is now a literal pattern token instead of being silently swallowed),
     // plus the fixture tests covering both the new paths and the untouched ones.
-    ("src/commands_search.rs", 3720),
+    ("src/commands_search.rs", 3872),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
