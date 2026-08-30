@@ -2734,6 +2734,143 @@ mod tests {
         assert!(matches!(state.into_result(), PromptResult::Done { .. }));
     }
 
+    /// Name the `PromptResult` variant so the table below can `assert_eq!` on a
+    /// verdict instead of a `matches!` that silently accepts the wrong arm.
+    fn result_label(r: &PromptResult) -> &'static str {
+        match r {
+            PromptResult::Done { .. } => "Done",
+            PromptResult::RetriableError { .. } => "RetriableError",
+            PromptResult::FatalError { .. } => "FatalError",
+            PromptResult::ContextOverflow { .. } => "ContextOverflow",
+        }
+    }
+
+    /// Classify one `StopReason::Error` shape at the emission point — the
+    /// `PromptResult` a caller of `handle_agent_end` receives, never a
+    /// predicate one layer below.
+    fn classify_shape(error_message: Option<&str>) -> &'static str {
+        let mut state = state_for_test();
+        state.handle_agent_end(vec![error_assistant_msg(error_message)], "claude-test");
+        result_label(&state.into_result())
+    }
+
+    /// Day 183 — the measured answer to "does a stream cut off mid-answer get
+    /// classified as FATAL?". It does **not**: every truncation / stall /
+    /// connection-loss shape lands in `RetriableError`, so `run_prompt_auto_retry`
+    /// already retries it and the piped gate's `!had_error` never sees it.
+    ///
+    /// The strings are not invented. yoagent 0.18.1's `ProviderError` carries the
+    /// `#[error(...)]` formats below (`provider/traits.rs:246-262`) and
+    /// `agent_loop.rs:1139` does `error_message: Some(e.to_string())`, so the
+    /// Display string of that enum *is* what reaches this branch. Cross-checked
+    /// against the one error string CLAUDE.md records verbatim from a real
+    /// session — `Rate limited, retry after Some(14454000)ms` — which matches
+    /// `#[error("Rate limited, retry after {retry_after_ms:?}ms")]` exactly,
+    /// including the `Some(..)` that only a `{:?}` of an `Option` produces.
+    /// <!-- yoagent-version-claim: 0.18.1 -->
+    #[test]
+    fn stream_cut_off_mid_answer_is_retriable_not_fatal() {
+        // (shape, expected verdict, why)
+        let table: &[(Option<&str>, &str, &str)] = &[
+            // --- the subject: a stream cut off mid-answer ---
+            (
+                Some("Network error: connection closed before message completed"),
+                "RetriableError",
+                "connection loss mid-stream",
+            ),
+            (
+                Some("Network error: error decoding response body: unexpected end of file"),
+                "RetriableError",
+                "truncated body — caught by the `network` prefix, not by `unexpected eof`",
+            ),
+            (
+                Some("Network error: operation timed out"),
+                "RetriableError",
+                "stall",
+            ),
+            (
+                Some("API error: 500 Internal Server Error"),
+                "RetriableError",
+                "server error mid-stream",
+            ),
+            (
+                Some("API error: overloaded_error"),
+                "RetriableError",
+                "provider overload",
+            ),
+            // --- near-miss guards: must STAY fatal (#646 surface-and-stop) ---
+            (
+                None,
+                "FatalError",
+                "#646 pause_turn: StopReason::Error with no message",
+            ),
+            (
+                Some("tool call arguments for `read_file` were never assembled"),
+                "FatalError",
+                "#646 dropped tool-call arguments — deterministic, re-running reproduces it",
+            ),
+            // --- near-miss guards: must STAY exactly as they are ---
+            (
+                Some("stream ended without a terminator"),
+                "Done",
+                "#612 known-benign: the response WAS delivered in full",
+            ),
+            (
+                Some("Context overflow: prompt is too long: 402134 tokens > 200000 maximum"),
+                "ContextOverflow",
+                "overflow keeps its own path",
+            ),
+            (
+                Some("Rate limited, retry after Some(14454000)ms"),
+                "RetriableError",
+                "CLAUDE.md's verbatim real-session string",
+            ),
+        ];
+
+        // Anti-vacuous: a table whose fixtures do not carry the shapes they
+        // claim would agree with any classifier at all.
+        assert!(table.len() >= 10, "table shrank — rows were dropped");
+        assert!(
+            table
+                .iter()
+                .filter(|(m, _, _)| m.is_some_and(|s| s.starts_with("Network error: ")))
+                .count()
+                >= 3,
+            "the truncation rows must really use yoagent's Network error prefix"
+        );
+
+        for (shape, expected, why) in table {
+            assert_eq!(
+                classify_shape(*shape),
+                *expected,
+                "shape {shape:?} ({why}) changed classification"
+            );
+        }
+    }
+
+    /// The half of the measurement that is NOT about truncation, recorded
+    /// because it is the surprising row: an API error carrying no recognised
+    /// keyword sets nothing at all, so it surfaces as `Done` rather than as any
+    /// error. Not a truncation defect and deliberately not repaired here — the
+    /// phrase list is #855's open subject. Pinned so the reading is not
+    /// re-derived, and so a future widening of the phrase list is a visible
+    /// change rather than a silent one.
+    #[test]
+    fn unrecognised_api_error_surfaces_as_done_not_fatal() {
+        assert_eq!(
+            classify_shape(Some("API error: something no phrase list recognises")),
+            "Done",
+            "an unrecognised API error is neither retried nor surfaced as an error"
+        );
+        // Near-miss guard: an auth error is likewise not fatal — it is refused
+        // by the non-retriable status-code check and falls through to Done.
+        assert_eq!(
+            classify_shape(Some("Auth error: 401 unauthorized")),
+            "Done",
+            "auth errors take the diagnostic path, not the fatal one"
+        );
+    }
+
     /// Drive `handle_stream_json_events` with a hand-fed event stream and return
     /// the resulting `PromptOutcome`. The `rx` channel IS the seam: the agent
     /// never produces anything, it only exists to satisfy the `&mut Agent`

@@ -1722,9 +1722,7 @@ mod tests {
         // the guards above could be satisfied by a highlighter that never comments.
         assert_eq!(
             highlight_code_line("rust", "let x = 1; // note"),
-            format!(
-                "{BOLD_CYAN}let{RESET} x = {YELLOW}1{RESET}; {DIM}// note{RESET}"
-            )
+            format!("{BOLD_CYAN}let{RESET} x = {YELLOW}1{RESET}; {DIM}// note{RESET}")
         );
     }
 
