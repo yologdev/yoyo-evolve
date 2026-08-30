@@ -1,0 +1,74 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+CLAUDE.md was not touched. Let me verify the claim it now contradicts, and check the retry loop mechanics.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never auto-retried" CLA…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1375p' src/prompt.r… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+CLAUDE.md line 287 still asserts the now-false claim. One focused check on the load-bearing "both loops rewind" claim:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== TEXT PATH (run_prompt_… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both loops do restore — the fix's core premise holds. Code side is sound. But CLAUDE.md, an explicitly named file with a required Step 2, is absent from the diff, and line 287 still asserts the sentence the task named as now-false.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 26s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file is already written. Let me confirm it's well-formed and stop there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_1.md … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict file is complete and well-formed: 6 required lines, no leftover placeholders, one verdict word per Checked: line.
+
+## Evaluation complete — **FAIL**
+
+What I judged:
+
+The code half is genuinely good and I want to be clear about that, because the failure is narrow:
+
+• malformed_tool_call_retry and MAX_MALFORMED_RETRIES landed in prompt_retry_limits.rs as specified, with the judgment-threshold-not-a-measurement reasoning written into the const's doc comment.
+• Narrowness holds. Auth/rate-limit shapes are checked first and win outright, so `"401 Unauthorized: tool call arguments were never assembled" correctly refuses. pause_turn` is excluded with its reason at the branch.
+• Both doors wired, each with its own malformed_retries counter separate from attempt — so a malformed turn still gets its resample after an unrelated transient retry. That's a nicer detail than the task asked for.
+• Every new definition has its consumer in the same diff — including the three visibility widenings (`is_dropped_tool_args_error, and the four tool_wrappers` const arrays), each with its cross-module caller landing alongside. This is the #618/#653/#658 shape and it was avoided.
+• I independently verified the Step 0 stop-rule premise rather than trusting the doc comment: both retry loops call save_messages() / restore_messages(), so the broken block really is not carried into the resample. The fix's core justification is sound, not asserted.
+
+Why it still fails:
+
+git diff HEAD~1 --stat shows three files; CLAUDE.md is not among them. The task named it in its Files: line and made Step 2 a required deliverable. CLAUDE.md:287 still reads:
+
+│ a caller-visible error that is never auto-retried (surface-and-stop, #646)
+
+That sentence is now false for the dropped-args shape, and it sits in the one document re-injected as authoritative context every session. This repo's own record is that exactly this defect — a stale authoritative claim in a file agents read as ground truth — cost eight sessions on src/gasp.rs's "unreachable" comment. The task anticipated it and asked specifically for the superseded claim to be recorded, not erased, plus the plainly-stated limit that this is a resample rather than a context repair.
+
+The remedy is one paragraph on an existing bullet, so this is a cheap fix on re-run rather than a rework.
+
+I made no code changes.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

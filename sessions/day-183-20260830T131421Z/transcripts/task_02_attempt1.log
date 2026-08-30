@@ -1,0 +1,183 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 1: grounding without opening the target file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== (1a) tests referencing…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== (1b) repair history ==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== (1c) CLAUDE.md claims … ✓ (11ms)
+ ✓ (21ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== test count in dispatch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CLAUDE.md sentences na… ✓ (13ms)
+ ✓ (59ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 39s (5 ✓)
+
+Grounding is rich. Now hypotheses — before opening the target.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== mo… (13 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 91 confirmed. Writing the prediction and mirroring it before the first read.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/r… (68 lines) ✓ (202ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+gh returned 401 — the token expired mid-task. One retry, then I record the failure honestly (per my own rule: "could not mirror" must not read as "mirrored") and write the prediction line before reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue comment 738 --body-file… ✓ (261ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mirror failed twice — recorded as could not mirror, not as mirrored. Writing the prediction line now, still before the first read.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (82 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction is locked. Now I read — the two scoped surfaces only.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== flag_value / require_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ROUTED_SUBCOMMANDS con… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.9s (2 ✓)
+
+h1 falsified on sight — FlagValueCheck::FlagLike exists, and it even exempts negative numbers. h2's count half hits: 38 entries, not 37. Reading the two helpers' bodies:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '535,600p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== require_flag_value cal… ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The finding is sharp. require_flag_value (with FlagLike) has exactly one non-test consumer — cli.rs:598 — while flag_value, the loose sibling in the same file, has 8. Checking the rest of scope:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h0b: ad-hoc position()… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four bets are gradeable. Before choosing the fix, I must check whether narrowing flag_value could break a working invocation — my task file warns a router that refuses valid input is worse than one that misses an odd flag:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ALL flag_value call si… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cli.rs:1647 (-p/`--prompt) and :1723 (--system) take **free text** — a prompt may legitimately begin with -. So a global narrowing would silently drop a working invocation, and src/cli.rs` is off-limits for this task. This is the case my task file scripts: file it, land near-miss guards instead. Checking which contracts already have fixtures:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== existing require_flag_… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+require_flag_value is fully fixtured (7 states incl. the negative-number exemption). flag_value has fixtures for Missing and Empty but none for FlagLike — two of three states pinned, which is exactly why the hole reads as covered. Landing near-miss guards over the contracts that hold:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '888,902p' src/dispatch_s… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/dispatch_sub.rs (2 → 87 lines)
+  +     /// Near-miss guard #1 for the `flag_value` / `require_flag_value` asymmetry
+  +     /// (blind round 91, Day 183).
+  +     ///
+  +     /// `require_flag_value` classifies four states (`Ok` / `FlagLike` / `Empty` /
+  +     /// `Missing`) and `flag_value` collapses to `Option`, handling `Missing` and
+  +     /// `Empty` and **not** `FlagLike`. Two of the three are fixtured above
+  +     /// (`..._when_value_missing`, `..._for_empty_string`), which is exactly why the
+  +     /// third reads as covered.
+  +     ///
+  +     /// This test deliberately asserts **nothing** about the `FlagLike` gap — a
+  +     /// fixture pinning a known-wrong output would convert the defect into a green
+  +     /// invariant. It pins the opposite direction: the values a future fix must
+  +     /// **not** start refusing. A negative number is a legitimate value whose first
+  +     /// byte is `-`, and `require_flag_value` already exempts it on purpose.
+  +     #[test]
+  +     fn flag_value_keeps_negative_numbers_which_a_flaglike_fix_must_not_refuse() {
+  +         let args = vec!["yoyo".into(), "--temperature".into(), "-0.1".into()];
+  +         assert_eq!(
+  +             flag_value(&args, &["--temperature"]),
+  +             Some("-0.1".into()),
+  ... (67 more lines)
+ ✓ (1m 58s)
+  +     /// Near-miss guard #1 for the `flag_value` / `require_flag_value` asymmetry
+  +     /// (blind round 91, Day 183).
+  +     ///
+  +     /// `require_flag_value` classifies four states (`Ok` / `FlagLike` / `Empty` /
+  +     /// `Missing`) and `flag_value` collapses to `Option`, handling `Missing` and
+  +     /// `Empty` and **not** `FlagLike`. Two of the three are fixtured above
+  +     /// (`..._when_value_missing`, `..._for_empty_string`), which is exactly why the
+  +     /// third reads as covered.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo dispatch_s… ✓ (1.5s)
+  3 tools completed in 2m 23s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+83 passed, 0 failed. Running the full gate to see what the truncated auto-check reported:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired exactly as designed — a registered round with no grade is fatal. Writing the result line:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (81 lines) ✓ (206ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the positive controls — serially, since two file-mutating controls in one parallel block raced once and one falsely passed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/dispa… (22 lines) ✓ (39.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control A is the round's best evidence: the naive one-line fix I would otherwise have shipped turns exactly one test red — the free-text guard — proving it would silently drop yoyo -p "-- summarize this diff". The negative-number guard stayed green, so the discrimination is real. Restoring, then control B:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ds.b… (9 lines) ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fired. Restoring and confirming the tree is exactly as intended:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ds.bak src/dispatch_sub.… ✓ (10.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No module_size warning (1887 lines, under cap) — no register edit needed. Recording the round in CLAUDE.md, which is now the only surface holding this finding since gh is 401:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `dispatch_sub.rs`' C… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/dispatch_sub.rs
+

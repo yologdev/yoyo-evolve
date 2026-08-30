@@ -1,0 +1,297 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — measuring before writing any production code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fatal_error" src/prompt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "into_result\|retriable_… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,340p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '840,975p' src/prompt.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:300..330  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:848..928 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_prompt_auto_retr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1400p' src/prompt.r… ✓ (3ms)
+ ✓ (4ms)
+  8 tools completed in 11.7s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1230p' src/prompt.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Key finding for the STOP RULE. Let me confirm it precisely.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "save_messages\|restore_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1230,1270p' src/prompt.r… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1335..1351  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1626..1644 ✓ (1ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 28.1s (4 ✓)
+
+Step 0 is complete and the STOP RULE does not fire. Let me check one more thing before writing code.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AUTH_ERROR_SHAPES\|RATE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -40 src/prompt_retry_limits… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 0 is complete and supports the fix. Writing the decision function now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1222,1250p' src/tool_wra… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines)  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 1 lines)
+  - fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+  + pub(crate) fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+ ✓ (2m 8s)
+  - fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+  + pub(crate) fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+ ✗ (2m 8s)
+    │ Command timed out after 120s
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 1 lines)
+  - const AUTH_ERROR_SHAPES: &[&str] = &[
+  + pub(crate) const AUTH_ERROR_SHAPES: &[&str] = &[
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 1 lines)
+  - const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+  + pub(crate) const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+ ✓ (12.3s)
+  - const AUTH_ERROR_SHAPES: &[&str] = &[
+  + pub(crate) const AUTH_ERROR_SHAPES: &[&str] = &[
+ ✓ (24.6s)
+  - const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+  + pub(crate) const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 46s (4 ✓, 1 ✗)
+
+The python heredoc did write before the auto-check timed out — my edits doubled it. Fixing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) pub(crate)\|… ✓ (3ms)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (1 → 1 lines)
+  - pub(crate) pub(crate) const AUTH_STATUS_CODES
+  + pub(crate) const AUTH_STATUS_CODES
+ ✓ (2m 6s)
+  - pub(crate) pub(crate) const AUTH_STATUS_CODES
+  + pub(crate) const AUTH_STATUS_CODES
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the decision function. Appending to src/prompt_retry_limits.rs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (3 → 73 lines)
+  + /// How many extra attempts a malformed tool-call turn is worth.
+  + ///
+  + /// **This is a judgment threshold, not a measurement.** Nothing measured says 1
+  + /// is right; it is the point where "one wasted turn" is cheaper than "a dead
+  + /// run", and it is 1 rather than 3 precisely because #646's original fear is
+  + /// real and unquantified: nobody has measured how often a resample reproduces
+  + /// the same malformed turn. One attempt buys the common case (a one-off
+  + /// sampling accident) without turning a deterministic failure into a burned
+  + /// budget.
+  + pub(crate) const MAX_MALFORMED_RETRIES: u32 = 1;
+  + 
+  + /// Should a fatal turn be resampled because its tool call arrived malformed?
+  + ///
+  + /// The #646 class — the model emitted a tool call whose arguments never
+  + /// assembled, so the tool never ran — is usually a sampling accident, and both
+  + /// API-retry loops in `prompt.rs` rewind the message list to the pre-prompt
+  + /// state before a retry (`agent.save_messages()` / `restore_messages`), so the
+  + /// broken block is **not** carried into the resample. That rewind is what makes
+  + /// one more attempt worth taking; without it a retry would reproduce the
+  + /// failure deterministically, which is exactly what #646 refused.
+  ... (53 more lines)
+ ✓ (15.1s)
+  + /// How many extra attempts a malformed tool-call turn is worth.
+  + ///
+  + /// **This is a judgment threshold, not a measurement.** Nothing measured says 1
+  + /// is right; it is the point where "one wasted turn" is cheaper than "a dead
+  + /// run", and it is 1 rather than 3 precisely because #646's original fear is
+  + /// real and unquantified: nobody has measured how often a resample reproduces
+  + /// the same malformed turn. One attempt buys the common case (a one-off
+  + /// sampling accident) without turning a deterministic failure into a burned
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 43.6s (2 ✓)
+
+Expected — definition without consumer. Wiring both doors now:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (10 → 35 lines)
+                    // this class of failure, so it is deliberately NOT retried — but it
+                    // must not read as a clean `Done` either, so record it as an API
+                    // error the caller can see.
+  +                 //
+  +                 // Day 183: one bounded exception. A malformed tool call (#646's
+  +                 // dropped-args shape) is usually a sampling accident, and the
+  +                 // `restore_messages` above rewinds the message list to the
+  +                 // pre-prompt state, so the broken block is not carried into the
+  +                 // resample. `malformed_tool_call_retry` owns the whole decision
+  +                 // and refuses every other shape, including the `pause_turn` half
+  +                 // of this same variant.
+                    accumulate_usage(&mut total_usage, &usage);
+  +                 if attempt < MAX_RETRIES
+  +                     && crate::prompt_retry_limits::malformed_tool_call_retry(
+  +                         &error_msg,
+  +                         malformed_retries,
+  +                     )
+  +                 {
+  +                     malformed_retries += 1;
+  +                     if !crate::format::is_quiet() {
+  ... (12 more lines)
+ ✓ (13.0s)
+                    // this class of failure, so it is deliberately NOT retried — but it
+                    // must not read as a clean `Done` either, so record it as an API
+                    // error the caller can see.
+  +                 //
+  +                 // Day 183: one bounded exception. A malformed tool call (#646's
+  +                 // dropped-args shape) is usually a sampling accident, and the
+  +                 // `restore_messages` above rewinds the message list to the
+  +                 // pre-prompt state, so the broken block is not carried into the
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let mut api_error: Opti… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.0s (2 ✓)
+
+Now door 2 (the content-path loop):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (7 → 28 lines)
+                PromptResult::FatalError { error_msg, usage } => {
+                    // #646: surface-and-stop — already printed by handle_agent_end,
+                    // never auto-retried, but visible to the caller.
+  +                 //
+  +                 // Day 183: the same single bounded exception as the text path
+  +                 // above. Both doors or neither — wiring one is the "two doors,
+  +                 // one policy, one deaf" shape this repo has shipped eight times.
+                    accumulate_usage(&mut total_usage, &usage);
+  +                 if attempt < MAX_RETRIES
+  +                     && crate::prompt_retry_limits::malformed_tool_call_retry(
+  +                         &error_msg,
+  +                         malformed_retries,
+  +                     )
+  +                 {
+  +                     malformed_retries += 1;
+  +                     if !crate::format::is_quiet() {
+  +                         eprintln!(
+  +                             "{DIM}  {}{RESET}",
+  +                             crate::prompt_retry_limits::malformed_retry_notice(
+  +                                 crate::format::is_plain_output()
+  ... (8 more lines)
+ ✓ (2m 6s)
+                PromptResult::FatalError { error_msg, usage } => {
+                    // #646: surface-and-stop — already printed by handle_agent_end,
+                    // never auto-retried, but visible to the caller.
+  +                 //
+  +                 // Day 183: the same single bounded exception as the text path
+  +                 // above. Both doors or neither — wiring one is the "two doors,
+  +                 // one policy, one deaf" shape this repo has shipped eight times.
+                    accumulate_usage(&mut total_usage, &usage);
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 src/prompt_retry_limits.… ✓ (2ms)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs (3 → 117 lines)
+            assert!(plain.starts_with("waiting"), "plain output shape: {plain}");
+  +     }
+  + 
+  +     /// The shapes that MUST fire: a malformed tool call on the first attempt.
+  +     ///
+  +     /// Every needle here is one `is_dropped_tool_args_error` really matches, so
+  +     /// this pins the seam between the two functions rather than restating one.
+  +     #[test]
+  +     fn malformed_retry_fires_on_the_dropped_args_shape_once() {
+  +         let shapes = [
+  +             "tool call arguments were never assembled",
+  +             "tool_call never completed",
+  +             "assistant emitted a tool call with incomplete arguments",
+  +             "tool call produced no arguments",
+  +         ];
+  +         for s in shapes {
+  +             assert!(
+  +                 malformed_tool_call_retry(s, 0),
+  +                 "first attempt must resample: {s}"
+  +             );
+  ... (97 more lines)
+ ✓ (2m 6s)
+            assert!(plain.starts_with("waiting"), "plain output shape: {plain}");
+  +     }
+  + 
+  +     /// The shapes that MUST fire: a malformed tool call on the first attempt.
+  +     ///
+  +     /// Every needle here is one `is_dropped_tool_args_error` really matches, so
+  +     /// this pins the seam between the two functions rather than restating one.
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo prompt_ret… ✓ (25.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 51s (3 ✓)
+
+17/17 green. Now the positive control, run serially (never in one parallel block):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (9 lines) ✓ (24.2s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.16 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: constant `MAX_MALFORMED_RETRIES` is never used[0m
+   [1m[94m--> [0msrc/prompt_retry_limits.rs:335:18
+    [1m[94m|[0m
+[1m[94m335[0m [1m[94m|[0m pub(crate) const MAX_MALFORMED_RETRIES: u32 = 1;
+    [1m[94m|[0m                  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired **exactly right: the fix test went red, all 16 others — including both near-miss guards** — stayed green. That's the direction that proves the guards test the pass-through. The lint error above is from the neutered body. Restoring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/prl.bak src/prompt_retry… ✓ (23.8s)
+
+Restored, 17/17 green. Now the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 35s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 54s (2 ✓)
+
+All green — 5372 passed. Checking the module-size gate for src/prompt.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (195ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

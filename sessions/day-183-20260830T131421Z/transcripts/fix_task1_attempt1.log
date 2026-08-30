@@ -1,0 +1,172 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the missing piece: CLAUDE.md was never updated. Let me first check the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never auto-retried" CLA… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+The code landed but CLAUDE.md was not touched. Let me read the actual implementation so the doc paragraph describes what shipped, not what I assume shipped.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/prompt_re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/prompt.rs… ✓ (6ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,400p' src/prompt_ret…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1335,1375p' src/prompt.r… ✓ (3ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6.7s (4 ✓)
+
+Output is being elided. Let me read the exact bodies.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry_limits.rs:326..356  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1336..1372 ✓ (0ms)
+ ✓ (1ms)
+  2 tools completed in 2ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have the implementation accurately. The only remaining work is Step 2 (CLAUDE.md). Let me verify the claims I'm about to write rather than trusting the evaluator's summary.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== save/restore in both l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== new test names ===" &&… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+The restore_messages claim is load-bearing for the paragraph I'm about to write. Let me verify it myself rather than trusting the evaluator's summary.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1185..1211  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1568..1588 ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.5s (2 ✓)
+
+Verified myself in both loops: saved_state is captured before attempt 0, and each retry iteration rewinds via restore_messages at the top. The claim holds. Let me read the test bodies so the doc describes the guards accurately.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn malformed_retry_fires_o…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn malformed_retry_refuses… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+The guards are thorough. Now let me run the positive control the task requires — serially, since a parallel pair of file-mutating controls raced once and one falsely passed.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo malformed … ✓ (170ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Baseline green (13 passed). Now the positive control — neuter the decision function to always return false.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (10 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo malformed … ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.3s (2 ✓)
+
+Exactly the required split: 1 red (the firing test) and 12 green — every near-miss guard stayed green under the neutered function, which is the direction proving they test the pass-through rather than the fix. Restoring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/prl.bak src/prompt_retry… ✓ (23.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, byte-empty diff, 13/13 green. Positive control run rather than assumed, and serially.
+
+Now the actual missing work. One important finding first — the task file's suggested wording for Step 2 asserts "the broken block may still be present", but that contradicts what I measured. Let me confirm my anchor is unique before editing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "both are separate featu… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Anchor is unique. Let me locate MAX_RETRIES so I describe the shared bound accurately.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "MAX_RETRIES\s*:\s*u32\… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have every fact verified. Writing the Step 2 paragraph:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Deliberately not done, named rather than implied:** `AgentEnd`'s `SessionStats` rollup is still discarded by the `..`, and `CacheConfig::session_key` is untouched — both are separate features.
+  + **Deliberately not done, named rather than implied:** `AgentEnd`'s `SessionStats` rollup is still discarded by the `..`, and `CacheConfig::session_key` is untouched — both are separate features. **Day 183 — one bounded exception to surface-and-stop, and it moves exactly one of the two fatal shapes.** **Superseded claim, recorded rather than erased:** this bullet's opening sentence says a fatal `StopReason::Error` is *"a caller-visible error that is **never auto-retried** (surface-and-stop, #… [yoyo: 6957 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 50s)
+  - **Deliberately not done, named rather than implied:** `AgentEnd`'s `SessionStats` rollup is still discarded by the `..`, and `CacheConfig::session_key` is untouched — both are separate features.
+  + **Deliberately not done, named rather than implied:** `AgentEnd`'s `SessionStats` rollup is still discarded by the `..`, and `CacheConfig::session_key` is untouched — both are separate features. **Day 183 — one bounded exception to surface-and-stop, and it moves exactly one of the two fatal shapes.** **Superseded claim, recorded rather than erased:** this bullet's opening sentence says a fatal `StopReason::Error` is *"a caller-visible error that is **never auto-retried** (surface-and-stop, #… [yoyo: 6957 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the file:line citations I just wrote are accurate rather than assumed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== prompt.rs:305-312 ==="…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 1189 ===" && sed -n '1… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.3s (2 ✓)
+
+Line ranges check out. Let me pin the exact line of the sentence I quoted, rather than leave a possibly-off citation.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "re-running the identica… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The quote is at line 310, not 309. Fixing my citation — a wrong file:line in the document re-injected as authoritative context every session is precisely the defect class this repo keeps paying for.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Its own comment (`src/prompt.rs:309`) gives the reason
+  + Its own comment (`src/prompt.rs:310`) gives the reason
+ ✓ (1m 40s)
+  - Its own comment (`src/prompt.rs:309`) gives the reason
+  + Its own comment (`src/prompt.rs:310`) gives the reason
+
+Now the full verification suite the task requires:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (16.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 49s (2 ✓)
+
+All green (5372 passed). Now the module-size gate — the task says if it warns for src/prompt.rs I must paste the literal line it prints:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (189ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Paying the drift now rather than absorbing it — Day 174 measured 11 entries that had silently absorbed drift for exactly this reason, and Day 183 records it recurring.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/prompt.rs"' tests/… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/prompt.rs", 3509),
+  +     ("src/prompt.rs", 3561),
