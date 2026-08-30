@@ -1,0 +1,303 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two functions the register's claim is about.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "list_project_files" -r …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTERED_GIT_BYPASSES… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+The register says src/commands_search.rs, not src/commands_project.rs as the task header claims. Let me read both sides before touching anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '88,175p' tests/git_choke…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn list_project_files" … ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,185p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn git_command\|fn run_… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '183,215p' src/git.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn \|pub(crate) fn … ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 31.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reading done. Now Step 0's measurement — I found one candidate difference (run_git_in_dir trims whole stdout; the raw call does not). Let me measure it in a scratch repo rather than reason about it.
+  ▶ $ cd /tmp && rm -rf gcp && mkdir gcp && cd gcp && git init -q … (12 lines) ✓ (320ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured. Two findings at once: the quotepath defect is real ("src/n\303\244me.rs" vs src/näme.rs), and a space is not quoted — so the near-miss guard is valid. But note  leading.rs sorts first, which matters for Step 0's claim. Let me check the helper semantics and the scanner.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/git.rs src/commands_se…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn enclosing_fn\|fn sca… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.1s (2 ✓)
+
+src/git.rs is at 1993 of a 2000 cap — so no new helper there. `run_git_output(&["-C", …])` gives a byte-exact conversion (untrimmed, same argv) with zero lines added to git.rs. Let me copy the scratch-repo shape from git.rs's own quotepath test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quotepath" -B 4 -A 40 s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the conversion. run_git_output(&["-C", …]) preserves the argv and the untrimmed parse exactly — which matters, because run_git_in_dir trims the whole blob and would mangle a leading-space filename. Adding the dir-taking seam so the fix is testable without a chdir (#780).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (39 → 67 lines)
+    /// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
+  + ///
+  + /// Thin wrapper over [`list_project_files_in`] resolving against the process
+  + /// working directory. Byte-identical to the pre-#864 behaviour for every caller.
+    pub(crate) fn list_project_files() -> Vec<String> {
+  +     list_project_files_in(".")
+  + }
+  + 
+  + /// The dir-taking seam behind [`list_project_files`], so the list can be driven
+  + /// against a scratch repo without moving the **process** working directory —
+  + /// which is global, and which #780 spent two tasks removing from tests. Same
+  + /// shape as `suggest_related_files_in` / `apply_patch_in` / `existing_config_paths_in`.
+  + ///
+  + /// **#864 — routed through the chokepoint.** The `ls-files` call used to be a raw
+  + /// `std::process::Command::new("git")`, so it received nothing applied at the
+  + /// `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863), tomorrow
+  + /// whatever else lands there. Consequence, measured: a project file named
+  + /// `src/näme.rs` came back as the literal bytes `"src/n\303\244me.rs"`,
+  + /// surrounding quotes and octal escapes included, which no consumer can use as a
+  + /// path. This list is `/context`'s file set and `auto_context_for_prompt`'s
+  ... (41 more lines)
+ ✓ (1m 23s)
+    /// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
+  + ///
+  + /// Thin wrapper over [`list_project_files_in`] resolving against the process
+  + /// working directory. Byte-identical to the pre-#864 behaviour for every caller.
+    pub(crate) fn list_project_files() -> Vec<String> {
+  +     list_project_files_in(".")
+  + }
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Conversion landed. Now the emission-point tests beside the existing one.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn list_project_files_r… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 125 lines)
+  +     }
+  + 
+  +     /// Scratch git repo for the #864 path-quoting guards. Raw `Command` on
+  +     /// purpose: this is a test region (the chokepoint gate truncates each file at
+  +     /// its module-level `#[cfg(test)] mod` marker), and setup must not inherit
+  +     /// yoyo's own globals — the whole point is to observe what plain git emits.
+  +     fn init_scratch_repo_for_listing(root: &std::path::Path) {
+  +         for args in [
+  +             vec!["init", "-q"],
+  +             vec!["config", "user.email", "t@example.com"],
+  +             vec!["config", "user.name", "yoyo-test"],
+  +         ] {
+  +             let ok = std::process::Command::new("git")
+  +                 .arg("-C")
+  +                 .arg(root)
+  +                 .args(&args)
+  +                 .status()
+  +                 .expect("git must be on PATH for this test")
+  +                 .success();
+  +             assert!(ok, "scratch repo setup failed for {args:?}");
+  ... (105 more lines)
+ ✗ (1ms)
+    │ old_text matches 358 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs. Include more surrounding context to make the match unique.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (4 → 128 lines)
+                "list_project_files should include Cargo.toml; got {} files",
+                files.len()
+  +         );
+  +     }
+  + 
+  +     /// Scratch git repo for the #864 path-quoting guards. Raw `Command` on
+  +     /// purpose: this is a test region (the chokepoint gate truncates each file at
+  +     /// its module-level `#[cfg(test)] mod` marker), and setup must not inherit
+  +     /// yoyo's own globals — the whole point is to observe what plain git emits.
+  +     fn init_scratch_repo_for_listing(root: &std::path::Path) {
+  +         for args in [
+  +             vec!["init", "-q"],
+  +             vec!["config", "user.email", "t@example.com"],
+  +             vec!["config", "user.name", "yoyo-test"],
+  +         ] {
+  +             let ok = std::process::Command::new("git")
+  +                 .arg("-C")
+  +                 .arg(root)
+  +                 .args(&args)
+  +                 .status()
+  ... (108 more lines)
+ ✓ (1m 24s)
+                "list_project_files should include Cargo.toml; got {} files",
+                files.len()
+  +         );
+  +     }
+  + 
+  +     /// Scratch git repo for the #864 path-quoting guards. Raw `Command` on
+  +     /// purpose: this is a test region (the chokepoint gate truncates each file at
+  +     /// its module-level `#[cfg(test)] mod` marker), and setup must not inherit
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo list_proje… ✓ (148ms)
+  4 tools completed in 2m 13s (3 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 4 pass. The auto-check failure is almost certainly the ratchet firing — I converted but haven't deleted the register entry yet. Let me confirm that's exactly what it is.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate passes and still reports 11 bypasses — the ratchet did not fire. That means my conversion didn't remove the site the scanner sees. Let me check rather than assume.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Command::new("git")' sr… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found it — and it's my own lesson landing on me. Line 143 is my own doc comment: the scanner is a textual match, so my prose describing the fix is being counted as a bypass, attributed to list_project_files by the backwards fn search. The count never moved.
+
+That's "will writing about this detector match it?" — verbatim. Let me fix my prose rather than hand the scanner a decoy.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (5 → 5 lines)
+  - /// **#864 — routed through the chokepoint.** The `ls-files` call used to be a raw
+  - /// `std::process::Command::new("git")`, so it received nothing applied at the
+  - /// `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863), tomorrow
+  - /// whatever else lands there. Consequence, measured: a project file named
+  + /// **#864 — routed through the chokepoint.** The `ls-files` call used to shell
+  + /// git directly through a raw `std::process::Command`, so it received nothing
+  + /// applied at the `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863),
+  + /// tomorrow whatever else lands there. Consequence, measured: a project file named
+    /// `src/näme.rs` came back as the literal bytes `"src/n\303\244me.rs"`,
+ ✓ (1m 17s)
+  - /// **#864 — routed through the chokepoint.** The `ls-files` call used to be a raw
+  - /// `std::process::Command::new("git")`, so it received nothing applied at the
+  - /// `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863), tomorrow
+  - /// whatever else lands there. Consequence, measured: a project file named
+  + /// **#864 — routed through the chokepoint.** The `ls-files` call used to shell
+  + /// git directly through a raw `std::process::Command`, so it received nothing
+  + /// applied at the `src/git.rs` chokepoint — today `-c core.quotepath=off` (#863),
+  + /// tomorrow whatever else lands there. Consequence, measured: a project file named
+    /// `src/näme.rs` came back as the literal bytes `"src/n\303\244me.rs"`,
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ratchet should fire — site gone, entry still registered. Let me confirm that's the failure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (185ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ratchet fired with its own pasteable remedy — "The debt is paid". That's the gate proving the conversion landed. Now Step 2: delete the entry.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/git_chokepoint.rs (11 → 3 lines)
+  -     (
+  -         "src/commands_search.rs",
+  -         "list_project_files",
+  -         "NO structural blocker — this duplicates run_git_in_dir(toplevel, [\"ls-files\"]) \
+  -          exactly and is a genuine conversion candidate. Registered rather than fixed \
+  -          because #864 is scoped to enumeration; converting a site and building the gate in \
+  -          one task is how a verified narrow change becomes an unverified wide one.",
+  -     ),
+        (
+            "src/commands_search.rs",
+            "run_grep",
+ ✓ (50.9s)
+  -     (
+  -         "src/commands_search.rs",
+  -         "list_project_files",
+  -         "NO structural blocker — this duplicates run_git_in_dir(toplevel, [\"ls-files\"]) \
+  -          exactly and is a genuine conversion candidate. Registered rather than fixed \
+  -          because #864 is scoped to enumeration; converting a site and building the gate in \
+  -          one task is how a verified narrow change becomes an unverified wide one.",
+  -     ),
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (182ms)
+  2 tools completed in 53.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate passes with exactly the required shape: 10 bypasses under 7 entries. But the census header still says "Day 182" and the module doc carries the old counts — stale the moment the numbers moved.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 182\|eight entries\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,475p' tests/git_chok… ✓ (2ms)
+  3 tools completed in 8.4s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5366 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — I added ~155 lines to commands_search.rs. It prints its own pasteable remedy; let me use that rather than hand-typing a number.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (153ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/commands_search.rs… ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_search.rs", 3720),
+  +     ("src/commands_search.rs", 3872),
+ ✓ (50.8s)
+  -     ("src/commands_search.rs", 3720),
+  +     ("src/commands_search.rs", 3872),
+  3 tools completed in 57.2s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

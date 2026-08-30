@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,420p' src/format/cos… ✓ (2ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_cache_stats" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs && git … ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/format/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 240 cargo test --bin yoy… ✓ (6ms)
+ ✓ (142ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:src/format/cost.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.lock | h… ✓ (7ms)
+ ✓ (149ms)
+  8 tools completed in 24.4s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (4ms)
+
+**Verdict: PASS** — written to session_plan/eval_task_1.md.
+
+## What I verified
+
+The task's premise was false, and the implementer caught it at Step 0. The task asserted "Nothing anywhere derives or displays a hit ratio" and specified two new functions. Every piece already existed:
+
+• format_cache_stats at src/format/cost.rs:391
+• Wired at both doors — handle_tokens (commands_info.rs:579) and handle_cost (:604)
+• With the exact denominator the task specified, via upstream yoagent::Usage::cache_hit_rate
+
+Building the specified functions would have created a second statement of a metric that already has one — the duplication defect this repo has rules against.
+
+Evidence I collected rather than assumed:
+
+| Check | Method | Result |
+|---|---|---|
+| Feature pre-exists & wiring | grep -n format_cache_stats | both doors, pre-diff |
+| Production behaviour unchanged | extracted the function body from HEAD~1 and HEAD, diff'd | byte-identical |
+| Test count claim | cargo test --bin yoyo format::cost | 103 passed / 0 failed — matches the write-up |
+| Register drift paid | wc -l src/format/cost.rs vs register entry | 2539 = 2539 ✓ |
+| New version markers have a consumer | cargo test --test doc_version_claims | 5 passed |
+
+The guards are not busywork. The user-visible percentage is computed entirely by an upstream method this repo doesn't own — the same exposure that made `main` red for 31 hours over the sonnet-5 preset. The four pre-existing tests assert rendered percentages, so an upstream denominator change would redden all four with receipts reading as a formatting bug. The new cache_hit_rate_denominator_is_input_plus_read_plus_write derives its expectation from the formula, fails with a message naming the real suspect, and carries an anti-vacuous pair proving the fixture can actually distinguish the two rival denominators.
+
+One note, not a failure: the deliverable shifted from "build a feature" to "the feature exists; pin it and fix the doc that hid it." That's the correct response to a falsified premise, and CLAUDE.md states the limit plainly — "Nothing about production behaviour changed" — rather than dressing docs-and-tests as a shipped feature.
+
+  watch: no files changed this turn — skipping
+
