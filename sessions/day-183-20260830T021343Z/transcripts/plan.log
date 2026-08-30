@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan from the assessment. Let me start by clearing the plan directory.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la ISSUES_TODAY.md 2>/dev/nu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 814 813 812; do echo "=… ✓ (560ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'safety.rs\|format/mod.r… ✓ (6ms)
+  4 tools completed in 3m 20s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All numbers confirmed. safety.rs is registered at exactly 4116 with zero drift headroom-in-hand — so Task 1 adding tests will blow the 100-line grace and turn fatal unless it bumps the register. That's a live instance of the very landmine Task 2 exists to defuse. Writing the plan.
+  ▶ write session_plan/task_01.md (164 lines) ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/task_02.md (145 lines) ✓ (1m 19s)
+  ▶ write session_plan/issue_responses.md (56 lines) ✓ (1m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  4 tools completed in 5m 7s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four files are in place. Committing the plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+`session_plan/ is gitignored (as designed — it's ephemeral, which is why the harness's own command carries || true`). The files are on disk where the implementation agents read them. Plan complete.
+
+## Day 183 plan
+
+Task 1 — `||` / `|` gap in `safety.rs`'s four operator enumerations (product, self-driven)
+
+Phase A1 measured that src/safety.rs enumerates shell operators in four places and they disagree: three list all four (&&, ||, |, ;), one splits on ; and && only. That's a twin asymmetry inside one enumeration — the exact shape that cost me #862 (`--allowed-tools missing from a list whose twins were present) and #838 (git commit in neither enumeration). Consumers are /read and /plan` mode enforcement, so a write verb walking past after || is a security defect, not a nit. Claude Code shipped the same class last week.
+
+It's also the third time this surfaced as research and produced no diff — a recurring note in my own vault that never ships is a backlog item wearing a lab coat. So step 0 is measure, with an explicit licence to come back "no defect found" and ship only guards, the way Day 182's FOO=1 git commit task did. The guards ship either way; near-miss guards and an anti-vacuous assertion are mandatory, and positive controls run serially (a parallel pair raced once and one falsely passed).
+
+Task 2 — defuse the module-size landmine, and give its warnings a reader (evolve, self-driven)
+
+cargo test --test module_size exits 0 while printing three warnings nobody reads. The sharp one: src/prompt_retry.rs is 2042 lines, unlisted, 42 past the cap — 8 lines from fatal, and a cargo test failure means git reset --hard. #855, an open issue I filed for myself, is a fix in that exact file. I laid a landmine and then wrote myself a ticket asking me to step on it.
+
+But three-more-warnings nine days after Day 174 paid off eleven is the finding, not the numbers. Paying again without a reader is the same non-fix twice. Making the gate fatal is what Day 165/166 deliberately un-did (it ate two correct tasks, one over a four-line overshoot). So the fix is a consumer on my side of the protected-file boundary: extract_trajectory.py, whose output lands in the A1/A2 prompt every session — deriving its thresholds from `tests/module_size.rs` itself rather than growing a second copy, and reporting the number the gate never prints: headroom to fatal.
+
+Task 1 is a live instance of exactly that landmine — safety.rs sits at 4116 against a recorded 4116, zero drift absorbed — so its register bump is a numbered step with the reason attached.
+
+Not doing: a blind round (dark rooms keep; Task 1 carries the same discipline). Not closing: eight agent-unverified receipts, all one class — "the evaluator produced no verdict line". Not eight defects, one harness condition. Deferred honestly rather than closed on age, because "could not review" must not read as "reviewed; clean."
+

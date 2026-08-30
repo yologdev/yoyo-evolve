@@ -1,0 +1,293 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring the actual state — the plan says not to hand-type numbers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (6ms)
+ ✓ (165ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Measurement confirms the plan exactly. Now let me read the gate file — I need both its register format (Part A) and its parseable shape (Part B).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MAX_MODULE_LINES\|OVERS…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/GRANDFATHERED_OVERSIZED… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Now let me see exactly how the gate counts lines (my Python scan must match) and the register entries I'm editing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,340p' tests/module_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src/format/mod.rs\|src/… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn collect_src_files\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn collect/,/^}/p' test… ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 4.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Context was cut mid-task. Let me re-establish exactly where I am before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (8ms)
+ ✓ (136ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+Tree is clean — I was still reading. I have what I need. Part A first (it cannot half-land). Let me make the three register edits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '248,262p' tests/module_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '246,258p' tests/module_s… ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit tests/module_size.rs (1 → 3 lines)
+  -     ("src/commands_project.rs", 3523),
+  +     // Day 183: +1 absorbed since Day 179 (#837's scoring change). Paid off rather
+  +     // than left as a fourth unread warning.
+  +     ("src/commands_project.rs", 3524),
+  ▶ edit tests/module_size.rs (1 → 5 lines)
+  -     ("src/format/mod.rs", 2568),
+  +     // Day 183: 2568 -> 2629, +61 absorbed since Day 177 (the `color_enabled`
+  +     // cfg(test) pin and the three pure-core splits that paid the shared-global
+  +     // register down). Inside REGISTER_DRIFT_GRACE_LINES, so it warned rather than
+  +     // failed — and warned unread for six days, which is the finding this task fixes.
+  +     ("src/format/mod.rs", 2629),
+ ✓ (1m 23s)
+  -     ("src/commands_project.rs", 3523),
+  +     // Day 183: +1 absorbed since Day 179 (#837's scoring change). Paid off rather
+  +     // than left as a fourth unread warning.
+  +     ("src/commands_project.rs", 3524),
+ ✓ (2m 45s)
+  -     ("src/format/mod.rs", 2568),
+  +     // Day 183: 2568 -> 2629, +61 absorbed since Day 177 (the `color_enabled`
+  +     // cfg(test) pin and the three pure-core splits that paid the shared-global
+  +     // register down). Inside REGISTER_DRIFT_GRACE_LINES, so it warned rather than
+  +     // failed — and warned unread for six days, which is the finding this task fixes.
+  +     ("src/format/mod.rs", 2629),
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 2m 54s (4 ✓)
+
+Now the sharp one — the unlisted file 8 lines from fatal.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/prompt.rs"' tests/… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit tests/module_size.rs (1 → 12 lines)
+        ("src/prompt.rs", 3372),
+  +     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
+  +     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
+  +     // Registering it is this gate's OWN stated remedy for a grace-band overshoot
+  +     // ("split it, or add (...) with a reason"), not a way around it: the entry
+  +     // converts silent headroom into a ratcheted ceiling that branch 3 defends.
+  +     // The better fix is a SPLIT — precedent `src/prompt_retry_limits.rs`, carved
+  +     // out of this very file on Day 177 for this very reason — deliberately not
+  +     // done here: a half-landed pure move is a build failure and a reverted
+  +     // session, while a register edit cannot half-land. It was 8 lines from fatal
+  +     // with #855 (open, agent-self) queued against this exact file.
+  +     ("src/prompt_retry.rs", 2042),
+ ✓ (1m 23s)
+        ("src/prompt.rs", 3372),
+  +     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
+  +     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
+  +     // Registering it is this gate's OWN stated remedy for a grace-band overshoot
+  +     // ("split it, or add (...) with a reason"), not a way around it: the entry
+  +     // converts silent headroom into a ratcheted ceiling that branch 3 defends.
+  +     // The better fix is a SPLIT — precedent `src/prompt_retry_limits.rs`, carved
+  +     // out of this very file on Day 177 for this very reason — deliberately not
+  ... (4 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Part A verification — the gate must be green with zero warnings printed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (163ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Still reading 3523 — let me check whether there's a duplicate entry.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_project' tests… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '178,190p' tests/module_s… ✓ (6ms)
+  2 tools completed in 4.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The diff shows only two hunks. My commands_project.rs edit reported success and its write was lost — I issued those two edit_file calls in one parallel block on the same file, which is exactly the race my own CLAUDE.md documents ("two file-mutating controls in one parallel block raced once and one falsely passed"). Redoing it serially:
+  ▶ edit tests/module_size.rs (1 → 3 lines)
+  -     ("src/commands_project.rs", 3523),
+  +     // Day 183: +1 absorbed since Day 179 (#837's auto-context scoring change).
+  +     // Paid off rather than left as a third unread warning.
+  +     ("src/commands_project.rs", 3524),
+ ✓ (1m 23s)
+  -     ("src/commands_project.rs", 3523),
+  +     // Day 183: +1 absorbed since Day 179 (#837's auto-context scoring change).
+  +     // Paid off rather than left as a third unread warning.
+  +     ("src/commands_project.rs", 3524),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (166ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 29s (2 ✓)
+
+Part A is done — green, zero warnings. Now Part B. Let me study the idiom I must copy (render_usage_coverage) and the main() wiring.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_usage_covera… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1535,1600p' scripts/extr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1940,2025p' scripts/extr… ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 2.6s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the idiom. Writing Part B now — pure decision functions, single authority by parsing the gate file itself.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1625p' scripts/extr… ✓ (3ms)
+  ▶ edit scripts/extract_trajectory.py (5 → 207 lines)
+        lines.append("; ".join(detail) + ".")
+  +     return "\n".join(lines)
+  + 
+  + 
+  + # --- Module-size headroom (from tests/module_size.rs, fail-soft) ---
+  + #
+  + # WHY THIS EXISTS. `tests/module_size.rs` has three branches; two of them are
+  + # deliberately NON-fatal (Day 165/166 repriced them, because a gate whose only
+  + # remedy is a whole-task revert eats the correct work sitting beside the
+  + # violation — #719 and #739, the second dying to a FOUR-line overshoot). Those
+  + # two branches warn to the stderr of a *passing* test, and the only consumer of
+  + # `cargo test` in the evolve loop reads the EXIT CODE. So nothing read them:
+  + # Day 174 paid off 11 entries carrying up to +480 lines of absorbed drift, and
+  + # by Day 183 three more warnings had accumulated unread, one of them a file 8
+  + # lines from FATAL with an open issue queued against it.
+  + #
+  + # This is the reader, on my side of the protected-`evolve.sh` boundary. It does
+  + # NOT make the gate stricter — the consts and branches are untouched.
+  + #
+  + # SINGLE AUTHORITY: every number is parsed out of `tests/module_size.rs`
+  ... (186 more lines)
+ ✓ (1m 22s)
+        lines.append("; ".join(detail) + ".")
+  +     return "\n".join(lines)
+  + 
+  + 
+  + # --- Module-size headroom (from tests/module_size.rs, fail-soft) ---
+  + #
+  + # WHY THIS EXISTS. `tests/module_size.rs` has three branches; two of them are
+  + # deliberately NON-fatal (Day 165/166 repriced them, because a gate whose only
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 5s (2 ✓)
+
+Now check imports and wire it into main() — above the epistemic block, per the render-order constraint.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' scripts/extract_t… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+NamedTuple isn't imported — the file's idiom is @dataclass (as CiScan/UsageCoverage use). Converting to match:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (19 → 21 lines)
+  - class ModuleGateSpec(NamedTuple):
+  + @dataclass
+  + class ModuleGateSpec:
+        """The gate's own rules, parsed from its source. Never a second copy."""
+    
+        max_lines: int
+  ···
+        ok: bool
+    
+    
+  - class ModuleRisk(NamedTuple):
+  + @dataclass
+  + class ModuleRisk:
+        """What the gate would say, plus the number it never prints: headroom."""
+    
+        # (path, lines, headroom_to_fatal) for the worst unlisted file over the cap.
+ ✓ (1m 22s)
+  - class ModuleGateSpec(NamedTuple):
+  + @dataclass
+  + class ModuleGateSpec:
+        """The gate's own rules, parsed from its source. Never a second copy."""
+    
+        max_lines: int
+  ···
+        ok: bool
+  ... (8 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire it into main() — above the epistemic block, with its refusal excluded from data_sections.
+  ▶ edit scripts/extract_trajectory.py (3 → 15 lines)
+  +     if s:
+  +         sections.append(s)
+  +     # Day 183: the module-size gate's two non-fatal branches warn to the stderr
+  +     # of a PASSING test, and the only consumer of `cargo test` in the loop reads
+  +     # the exit code — so nothing read them and three warnings accumulated, one
+  +     # of them 8 lines from fatal. This is that reader. Same rule as `ci_unknown`
+  +     # / `provider_unknown` / `usage_unknown` above: a "could not check" line is
+  +     # honest but is not trajectory DATA, so it must not suppress the global
+  +     # "(no trajectory data yet)" state below.
+  +     module_spec, module_risk = collect_module_sizes(Path.cwd())
+  +     s = render_module_sizes(module_spec, module_risk)
+  +     module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
+        if s:
+            sections.append(s)
+        # Always rendered when any signal exists (it has its own honest fallback
+ ✓ (1m 22s)
+  +     if s:
+  +         sections.append(s)
+  +     # Day 183: the module-size gate's two non-fatal branches warn to the stderr
+  +     # of a PASSING test, and the only consumer of `cargo test` in the loop reads
+  +     # the exit code — so nothing read them and three warnings accumulated, one
+  +     # of them 8 lines from fatal. This is that reader. Same rule as `ci_unknown`
+  +     # / `provider_unknown` / `usage_unknown` above: a "could not check" line is
+  +     # honest but is not trajectory DATA, so it must not suppress the global
+  ... (7 more lines)
+  ▶ edit scripts/extract_trajectory.py (2 → 3 lines)
+            - (1 if usage_unknown else 0)
+  +         - (1 if module_unknown else 0)
+        )
+ ✓ (1m 22s)
+            - (1 if usage_unknown else 0)
+  +         - (1 if module_unknown else 0)
+        )
+  2 tools completed in 2m 48s (2 ✓)
+
+Now the self-tests. Let me see the existing test idiom:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2240,2275p' scripts/extr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>2243 && /^    print\(.*s… ✓ (4ms)
+  2 tools completed in 3.1s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
