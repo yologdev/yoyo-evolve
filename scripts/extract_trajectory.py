@@ -4229,6 +4229,179 @@ src/commands_config.rs
         "nothing there.",
     )
 
+    # --- Module-size reader (Day 183) -------------------------------------
+    # The gate warns on the stderr of a PASSING test and the only consumer of
+    # `cargo test` in the evolve loop reads the exit code, so nothing read it.
+    # Everything below is driven with FABRICATED inputs — no filesystem, no
+    # `gh`, no `cargo` (#832) — so the decision is graded, not the wiring.
+    print("\n=== module-size reader self-tests ===\n")
+
+    # count_rs_lines must agree with Rust's `content.lines().count()`. A
+    # counter that disagrees with the gate is worse than no counter.
+    assert_eq("count_rs_lines: empty text is 0 lines", str(count_rs_lines("")), "0")
+    assert_eq("count_rs_lines: trailing newline is not a line", str(count_rs_lines("a\nb\n")), "2")
+    assert_eq("count_rs_lines: no trailing newline still counts", str(count_rs_lines("a\nb")), "2")
+    assert_eq("count_rs_lines: one line with newline", str(count_rs_lines("a\n")), "1")
+    # The splitlines() trap: Python splits on \x0b/\x0c/\u2028, Rust does not.
+    assert_eq(
+        "count_rs_lines: a vertical tab is NOT a line break (Rust splits on \\n only)",
+        str(count_rs_lines("a\x0bb\n")),
+        "1",
+    )
+
+    # A faithful fixture of the gate's own shape, including the `2_000`
+    # underscore literal and an interleaved comment.
+    gate_fixture = (
+        "const MAX_MODULE_LINES: usize = 2_000;\n"
+        "const OVERSHOOT_GRACE_LINES: usize = 50;\n"
+        "const REGISTER_DRIFT_GRACE_LINES: usize = 100;\n"
+        "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n"
+        '    // a comment between entries\n'
+        '    ("src/cli.rs", 5349),\n'
+        '    ("src/format/mod.rs", 2629),\n'
+        "];\n"
+        "fn fixture() { let _ = [(\"src/fake_fixture.rs\", 500)]; }\n"
+    )
+    spec = parse_module_gate(gate_fixture)
+    assert_true("parse_module_gate: a well-formed gate parses ok", spec.ok)
+    assert_eq("parse_module_gate: the 2_000 underscore literal parses", str(spec.max_lines), "2000")
+    assert_eq("parse_module_gate: overshoot grace parses", str(spec.overshoot_grace), "50")
+    assert_eq("parse_module_gate: drift grace parses", str(spec.drift_grace), "100")
+    assert_eq("parse_module_gate: both register entries parse", str(len(spec.register)), "2")
+    assert_eq(
+        "parse_module_gate: a nested path entry keeps its full relpath",
+        str(spec.register.get("src/format/mod.rs")),
+        "2629",
+    )
+    # Only the register LITERAL is scanned, so a `("src/x.rs", N)` pair sitting
+    # in the gate's own unit-test fixtures can never masquerade as an entry.
+    assert_true(
+        "parse_module_gate: a pair outside the register literal is not an entry",
+        "src/fake_fixture.rs" not in spec.register,
+    )
+    # Anti-vacuous, in every direction a broken parse can fail.
+    assert_true("parse_module_gate: empty text refuses", not parse_module_gate("").ok)
+    assert_true(
+        "parse_module_gate: a missing const refuses rather than defaulting",
+        not parse_module_gate(
+            gate_fixture.replace("const OVERSHOOT_GRACE_LINES: usize = 50;\n", "")
+        ).ok,
+    )
+    assert_true(
+        "parse_module_gate: ZERO register entries refuses (a broken parse is not a clean one)",
+        not parse_module_gate(
+            "const MAX_MODULE_LINES: usize = 2_000;\n"
+            "const OVERSHOOT_GRACE_LINES: usize = 50;\n"
+            "const REGISTER_DRIFT_GRACE_LINES: usize = 100;\n"
+            "const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[\n];\n"
+        ).ok,
+    )
+    assert_true(
+        "parse_module_gate: a missing register literal refuses",
+        not parse_module_gate(
+            "const MAX_MODULE_LINES: usize = 2_000;\n"
+            "const OVERSHOOT_GRACE_LINES: usize = 50;\n"
+            "const REGISTER_DRIFT_GRACE_LINES: usize = 100;\n"
+        ).ok,
+    )
+
+    # A crash-safe reader: a neutered scan must make these assertions FAIL,
+    # not raise, or the run aborts before the near-miss guards below and the
+    # positive control cannot show that they stay green.
+    def field(tup, i: int) -> str:
+        return "<none>" if tup is None else str(tup[i])
+
+    # module_size_risks: the AT-RISK side. Numbers are this session's real
+    # measurement — src/prompt_retry.rs at 2042 was 8 lines from fatal.
+    risk = module_size_risks(spec, [("src/prompt_retry.rs", 2042), ("src/main.rs", 100)])
+    assert_true("module_size_risks: an unlisted file over the cap is caught", risk.worst_unlisted is not None)
+    assert_eq(
+        "module_size_risks: headroom to FATAL is max + grace - lines (the number the gate never prints)",
+        field(risk.worst_unlisted, 2),
+        "8",
+    )
+    assert_eq("module_size_risks: the scanned count is the whole denominator", str(risk.scanned), "2")
+    # Near-miss guard: the side that must NOT fire. A discriminator tested
+    # only where it fires is vacuous green.
+    clean = module_size_risks(spec, [("src/main.rs", 100), ("src/format/mod.rs", 2629)])
+    assert_true(
+        "module_size_risks: a clean tree reports NO unlisted risk",
+        clean.worst_unlisted is None,
+    )
+    assert_true(
+        "module_size_risks: a listed file exactly at its recorded lines is not drift",
+        clean.worst_drift is None,
+    )
+    assert_true(
+        "module_size_risks: a file exactly AT the cap is not over it (boundary)",
+        module_size_risks(spec, [("src/x.rs", 2000)]).worst_unlisted is None,
+    )
+    assert_true(
+        "module_size_risks: one line past the cap IS over it (the other side of the boundary)",
+        module_size_risks(spec, [("src/x.rs", 2001)]).worst_unlisted is not None,
+    )
+    # Drift: reported only past MODULE_DRIFT_REPORT_FRACTION of the grace band,
+    # so the +1/+2 creep that made up most of Day 174's list stays quiet.
+    drift = module_size_risks(spec, [("src/format/mod.rs", 2690), ("src/cli.rs", 5350)])
+    assert_true("module_size_risks: drift past the report floor is caught", drift.worst_drift is not None)
+    assert_eq(
+        "module_size_risks: the reported drift is the WORST (smallest headroom), not the first seen",
+        field(drift.worst_drift, 0),
+        "src/format/mod.rs",
+    )
+    assert_eq(
+        "module_size_risks: drift headroom is recorded + drift_grace - lines",
+        field(drift.worst_drift, 3),
+        "39",
+    )
+    assert_true(
+        "module_size_risks: a +1 drift is under the floor and stays silent",
+        module_size_risks(spec, [("src/cli.rs", 5350)]).worst_drift is None,
+    )
+
+    # render_module_sizes: three states, none folded into another.
+    at_risk = render_module_sizes(spec, risk)
+    assert_true(
+        "render: the AT-RISK line names the headroom and that FATAL reverts the task",
+        "8 more line(s) makes `cargo test` FATAL" in at_risk,
+    )
+    assert_true(
+        "render: the AT-RISK line prints the literal register line to paste",
+        '("src/prompt_retry.rs", 2042)' in at_risk,
+    )
+    assert_true(
+        "render: AT-RISK is held to at most 2 lines plus its header",
+        len(at_risk.splitlines()) <= 3,
+    )
+    assert_true(
+        "render: a drift risk renders its own line with its own headroom",
+        "39 more line(s) makes it FATAL" in render_module_sizes(spec, drift),
+    )
+    # Near-miss guard: OK renders NOTHING. Silent is the common case and the
+    # entire regression surface — asserted as byte-identical emptiness, not
+    # as the absence of some substring.
+    assert_eq("render: a clean scan renders the empty string, byte-identically", render_module_sizes(spec, clean), "")
+    # COULD NOT CHECK, both ways in. Anti-vacuous is asserted FIRST in the
+    # renderer, so a zero-file walk refuses even when the spec parsed fine.
+    zero_files = render_module_sizes(spec, ModuleRisk(None, None, 0))
+    assert_true(
+        "render: a walk finding zero src files refuses rather than rendering OK",
+        "not checked" in zero_files and "found 0 files" in zero_files,
+    )
+    assert_true(
+        "render: the zero-file refusal says outright it is NOT a clean bill",
+        "NOT 'no modules at risk'" in zero_files,
+    )
+    unparsed = render_module_sizes(ModuleGateSpec(0, 0, 0, {}, False), ModuleRisk(None, None, 94))
+    assert_true(
+        "render: an unparseable gate file refuses rather than rendering OK",
+        "not checked" in unparsed and MODULE_GATE_REL_PATH in unparsed,
+    )
+    assert_true(
+        "render: the unparseable-gate refusal also refuses to read as 'checked; clean'",
+        "NOT 'no modules at risk'" in unparsed,
+    )
+
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
 
