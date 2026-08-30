@@ -390,15 +390,25 @@ def test_diff_is_register_only(diff_text: str) -> bool:
             continue
         if line.startswith("+"):
             body = line[1:]
+            entry_state = added_state
             residue, added_state = strip_rust_strings_and_comments(body, added_state)
         elif line.startswith("-"):
             body = line[1:]
+            entry_state = removed_state
             residue, removed_state = strip_rust_strings_and_comments(body, removed_state)
         else:
             # Context, `@@` headers, `\ No newline at end of file`. Not a change.
             continue
         changed += 1
-        if not all(c in REGISTER_RESIDUE_CHARS for c in residue):
+        # ONE STATEMENT OF THE RULE, and this is why the strip happens twice. The loop
+        # needs the residue itself (for the paren evidence below) and the carried state;
+        # the JUDGMENT "can this line hold an assertion?" is asked of
+        # `is_register_literal_line` rather than re-spelled here. A second inline copy of
+        # `all(c in REGISTER_RESIDUE_CHARS ...)` would agree the day it was written and
+        # drift forever after — the defect this whole file's derivation replaced. Both
+        # calls strip the same body from the same entry state through the same pure
+        # function, so they cannot disagree.
+        if not is_register_literal_line(body, entry_state):
             return False
         if "(" in residue or ")" in residue:
             saw_paren = True
@@ -485,6 +495,37 @@ def attribute_failures(
                 f"{name!r} lives in {owners[0]}, whose diff is not register-only"
             )
     return True, "every failing test lives in a file whose diff was register-only"
+
+
+def apply_register_drift(
+    verdict: str,
+    output: str,
+    pre_test_sources: dict,
+    register_only: dict,
+) -> tuple[str, str]:
+    """The #867 decision, as one pure function: does this verdict become REGISTER_DRIFT?
+
+    Returns `(verdict, why)`, where `why` is the empty string when nothing changed.
+
+    THE PRECEDENCE IS THE SAFETY PROPERTY AND IT IS ENCODED HERE, NOT AT THE CALL SITE.
+    The branch fires ONLY on `UNEARNED`. `INCONCLUSIVE` (pre-tests did not compile against
+    post-src/) and `BASELINE_RED` (the reference point is itself broken) therefore keep
+    absolute precedence untouched, because a build that did not finish cannot have run the
+    assertions it is being judged on. `EARNED`, `NO_TEST_CHANGE` and `COULD_NOT_CHECK`
+    likewise pass through byte-identically — a green is never rewritten into a void.
+
+    It lives beside `attribute_failures` rather than inline in `run_counterfactual` for
+    one reason: `run_counterfactual` shells two cargo invocations, so anything inlined
+    there is unpinnable by a self-test. This is the composition an actual run performs,
+    and it is exercised by the same rows a live read would take.
+    """
+    if verdict != UNEARNED:
+        return verdict, ""
+    failing = failing_test_names(output)
+    drift, why = attribute_failures(failing, pre_test_sources, register_only)
+    if not drift:
+        return UNEARNED, why
+    return REGISTER_DRIFT, why + ". Failing: " + ", ".join(failing)
 
 
 # --------------------------------------------------------------------------------------
@@ -790,19 +831,19 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
 
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         verdict = classify_counterfactual(rc, out)
-        # REGISTER DRIFT (#867). Checked ONLY on an UNEARNED, so INCONCLUSIVE and
-        # COULD_NOT_CHECK keep absolute precedence: a build that did not finish cannot
-        # have run the assertions it is being judged on, and that ordering must not move.
-        if verdict == UNEARNED:
-            failing = failing_test_names(out)
-            drift, why = attribute_failures(failing, pre_sources, {
-                path: path in register_only for path in changed
-            })
-            if drift:
-                return REGISTER_DRIFT, (
-                    "BASELINE: green. COUNTERFACTUAL: red, but VOID — " + why
-                    + ". Failing: " + ", ".join(failing) + ". " + summarise(out)
-                )
+        # REGISTER DRIFT (#867), decided by the pure `apply_register_drift` so the branch
+        # this shells cargo for is the same one the self-tests pin. It fires ONLY on an
+        # UNEARNED, so INCONCLUSIVE and COULD_NOT_CHECK keep absolute precedence: a build
+        # that did not finish cannot have run the assertions it is being judged on, and
+        # that ordering must not move.
+        verdict, why = apply_register_drift(verdict, out, pre_sources, {
+            path: path in register_only for path in changed
+        })
+        if verdict == REGISTER_DRIFT:
+            return verdict, (
+                "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+                + why + ". " + summarise(out)
+            )
         return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
     finally:
         # LANDMINE 1, the other half: always give the worktree back.
@@ -1260,6 +1301,136 @@ def run_self_tests():
         "an assert_eq! diff is NOT register-only",
         not test_diff_is_register_only(BEHAVIOURAL_DIFF),
     )
+
+    # -- is_register_literal_line, directly: the rule test_diff_is_register_only asks -----
+    # Table-tested in BOTH directions, because a discriminator exercised only where it
+    # fires is vacuous green — and this predicate's whole job is to say NO to assertions.
+    register_line_table = [
+        # (line, carried in_string, expected, why)
+        ('    ("src/cli.rs", 5349),', False, True, "a two-field register tuple"),
+        ('    ("src/commands_search.rs", "list_project_files", "why..."),',
+         False, True, "the three-field 08a9e36f shape"),
+        ("    (", False, True, "a tuple opened across lines"),
+        ('        "list_project_files",', False, True, "a lone tuple field"),
+        ("    ),", False, True, "a tuple closed across lines"),
+        ("//! module prose", False, True, "a doc comment carries no assertion"),
+        ("    // an ordinary comment", False, True, "a line comment likewise"),
+        ("", False, True, "a blank line"),
+        ("   ", False, True, "a whitespace-only line"),
+        ("     exactly and is a conversion candidate.\",", True, True,
+         "a continued string literal is pure content"),
+        ('    assert_eq!(got, "x");', False, False, "an assertion"),
+        ("    let n = count_rs_lines(p);", False, False, "a binding"),
+        ("fn every_site_is_registered() {", False, False, "a fn signature"),
+        ("    const MAX_MODULE_LINES: usize = 2000;", False, False, "a const"),
+        ("    panic!();", False, False, "a bare panic still names an identifier"),
+    ]
+    for line_, state_, expected_, why_ in register_line_table:
+        got_ = is_register_literal_line(line_, state_)
+        check(f"register line ({why_})", got_ == expected_, got_)
+
+    # EMPTY DIFF IS FALSE, NOT TRUE. "Nothing changed" is not "only bookkeeping changed";
+    # folding them would let a file with no diff at all launder a real failure into a void
+    # verdict, which is the one direction this instrument exists to avoid.
+    check("an empty diff is NOT register-only", not test_diff_is_register_only(""))
+    check(
+        "a context-only diff is NOT register-only",
+        not test_diff_is_register_only(
+            "--- a/tests/module_size.rs\n"
+            "+++ b/tests/module_size.rs\n"
+            "@@ -1,1 +1,1 @@\n"
+            '     ("src/cli.rs", 5349),\n'
+        ),
+    )
+
+    # -- failing_test_names: both libtest shapes, deduped ---------------------------------
+    LIBTEST_OUT = (
+        "running 13 tests\n"
+        "test every_direct_git_invocation_is_at_the_chokepoint_or_registered ... FAILED\n"
+        "test classify_table ... ok\n"
+        "\n"
+        "failures:\n"
+        "\n"
+        "    every_direct_git_invocation_is_at_the_chokepoint_or_registered\n"
+        "\n"
+        "test result: FAILED. 12 passed; 1 failed\n"
+    )
+    check(
+        "failing_test_names reads both shapes and dedupes",
+        failing_test_names(LIBTEST_OUT)
+        == ["every_direct_git_invocation_is_at_the_chokepoint_or_registered"],
+        failing_test_names(LIBTEST_OUT),
+    )
+    check(
+        "failing_test_names finds nothing in a green run",
+        failing_test_names("test result: ok. 42 passed; 0 failed\n") == [],
+    )
+
+    # -- attribute_failures: the conservative direction is the safety property ------------
+    PRE_SOURCES = {
+        "tests/git_chokepoint.rs":
+            "fn every_direct_git_invocation_is_at_the_chokepoint_or_registered() {}\n"
+            "fn classify_table() {}\n",
+        "tests/module_size.rs": "fn src_modules_respect_the_size_gate() {}\n",
+    }
+    ratchet = ["every_direct_git_invocation_is_at_the_chokepoint_or_registered"]
+    ok_, _ = attribute_failures(ratchet, PRE_SOURCES, {"tests/git_chokepoint.rs": True})
+    check("a ratchet failure in a register-only file IS drift", ok_)
+    # NEAR-MISS GUARD: same file, same test, but the diff touched something substantive.
+    ok_, _ = attribute_failures(ratchet, PRE_SOURCES, {"tests/git_chokepoint.rs": False})
+    check("...and is NOT drift when that file's diff was behavioural", not ok_)
+    # NEAR-MISS GUARD: a genuine failure sitting beside bookkeeping still wins.
+    ok_, _ = attribute_failures(
+        ratchet + ["src_modules_respect_the_size_gate"],
+        PRE_SOURCES,
+        {"tests/git_chokepoint.rs": True, "tests/module_size.rs": False},
+    )
+    check("one non-attributable failure keeps the whole set UNEARNED", not ok_)
+    # Unmappable in BOTH directions: zero owners, and more than one.
+    ok_, _ = attribute_failures(["no_such_test"], PRE_SOURCES,
+                                {"tests/git_chokepoint.rs": True})
+    check("a name owned by ZERO files is not drift", not ok_)
+    ok_, _ = attribute_failures(
+        ["shared_name"],
+        {"tests/a.rs": "fn shared_name() {}\n", "tests/b.rs": "fn shared_name() {}\n"},
+        {"tests/a.rs": True, "tests/b.rs": True},
+    )
+    check("a name owned by TWO files is not drift", not ok_)
+    ok_, _ = attribute_failures([], PRE_SOURCES, {"tests/git_chokepoint.rs": True})
+    check("an unnameable failure set is not drift", not ok_)
+
+    # -- apply_register_drift: the composition an actual run performs ---------------------
+    # The real 08a9e36f shape: the commit deleted the register line AND converted the
+    # bypass, so laying the pre-task file over post-task src/ fires the ratchet BY
+    # CONSTRUCTION. The gate worked; the instrument used to mis-read it.
+    CHOKEPOINT_REG_DIFF = (
+        "--- a/tests/git_chokepoint.rs\n"
+        "+++ b/tests/git_chokepoint.rs\n"
+        "@@ -1,1 +1,0 @@\n"
+        '-    ("src/commands_search.rs", "list_project_files", "no blocker"),\n'
+    )
+    check(
+        "the real 08a9e36f deleted-tuple shape is register-only",
+        test_diff_is_register_only(CHOKEPOINT_REG_DIFF),
+    )
+    drift_map = {"tests/git_chokepoint.rs": test_diff_is_register_only(CHOKEPOINT_REG_DIFF)}
+    v_, _ = apply_register_drift(UNEARNED, LIBTEST_OUT, PRE_SOURCES, drift_map)
+    check("register-only diff + ratchet failure -> REGISTER_DRIFT", v_ == REGISTER_DRIFT, v_)
+    # NEAR-MISS GUARD, and it is the half that matters: the SAME file, but a diff that
+    # touched a real assertion. A void verdict must never eat a genuine finding.
+    v_, _ = apply_register_drift(
+        UNEARNED, LIBTEST_OUT, PRE_SOURCES,
+        {"tests/git_chokepoint.rs": test_diff_is_register_only(BEHAVIOURAL_DIFF)},
+    )
+    check("behavioural diff + same failure stays UNEARNED", v_ == UNEARNED, v_)
+    # PRECEDENCE: every other verdict passes through byte-identically. INCONCLUSIVE and
+    # BASELINE_RED must win outright — a build that did not finish cannot have run the
+    # assertions it is being judged on — and a green is never rewritten into a void.
+    for pass_through in (INCONCLUSIVE, BASELINE_RED, EARNED, NO_TEST_CHANGE,
+                         COULD_NOT_CHECK):
+        v_, why_ = apply_register_drift(pass_through, LIBTEST_OUT, PRE_SOURCES, drift_map)
+        check(f"{pass_through} outranks the drift branch", v_ == pass_through, v_)
+        check(f"{pass_through} carries no drift reason", why_ == "", why_)
 
     reg = CensusRow("d" * 40, "Day 1 (0:0): register bump (Task 1)",
                     ["tests/module_size.rs"], {"tests/module_size.rs"})
