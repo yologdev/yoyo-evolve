@@ -121,7 +121,7 @@ import sys
 import tempfile
 
 # --------------------------------------------------------------------------------------
-# The five states. None folds into another.
+# The seven states. None folds into another.
 # --------------------------------------------------------------------------------------
 
 NO_TEST_CHANGE = "NO_TEST_CHANGE"
@@ -130,9 +130,17 @@ UNEARNED = "UNEARNED"
 INCONCLUSIVE = "INCONCLUSIVE"
 COULD_NOT_CHECK = "COULD_NOT_CHECK"
 BASELINE_RED = "BASELINE_RED"
+REGISTER_DRIFT = "REGISTER_DRIFT"
 
-# The five a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
-RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK, BASELINE_RED)
+# The six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+RUN_VERDICTS = (
+    EARNED,
+    UNEARNED,
+    INCONCLUSIVE,
+    COULD_NOT_CHECK,
+    BASELINE_RED,
+    REGISTER_DRIFT,
+)
 
 # Internal sentinel, deliberately NOT a run verdict: the baseline passed, so the
 # comparison is licensed and the counterfactual may proceed. It never reaches a report.
@@ -141,17 +149,24 @@ BASELINE_OK = "BASELINE_OK"
 # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
 TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
 
-# Test files that are DEBT REGISTERS rather than behavioural tests. Their contents are
-# recorded line counts and named exceptions, so a PRE-task copy laid over POST-task src/
-# fails by construction whenever a module grew — and that failure is the gate working as
-# designed (updating the register is the compliant remedy the gate itself prints), not
-# evidence of a loosened assertion. Counting those as UNEARNED would be a confident wrong
-# verdict, which is the exact over-reach this whole milestone is about.
+# SUPERSEDED (Day 183, #867), recorded rather than erased: this was
+#     REGISTER_TEST_FILES = frozenset({"tests/module_size.rs"})
+# a hand-listed set of "debt register" test files. It was a per-FILE filter while the real
+# property is per-ASSERTION, and it was the `MECHANICAL_SUBJECTS` / `GLOBAL_SETTERS` shape:
+# a hand-written list with no authority behind it, which goes stale silently and needs its
+# own drift guard to stay honest. It also could not express the case that produced this
+# instrument's only live reading — tests/git_chokepoint.rs mixes a debt register AND a
+# two-direction ratchet BESIDE 12 genuinely behavioural tests, so excluding the file loses
+# the 12 and including it manufactures an UNEARNED out of bookkeeping.
 #
-# Only tests/module_size.rs qualifies today: it is the one gate whose register encodes a
-# MEASUREMENT of src/ (line counts) that legitimately moves with every commit. The other
-# gates' registers name files, tests or reasons, which do not drift when src/ grows.
-REGISTER_TEST_FILES = frozenset({"tests/module_size.rs"})
+# What replaced it is DERIVED FROM THE DIFF OF THE COMMIT UNDER TEST — see
+# `test_diff_is_register_only` below. That covers tests/module_size.rs too (its diffs are
+# register-only by construction), so the hand-list is redundant as well as stale-prone.
+
+# A changed line can only carry an assertion if something SURVIVES stripping its string
+# literals and comments. These are the residue characters that cannot: tuple scaffolding,
+# separators, and the bare integers a line-count register is made of.
+REGISTER_RESIDUE_CHARS = set("(),; \t0123456789")
 
 # rustc/cargo compile-failure markers, anchored to column 0 of a line because that is
 # where rustc emits them. A panic message that quotes one is indented and must not match.
@@ -256,6 +271,223 @@ def classify_baseline(exit_code: int, output: str) -> str:
 
 
 # --------------------------------------------------------------------------------------
+# Register-drift attribution. Derived from the diff, never from a hand-listed filename.
+# --------------------------------------------------------------------------------------
+
+
+def strip_rust_strings_and_comments(line: str, in_string: bool) -> tuple[str, bool]:
+    """Remove string literals and `//` comments from one line. Returns (residue, state).
+
+    `in_string` carries across lines because a Rust string literal may be continued with a
+    trailing backslash, which is exactly how a debt register writes a long `reason` field:
+
+        "NO structural blocker — this duplicates run_git_in_dir(toplevel, [...]) \\
+         exactly and is a genuine conversion candidate.",
+
+    The second line has no quote character at all and is pure string content. Without the
+    carried state it would look like bare prose and read as substantive code.
+
+    Escapes are honoured (`\\"` does not close a string). Raw strings are NOT modelled: a
+    `r#"..."#` is treated as an ordinary quote, which can only make the residue LARGER and
+    therefore only ever pushes a verdict toward UNEARNED. That is the safe direction, and
+    it is deliberate rather than an oversight.
+    """
+    out = []
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and line[i + 1] == "/":
+            break  # `//`, `///` and `//!` all end the line
+        out.append(ch)
+        i += 1
+    # A trailing backslash OUTSIDE a string is not a continuation in Rust, so state only
+    # persists when the quote was genuinely left open.
+    return "".join(out), in_string
+
+
+def is_register_literal_line(line: str, in_string: bool = False) -> bool:
+    """True when this changed line CANNOT carry an assertion.
+
+    The rule is one sentence: strip the line's string literals and comments, and ask
+    whether anything but tuple scaffolding survives. A debt-register entry is a tuple of
+    literals, so its residue is punctuation and digits:
+
+        ("src/cli.rs", 5349),               -> `(, ),`  + digits   -> True
+        (                                    -> `(`                 -> True
+            "list_project_files",            -> `,`                 -> True
+        ),                                   -> `),`                -> True
+        //! ...prose...                      -> ``                  -> True
+        (blank)                              -> ``                  -> True
+
+    while anything that could fail is made of identifiers:
+
+        assert_eq!(got, "x");                -> `assert_eq!(got, );` -> False
+        let n = count_rs_lines(p);           -> `let n = (p);`       -> False
+        fn every_site_is_registered() {      -> `fn ...() {`         -> False
+
+    `in_string` is the carried state from `strip_rust_strings_and_comments`; the default
+    exists so a single line can be asked about on its own.
+    """
+    residue, _ = strip_rust_strings_and_comments(line, in_string)
+    return all(c in REGISTER_RESIDUE_CHARS for c in residue)
+
+
+def test_diff_is_register_only(diff_text: str) -> bool:
+    """True when ONE test file's diff changed nothing but debt-register bookkeeping.
+
+    This is the derivation that replaced the hand-listed `REGISTER_TEST_FILES`. It is a
+    property of the commit under test, computed from `git diff P..C -- tests/`, i.e. data
+    the run already has in hand.
+
+    Two conditions, and both are load-bearing:
+
+    1. Every added and every removed line is `is_register_literal_line`. Context lines and
+       the `---`/`+++`/`@@` headers are not changes and are skipped. The two sides carry
+       SEPARATE string state, because `-` and `+` lines interleave in the hunk body and
+       threading one state through both would let a removed open-quote swallow an added
+       assertion.
+    2. At least one paren appears in the changed residue. This is the near-miss guard, and
+       it exists for one specific hole: a multi-line `assert_eq!` whose only changed line
+       is its expected string,
+
+           assert_eq!(
+               got,
+               "expected",     <- the only changed line
+           );
+
+       strips to `,`, which passes condition 1 on its own. Requiring evidence that a TUPLE
+       was actually touched rejects that block, because it carries no paren at all.
+
+    EMPTY DIFF IS FALSE, NOT TRUE. "Nothing changed" is not "only bookkeeping changed", and
+    folding them would let a file with no diff launder a real failure into a void verdict.
+
+    THE RESIDUAL HOLE, STATED RATHER THAN IMPLIED: a commit that changes BOTH a register
+    tuple AND an assertion's expected string, in the SAME file, passes — the register's
+    paren vouches for the string line. It is narrow, and every other branch of the
+    attribution runs the conservative way (an unmappable or non-attributable failing test
+    is never register drift), so a real failure still has to slip past all of them.
+    """
+    added_state = False
+    removed_state = False
+    changed = 0
+    saw_paren = False
+
+    for line in diff_text.splitlines():
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("+"):
+            body = line[1:]
+            residue, added_state = strip_rust_strings_and_comments(body, added_state)
+        elif line.startswith("-"):
+            body = line[1:]
+            residue, removed_state = strip_rust_strings_and_comments(body, removed_state)
+        else:
+            # Context, `@@` headers, `\ No newline at end of file`. Not a change.
+            continue
+        changed += 1
+        if not all(c in REGISTER_RESIDUE_CHARS for c in residue):
+            return False
+        if "(" in residue or ")" in residue:
+            saw_paren = True
+
+    return changed > 0 and saw_paren
+
+
+def failing_test_names(output: str) -> list[str]:
+    """Names of the tests libtest reported as failing, from the captured run output.
+
+    ONE parser, not two: `classify_counterfactual` reads the same capture for its
+    `test result:` lines, and a second reader of the same text is how two answers about
+    one run start to disagree.
+
+    Both shapes libtest emits are read — the streaming `test NAME ... FAILED` line and the
+    `failures:` block that lists them again — and the result is deduped, so a test named in
+    both is one failure, not two.
+    """
+    names = []
+    seen = set()
+
+    def add(name: str) -> None:
+        name = name.strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    for m in re.finditer(r"^test\s+(\S+)\s+\.\.\.\s+FAILED", output, re.MULTILINE):
+        add(m.group(1))
+
+    # The trailing `failures:` block indents each name by four spaces.
+    in_block = False
+    for line in output.splitlines():
+        if re.match(r"^failures:\s*$", line):
+            in_block = True
+            continue
+        if in_block:
+            if line.startswith("    ") and line.strip() and "::" not in line[:4]:
+                candidate = line.strip()
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:]*", candidate):
+                    add(candidate)
+                    continue
+            if line.strip() == "":
+                continue
+            in_block = False
+    return names
+
+
+def attribute_failures(
+    failing: list[str],
+    pre_test_sources: dict,
+    register_only: dict,
+) -> tuple[bool, str]:
+    """Is EVERY failing test attributable to register drift? Returns (verdict, reason).
+
+    `pre_test_sources` maps `tests/x.rs` -> its PRE-task contents (the tree that was
+    actually run). `register_only` maps `tests/x.rs` -> bool from
+    `test_diff_is_register_only`.
+
+    THE CONSERVATIVE DIRECTION IS THE SAFETY PROPERTY, AND IT IS WRITTEN HERE SO NOBODY
+    "SIMPLIFIES" IT LATER: a failing test name that maps to ZERO files, or to MORE THAN
+    ONE, is NOT register drift. An unattributable failure must never be laundered into
+    bookkeeping — that would convert a real unearned green into a void verdict, which is
+    the one direction this whole instrument exists to avoid.
+
+    Likewise a failure set that is EMPTY is not register drift: something failed, and if
+    the parser could not name it we do not get to say what it was.
+    """
+    if not failing:
+        return False, "no failing test could be named in the capture"
+
+    for name in failing:
+        owners = [
+            path
+            for path, src in pre_test_sources.items()
+            if re.search(r"\bfn\s+" + re.escape(name) + r"\s*\(", src)
+        ]
+        if len(owners) != 1:
+            return False, (
+                f"{name!r} maps to {len(owners)} pre-task test file(s) — not attributable"
+            )
+        if not register_only.get(owners[0], False):
+            return False, (
+                f"{name!r} lives in {owners[0]}, whose diff is not register-only"
+            )
+    return True, "every failing test lives in a file whose diff was register-only"
+
+
+# --------------------------------------------------------------------------------------
 # Census — the deliverable. Pure half here, git I/O at the call site.
 # --------------------------------------------------------------------------------------
 
@@ -263,12 +495,16 @@ def classify_baseline(exit_code: int, output: str) -> str:
 class CensusRow:
     """One task commit and whether it is addressable by the counterfactual."""
 
-    __slots__ = ("sha", "subject", "test_files")
+    __slots__ = ("sha", "subject", "test_files", "register_only")
 
-    def __init__(self, sha: str, subject: str, test_files: list[str]):
+    def __init__(self, sha: str, subject: str, test_files: list[str],
+                 register_only: frozenset | set | None = None):
         self.sha = sha
         self.subject = subject
         self.test_files = test_files
+        # Paths whose diff in THIS commit was register-only, derived by
+        # `test_diff_is_register_only`. Never a hand-listed filename.
+        self.register_only = frozenset(register_only or ())
 
     @property
     def addressable(self) -> bool:
@@ -276,13 +512,18 @@ class CensusRow:
 
     @property
     def behavioural(self) -> bool:
-        """True when at least one touched test file is NOT a debt register.
+        """True when at least one touched test file's diff was NOT pure bookkeeping.
 
-        This is the denominator that carries signal. A commit touching only
-        tests/module_size.rs is addressable in the mechanical sense and worthless in the
-        evidential one — see REGISTER_TEST_FILES.
+        This is the denominator that carries signal. A commit whose only test-file changes
+        are debt-register entries is addressable in the mechanical sense and worthless in
+        the evidential one, because its counterfactual verdict is decided by construction.
+
+        DERIVED, NOT NAMED (Day 183, #867): the split used to be a hand-listed set of
+        filenames, which could not express a file that is BOTH — tests/git_chokepoint.rs
+        carries a debt register beside 12 behavioural tests. The question is now asked of
+        the commit's diff, per file.
         """
-        return any(p not in REGISTER_TEST_FILES for p in self.test_files)
+        return any(p not in self.register_only for p in self.test_files)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"CensusRow({self.sha[:8]}, addressable={self.addressable})"
@@ -324,28 +565,27 @@ def top_level_test_files(paths: list[str]) -> list[str]:
     return out
 
 
-def behavioural_test_files(paths: list[str]) -> list[str]:
+def behavioural_test_files(paths: list[str], register_only=None) -> list[str]:
     """The subset of top-level test files that are EVIDENCE rather than BOOKKEEPING.
 
     THIS IS THE SET THAT MAY BE ROLLED BACK, and the distinction is not cosmetic. A debt
-    register (`REGISTER_TEST_FILES`) encodes line counts OF `src/`, so laying a pre-task
+    register encodes line counts OF `src/`, so laying a pre-task
     copy over post-task `src/` fails **by construction** whenever a module grew — the gate
     working exactly as designed, since pasting the updated register line is the compliant
     remedy it prints. Rolling one back would manufacture an `UNEARNED` out of bookkeeping,
     which is the same defect the census already refuses to make when it splits
     register-only commits out of the behavioural denominator.
 
-    The census consumed `REGISTER_TEST_FILES` from the start; the RUN PATH did not, so a
-    MIXED commit — one behavioural test file plus a register bump, which is the common
-    shape — dragged the register into the overlay and produced a manufactured red. Live
-    instance: `08a9e36f` moves `("src/commands_search.rs", 3720)` to `3872` for the very
-    file it grew, so its counterfactual was unfalsifiable for exactly the reason the
-    baseline gate exists.
+    DERIVED FROM THE DIFF (Day 183, #867), never from a hand-listed filename: `register_only`
+    maps each touched path to `test_diff_is_register_only` for THIS commit. The hand-list
+    could not express tests/git_chokepoint.rs, which carries a debt register AND a
+    two-direction ratchet beside 12 genuinely behavioural tests — excluding the file loses
+    the 12, including it manufactures an UNEARNED out of bookkeeping.
 
-    Register files are therefore left at their SHIPPED (post-task) version, so the gate
-    matches the `src/` it is measuring and only behavioural assertions are counterfactualled.
+    Register files are left at their SHIPPED (post-task) version, so the gate matches the
+    `src/` it is measuring and only behavioural assertions are counterfactualled.
     """
-    return [p for p in top_level_test_files(paths) if p not in REGISTER_TEST_FILES]
+    return [p for p in top_level_test_files(paths) if p not in (register_only or ())]
 
 
 def census_summary(rows: list[CensusRow]) -> dict:
@@ -354,7 +594,7 @@ def census_summary(rows: list[CensusRow]) -> dict:
     Three tiers, and `behavioural` is the one that carries signal. `register_only` is
     reported separately rather than summed into `addressable`, because folding it in
     produces a flattering headline over commits whose counterfactual verdict is decided
-    by construction (see REGISTER_TEST_FILES).
+    by construction (see `test_diff_is_register_only`).
     """
     return {
         "task_commits": len(rows),
@@ -419,7 +659,19 @@ def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, 
             # inside my own meter is the defect this whole family of checks is about.
             rows.append(CensusRow(sha, subject, []))
             continue
-        rows.append(CensusRow(sha, subject, top_level_test_files(out2.splitlines())))
+        touched = top_level_test_files(out2.splitlines())
+        # Ask the DIFF, per file, rather than a hand-listed filename (#867).
+        reg = set()
+        for path in touched:
+            rc3, diff = run_cmd(
+                ["git", "-C", root, "diff", f"{sha}^", sha, "--", path], timeout=60
+            )
+            # A diff we could not read is NOT register-only: an unreadable change must
+            # never be laundered into bookkeeping. Same conservative direction as
+            # `attribute_failures`.
+            if rc3 == 0 and test_diff_is_register_only(diff):
+                reg.add(path)
+        rows.append(CensusRow(sha, subject, touched, reg))
 
     rc3, out3 = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
     depth = out3.strip() if rc3 == 0 else "?"
@@ -457,6 +709,21 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
     if rc != 0:
         return COULD_NOT_CHECK, f"git diff failed (rc={rc})"
     changed = top_level_test_files(out.splitlines())
+    # Per-file: was this file's change nothing but debt-register bookkeeping? Derived
+    # from the diff of the commit under test (#867), never from a hand-listed filename.
+    register_only = set()
+    pre_sources = {}
+    for path in changed:
+        rc_d, dtext = run_cmd(
+            ["git", "-C", root, "diff", parent, sha, "--", path], timeout=60
+        )
+        if rc_d == 0 and test_diff_is_register_only(dtext):
+            register_only.add(path)
+        # The PRE-task contents are what actually runs, so that is what a failing test
+        # name is mapped against.
+        rc_s, src = run_cmd(["git", "-C", root, "show", f"{parent}:{path}"], timeout=60)
+        if rc_s == 0:
+            pre_sources[path] = src
     if not changed:
         # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
         # baseline is needed and none is run — there is no comparison to license.
@@ -465,7 +732,7 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
     # Only BEHAVIOURAL test files may be rolled back. A debt register encodes line counts
     # of `src/`, so a pre-task copy over post-task `src/` fails by construction and would
     # manufacture an UNEARNED out of bookkeeping. Registers stay at the shipped version.
-    rollback = behavioural_test_files(out.splitlines())
+    rollback = behavioural_test_files(out.splitlines(), register_only)
     if not rollback:
         return NO_TEST_CHANGE, (
             "only debt-register file(s) touched ("
@@ -523,6 +790,19 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
 
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         verdict = classify_counterfactual(rc, out)
+        # REGISTER DRIFT (#867). Checked ONLY on an UNEARNED, so INCONCLUSIVE and
+        # COULD_NOT_CHECK keep absolute precedence: a build that did not finish cannot
+        # have run the assertions it is being judged on, and that ordering must not move.
+        if verdict == UNEARNED:
+            failing = failing_test_names(out)
+            drift, why = attribute_failures(failing, pre_sources, {
+                path: path in register_only for path in changed
+            })
+            if drift:
+                return REGISTER_DRIFT, (
+                    "BASELINE: green. COUNTERFACTUAL: red, but VOID — " + why
+                    + ". Failing: " + ", ".join(failing) + ". " + summarise(out)
+                )
         return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
     finally:
         # LANDMINE 1, the other half: always give the worktree back.
@@ -548,12 +828,21 @@ read as "checked; clean"):
      buries unit tests inside 91 src/ files behind #[cfg(test)], and those cannot be
      lifted out without dragging the production code along. That half stays unmeasured,
      and one number here must never be read as a rate over the whole suite.
-  3. A DEBT REGISTER IS NOT A BEHAVIOURAL TEST. tests/module_size.rs records line counts
-     of src/, so a PRE-task copy laid over POST-task src/ fails by construction whenever
-     a module grew — and that failure is the gate working as designed, since updating the
-     register is the compliant remedy the gate itself prints. Those commits are counted
-     as REGISTER-ONLY and kept OUT of the behavioural denominator. Read the BEHAVIOURAL
-     rate; the addressable rate is the flattering one.
+  3. A DEBT REGISTER IS NOT A BEHAVIOURAL TEST. A register records line counts of src/,
+     so a PRE-task copy laid over POST-task src/ fails by construction whenever a module
+     grew — and that failure is the gate working as designed, since updating the register
+     is the compliant remedy the gate itself prints. Those commits are counted as
+     REGISTER-ONLY and kept OUT of the behavioural denominator. Read the BEHAVIOURAL
+     rate; the addressable rate is the flattering one. The split is DERIVED from each
+     commit's own diff, not from a hand-listed filename — a file can be both (
+     tests/git_chokepoint.rs carries a register beside 12 behavioural tests).
+  3a. REGISTER_DRIFT MEANS THE VERDICT IS **VOID**, NOT CLEAN. It says every failing test
+     lives in a file whose diff was pure bookkeeping, so the red was manufactured by the
+     overlay rather than by the code. It is NEITHER evidence of an earned green NOR of an
+     unearned one — do not add it to either column. It is also attributed CONSERVATIVELY:
+     a failing test whose name maps to zero or several files, or that lives in a file with
+     a substantive diff, keeps the verdict at UNEARNED. A genuine behavioural failure
+     sitting beside bookkeeping still wins.
   4. INCONCLUSIVE IS NOT A NEAR-MISS. Pre-tests that fail to COMPILE against post-src/
      are exactly what an honest API rename produces, and exactly what a hidden break
      produces. The state exists because the two are indistinguishable from here, not
@@ -622,7 +911,7 @@ def main(argv):
         prog="counterfactual_green.py",
         description=(
             "Was this green EARNED? Rebuild post-task src/ with pre-task tests/ and run "
-            "cargo test. Six states, none folded into another."
+            "cargo test. Seven states, none folded into another."
         ),
         epilog=(
             "Hand-run only. Never invoked from a #[test] (#832: no #[test] under src/ "
@@ -853,10 +1142,11 @@ def run_self_tests():
     check("BASELINE_OK is not a run verdict", BASELINE_OK not in RUN_VERDICTS)
     check("BASELINE_RED is a run verdict", BASELINE_RED in RUN_VERDICTS)
     check(
-        "six distinct states",
+        "seven distinct states",
         len({NO_TEST_CHANGE, EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK,
-             BASELINE_RED}) == 6,
+             BASELINE_RED, REGISTER_DRIFT}) == 7,
     )
+    check("REGISTER_DRIFT is a run verdict", REGISTER_DRIFT in RUN_VERDICTS)
 
     # NEAR-MISS GUARD, and it is the half that matters: a GREEN baseline followed by a RED
     # counterfactual must STILL classify UNEARNED. The gate must not eat the finding it
@@ -949,47 +1239,74 @@ def run_self_tests():
     )
 
     # -- the register-only split: the finding, in both directions ------------------------
-    # A commit touching ONLY a debt register is addressable and carries no signal. This
-    # row is the near-miss guard for the tier below it: without it, a 64% headline reads
-    # as measurable when the real denominator is a fraction of that.
-    reg = CensusRow("d" * 40, "Day 1 (0:0): register bump (Task 1)", ["tests/module_size.rs"])
+    # DERIVED from each commit's diff (#867), never a hand-listed filename. The census
+    # must not report a register bump as measurable when the real denominator is smaller.
+    REG_DIFF = (
+        "--- a/tests/module_size.rs\n"
+        "+++ b/tests/module_size.rs\n"
+        "@@ -1,1 +1,1 @@\n"
+        '-    ("src/cli.rs", 5349),\n'
+        '+    ("src/cli.rs", 5400),\n'
+    )
+    BEHAVIOURAL_DIFF = (
+        "--- a/tests/git_chokepoint.rs\n"
+        "+++ b/tests/git_chokepoint.rs\n"
+        "@@ -1,1 +1,1 @@\n"
+        '-    assert_eq!(scan.sites.len(), 70);\n'
+        '+    assert_eq!(scan.sites.len(), 71);\n'
+    )
+    check("a register bump diff is register-only", test_diff_is_register_only(REG_DIFF))
+    check(
+        "an assert_eq! diff is NOT register-only",
+        not test_diff_is_register_only(BEHAVIOURAL_DIFF),
+    )
+
+    reg = CensusRow("d" * 40, "Day 1 (0:0): register bump (Task 1)",
+                    ["tests/module_size.rs"], {"tests/module_size.rs"})
     check("register-only is addressable", reg.addressable, reg)
     check("register-only is NOT behavioural", not reg.behavioural, reg)
     mixed = CensusRow(
         "e" * 40, "Day 1 (0:0): gate + bump (Task 1)",
         ["tests/git_chokepoint.rs", "tests/module_size.rs"],
+        {"tests/module_size.rs"},
     )
     check("a mixed commit IS behavioural", mixed.behavioural, mixed)
+    # ...and the case the hand-list could not express: the SAME file, register-only in
+    # this commit. That is 08a9e36f, and it is the whole point of #867.
+    chokepoint_reg = CensusRow(
+        "h" * 40, "Day 1 (0:0): convert the bypass (Task 2)",
+        ["tests/git_chokepoint.rs"], {"tests/git_chokepoint.rs"},
+    )
+    check(
+        "a behavioural-file commit CAN be register-only when its diff says so",
+        not chokepoint_reg.behavioural,
+        chokepoint_reg,
+    )
 
     # -- the ROLLBACK set: registers are never laid back over post-task src/ --------------
-    # The census consumed REGISTER_TEST_FILES from day one; the RUN PATH did not, so a
-    # mixed commit dragged the register into the overlay and manufactured a red. Live
-    # instance: 08a9e36f bumps ("src/commands_search.rs", 3720) -> 3872 for the very file
-    # it grew, so rolling that register back fails BY CONSTRUCTION.
     mixed_paths = ["src/commands_search.rs", "tests/git_chokepoint.rs", "tests/module_size.rs"]
     check(
         "rollback set drops the debt register",
-        behavioural_test_files(mixed_paths) == ["tests/git_chokepoint.rs"],
-        behavioural_test_files(mixed_paths),
+        behavioural_test_files(mixed_paths, {"tests/module_size.rs"})
+        == ["tests/git_chokepoint.rs"],
+        behavioural_test_files(mixed_paths, {"tests/module_size.rs"}),
     )
     # NEAR-MISS GUARD, and it is the half that matters: the behavioural file is still
     # rolled back. A filter that ate the finding it exists to protect would be worse than
     # no filter, and a discriminator tested only on the side that fires is vacuous green.
     check(
         "rollback set KEEPS the behavioural file",
-        "tests/git_chokepoint.rs" in behavioural_test_files(mixed_paths),
-        behavioural_test_files(mixed_paths),
+        "tests/git_chokepoint.rs"
+        in behavioural_test_files(mixed_paths, {"tests/module_size.rs"}),
     )
     check(
         "a register-only commit has an EMPTY rollback set",
-        behavioural_test_files(["tests/module_size.rs"]) == [],
-        behavioural_test_files(["tests/module_size.rs"]),
+        behavioural_test_files(["tests/module_size.rs"], {"tests/module_size.rs"}) == [],
     )
     # ...while still being seen as a touched test file, so the two questions stay distinct.
     check(
         "register-only still counts as a touched top-level test file",
         top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
-        top_level_test_files(["tests/module_size.rs"]),
     )
     plain = CensusRow("f" * 40, "Day 1 (0:0): real test (Task 1)", ["tests/integration.rs"])
     check("a non-register test is behavioural", plain.behavioural, plain)
