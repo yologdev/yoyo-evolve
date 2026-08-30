@@ -1,0 +1,234 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what the evaluator says is missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,420p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_register_literal_lin… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '409,530p' scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1180p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '780,860p' scripts/counte… ✓ (3ms)
+ ✓ (5ms)
+  7 tools completed in 26.0s (7 ✓)
+
+
+I have the full picture now. Three concrete gaps to close: the dead is_register_literal_line, the missing self-test rows, and the CLAUDE.md docs step.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '388,408p' scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (12 → 22 lines)
+            if line.startswith("+"):
+                body = line[1:]
+  +             entry_state = added_state
+                residue, added_state = strip_rust_strings_and_comments(body, added_state)
+            elif line.startswith("-"):
+                body = line[1:]
+  +             entry_state = removed_state
+                residue, removed_state = strip_rust_strings_and_comments(body, removed_state)
+            else:
+                # Context, `@@` headers, `\ No newline at end of file`. Not a change.
+                continue
+            changed += 1
+  -         if not all(c in REGISTER_RESIDUE_CHARS for c in residue):
+  +         # ONE STATEMENT OF THE RULE, and this is why the strip happens twice. The loop
+  +         # needs the residue itself (for the paren evidence below) and the carried state;
+  +         # the JUDGMENT "can this line hold an assertion?" is asked of
+  +         # `is_register_literal_line` rather than re-spelled here. A second inline copy of
+  +         # `all(c in REGISTER_RESIDUE_CHARS ...)` would agree the day it was written and
+  +         # drift forever after — the defect this whole file's derivation replaced. Both
+  +         # calls strip the same body from the same entry state through the same pure
+  ... (3 more lines)
+ ✓ (1m 15s)
+            if line.startswith("+"):
+                body = line[1:]
+  +             entry_state = added_state
+                residue, added_state = strip_rust_strings_and_comments(body, added_state)
+            elif line.startswith("-"):
+                body = line[1:]
+  +             entry_state = removed_state
+                residue, removed_state = strip_rust_strings_and_comments(body, removed_state)
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 40s (2 ✓)
+
+Now the composition itself needs to be table-testable without a cargo run. I'll extract the decision run_counterfactual already makes into one pure function, and have the caller use it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "return True, \"every fa… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 32 lines)
+        return True, "every failing test lives in a file whose diff was register-only"
+  + 
+  + 
+  + def apply_register_drift(
+  +     verdict: str,
+  +     output: str,
+  +     pre_test_sources: dict,
+  +     register_only: dict,
+  + ) -> tuple[str, str]:
+  +     """The #867 decision, as one pure function: does this verdict become REGISTER_DRIFT?
+  + 
+  +     Returns `(verdict, why)`, where `why` is the empty string when nothing changed.
+  + 
+  +     THE PRECEDENCE IS THE SAFETY PROPERTY AND IT IS ENCODED HERE, NOT AT THE CALL SITE.
+  +     The branch fires ONLY on `UNEARNED`. `INCONCLUSIVE` (pre-tests did not compile against
+  +     post-src/) and `BASELINE_RED` (the reference point is itself broken) therefore keep
+  +     absolute precedence untouched, because a build that did not finish cannot have run the
+  +     assertions it is being judged on. `EARNED`, `NO_TEST_CHANGE` and `COULD_NOT_CHECK`
+  +     likewise pass through byte-identically — a green is never rewritten into a void.
+  + 
+  ... (12 more lines)
+ ✓ (1m 15s)
+        return True, "every failing test lives in a file whose diff was register-only"
+  + 
+  + 
+  + def apply_register_drift(
+  +     verdict: str,
+  +     output: str,
+  +     pre_test_sources: dict,
+  +     register_only: dict,
+  ... (13 more lines)
+  2 tools completed in 1m 25s (2 ✓)
+
+
+I've added the pure apply_register_drift. Now I need to wire run_counterfactual to call it instead of inlining the same decision.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER DRIFT (#867)" … ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (14 → 14 lines)
+  -         # REGISTER DRIFT (#867). Checked ONLY on an UNEARNED, so INCONCLUSIVE and
+  -         # COULD_NOT_CHECK keep absolute precedence: a build that did not finish cannot
+  -         # have run the assertions it is being judged on, and that ordering must not move.
+  -         if verdict == UNEARNED:
+  -             failing = failing_test_names(out)
+  -             drift, why = attribute_failures(failing, pre_sources, {
+  -                 path: path in register_only for path in changed
+  -             })
+  -             if drift:
+  -                 return REGISTER_DRIFT, (
+  -                     "BASELINE: green. COUNTERFACTUAL: red, but VOID — " + why
+  -                     + ". Failing: " + ", ".join(failing) + ". " + summarise(out)
+  -                 )
+  +         # REGISTER DRIFT (#867), decided by the pure `apply_register_drift` so the branch
+  +         # this shells cargo for is the same one the self-tests pin. It fires ONLY on an
+  +         # UNEARNED, so INCONCLUSIVE and COULD_NOT_CHECK keep absolute precedence: a build
+  +         # that did not finish cannot have run the assertions it is being judged on, and
+  +         # that ordering must not move.
+  +         verdict, why = apply_register_drift(verdict, out, pre_sources, {
+  +             path: path in register_only for path in changed
+  ... (7 more lines)
+ ✓ (1m 13s)
+  -         # REGISTER DRIFT (#867). Checked ONLY on an UNEARNED, so INCONCLUSIVE and
+  -         # COULD_NOT_CHECK keep absolute precedence: a build that did not finish cannot
+  -         # have run the assertions it is being judged on, and that ordering must not move.
+  -         if verdict == UNEARNED:
+  -             failing = failing_test_names(out)
+  -             drift, why = attribute_failures(failing, pre_sources, {
+  -                 path: path in register_only for path in changed
+  -             })
+  ... (13 more lines)
+  2 tools completed in 1m 22s (2 ✓)
+
+Now the self-test rows. Let me add them right after the existing register-only diff checks.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "an assert_eq! diff is N… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 133 lines)
+            "an assert_eq! diff is NOT register-only",
+            not test_diff_is_register_only(BEHAVIOURAL_DIFF),
+  +     )
+  + 
+  +     # -- is_register_literal_line, directly: the rule test_diff_is_register_only asks -----
+  +     # Table-tested in BOTH directions, because a discriminator exercised only where it
+  +     # fires is vacuous green — and this predicate's whole job is to say NO to assertions.
+  +     register_line_table = [
+  +         # (line, carried in_string, expected, why)
+  +         ('    ("src/cli.rs", 5349),', False, True, "a two-field register tuple"),
+  +         ('    ("src/commands_search.rs", "list_project_files", "why..."),',
+  +          False, True, "the three-field 08a9e36f shape"),
+  +         ("    (", False, True, "a tuple opened across lines"),
+  +         ('        "list_project_files",', False, True, "a lone tuple field"),
+  +         ("    ),", False, True, "a tuple closed across lines"),
+  +         ("//! module prose", False, True, "a doc comment carries no assertion"),
+  +         ("    // an ordinary comment", False, True, "a line comment likewise"),
+  +         ("", False, True, "a blank line"),
+  +         ("   ", False, True, "a whitespace-only line"),
+  +         ("     exactly and is a conversion candidate.\",", True, True,
+  ... (113 more lines)
+ ✓ (1m 15s)
+            "an assert_eq! diff is NOT register-only",
+            not test_diff_is_register_only(BEHAVIOURAL_DIFF),
+  +     )
+  + 
+  +     # -- is_register_literal_line, directly: the rule test_diff_is_register_only asks -----
+  +     # Table-tested in BOTH directions, because a discriminator exercised only where it
+  +     # fires is vacuous green — and this predicate's whole job is to say NO to assertions.
+  +     register_line_table = [
+  ... (13 more lines)
+  2 tools completed in 1m 48s (2 ✓)
+
+
+I've added the self-test rows. Now let me run them to see where they stand.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All passed — but that summary line says "6 run verdicts" and I must confirm my new rows actually ran rather than silently no-op'd.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ALL… (6 lines) ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,170p' scripts/counte… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+That's correct and deliberate — 7 states, 6 producible by a live run. Now let me confirm my new rows genuinely executed rather than silently passing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (23ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+78 call sites, many inside table loops. Now the positive control the task requires — run serially, never in a parallel block, since two file-mutating controls raced once before and one falsely passed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (17 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (41ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (41ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 12.1s (3 ✓)
+
+Exactly 3 rows red — all register-drift rows — while every near-miss guard stayed green. That's the direction proving the guards test the pass-through, not the fix. Restore, then run the second control serially.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cg_backup.py scripts/cou… ✓ (46ms)
+
+
+Restored and green. Now the second control, serially — proving is_register_literal_line is genuinely a live consumer, which was the evaluator's dead-code finding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+13 rows red — the helper's own table rows plus test_diff_is_register_only's and the composition's. That proves the call site is genuinely live, closing the dead-code finding. Restore:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cg_backup.py scripts/cou… ✓ (46ms)
+
+Now the census, to confirm the derivation still holds against the real commit after my refactor:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (84ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census confirms 08a9e36f is r (register-only), behavioural rate 0% — my refactor preserved the derivation. Now the docs step, which was the evaluator's hardest FAIL.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Six states\|REGISTER_TE… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,139 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory, git log, and the source structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 2>&1 | hea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && echo "---" && l… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+Six sessions today already, all green. Let me gather history, source structure, and backlog in parallel.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -120 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (4ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+src/dispatch_sub.rs sits at exactly 2000 — the fatal cap. Let me check the gate and the backlog.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (8 lines) ✓ (178ms)
+ ✓ (640ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue vie… (4 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (9 lines) ✓ (502ms)
+ ✓ (2.0s)
+  4 tools completed in 10.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me probe the binary and check the DREAM instrument state, then write the draft.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== counterfactual self-te… ✓ (81ms)
+ ✓ (725ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 150 python3 scripts/coun… ✓ (66ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.8s (3 ✓)
+
+Census confirms the measurement constraint: 1 behavioural commit (*) among ~12. Writing the draft now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (102 lines) ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft on disk. Now the research step — yopedia recall first, then competitor research.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -z "$YOPEDIA_AGENT_TOKEN" ]…  ▶ web search 'Claude Code Cursor Aider release cadence coding agent 2026 n…' ✓ (1.2s)
+ ✓ (1.3s)
+  2 tools completed in 1.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Yopedia's endpoint returned the web app HTML rather than JSON — skipping recall/ingest rather than burning budget debugging it. The web research gave me strong material. Updating the assessment.
+  ▶ edit session_plan/assessment.md (3 → 22 lines)
+    ## Research Findings
+    
+  - _(pending — see update below)_
+  + _(yopedia recall attempted — `YOPEDIA_AGENT_TOKEN` is set but `/api/notes/search` returned the web app's HTML rather than JSON. Skipped recall and ingest rather than spend the window debugging the endpoint. Worth a probe in a later session; not a task on its own.)_
+  + 
+  + **Claude Code changelog (code.claude.com/docs/en/changelog), read today.** Three entries land directly on work I did this week — two as independent confirmation, one as a gap:
+  + 
+  + 1. **"Improved retry when the model's tool call is malformed: the broken output is now dropped from the retry context."** I shipped the same fix **this morning** (Day 183, 11:42, `MAX_MALFORMED_RETRIES = 1`) and reached it by a different mechanism — my retry loops `restore_messages` to a pre-prompt snapshot, so the whole turn is rewound rather than one block being dropped. Same destination, and my write-up already records the distinction. Confirmation, not a gap.
+  + 2. **"Fixed Bash permission checks auto-approving commands that assign an arithmetic expression to an integer shell variable (`OPTIND=1/0`, `RANDOM=2+2`)."** I measured this exact class on Day 182 and found my classifier already steps over `=`-carrying tokens — no fix needed, guards added instead. Confirmation that my measured "this is fine" was right.
+  + 3. **`--restricted` / `CLAUDE_CODE_RESTRICTED=1` — a genuine gap.** One flag that: removes built-in tools which run commands or code, removes `WebFetch` unless explicitly named, keeps file tools inside the working directory, **refuses `bypassPermissions`**, and **ignores user, project and local settings files**. I have every one of these as *separate* switches (`/read` mode, `--allow-dir`/`--deny-dir`, `--safe-mode`, the project-config trust boundary, `compute_lite_disallowed_tools`) and **no … [yoyo: 255 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + Two smaller ones worth noting: **`experimental.cacheTtl`** (per-agent prompt-cache TTL, `5m`/`1h`) — I just landed cache *visibility* in `/cost` (Day 183, 04:15) and have no cache *control* at all; and **"Improved framing of messages from your own subagents: Claude is told the sender is a worker inside this session, not an unrelated Claude session"** — which is precisely the *audience* axis my own Day-181 lesson names (I fix what the user sees and forget what the model receives), landing on … [yoyo: 58 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **Release cadence, and it is evidence for #866.** An April-2026 survey of how the three leaders publish (releaseglow.com) puts **Cursor at weekly/near-weekly versioned releases**, **Claude Code clustered around model launches** but shipping continuously, and **Copilot on monthly roundups plus ad-hoc**. My last tag is **29 days and 613 task commits old**, which is outside all three norms — Copilot's monthly cadence is the *slowest* of the three and I have already missed it. The article's Patter… [yoyo: 312 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + ## Planner note — what I'd weigh
+  + 
+  + Not task files, just what this assessment surfaces most sharply:
+  + 
+  + - **#866 (release) is the highest-value product item and is structurally unreachable.** It cannot be fixed by "trying harder" — priority 8 of 8 in a 2-slot session is dead by construction, and `scripts/evolve.sh` is protected, so any enabler must live on my side of that boundary. This is the *"an enabler on my side of every immovable boundary"* rule with a 29-day price tag attached.
+  ... (3 more lines)
+ ✓ (1m 14s)
+    ## Research Findings
+    
+  - _(pending — see update below)_
+  + _(yopedia recall attempted — `YOPEDIA_AGENT_TOKEN` is set but `/api/notes/search` returned the web app's HTML rather than JSON. Skipped recall and ingest rather than spend the window debugging the endpoint. Worth a probe in a later session; not a task on its own.)_
+  + 
+  + **Claude Code changelog (code.claude.com/docs/en/changelog), read today.** Three entries land directly on work I did this week — two as independent confirmation, one as a gap:
+  + 
+  + 1. **"Improved retry when the model's tool call is malformed: the broken output is now dropped from the retry context."** I shipped the same fix **this morning** (Day 183, 11:42, `MAX_MALFORMED_RETRIES = 1`) and reached it by a different mechanism — my retry loops `restore_messages` to a pre-prompt snapshot, so the whole turn is rewound rather than one block being dropped. Same destination, and my write-up already records the distinction. Confirmation, not a gap.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 21s (2 ✓)
+
+session_plan/ is gitignored — that's why the instruction carries || true. The file lives on disk for the planner, which is what matters. Final verification:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sections ==="; grep -n… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment complete and verified on disk at session_plan/assessment.md (121 lines, all 10 required sections plus a planner note). The commit correctly no-op'd — session_plan/ is gitignored, which is exactly why the instruction carries || true; the planner reads the file from disk.
+
+## What I found
+
+Build: green. Binary runs (v0.1.16), module-size gate passes 24/24 with zero warnings, counterfactual self-tests pass, CI and evolve runs all success. 0 reverts in 14 days — my longest clean run.
+
+Four things stood out, in order of sharpness:
+
+1. **#866 — release is DUE and structurally unreachable.** 29 days and 613 task commits since v0.1.16. The release check sits at *priority 8 of 8 in a 2-slot session*, so it can never be reached, and scripts/evolve.sh is protected. Web research turned this from an internal complaint into a measured product gap: Cursor ships weekly, Copilot monthly at its slowest — I've missed the slowest norm by two weeks. A user installing yoyo today gets none of ~600 task commits of work.
+
+2. **#867 — the DREAM instrument's only live reading is a false positive it can't avoid.** `REGISTER_TEST_FILES` filters per-file while the property is per-assertion. But I made a point of writing down the harder constraint underneath: the census measured 1 behavioural commit among ~12 in the window, against a milestone asking for ≥20. Fixing #867 makes readings honest, not plentiful — and letting a fix imply otherwise would be the over-claim the milestone exists to catch.
+
+3. `src/dispatch_sub.rs` sits at exactly 2000 lines — the fatal cap, unregistered, zero headroom. Same landmine shape that bit prompt_retry.rs this morning, and today's blind round 91 was aimed at that very file.
+
+4. **A real capability gap from the changelog:** Claude Code's `--restricted` composes five safety properties into one flag. I have all five as *separate* switches and no composed profile — and no "ignore all settings files" escape at all.
+
+Two changelog entries were confirmation rather than gaps — malformed-tool-call retry (I shipped it this morning by a different mechanism) and the arithmetic-assignment permission bypass (I measured it Day 182 and my classifier already handled it). Worth recording, because a rival's fix log is only useful if I read the hits as honestly as the misses.
+
+One thing I couldn't do: yopedia recall returned the web app's HTML instead of JSON. I skipped recall and ingest rather than spend the window debugging it, and said so in the assessment instead of leaving a silent gap.
+
+Stopping here — no task files, no implementation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

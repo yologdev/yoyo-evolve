@@ -1,0 +1,222 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I need to update CLAUDE.md — the code half landed but the docs half didn't. Let me look at the exact text that needs correcting.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Six states\|counterfact… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+The code landed but CLAUDE.md wasn't updated. Let me verify the actual implementation so the docs match reality exactly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' scripts/counterfa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_DRIFT\|def is_… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+The script's own docstring also still says "SIX STATES" — same stale-claim shape. Let me check both.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '36,46p' scripts/counterf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,535p' scripts/counte… ✓ (3ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.1s (2 ✓)
+
+Let me run the census to get real numbers for the doc rather than transcribing from the task file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (84ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The census confirms the reclassification. Let me verify precisely how much of the change is the derivation versus the window sliding, rather than implying the fix did all of it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 757e7482:scripts/counte… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me empirically confirm the reclassification by running the old script against today's window — git-only, no cargo.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 757e7482:scripts/counte… ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean A/B on the same window: exactly one commit moved (08a9e36f, `*→r`), 1 behavioural → 0. That isolates the derivation from the window slide. Now the docs — starting with the script's own docstring, which carries the identical stale-count defect.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (8 → 16 lines)
+  - SIX STATES, NONE FOLDED INTO ANOTHER
+  - ------------------------------------
+  + SEVEN STATES, NONE FOLDED INTO ANOTHER
+  + --------------------------------------
+    `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
+    tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
+    (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
+  - here), `BASELINE_RED` (see below), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout
+  - failure), which is never folded into any verdict — the same refusal the pre-push hook and
+  - `CiScan`'s could-not-run branch already make.
+  + here), `BASELINE_RED` (see below), `REGISTER_DRIFT` (#867 — every failing test lives in a
+  + file whose pre->post diff was pure register bookkeeping, so the red was manufactured by
+  + the overlay; VOID, not clean, and never counted in either column), and `COULD_NOT_CHECK`
+  + (worktree/checkout/cargo/timeout failure), which is never folded into any verdict — the
+  + same refusal the pre-push hook and `CiScan`'s could-not-run branch already make.
+  + 
+  + This heading read "SIX STATES" for one session after `REGISTER_DRIFT` landed, and "FIVE
+  + STATES" for one session after `BASELINE_RED` landed. A hand-maintained count beside a
+  + machine-maintained tuple goes stale silently in exactly one direction — downward — so
+  + `len(RUN_VERDICTS)` is what the self-tests assert and what `--test` prints; this prose is
+  ... (1 more lines)
+ ✓ (1m 15s)
+  - SIX STATES, NONE FOLDED INTO ANOTHER
+  - ------------------------------------
+  + SEVEN STATES, NONE FOLDED INTO ANOTHER
+  + --------------------------------------
+    `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
+    tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
+    (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
+  - here), `BASELINE_RED` (see below), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now CLAUDE.md. First the state count and the new verdict:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Six states, none folded into another:** `NO_TEST_CHANGE` (the diff touches no `tests/*.rs`, so the counterfactual tree **is** the shipped tree — there is nothing to counterfactual and this must **never** be counted as `EARNED`), `EARNED`, `UNEARNED`, `INCONCLUSIVE` (pre-tests do not **compile** against post-`src/` — the state DREAM.md names, because an honest API rename and a hidden break are indistinguishable from here), `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), and **`… [yoyo: 346 more bytes elided — diff lines are capped at 500 bytes]
+  + **Seven states, none folded into another:** `NO_TEST_CHANGE` (the diff touches no `tests/*.rs`, so the counterfactual tree **is** the shipped tree — there is nothing to counterfactual and this must **never** be counted as `EARNED`), `EARNED`, `UNEARNED`, `INCONCLUSIVE` (pre-tests do not **compile** against post-`src/` — the state DREAM.md names, because an honest API rename and a hidden break are indistinguishable from here), `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), **`BA… [yoyo: 611 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+  - **Six states, none folded into another:** `NO_TEST_CHANGE` (the diff touches no `tests/*.rs`, so the counterfactual tree **is** the shipped tree — there is nothing to counterfactual and this must **never** be counted as `EARNED`), `EARNED`, `UNEARNED`, `INCONCLUSIVE` (pre-tests do not **compile** against post-`src/` — the state DREAM.md names, because an honest API rename and a hidden break are indistinguishable from here), `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), and **`… [yoyo: 346 more bytes elided — diff lines are capped at 500 bytes]
+  + **Seven states, none folded into another:** `NO_TEST_CHANGE` (the diff touches no `tests/*.rs`, so the counterfactual tree **is** the shipped tree — there is nothing to counterfactual and this must **never** be counted as `EARNED`), `EARNED`, `UNEARNED`, `INCONCLUSIVE` (pre-tests do not **compile** against post-`src/` — the state DREAM.md names, because an honest API rename and a hidden break are indistinguishable from here), `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), **`BA… [yoyo: 611 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the stale "Recorded and filed rather than fixed" claim — it was fixed, by this task. Let me get the exact text.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360p' CLAUDE.md | grep -… ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Recorded and filed rather than fixed** — a per-assertion split is a design change needing its own task, and my own evidence is that a finding routed to the **scheduler** surface gets scheduled while one left in prose does not.
+  + **Recorded and filed rather than fixed** — a per-assertion split is a design change needing its own task, and my own evidence is that a finding routed to the **scheduler** surface gets scheduled while one left in prose does not. **Superseded status, recorded rather than erased (Day 183, the very next session) — and the pattern held for the SIXTH time: the finding routed to the scheduler surface was fixed within the day.** Every sentence in this paragraph is a true record of *the first live r… [yoyo: 551 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 14s)
+  - **Recorded and filed rather than fixed** — a per-assertion split is a design change needing its own task, and my own evidence is that a finding routed to the **scheduler** surface gets scheduled while one left in prose does not.
+  + **Recorded and filed rather than fixed** — a per-assertion split is a design change needing its own task, and my own evidence is that a finding routed to the **scheduler** surface gets scheduled while one left in prose does not. **Superseded status, recorded rather than erased (Day 183, the very next session) — and the pattern held for the SIXTH time: the finding routed to the scheduler surface was fixed within the day.** Every sentence in this paragraph is a true record of *the first live r… [yoyo: 551 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 29s (2 ✓)
+
+Now the new paragraph documenting the fix. Let me find the insertion point.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '361,363p' CLAUDE.md | cu… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=359 && NR<=364 {printf … ✓ (4ms)
+  2 tools completed in 3.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now insert the new paragraph documenting the fix, anchored on the census paragraph:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 5 lines)
+  - **The census, dated 2026-08-30, over the shallow 52-commit window
+  + **Day 183 (#867) — `REGISTER_DRIFT`, the seventh state: the false positive above is attributed by DIFF SHAPE, never by a hand-listed filename.** The measured defect is the paragraph above: `08a9e36f` scored `UNEARNED` off a single failing test, `every_direct_git_invocation_is_at_the_chokepoint_or_registered` — `tests/git_chokepoint.rs`'s **ratchet branch**, firing **by construction** because that commit converted the bypass *and* deleted its register line in one diff (the pairing that makes … [yoyo: 3468 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The measurement, dated 2026-08-30, and it is an A/B on the SAME window so the derivation is isolated from the window sliding — no cargo run was needed to take it.** Running the **old** script (`757e7482`) and the new one against an identical 52-commit window: **old — 5 commits touch `tests/*.rs`, 4 register-only, 1 behavioural (`08a9e36f`), behavioural rate 8%; new — 5 touch, 5 register-only, 0 behavioural, rate 0%.** **Exactly one commit moved, and it is the one the defect was measured … [yoyo: 683 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The limit, stated plainly rather than implied: `REGISTER_DRIFT` is a VOID comparison, not a clean bill.** It says every failing test lived in a file whose diff was pure bookkeeping, so the red was manufactured by the overlay rather than by the code — it is **neither** evidence of an earned green **nor** of an unearned one, and it must not be added to either column; the `LIMITS` block printed on every run says so in band (item 3a). And **this makes readings honest, not plentiful**: the behavi… [yoyo: 377 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+  - **The census, dated 2026-08-30, over the shallow 52-commit window
+  + **Day 183 (#867) — `REGISTER_DRIFT`, the seventh state: the false positive above is attributed by DIFF SHAPE, never by a hand-listed filename.** The measured defect is the paragraph above: `08a9e36f` scored `UNEARNED` off a single failing test, `every_direct_git_invocation_is_at_the_chokepoint_or_registered` — `tests/git_chokepoint.rs`'s **ratchet branch**, firing **by construction** because that commit converted the bypass *and* deleted its register line in one diff (the pairing that makes … [yoyo: 3468 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The measurement, dated 2026-08-30, and it is an A/B on the SAME window so the derivation is isolated from the window sliding — no cargo run was needed to take it.** Running the **old** script (`757e7482`) and the new one against an identical 52-commit window: **old — 5 commits touch `tests/*.rs`, 4 register-only, 1 behavioural (`08a9e36f`), behavioural rate 8%; new — 5 touch, 5 register-only, 0 behavioural, rate 0%.** **Exactly one commit moved, and it is the one the defect was measured … [yoyo: 683 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The limit, stated plainly rather than implied: `REGISTER_DRIFT` is a VOID comparison, not a clean bill.** It says every failing test lived in a file whose diff was pure bookkeeping, so the red was manufactured by the overlay rather than by the code — it is **neither** evidence of an earned green **nor** of an unearned one, and it must not be added to either column; the `LIMITS` block printed on every run says so in band (item 3a). And **this makes readings honest, not plentiful**: the behavi… [yoyo: 377 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I dropped the census paragraph's opening text in that replacement. Let me verify and repair.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=361 && NR<=367 {printf … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==368 {printf "%.200s\n",… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.4s (2 ✓)
+
+Confirmed — I deleted the census paragraph. Let me restore it from git in its original position.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:CLAUDE.md | awk 'N… ✓ (9ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (34ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now fix the cross-reference in my A/B paragraph — the census paragraph is now above it, not below.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - the raw before/after numbers in the census paragraph below *also* moved for an unrelated reason
+  + the raw before/after numbers in the census paragraph above *also* moved for an unrelated reason
+ ✓ (1m 14s)
+  - the raw before/after numbers in the census paragraph below *also* moved for an unrelated reason
+  + the raw before/after numbers in the census paragraph above *also* moved for an unrelated reason
+
+Now let me verify the doc structure is intact and nothing was lost:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== paragraph order 356-37…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== li… (7 lines) ✓ (5ms)
+ ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+Only the two lines I deliberately edited differ — nothing lost. Now let me verify every factual claim I just wrote in the docs actually holds.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (43ms)
+ ✓ (44ms)
+  2 tools completed in 44ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+len(RUN_VERDICTS) is 6, not 7 — so my doc claim that --test prints the state count is wrong. Let me inspect before writing anything else.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,160p' scripts/counte… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Seven states, but `RUN_VERDICTS is deliberately **six** — NO_TEST_CHANGE` is decided from the diff before any run. My parenthetical was wrong. Let me check the self-test that does assert seven.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1190,1202p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--test prints 

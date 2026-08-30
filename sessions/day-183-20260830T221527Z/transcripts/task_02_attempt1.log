@@ -1,0 +1,201 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the files I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 CHANGELOG.md && echo "=… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: shallow clone (50 commits), v0.1.16 tagged 29 days ago, [Unreleased] empty. Let me gather the journal record — not git log v0.1.16..HEAD, which fails silently here.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== all tags sorted ===" &… ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is v0.1.16 an ancestor… ✓ (35ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.5s (2 ✓)
+
+Trap confirmed exactly as documented: git log v0.1.16..HEAD returns 53 commits = the entire clone (53 total) — a silent whole-history dump. Using the journal. Let me verify each candidate entry's day number.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for pat in "wait-for-reset" "852… ✓ (28ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The journal is prose for general readers — no issue numbers. CLAUDE.md (in my context) is the authority for day numbers. But one task-file entry needs checking: cache hit-rate may predate this window.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== cache in prior CHANGEL… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Important correction found: cache hit-rate already shipped in Day 71 (CHANGELOG line 182). The task file listed it in good faith, but claiming it as new would be a false claim in a user-facing document. Dropping it. yoagent 0.18.1 confirmed.
+
+Now writing the section:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CHANGELOG.md (3 → 58 lines)
+    ## [Unreleased]
+  + 
+  + ## [0.1.17] — 2026-08-30
+  + 
+  + Days 155–183. **If you run `cargo` with colour enabled, this release is required**: watch mode's compiler-error parser was anchored to the start of a line, so a single ANSI escape in front of `error[E0308]` made it find *zero* errors — silently, with no warning, for anyone whose terminal or `CARGO_TERM_COLOR` turns colour on. The same class was fixed for TypeScript. Around that: yoyo learned to sit out a rate limit instead of burning five retries against it, sub-agents survive a dead model i… [yoyo: 393 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + ### Added
+  + 
+  + - **`--wait-for-reset`** — opt-in permission to wait out a provider rate limit (up to 6h) instead of giving up, reading the provider's own reset time rather than guessing; also settable as `wait_for_reset = true` in your config. Default off, because a process that can silently sleep for hours is not a safe default (Day 178)
+  + - **Rate-limit-aware retry** — when a provider reports *when* it will accept work again, yoyo honours that number instead of five capped backoffs against the same refusal, and says when the door reopens instead of failing silently (Day 177)
+  + - **Sub-agent model fallback** — if the session's model is unavailable, a dispatched `sub_agent` retries once against your configured fallback model instead of dying. Announces the switch; never fires on auth failures, rate limits, or a deliberate refusal (Day 180)
+  + - **Sub-agent failure diagnostics** — the parent now receives the error's *class*, HTTP status and model configuration instead of an opaque summary string, so it can tell "model unavailable" from "the delegated work failed" (Day 180)
+  + - **Partial sub-agent results are labelled** — a sub-agent stopped by its turn budget returns `Ok` with a truncated answer; that result is now annotated as partial rather than reading as finished work (Day 182)
+  + - **Project-config trust boundary** — a project-local `.yoyo.toml` can no longer silently start MCP servers, grant `permissions.allow`, or run shell hooks, and `.yoyo/goal_verify.md` no longer executes on `/goal check`. yoyo asks once per folder, remembers your answer with `--trust-project-always`, and names every grant before you answer. A non-interactive run always takes the safe answer (Days 166, 167, 175, 178)
+  + - **Wildcards in `[directories]`** — `deny = ["*/secrets"]` and `allow = ["src/*"]` now match; previously a wildcard entry matched nothing at all, so a `deny` pattern silently fenced nothing and an `allow` pattern locked you out of every file (Day 178)
+  + - **Failed MCP/OpenAPI servers are reported to the model** — previously a server that failed to connect left the model with a shorter tool list and no error, so it concluded the capability did not exist and silently worked around it (Day 181)
+  + - **Runaway-loop notice** — when yoyo stops a run for repeating an identical tool call, it now says so and states that this was deliberate, rather than stopping with no stated reason (Day 181)
+  + - **Malformed tool calls get one resample** — a turn whose tool arguments never assembled is retried once instead of ending the run, bounded and announced (Day 183)
+  + - **CLI doors for `/ast` and `/def`** — `yoyo ast '$X.unwrap()' --in src/` and `yoyo def <symbol>` now reach the real handlers; they used to fall through and run as billed LLM prompts (Day 169)
+  + - **`/test` forwards its arguments** — `yoyo test --lib` and `/test --lib` reach your test runner instead of silently running the whole suite (Day 166)
+  ... (38 more lines)
+ ✓ (1m 14s)
+    ## [Unreleased]
+  + 
+  + ## [0.1.17] — 2026-08-30
+  + 
+  + Days 155–183. **If you run `cargo` with colour enabled, this release is required**: watch mode's compiler-error parser was anchored to the start of a line, so a single ANSI escape in front of `error[E0308]` made it find *zero* errors — silently, with no warning, for anyone whose terminal or `CARGO_TERM_COLOR` turns colour on. The same class was fixed for TypeScript. Around that: yoyo learned to sit out a rate limit instead of burning five retries against it, sub-agents survive a dead model i… [yoyo: 393 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + ### Added
+  + 
+  ... (13 more lines)
+
+Now the version bump:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit Cargo.toml (1 → 1 lines)
+  - version = "0.1.16"
+  + version = "0.1.17"
+ ✓ (2m 0s)
+  - version = "0.1.16"
+  + version = "0.1.17"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ec… ✓ (167ms)
+  2 tools completed in 2m 3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Lockfile updated to 0.1.17. But that build finished in 0.14s — suspiciously fast for a version change. Let me verify the binary actually reports the new version, then run the full gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ./target/debug/yoyo --version 2>… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Binary reports v0.1.17. Now the full gate — all four checks:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== FMT ===" && cargo fmt … ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '^test… ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 23s (2 ✓)
+
+All green — 5380 passed, 0 failed, plus 11 more test binaries. Let me confirm no suite failed anywhere, and review my diff before committing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'test … ✓ (1m 14s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the three in-scope files, no `src/` touched, all four gates green. Committing the version bump before tagging — that ordering is the safety property:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate satisfied: all four checks green and the bump is committed. Now the step that was actually skipped for 58 days — tag and push:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== remote tag already the… ✓ (788ms)
+
+Tag created locally, pointing exactly at the green commit. Pushing it — this is the one-way door:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git push origin v0.1.17 2>&1 | t… ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pushed. Now verifying the two facts that are genuinely different — tagged vs pushed — and that the release workflow actually fired:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== REMOTE TAG (the fact t… ✓ (16.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Release run 33337676395 is **in_progress** for tag `v0.1.17`, and the remote tag points at exactly my green commit. Let me check for version staleness in docs while the build runs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== hardcoded 0.1.16 anywh… ✓ (1m 41s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No version hardcoded in README/docs/CLAUDE.md — nothing stale to fix. Waiting for the release build (prior ones took ~5m30s):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sleep 240 && gh run list --workf… ✓ (4m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Still building at 6m17s (4 targets: Linux, macOS Intel, macOS ARM, Windows). Let me check the individual jobs to be sure nothing is failing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run view 33337676395 --json j… ✓ (1.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Jobs report success — including "Publish to crates.io" and "Create Release". Final confirmation:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --workflow release.y… ✓ (1.2s)
+
+v0.1.17 is out. Run 33337676395 completed success in 6m26s — all four targets published with checksums, and crates.io too.
+
+## What shipped
+
+The release, end to end:
+• CHANGELOG.md — a `## [0.1.17] — 2026-08-30 section covering Days 155–183, with ## [Unreleased]` kept above it for next time
+• Cargo.toml / Cargo.lock — 0.1.16 → 0.1.17
+• `v0.1.17` tagged and pushed — the step that had been skipped for 58 days
+
+Verification, all four criteria met: gates green before the tag (5380 tests passed, 0 failed; clippy, fmt, build clean) → ./target/debug/yoyo --version → v0.1.17 → tag present locally and on the remote (1445bbe8, matching the green commit exactly) → release run fired and finished.
+
+## The trap I was warned about, confirmed live
+
+git log v0.1.16..HEAD returned 53 commits — the entire clone (53 total). Not an error, not empty: a silent whole-history dump, because the shallow checkout can't reach a 29-day-old tag. I built the section from journals/JOURNAL.md instead, which clone depth can't truncate.
+
+## One thing I changed about my own task
+
+The task file listed "prompt-cache hit-rate visibility in `/tokens` and `/cost`" as an Added entry. It isn't new — it's already in this same CHANGELOG at line 182, shipped Day 71. What landed on Day 183 was test guards pinning the upstream ratio, which is invisible to users and is exactly the self-instrumentation the task told me not to pad with.
+
+So I dropped it. A CHANGELOG is a product document, and "we added this" about something a user has had for 112 days is a false claim in the one artifact people read to decide whether to upgrade. Checking beat transcribing — my own rule is that the artifact at the work site wins over the plan.
+
+## What I deliberately left alone
+
+• `skills/release/SKILL.md:last_used` is still `2026-05-13`. It's a fourth file and #866's second defect; half-doing it would be worse than naming it.
+• No src/ file was touched. The diff is exactly three files — I checked, rather than assuming.
+• Announcing in discussions is Phase C's job.
+
+The headline for users is #859: watch mode's Rust error parser was anchored at column 0, so a single ANSI escape made it find zero compiler errors — silently, for anyone with colour on, which is cargo's default on a terminal. Auto-fix then ran with nothing to fix. That's been broken in every release people could install until about six minutes ago.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

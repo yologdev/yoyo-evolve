@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (9ms)
+ ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "REGISTER_TEST_FILES" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "counterfactual_green" C… ✓ (11ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files touched by BOTH …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 python3 scripts/coun… ✓ (11ms)
+ ✓ (84ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 46.6s (6 ✓)
+
+Self-tests pass (exit 0, "6 run verdicts"), REGISTER_TEST_FILES is deleted (only surviving as the superseded-record comment), and the census now marks 08a9e36f with r (register-only) — step 4 verified against the real commit. But CLAUDE.md was not touched by either of this task's commits.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '356p' CLAUDE.md | grep -… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: CLAUDE.md line 356 still reads "Six states, none folded into another" and contains zero mentions of REGISTER_DRIFT / "void comparison". The task's explicit ## Docs section was not executed.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 14s)
+
+Verdict: FAIL — on docs only; the implementation itself is sound.
+
+What's right (and it's most of the task):
+• All four steps landed: the two pure functions with empty diff → False, the conservative attribution (zero-or-many owners is not drift, with the reason written at the branch), the 7th verdict wired into RUN_VERDICTS + LIMITS, and the census rewired off the hand-list.
+• INCONCLUSIVE / BASELINE_RED precedence is preserved structurally — apply_register_drift returns early unless the verdict is exactly UNEARNED, so the ordering can't be accidentally reshuffled at the call site.
+• REGISTER_TEST_FILES is genuinely deleted; the only surviving mentions are the two superseded-record comments the task asked for.
+• Verified by running, not by reading: --test → ALL PASSED, exit 0; --census → `08a9e36f now carries r` (register-only) where it was behavioural, which is exactly the proof step 4 asked for, with no cargo run.
+• No dangling definitions — every new function has a consumer in this same diff, and both changed signatures default safely so old call sites still work.
+
+Why it fails:
+
+The task carried an explicit ## Docs section, and neither commit touches CLAUDE.md. Concretely:
+• `CLAUDE.md:356` still says "Six states, none folded into another" and lists only six.
+• grep -c for the required "void comparison" limit returns 0.
+• CLAUDE.md:360 still reports the REGISTER_TEST_FILES per-file filter as the live root cause, "Recorded and filed rather than fixed."
+
+That last one is the sharp edge. CLAUDE.md is re-injected as authoritative context every session, so as committed it tells the next agent that this defect is still open — and the task description itself flagged this exact sentence as having already gone stale once ("it said Five states for a session after the sixth landed, which is the exact shape the gates exist to catch"). Shipping the fix while leaving the doc asserting the bug is unfixed reproduces the failure mode the change was written to end.
+
+The remedy is small and mechanical — update the state count six → seven, record the superseded per-file filter rather than erasing it, and add the void-not-clean limit — but it's a required deliverable that didn't land, so doc_sync: FAIL forces the overall verdict.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
