@@ -444,12 +444,54 @@ fn modern_panic_location(line: &str) -> Option<(String, u32)> {
     Some((file.to_string(), line_no))
 }
 
-/// Look ahead from line `start` for a `  --> path:line:col` location line.
-/// Returns (file, line) if found within the next 5 lines.
+/// Does this line begin a **new** diagnostic?
+///
+/// #860: the bound for [`extract_location`]'s lookahead. rustc emits one
+/// diagnostic per header, and a genuine diagnostic's own `-->` always precedes
+/// the next header — so anything at or past the next header belongs to that
+/// *next* diagnostic, never to this one.
+///
+/// The three shapes are the same three [`parse_rust_errors`] itself anchors on
+/// (`error…`, `warning…`, `thread '…' panicked at …`), so a line that would
+/// start a new entry also stops the previous entry's search. `error` and
+/// `warning` are matched as bare prefixes rather than requiring `: ` or `[`,
+/// because both the coded (`error[E0308]:`) and uncoded (`error:`) forms must
+/// bound, as must cargo's own `warning: \`crate\` (manifest) generated …`
+/// summary lines, which carry no location and sit between the two.
+///
+/// Input is already ANSI-stripped and `trim_start`ed by `parse_rust_errors`
+/// (#859), so this needs no second matcher — without that, the bound would
+/// silently never fire for anyone running `color = "always"`.
+fn begins_new_diagnostic(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("error") || t.starts_with("warning") || t.starts_with("thread '")
+}
+
+/// Find the `--> path:line:col` belonging to the diagnostic whose header is at
+/// `start`, searching the next 5 lines.
+///
+/// #860: the search **stops at the next diagnostic header**. Without that
+/// bound a diagnostic carrying no location of its own — a manifest warning, a
+/// link failure, `error[E0463]: can't find crate` — absorbed the location of
+/// whichever diagnostic happened to follow it within the window, and reported
+/// it *confidently*. That is worse than `None`: `build_watch_fix_prompt` feeds
+/// `file`/`line` to `extract_error_source_context`, so the fix agent was handed
+/// a quoted excerpt of innocent code.
+///
+/// **The bound is a pure narrowing, and that is why it is safe.** It can only
+/// turn a *wrong* `Some(location)` into `None`; it can never invent a location,
+/// and it can never move one that was already correct, because a genuine
+/// diagnostic's own `-->` always precedes the next header. Please do not
+/// "simplify" the bound away — it fires on real, ordinary cargo output (any
+/// typo'd manifest key beside any type error; see the #860 test).
 fn extract_location(lines: &[&str], start: usize) -> (Option<String>, Option<u32>) {
     let end = std::cmp::min(start + 6, lines.len());
     for line in &lines[start + 1..end] {
         let trimmed = line.trim();
+        // #860: past this point we are reading someone else's diagnostic.
+        if begins_new_diagnostic(trimmed) {
+            break;
+        }
         if let Some(rest) = trimmed.strip_prefix("--> ") {
             // Format: path:line:col
             let parts: Vec<&str> = rest.rsplitn(3, ':').collect();
@@ -3158,6 +3200,133 @@ error: could not compile `ansi_probe` (bin \"ansi_probe\") due to 1 previous err
             errors[0].message,
             "thread 'tests::my_test' panicked at 'assertion failed: `(left == right)`"
         );
+    }
+
+    /// #860: a diagnostic with no location of its own must NOT absorb the
+    /// `-->` belonging to the next diagnostic.
+    ///
+    /// **This fixture is a real capture, not fabricated** (dated 2026-08-30,
+    /// cargo 1.x on this runner). Produced in a scratch crate under `/tmp` —
+    /// never this repo, per `run_git`'s `#[cfg(test)]` destructive guard and
+    /// #780's cwd lessons — by a `Cargo.toml` carrying one bogus key plus a
+    /// `let x: i32 = "not an int";`, captured with
+    /// `CARGO_TERM_COLOR=never cargo build 2>&1`. The shape is ordinary rather
+    /// than exotic: **any** typo'd manifest key plus **any** type error yields
+    /// it, and the located neighbour lands 4 lines below the location-less
+    /// header — squarely inside `extract_location`'s 5-line window.
+    ///
+    /// Before the bound, `warning: Cargo.toml: unused manifest key: …` came
+    /// back carrying `src/main.rs:2` — a confident pointer at innocent code,
+    /// which `build_watch_fix_prompt` then feeds to
+    /// `extract_error_source_context` to quote the wrong source lines at the
+    /// fix agent.
+    #[test]
+    fn parse_rust_errors_location_less_diagnostic_does_not_absorb_its_neighbour_860() {
+        let output = "\
+warning: Cargo.toml: unused manifest key: package.bogus_key_here
+warning: `loc860` (manifest) generated 1 warning
+   Compiling loc860 v0.1.0 (/tmp/loc860.bDyper)
+error[E0308]: mismatched types
+ --> src/main.rs:2:18
+";
+
+        // Anti-vacuous: pin that the fixture really has the shape the test
+        // claims, so a broken parser cannot pass by having both sides agree on
+        // nothing. The manifest warning owns no `-->`; the E0308 header does,
+        // on the very next line; and the two sit inside one 5-line window.
+        let raw: Vec<&str> = output.lines().collect();
+        assert!(
+            raw[0].starts_with("warning: Cargo.toml: unused manifest key"),
+            "fixture drifted: first line is not the location-less warning: {:?}",
+            raw[0],
+        );
+        assert!(
+            !raw[1].trim().starts_with("--> ") && !raw[2].trim().starts_with("--> "),
+            "fixture drifted: the location-less warning must own no `-->`",
+        );
+        assert!(
+            raw[3].starts_with("error[E0308]") && raw[4].trim().starts_with("--> "),
+            "fixture drifted: the located neighbour must carry its own `-->`",
+        );
+        let arrow_at = raw
+            .iter()
+            .position(|l| l.trim().starts_with("--> "))
+            .expect("fixture drifted: no `-->` anywhere");
+        assert!(
+            (1..6).contains(&arrow_at),
+            "fixture drifted: the neighbour's `-->` is at {arrow_at}, outside the 5-line \
+             window scanned from the location-less header at index 0",
+        );
+
+        let errors = parse_rust_errors(output);
+        assert_eq!(
+            errors.len(),
+            2,
+            "expected the manifest warning and the E0308: {errors:?}",
+        );
+
+        // The fix: the location-less warning keeps its honest `None`.
+        assert_eq!(
+            errors[0].file, None,
+            "location-less warning absorbed a neighbour's file: {:?}",
+            errors[0],
+        );
+        assert_eq!(
+            errors[0].line, None,
+            "location-less warning absorbed a neighbour's line: {:?}",
+            errors[0],
+        );
+
+        // The neighbour keeps its OWN location — the bound must not cost the
+        // located diagnostic anything.
+        assert_eq!(errors[1].code.as_deref(), Some("E0308"));
+        assert_eq!(errors[1].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(errors[1].line, Some(2));
+    }
+
+    /// Near-miss guard for #860, and the half that matters: the bound's whole
+    /// risk is cutting the window short, so a genuine `-->` at **every**
+    /// in-window distance must still be found.
+    ///
+    /// A discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn parse_rust_errors_located_diagnostic_still_finds_its_arrow_at_every_distance_860() {
+        for distance in 1..=5usize {
+            let filler = "  |\n".repeat(distance - 1);
+            let output =
+                format!("error[E0308]: mismatched types\n{filler} --> src/main.rs:42:18\n  |\n");
+            let errors = parse_rust_errors(&output);
+            assert_eq!(errors.len(), 1, "distance {distance}: {errors:?}");
+            assert_eq!(
+                errors[0].file.as_deref(),
+                Some("src/main.rs"),
+                "distance {distance}: bound cut the window short",
+            );
+            assert_eq!(
+                errors[0].line,
+                Some(42),
+                "distance {distance}: bound cut the window short",
+            );
+        }
+    }
+
+    /// Near-miss guard for #860: `thread '` is now also a bound marker, so a
+    /// panic must not truncate its own parse. Both shapes, byte-identical to
+    /// the pre-#860 behaviour pinned by the two tests above.
+    #[test]
+    fn parse_rust_errors_panic_shapes_unaffected_by_the_header_bound_860() {
+        let modern = "thread 'tests::t' (4861) panicked at src/main.rs:7:9:\n\
+                      assertion `left == right` failed\n";
+        let errors = parse_rust_errors(modern);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].file.as_deref(), Some("src/main.rs"));
+        assert_eq!(errors[0].line, Some(7));
+
+        let legacy = "thread 'tests::t' panicked at 'boom', src/lib.rs:99:9\n";
+        let errors = parse_rust_errors(legacy);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].file, None, "legacy shape must not gain a file");
+        assert_eq!(errors[0].line, None, "legacy shape must not gain a line");
     }
 
     #[test]
