@@ -1,0 +1,304 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the tool I'm about to gate.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:98..458 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:196..411 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:500..755 ✓ (1ms)
+  4 tools completed in 8.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read the whole file. Now let me act — first verify the target commits are reachable, then make the change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%H %s' 08a9… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both commits reachable, and 08a9e36f is genuinely behavioural (tests/git_chokepoint.rs + the register). Now the gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (8 → 13 lines)
+    UNEARNED = "UNEARNED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    COULD_NOT_CHECK = "COULD_NOT_CHECK"
+  + BASELINE_RED = "BASELINE_RED"
+    
+  - # The four a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  - RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK)
+  + # The five a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  + RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK, BASELINE_RED)
+  + 
+  + # Internal sentinel, deliberately NOT a run verdict: the baseline passed, so the
+  + # comparison is licensed and the counterfactual may proceed. It never reaches a report.
+  + BASELINE_OK = "BASELINE_OK"
+ ✓ (1m 13s)
+    UNEARNED = "UNEARNED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    COULD_NOT_CHECK = "COULD_NOT_CHECK"
+  + BASELINE_RED = "BASELINE_RED"
+    
+  - # The four a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  - RUN_VERDICTS = (EARNED, UNEARNED, INCONCLUSIVE, COULD_NOT_CHECK)
+  + # The five a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  ... (5 more lines)
+
+Now the pure classifier for the baseline, next to its sibling:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (9 → 55 lines)
+            return UNEARNED
+        if TEST_RESULT_OK_RE.search(output):
+            return EARNED
+  +     return COULD_NOT_CHECK
+  + 
+  + 
+  + def classify_baseline(exit_code: int, output: str) -> str:
+  +     """Classify the BASELINE run: parent `tests/` against parent `src/`, whole.
+  + 
+  +     WHY A BASELINE AT ALL
+  +     ---------------------
+  +     Without it an UNEARNED verdict is **unfalsifiable**. The counterfactual runs pre-task
+  +     `tests/` against post-task `src/` and reads the result — but a flaky test, environment
+  +     drift, a feature-gated file or a shallow-clone artifact produces exactly the same red
+  +     as a genuine unearned green, and nothing here could tell them apart. Establishing that
+  +     the reference point is itself green is what converts "the tests fail" into "the tests
+  +     fail *because of the code change*".
+  + 
+  +     This is independently the dominant failure mode of the whole method. arXiv 2606.16062
+  +     audited an LLM-judge loop reporting 10 of 11 tasks fixed; Docker re-verification of 8
+  ... (30 more lines)
+ ✓ (1m 12s)
+            return UNEARNED
+        if TEST_RESULT_OK_RE.search(output):
+            return EARNED
+  +     return COULD_NOT_CHECK
+  + 
+  + 
+  + def classify_baseline(exit_code: int, output: str) -> str:
+  +     """Classify the BASELINE run: parent `tests/` against parent `src/`, whole.
+  ... (13 more lines)
+
+Now the I/O half — baseline first, same worktree, shared warm target dir:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (52 → 84 lines)
+    def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
+  -     """Build post-src/ + pre-tests/ in a scratch worktree and run cargo test.
+  +     """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
+    
+        Returns (verdict, detail). Every landmine from the module doc is enforced here.
+  + 
+  +     ORDER IS THE DESIGN: the baseline runs FIRST, and a red baseline short-circuits.
+  +     That is correct (there is nothing to learn from comparing against a broken reference)
+  +     and it is the cost control — it skips the expensive second cargo invocation on exactly
+  +     the commits that cannot answer either way.
+  + 
+  +     The baseline is the parent commit **whole** — pre-task `tests/` AND pre-task `src/` —
+  +     run through the same worktree, the same `cargo test`, the same `CARGO_TARGET_DIR`. If
+  +     it is not a control run the same way, it is not a control.
+        """
+        rc, out = run_cmd(["git", "-C", root, "rev-parse", f"{sha}^"], timeout=60)
+        if rc != 0:
+  ···
+            return COULD_NOT_CHECK, f"git diff failed (rc={rc})"
+        changed = top_level_test_files(out.splitlines())
+  ... (64 more lines)
+ ✓ (1m 13s)
+    def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
+  -     """Build post-src/ + pre-tests/ in a scratch worktree and run cargo test.
+  +     """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
+    
+        Returns (verdict, detail). Every landmine from the module doc is enforced here.
+  + 
+  +     ORDER IS THE DESIGN: the baseline runs FIRST, and a red baseline short-circuits.
+  +     That is correct (there is nothing to learn from comparing against a broken reference)
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests for the gate — including the near-miss guard that matters:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 105 lines)
+  +     # -- THE BASELINE GATE ---------------------------------------------------------------
+  +     # Without a baseline an UNEARNED is unfalsifiable: a flaky test, environment drift or
+  +     # a shallow-clone artifact produces exactly the same red as a genuine unearned green.
+  +     # Table-driven over fabricated exit codes and captured output, same as its sibling.
+  +     baseline_table = [
+  +         # (name, rc, output, expected)
+  +         (
+  +             "green baseline licenses the comparison",
+  +             0,
+  +             "running 42 tests\ntest result: ok. 42 passed; 0 failed\n",
+  +             BASELINE_OK,
+  +         ),
+  +         (
+  +             "red baseline is BASELINE_RED",
+  +             101,
+  +             "running 42 tests\n"
+  +             "thread 'x' panicked at src/a.rs:1:1:\nassertion failed\n"
+  +             "test result: FAILED. 41 passed; 1 failed; 0 ignored\n",
+  +             BASELINE_RED,
+  +         ),
+  ... (85 more lines)
+ ✓ (1m 12s)
+  +     # -- THE BASELINE GATE ---------------------------------------------------------------
+  +     # Without a baseline an UNEARNED is unfalsifiable: a flaky test, environment drift or
+  +     # a shallow-clone artifact produces exactly the same red as a genuine unearned green.
+  +     # Table-driven over fabricated exit codes and captured output, same as its sibling.
+  +     baseline_table = [
+  +         # (name, rc, output, expected)
+  +         (
+  +             "green baseline licenses the comparison",
+  ... (13 more lines)
+
+Now update the module docstring and LIMITS to match (six states, not five):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (8 → 33 lines)
+  - FIVE STATES, NONE FOLDED INTO ANOTHER
+  - -------------------------------------
+  + SIX STATES, NONE FOLDED INTO ANOTHER
+  + ------------------------------------
+    `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
+    tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
+    (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
+  - here), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), which is never
+  - folded into any verdict — the same refusal the pre-push hook and `CiScan`'s could-not-run
+  - branch already make.
+  + here), `BASELINE_RED` (see below), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout
+  + failure), which is never folded into any verdict — the same refusal the pre-push hook and
+  + `CiScan`'s could-not-run branch already make.
+  + 
+  + THE BASELINE GATE, AND WHY IT IS NOT OPTIONAL
+  + ---------------------------------------------
+  + The first version of this tool ran pre-task `tests/` against post-task `src/` and read the
+  + result. It never established that those pre-task tests passed against pre-task `src/`.
+  + Without that baseline an `UNEARNED` verdict is **unfalsifiable**: a flaky test, environment
+  + drift, a feature-gated file or a shallow-clone artifact produces exactly the same red as a
+  ... (18 more lines)
+ ✓ (1m 12s)
+  - FIVE STATES, NONE FOLDED INTO ANOTHER
+  - -------------------------------------
+  + SIX STATES, NONE FOLDED INTO ANOTHER
+  + ------------------------------------
+    `NO_TEST_CHANGE` (nothing to counterfactual — the counterfactual tree *is* the shipped
+    tree, and this must never be counted as EARNED), `EARNED`, `UNEARNED`, `INCONCLUSIVE`
+    (pre-tests do not compile: an honest API rename and a hidden break are indistinguishable
+  - here), and `COULD_NOT_CHECK` (worktree/checkout/cargo/timeout failure), which is never
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (12 → 22 lines)
+         are exactly what an honest API rename produces, and exactly what a hidden break
+         produces. The state exists because the two are indistinguishable from here, not
+         because the run was sloppy.
+  -   5. IT SEES ONLY SURVIVING HISTORY. scripts/evolve.sh reverts a failed task with
+  +   5. A BASELINE_RED CONCLUDES NOTHING, IN EITHER DIRECTION. It says the parent commit's
+  +      own tests do not pass against the parent commit's own src/ — so the reference point
+  +      is broken and the comparison is void. It is NOT a weak UNEARNED and NOT a machinery
+  +      failure; those are COULD_NOT_CHECK. Read it as "this commit is unmeasurable here".
+  +   6. A SMALL GAP IS NOT PROOF OF COMPLIANCE. Copied verbatim from SpecBench (arXiv
+  +      2605.21384), whose held-out axis catches what a backward counterfactual structurally
+  +      cannot: the pre-task tests never composed the NEW features either, so
+  +      feature-isolation failures are invisible to this method. A green counterfactual says
+  +      the old assertions still hold; it says nothing about whether the new behaviour was
+  +      specified correctly.
+  +   7. IT SEES ONLY SURVIVING HISTORY. scripts/evolve.sh reverts a failed task with
+         `git reset --hard PRE_TASK_SHA`, so an unearned green inside a REVERTED task is
+         invisible forever — and the sessions most likely to contain the behaviour are the
+         ones whose evidence was destroyed. A clean census is a statement about survivors.
+  -   6. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
+  +   8. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
+  ... (3 more lines)
+ ✓ (1m 12s)
+         are exactly what an honest API rename produces, and exactly what a hidden break
+         produces. The state exists because the two are indistinguishable from here, not
+         because the run was sloppy.
+  -   5. IT SEES ONLY SURVIVING HISTORY. scripts/evolve.sh reverts a failed task with
+  +   5. A BASELINE_RED CONCLUDES NOTHING, IN EITHER DIRECTION. It says the parent commit's
+  +      own tests do not pass against the parent commit's own src/ — so the reference point
+  +      is broken and the comparison is void. It is NOT a weak UNEARNED and NOT a machinery
+  +      failure; those are COULD_NOT_CHECK. Read it as "this commit is unmeasurable here".
+  ... (13 more lines)
+  2 tools completed in 2m 37s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Low on budget — starting the long pole (the live reading) in background now, then verifying while it runs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup python… (2 lines) ✓ (4.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass (5 run verdicts now), --help works. Now the positive control — serially, on its own, no other file-mutating work in flight:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (103ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (207ms)
+  2 tools completed in 6.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired correctly: 6 baseline tests red, 0 near-miss guards red — the direction proving the guards test the pass-through, not the fix. Restored, ALL PASSED. Now the live reading:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff -q /tmp/cg_backup.py script… ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The reading is mid-flight and already showing a FAILED line. Let me wait for it to land:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in $(seq 1 55); do if ! pg… ✗ (10m 0s)
+    │ Command timed out after 600s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if pgrep -f "counterfactual_gree… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict has landed. Let me read the detail — the baseline result is the part that makes it mean anything:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' /tmp/reading_08a9… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A20 'counterfactual verdic… ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The first live reading is in, and it found something real. Let me record it:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 9 lines)
+    restoring returns `ALL PASSED`, exit 0.
+  + 
+  + **Day 183 (second task) — the baseline gate, and the FIRST live reading, which found a defect in the instrument rather than in my history.** The tool shipped the previous session with self-tests passing, a census run, and **zero live readings** — the same shape as #810, a grader built and never read (*polishing an instrument's honesty is a costume for not using it*). Before reading it, one defect had to be closed: **it ran pre-task `tests/` against post-task `src/` and never established that… [yoyo: 3126 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The reading, dated 2026-08-30, on `08a9e36f`** (Day 183, #864 — convert the one registered git bypass), the newer of the census's two behavioural candidates. **BASELINE: green** — the parent's own tests pass against the parent's own `src/`, so the comparison is licensed, and *saying that beside the verdict is the entire point of the gate*. **COUNTERFACTUAL: `UNEARNED`** — post-task `src/` with pre-task `tests/` gives `test result: ok. 5365 passed` on the main binary and `test result: FAI… [yoyo: 716 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **So the instrument's own `REGISTER_TEST_FILES` exclusion is too narrow, and its stated reason is wrong in a direction I did not consider.** That constant holds only `tests/module_size.rs`, reasoning that *"the other gates' registers name files, tests or reasons, which do not drift when `src/` grows."* True — and irrelevant, because those registers do not fail when `src/` **grows**, they fail when the debt is **paid**, and *every one of my eight gates has a ratchet that makes improving a failu… [yoyo: 1086 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The census, dated 2026-08-30, over the shallow 52-commit window: 12 task commits; 5 `NO_TEST_CHANGE`; 7 touching `tests/*.rs`, of which 5 are REGISTER-ONLY and 2 behavioural** (`08a9e36f` and `5c82fef5`, both touching `tests/git_chokepoint.rs`) — a **17% behavioural rate against a 58% addressable rate**, and *that split is the finding rather than a step*. **Three limits, stated rather than implied.** (1) **n=2 is not a rate, so none is reported.** DREAM.md asks for ≥20 task commits; the be… [yoyo: 1499 more bytes elided — diff lines are capped at 500 bytes]
+ ✗ (2ms)
+    │ old_text matches 4 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md. Include more surrounding context to make the match unique.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ALL PASSED\`, exit 0.' … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '358,360p' CLAUDE.md | cu… ✓ (5ms)
+  3 tools completed in 6.5s (2 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 30 python3 scripts/count… ✓ (42ms)
+ ✓ (49ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RUN_VERDICTS\|BASELINE_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (5ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 40 git show 08a9e36f --s… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 49.7s (5 ✓)
+
+Verification complete. Everything checks out:
+
+• --test → ALL PASSED, exit 0; --help → usage, exit 0 (real argparse, says "Six states").
+• BASELINE_RED is a distinct constant in RUN_VERDICTS; BASELINE_OK is deliberately excluded and only used internally at the != BASELINE_OK gate.
+• classify_baseline keeps the compile-vs-assert split (compile error → `COULD_NOT_CHECK, not BASELINE_RED`), plus the anti-vacuous zero-tests branch.
+• Baseline runs first: worktree is created at parent, baseline short-circuits before the second cargo invocation, one shared CARGO_TARGET_DIR under mkdtemp, worktree remove --force still in finally.
+• Near-miss guard is asserted both ways (green baseline + red counterfactual → still UNEARNED; green + green → still EARNED).
+• The live reading is corroborated against git: 08a9e36f really does touch tests/git_chokepoint.rs + tests/module_size.rs + src/commands_search.rs, really does delete the "list_project_files" register line, and `every_direct_git_invocation_is_at_the_chokepoint_or_registered` really does exist at its parent — so the ratchet firing by construction is a genuine mechanism, not an inferred one.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 26s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The evaluation is complete — the verdict file was already written. Let me confirm it's in place and correctly formatted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/eval_task_1.… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evaluation complete. The verdict file is in place, correctly formatted — all five required lines present (Verdict + 4 Checked), no leftover angle-bracket placeholders, no code fences.
+
+## Verdict: PASS
+
+What I verified (judging the diff, not exploring the repo):
+
+| Requirement | Evidence |
+|---|---|
+| Fifth verdict, distinct constant in RUN_VERDICTS | BASELINE_RED at :132, in RUN_VERDICTS :135; BASELINE_OK deliberately excluded as internal sentinel :139, pinned by self-test :853–854 |
+| Never folded into UNEARNED/COULD_NOT_CHECK | Explicit self-tests: red baseline is not UNEARNED, red baseline is not COULD_NOT_CHECK, six distinct states |
+| Baseline runs first | worktree add --detach wt parent (was sha) — the tree starts at the parent so the control is the first thing runnable |
+| Red baseline short-circuits | if baseline != BASELINE_OK: return baseline before the second cargo test |
+| Shared CARGO_TARGET_DIR, out of repo target/ | env hoisted above both runs, target under mkdtemp |
+| Compile-vs-assert split on the baseline side | has_compile_error → COULD_NOT_CHECK, not BASELINE_RED; plus the anti-vacuous zero-tests branch |
+| Landmines preserved | mkdtemp worktree, worktree remove --force in finally, no #[test] invocation, no register entry |
+| Near-miss guard | green baseline + red counterfactual → still `UNEARNED`; and green+green → still EARNED |
+| Verification commands | --test → ALL PASSED exit 0; --help → usage exit 0 (no FileNotFoundError regression) |
+
+The step-2 reading is corroborated against git rather than taken on trust — the failure mode this very gate cites is "reasoned about what it would check if it ran", so I checked the mechanism: 08a9e36f genuinely touches tests/git_chokepoint.rs + tests/module_size.rs + src/commands_search.rs (the mixed shape), genuinely deletes the "list_project_files" register line, and `every_direct_git_invocation_is_at_the_chokepoint_or_registered` genuinely exists at its parent. So the ratchet-fires-by-construction explanation for the `UNEARNED` holds, and the reading stays valid even after the behavioural_test_files filter, since git_chokepoint.rs is behavioural and still rolled back.
+
+Cleanup feedback, not a fail: the diff adds behavioural_test_files — a real run-path behaviour change beyond the task's step 1 — which is thoroughly documented in the script docstring and four self-tests, but is not named in the CLAUDE.md prose. CLAUDE.md's "recorded and filed rather than fixed" refers to the narrower per-assertion problem, which genuinely remains unfixed, so it isn't a contradiction — just an incompleteness worth closing next time that file is touched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

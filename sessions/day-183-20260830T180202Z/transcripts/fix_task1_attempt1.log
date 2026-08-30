@@ -1,0 +1,219 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Step 1 landed and is committed. The two missing halves are the live reading (Step 2) and the CLAUDE.md writeup. Let me verify the tool first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (40ms)
+ ✓ (40ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Both pass, but I notice two stale "five states" strings inside the tool itself. Let me read the script.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,90p' scripts/counterfa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,200p' scripts/counter… ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: Step 1 is committed and green. Remaining — the stale "five states" strings inside the tool (same drift class the evaluator punished), the live reading, and CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Five states\|five state…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in 08a9e36f 5c82fef5; do e… ✓ (4ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Both commits and their parents are reachable — no shallow-clone refusal. Fixing the three stale "five" strings first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "self-tests over" script… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 967 derives from len(RUN_VERDICTS) (correctly 5 run verdicts) and line 134 is right — only the two literal "Five states" claims are stale:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 2 lines)
+  - # The five states. None folds into another.
+  + # The six states. None folds into another. Five of them a live run can produce;
+  + # NO_TEST_CHANGE is decided by the diff, before any run.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 1 lines)
+  -             "cargo test. Five states, none folded into another."
+  +             "cargo test. Six states, none folded into another."
+ ✓ (1m 24s)
+  - # The five states. None folds into another.
+  + # The six states. None folds into another. Five of them a live run can produce;
+  + # NO_TEST_CHANGE is decided by the diff, before any run.
+ ✓ (2m 49s)
+  -             "cargo test. Five states, none folded into another."
+  +             "cargo test. Six states, none folded into another."
+  2 tools completed in 2m 50s (2 ✓)
+
+Now the deliverable — the live reading on 08a9e36f. This runs two cold cargo builds, so it needs room:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 08a9e36f^ 08a9e36f --na… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: the stale-string fixes are made; the reading is next. 08a9e36f touches a register file (tests/module_size.rs) alongside the behavioural one, so I need to check how the run handles that before trusting the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def run_counterfactual… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict's validity turns on whether the register file is excluded from the pre-task overlay:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def top_level_test_fil… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+top_level_test_files does not exclude register files — so 08a9e36f's pre-task tests/module_size.rs would be laid over post-task src/, and it fails by construction because src/commands_search.rs grew in that very commit. That would manufacture an UNEARNED. Let me confirm the constant's current consumers:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_TEST_FILES\|re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 08a9e36f^ 08a9e36f -- t… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.5s (2 ✓)
+
+Confirmed: 08a9e36f bumps the register 3720 → 3872 for the very file it grew, and REGISTER_TEST_FILES is consumed only by the census, never by the run path. Rolling that file back would manufacture an UNEARNED out of bookkeeping. Fixing before reading:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def top_level_test_fil… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix — a behavioural_test_files helper, wired into the overlay so debt registers stay at the shipped version:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 28 lines)
+                continue
+            out.append(p)
+        return out
+  + 
+  + 
+  + def behavioural_test_files(paths: list[str]) -> list[str]:
+  +     """The subset of top-level test files that are EVIDENCE rather than BOOKKEEPING.
+  + 
+  +     THIS IS THE SET THAT MAY BE ROLLED BACK, and the distinction is not cosmetic. A debt
+  +     register (`REGISTER_TEST_FILES`) encodes line counts OF `src/`, so laying a pre-task
+  +     copy over post-task `src/` fails **by construction** whenever a module grew — the gate
+  +     working exactly as designed, since pasting the updated register line is the compliant
+  +     remedy it prints. Rolling one back would manufacture an `UNEARNED` out of bookkeeping,
+  +     which is the same defect the census already refuses to make when it splits
+  +     register-only commits out of the behavioural denominator.
+  + 
+  +     The census consumed `REGISTER_TEST_FILES` from the start; the RUN PATH did not, so a
+  +     MIXED commit — one behavioural test file plus a register bump, which is the common
+  +     shape — dragged the register into the overlay and produced a manufactured red. Live
+  +     instance: `08a9e36f` moves `("src/commands_search.rs", 3720)` to `3872` for the very
+  ... (7 more lines)
+ ✓ (1m 25s)
+                continue
+            out.append(p)
+        return out
+  + 
+  + 
+  + def behavioural_test_files(paths: list[str]) -> list[str]:
+  +     """The subset of top-level test files that are EVIDENCE rather than BOOKKEEPING.
+  + 
+  ... (13 more lines)
+
+Now wire it into the run path:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 16 lines)
+            # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
+            # baseline is needed and none is run — there is no comparison to license.
+            return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
+  + 
+  +     # Only BEHAVIOURAL test files may be rolled back. A debt register encodes line counts
+  +     # of `src/`, so a pre-task copy over post-task `src/` fails by construction and would
+  +     # manufacture an UNEARNED out of bookkeeping. Registers stay at the shipped version.
+  +     rollback = behavioural_test_files(out.splitlines())
+  +     if not rollback:
+  +         return NO_TEST_CHANGE, (
+  +             "only debt-register file(s) touched ("
+  +             + ", ".join(changed)
+  +             + ") — verdict decided by construction, no signal"
+  +         )
+ ✓ (1m 26s)
+            # Nothing to counterfactual: the counterfactual tree IS the shipped tree. No
+            # baseline is needed and none is run — there is no comparison to license.
+            return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
+  + 
+  +     # Only BEHAVIOURAL test files may be rolled back. A debt register encodes line counts
+  +     # of `src/`, so a pre-task copy over post-task `src/` fails by construction and would
+  +     # manufacture an UNEARNED out of bookkeeping. Registers stay at the shipped version.
+  +     rollback = behavioural_test_files(out.splitlines())
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 5 lines)
+  -         # Lay the PRE-task tests back over the POST-task src/.
+  +         # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
+  +         # are deliberately NOT rolled back — see behavioural_test_files.
+            rc, out = run_cmd(
+  -             ["git", "-C", wt, "checkout", parent, "--"] + changed, timeout=120
+  +             ["git", "-C", wt, "checkout", parent, "--"] + rollback, timeout=120
+            )
+ ✓ (1m 25s)
+  -         # Lay the PRE-task tests back over the POST-task src/.
+  +         # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
+  +         # are deliberately NOT rolled back — see behavioural_test_files.
+            rc, out = run_cmd(
+  -             ["git", "-C", wt, "checkout", parent, "--"] + changed, timeout=120
+  +             ["git", "-C", wt, "checkout", parent, "--"] + rollback, timeout=120
+            )
+  2 tools completed in 2m 56s (2 ✓)
+
+Now self-tests for the new filter, including the near-miss guard:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'check("register-only is… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '953,962p' scripts/counte… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 32 lines)
+        check("a mixed commit IS behavioural", mixed.behavioural, mixed)
+  + 
+  +     # -- the ROLLBACK set: registers are never laid back over post-task src/ --------------
+  +     # The census consumed REGISTER_TEST_FILES from day one; the RUN PATH did not, so a
+  +     # mixed commit dragged the register into the overlay and manufactured a red. Live
+  +     # instance: 08a9e36f bumps ("src/commands_search.rs", 3720) -> 3872 for the very file
+  +     # it grew, so rolling that register back fails BY CONSTRUCTION.
+  +     mixed_paths = ["src/commands_search.rs", "tests/git_chokepoint.rs", "tests/module_size.rs"]
+  +     check(
+  +         "rollback set drops the debt register",
+  +         behavioural_test_files(mixed_paths) == ["tests/git_chokepoint.rs"],
+  +         behavioural_test_files(mixed_paths),
+  +     )
+  +     # NEAR-MISS GUARD, and it is the half that matters: the behavioural file is still
+  +     # rolled back. A filter that ate the finding it exists to protect would be worse than
+  +     # no filter, and a discriminator tested only on the side that fires is vacuous green.
+  +     check(
+  +         "rollback set KEEPS the behavioural file",
+  +         "tests/git_chokepoint.rs" in behavioural_test_files(mixed_paths),
+  +         behavioural_test_files(mixed_paths),
+  ... (12 more lines)

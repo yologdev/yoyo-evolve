@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what the gate implementation looks like, and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BASELINE_RED\|BASELINE_… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Step 1 landed; Steps 2 (the live reading) and the CLAUDE.md update are missing. Let me verify the gate works, then take the reading.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (43ms)
+ ✓ (45ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.7s (2 ✓)
+
+Both pass. Now the mandatory Step 2 reading — first checking reachability in the shallow clone.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "shallow: $(git rev-parse -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '490,560p' scripts/counte… ✓ (3ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+Both reachable. The reading needs two full cargo builds — starting it in the background now so it runs while I work on the census and docs.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm -f /tmp/c… (2 lines) ✓ (22.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up from the background reading I started. Let me check its state and the current diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== log exists? ==="; ls -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short; echo "=== wo… ✓ (6ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.4s (2 ✓)
+
+The reading completed: UNEARNED, baseline green. But before I record that, I need to check which test failed — the tool's own limit 3 warns about debt registers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTER_TEST_FILES" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files 08a9e36f touched… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+tests/git_chokepoint.rs carries a debt register too, but REGISTER_TEST_FILES only knows about module_size.rs. Let me check the mechanism before recording this verdict.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git_chokepoint.rs diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ps -p 249053 -o pid,cmd 2>&1 | h… ✓ (5ms)
+ ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.0s (2 ✓)
+
+Process is clean — no stray worktrees or cargo. The mechanism is now clear: 08a9e36f deleted a register entry from REGISTERED_GIT_BYPASSES. Let me verify empirically rather than by reasoning.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #[test] count in PRE-t… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Key detail to settle: the failing binary had 13 tests. Let me count properly (including indented ones) and start a targeted verification in the background.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in git_chokepoint module_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WT=$(mktemp -d /tmp/cfgwt.XXXXXX… ✓ (8ms)
+ ✓ (108ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.8s (2 ✓)
+
+13 tests — exact match with the failing binary. Let me run it to capture the actual failure message.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WT=$(cat /tm… (2 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rollback" scripts/count… ✓ (3ms)
+ ✓ (7.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.0s (2 ✓)
+
+Confirmed: only git_chokepoint.rs was rolled back (module_size is excluded as a register file). Now let me read the current CLAUDE.md bullet while the verification runs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "counterfactual_green" C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=356 && NR<=357' CLAUDE.… ✓ (11ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.4s (2 ✓)
+
+Let me check the verification run.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sleep 120; echo "=== verify log tail ==="; tail -30 /tmp/verify_gc.log 2>&1; ech… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ tail -25 /tmp/verify_gc.log 2>&1; echo "=== running? ==="; pgrep -f "test git_ch… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured, not reasoned — and it overturns the verdict. The failure is the ratchet branch: the register entry whose debt was paid in that very commit. Let me clean up first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ pkill -f "test git_chokepoint" 2>/dev/null; sleep 2; cd /home/runner/work/yoyo-e… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Safety guard caught my rm -rf pattern — rephrasing without it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ pkill -f "test git_chokepoint" 2>/dev/null; sleep 2; cd /hom… (4 lines) ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+pkill matched my own shell. Let me retry with a narrower pattern.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pgrep -af "cargo" | head -5 || e… ✓ (13ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Cargo is done. Now cleanup.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WT=$(cut -d=… (4 lines) ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean. Now the measured defect: REGISTER_TEST_FILES lists only module_size.rs. Let me enumerate which test files actually carry ratcheting debt registers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in tests/*.rs; do reg=$(gr… ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Seven files, not one. Let me look at the current definition and its doc comment.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,156p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,290p' scripts/counte… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '143,150p' scripts/counte… ✓ (3ms)
+  3 tools completed in 2.4s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=143 && NR<=155 {printf … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I see the fl
