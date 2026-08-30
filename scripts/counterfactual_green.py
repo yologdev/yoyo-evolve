@@ -324,6 +324,30 @@ def top_level_test_files(paths: list[str]) -> list[str]:
     return out
 
 
+def behavioural_test_files(paths: list[str]) -> list[str]:
+    """The subset of top-level test files that are EVIDENCE rather than BOOKKEEPING.
+
+    THIS IS THE SET THAT MAY BE ROLLED BACK, and the distinction is not cosmetic. A debt
+    register (`REGISTER_TEST_FILES`) encodes line counts OF `src/`, so laying a pre-task
+    copy over post-task `src/` fails **by construction** whenever a module grew — the gate
+    working exactly as designed, since pasting the updated register line is the compliant
+    remedy it prints. Rolling one back would manufacture an `UNEARNED` out of bookkeeping,
+    which is the same defect the census already refuses to make when it splits
+    register-only commits out of the behavioural denominator.
+
+    The census consumed `REGISTER_TEST_FILES` from the start; the RUN PATH did not, so a
+    MIXED commit — one behavioural test file plus a register bump, which is the common
+    shape — dragged the register into the overlay and produced a manufactured red. Live
+    instance: `08a9e36f` moves `("src/commands_search.rs", 3720)` to `3872` for the very
+    file it grew, so its counterfactual was unfalsifiable for exactly the reason the
+    baseline gate exists.
+
+    Register files are therefore left at their SHIPPED (post-task) version, so the gate
+    matches the `src/` it is measuring and only behavioural assertions are counterfactualled.
+    """
+    return [p for p in top_level_test_files(paths) if p not in REGISTER_TEST_FILES]
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -438,6 +462,17 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
         # baseline is needed and none is run — there is no comparison to license.
         return NO_TEST_CHANGE, "no top-level tests/*.rs touched"
 
+    # Only BEHAVIOURAL test files may be rolled back. A debt register encodes line counts
+    # of `src/`, so a pre-task copy over post-task `src/` fails by construction and would
+    # manufacture an UNEARNED out of bookkeeping. Registers stay at the shipped version.
+    rollback = behavioural_test_files(out.splitlines())
+    if not rollback:
+        return NO_TEST_CHANGE, (
+            "only debt-register file(s) touched ("
+            + ", ".join(changed)
+            + ") — verdict decided by construction, no signal"
+        )
+
     # LANDMINE 1: a scratch worktree under mkdtemp, never the live tree, never the repo.
     tmp = tempfile.mkdtemp(prefix="yoyo-counterfactual-")
     wt = os.path.join(tmp, "wt")
@@ -476,9 +511,10 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
         if rc != 0:
             return COULD_NOT_CHECK, f"checkout of {sha[:8]} failed: {out.strip()[:200]}"
 
-        # Lay the PRE-task tests back over the POST-task src/.
+        # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
+        # are deliberately NOT rolled back — see behavioural_test_files.
         rc, out = run_cmd(
-            ["git", "-C", wt, "checkout", parent, "--"] + changed, timeout=120
+            ["git", "-C", wt, "checkout", parent, "--"] + rollback, timeout=120
         )
         if rc != 0:
             # A test file that did not exist at the parent cannot be checked out. That is
@@ -586,7 +622,7 @@ def main(argv):
         prog="counterfactual_green.py",
         description=(
             "Was this green EARNED? Rebuild post-task src/ with pre-task tests/ and run "
-            "cargo test. Five states, none folded into another."
+            "cargo test. Six states, none folded into another."
         ),
         epilog=(
             "Hand-run only. Never invoked from a #[test] (#832: no #[test] under src/ "
@@ -924,6 +960,37 @@ def run_self_tests():
         ["tests/git_chokepoint.rs", "tests/module_size.rs"],
     )
     check("a mixed commit IS behavioural", mixed.behavioural, mixed)
+
+    # -- the ROLLBACK set: registers are never laid back over post-task src/ --------------
+    # The census consumed REGISTER_TEST_FILES from day one; the RUN PATH did not, so a
+    # mixed commit dragged the register into the overlay and manufactured a red. Live
+    # instance: 08a9e36f bumps ("src/commands_search.rs", 3720) -> 3872 for the very file
+    # it grew, so rolling that register back fails BY CONSTRUCTION.
+    mixed_paths = ["src/commands_search.rs", "tests/git_chokepoint.rs", "tests/module_size.rs"]
+    check(
+        "rollback set drops the debt register",
+        behavioural_test_files(mixed_paths) == ["tests/git_chokepoint.rs"],
+        behavioural_test_files(mixed_paths),
+    )
+    # NEAR-MISS GUARD, and it is the half that matters: the behavioural file is still
+    # rolled back. A filter that ate the finding it exists to protect would be worse than
+    # no filter, and a discriminator tested only on the side that fires is vacuous green.
+    check(
+        "rollback set KEEPS the behavioural file",
+        "tests/git_chokepoint.rs" in behavioural_test_files(mixed_paths),
+        behavioural_test_files(mixed_paths),
+    )
+    check(
+        "a register-only commit has an EMPTY rollback set",
+        behavioural_test_files(["tests/module_size.rs"]) == [],
+        behavioural_test_files(["tests/module_size.rs"]),
+    )
+    # ...while still being seen as a touched test file, so the two questions stay distinct.
+    check(
+        "register-only still counts as a touched top-level test file",
+        top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
+        top_level_test_files(["tests/module_size.rs"]),
+    )
     plain = CensusRow("f" * 40, "Day 1 (0:0): real test (Task 1)", ["tests/integration.rs"])
     check("a non-register test is behavioural", plain.behavioural, plain)
     none = CensusRow("g" * 40, "Day 1 (0:0): no tests (Task 1)", [])
