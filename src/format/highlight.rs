@@ -1693,7 +1693,8 @@ mod tests {
     /// The stateless path stays byte-identical for literals that open and close on one
     /// line — the load-bearing promise that adding a carried fact changed nothing.
     #[test]
-    fn single_line_raw_and_backtick_literals_are_byte_identical() {        for (lang, line) in [
+    fn single_line_raw_and_backtick_literals_are_byte_identical() {
+        for (lang, line) in [
             ("rust", "let s = r#\"a }\"#; let n = 1;"),
             ("rust", "let s = r\"plain\"; let n = 1;"),
             ("js", "const s = `a ${b} c`; const n = 1;"),
@@ -1789,5 +1790,255 @@ mod tests {
             highlight_code_line("rust", "let a = 1;")
         );
     }
-}
 
+    // --- #865 (Day 183): Python triple-quoted strings are carried across lines ---
+    //
+    // Found by blind round 90 and measured at the emission point. Before this, python
+    // never reached the stateful path at all (`highlight_code_line_with` returned early
+    // for any language without block comments, RESETTING `open_string`), so a docstring
+    // body was highlighted as executable code: a `#` opened an inline comment and
+    // keywords/numbers lit up inside the prose.
+    //
+    // Every assertion below is on the string `highlight_code_line{_with}` returns — never
+    // on `close_open_string` or `scan_block_comments` one layer down.
+
+    /// The literal `"""` / `'''` openers, spelled once so the fixtures below stay
+    /// readable — a raw string carrying three quotes needs `r##"…"##` and is a
+    /// transcription hazard in exactly the tests that must not be wrong.
+    const TQ: &str = "\"\"\"";
+    const SQ: &str = "'''";
+
+    /// THE FIX: a 5-line docstring driven through ONE carried state. Lines 3 and 4 are
+    /// the two defects #865 recorded — a `#` dimming inside prose, and `return 1`
+    /// rendering as a keyword plus a number inside prose.
+    #[test]
+    fn python_docstring_body_is_inert_across_lines_865() {
+        let doc = [
+            "def f():".to_string(),
+            format!("    {TQ}Return x if y."),
+            "    Uses # as a marker.".to_string(),
+            "    return 1".to_string(),
+            format!("    {TQ}"),
+        ];
+        let mut st = HighlightState::default();
+        let out: Vec<String> = doc
+            .iter()
+            .map(|l| highlight_code_line_with("python", l, &mut st))
+            .collect();
+
+        // Anti-vacuous: line 1 is ordinary code and MUST still highlight, so the
+        // inertness asserted below is a property of the docstring and not of a
+        // highlighter that has stopped highlighting anything.
+        assert_eq!(
+            out[0],
+            format!("{BOLD_CYAN}def{RESET} f():"),
+            "line 1 is code and must still highlight"
+        );
+
+        // Line 3: the `#` is docstring prose, not a comment marker.
+        assert_eq!(
+            out[2],
+            format!("{GREEN}    Uses # as a marker.{RESET}"),
+            "a `#` inside a docstring must not open a comment"
+        );
+        assert!(
+            !out[2].contains(DIM.0),
+            "line 3 must carry no DIM — that is the comment #865 reported: {:?}",
+            out[2]
+        );
+
+        // Line 4: `return` and `1` are docstring prose, not a keyword and a number.
+        assert_eq!(
+            out[3],
+            format!("{GREEN}    return 1{RESET}"),
+            "a keyword inside a docstring must not highlight"
+        );
+        assert!(
+            !out[3].contains(BOLD_CYAN.0) && !out[3].contains(YELLOW.0),
+            "line 4 must carry neither keyword nor number colour: {:?}",
+            out[3]
+        );
+
+        // Line 5 closes it, and the closer itself is string content.
+        assert_eq!(out[4], format!("{GREEN}    {TQ}{RESET}"));
+    }
+
+    /// The carried-state half of the fixture above, asserted separately so a failure
+    /// says whether the *rendering* or the *state machine* broke.
+    #[test]
+    fn python_docstring_carries_open_string_between_lines_865() {
+        let mut st = HighlightState::default();
+
+        highlight_code_line_with("python", "def f():", &mut st);
+        assert!(
+            st.open_string.is_none(),
+            "no literal is open before the docstring"
+        );
+
+        highlight_code_line_with("python", &format!("    {TQ}Return x if y."), &mut st);
+        assert_eq!(
+            st.open_string,
+            Some(StringDelim::TripleQuote { quote: '"' }),
+            "the opener must be carried to the next line"
+        );
+
+        for body in ["    Uses # as a marker.", "    return 1"] {
+            highlight_code_line_with("python", body, &mut st);
+            assert_eq!(
+                st.open_string,
+                Some(StringDelim::TripleQuote { quote: '"' }),
+                "{body:?} must not close the docstring"
+            );
+        }
+
+        highlight_code_line_with("python", &format!("    {TQ}"), &mut st);
+        assert!(
+            st.open_string.is_none(),
+            "the closer must clear the carried state"
+        );
+    }
+
+    /// The `'''` twin. Python's two triple-quote delimiters are interchangeable, so a
+    /// fix that carried only `"""` would be half a fix.
+    #[test]
+    fn python_single_quote_docstring_is_carried_too_865() {
+        let mut st = HighlightState::default();
+
+        let opener =
+            highlight_code_line_with("python", &format!("x = {SQ}Return x if y."), &mut st);
+        assert_eq!(
+            st.open_string,
+            Some(StringDelim::TripleQuote { quote: '\'' }),
+            "''' must open a triple-quoted literal"
+        );
+        assert!(
+            !opener.contains(DIM.0),
+            "the opener carries no comment: {opener:?}"
+        );
+
+        let body = highlight_code_line_with("python", "    return 1  # not a comment", &mut st);
+        assert_eq!(
+            body,
+            format!("{GREEN}    return 1  # not a comment{RESET}"),
+            "''' body is inert exactly as a \"\"\" body is"
+        );
+
+        highlight_code_line_with("python", &format!("done {SQ}"), &mut st);
+        assert!(st.open_string.is_none(), "''' must be closed by '''");
+    }
+
+    /// A backslash escapes the next character inside a triple-quoted literal, so `\"""`
+    /// is an escaped quote followed by two more — NOT a closer.
+    #[test]
+    fn python_escaped_quote_does_not_close_the_docstring_865() {
+        let mut st = HighlightState::default();
+
+        highlight_code_line_with("python", &format!("x = {TQ}a \\{TQ} still open"), &mut st);
+        assert_eq!(
+            st.open_string,
+            Some(StringDelim::TripleQuote { quote: '"' }),
+            "an escaped quote must not close the literal"
+        );
+
+        let closer = highlight_code_line_with("python", &format!("end {TQ}"), &mut st);
+        assert_eq!(closer, format!("{GREEN}end {TQ}{RESET}"));
+        assert!(st.open_string.is_none(), "a real closer still closes");
+    }
+
+    // --- Near-miss guards: the half that matters ---
+    //
+    // A discriminator tested only on the side that fires is vacuous green, and this
+    // file's whole history is exactly that. Everything below must be BYTE-IDENTICAL to
+    // the pre-#865 behaviour: python single-line forms, real python comments, and every
+    // other language, since `triple_quote_strings` gates on language.
+
+    /// Ordinary single-line python is untouched, and a REAL trailing comment still dims
+    /// — without which the inertness guards above could be satisfied by a highlighter
+    /// that had simply stopped commenting.
+    #[test]
+    fn python_single_line_forms_are_byte_identical_865() {
+        for (line, expected) in [
+            ("x = \"hi\"", format!("x = {GREEN}\"hi\"{RESET}")),
+            ("y = 2", format!("y = {YELLOW}2{RESET}")),
+            (
+                "x = 1  # note",
+                format!("x = {YELLOW}1{RESET}  {DIM}# note{RESET}"),
+            ),
+            ("c = \"#ff0000\"", format!("c = {GREEN}\"#ff0000\"{RESET}")),
+        ] {
+            let mut st = HighlightState::default();
+            let stateful = highlight_code_line_with("python", line, &mut st);
+            assert_eq!(stateful, expected, "{line:?} must render exactly as before");
+            // The stateless wrapper must agree, and nothing may be carried out of a
+            // line that opened no literal.
+            assert_eq!(
+                stateful,
+                highlight_code_line("python", line),
+                "{line:?}: stateless wrapper must agree"
+            );
+            assert!(st.open_string.is_none(), "{line:?} must carry nothing");
+        }
+    }
+
+    /// A triple-quoted literal that opens AND closes on one line leaves no carried
+    /// state — the boundary case between the fix and the guards above.
+    #[test]
+    fn python_single_line_triple_quote_opens_and_closes_865() {
+        for line in [
+            format!("d = {TQ}doc{TQ}"),
+            format!("d = {SQ}doc{SQ}"),
+            format!("d = {TQ}a{TQ}  # real comment"),
+        ] {
+            let mut st = HighlightState::default();
+            let out = highlight_code_line_with("python", &line, &mut st);
+            assert!(
+                st.open_string.is_none(),
+                "{line:?} closes on its own line and must carry nothing"
+            );
+            assert_eq!(
+                out,
+                highlight_code_line("python", &line),
+                "{line:?}: stateless wrapper must agree"
+            );
+        }
+
+        // And the code AFTER a closed docstring resumes ordinary highlighting — the
+        // "resumes just past the closer" half of the contract.
+        let mut st = HighlightState::default();
+        let out =
+            highlight_code_line_with("python", &format!("d = {TQ}a{TQ}  # real comment"), &mut st);
+        assert!(
+            out.ends_with(&format!("{DIM}# real comment{RESET}")),
+            "a real comment after the closer must still dim: {out:?}"
+        );
+    }
+
+    /// `triple_quote_strings` gates on language, so every other language is unchanged —
+    /// including when handed a line that LOOKS like a docstring.
+    #[test]
+    fn triple_quote_shape_is_inert_in_every_other_language_865() {
+        let docstring_shaped = format!("    {TQ}Return x if y.");
+        for lang in ["rust", "js", "go", "shell", "c"] {
+            let mut st = HighlightState::default();
+            let stateful = highlight_code_line_with(lang, &docstring_shaped, &mut st);
+            assert_eq!(
+                stateful,
+                highlight_code_line(lang, &docstring_shaped),
+                "{lang}: stateless wrapper must agree"
+            );
+            assert!(
+                !matches!(st.open_string, Some(StringDelim::TripleQuote { .. })),
+                "{lang} has no triple-quoted literals and must never open one"
+            );
+
+            // Ordinary code in each language is untouched too.
+            let plain = "x = 1";
+            let mut st2 = HighlightState::default();
+            assert_eq!(
+                highlight_code_line_with(lang, plain, &mut st2),
+                highlight_code_line(lang, plain),
+                "{lang}: {plain:?} must be byte-identical"
+            );
+        }
+    }
+}
