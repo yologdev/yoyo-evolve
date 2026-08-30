@@ -231,6 +231,18 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),
     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
+    // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
+    // grace band, for Python triple-quoted strings carried across lines (the
+    // `TripleQuote` open/close branch plus 36 emission-point tests, most of them
+    // the near-miss guards that pin every other language byte-identical).
+    // REGISTERED RATHER THAN SPLIT, and the distinction matters: registering is
+    // this gate's own stated remedy for a grace-band overshoot, while the better
+    // fix is a split (precedent: `src/format/highlight_lang.rs`, carved out of
+    // this same file on Day 174 for this same reason). Deliberately not done in
+    // this pass because a half-landed pure move is a build failure and a reverted
+    // session, while a register edit cannot half-land. The file now sits 7 lines
+    // from fatal, so the *next* task here is the split, not another entry.
+    ("src/format/highlight.rs", 2044),
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
     // chunking-independence and carry-safety regression tests.
