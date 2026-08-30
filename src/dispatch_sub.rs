@@ -898,6 +898,91 @@ mod tests {
         );
     }
 
+    /// Near-miss guard #1 for the `flag_value` / `require_flag_value` asymmetry
+    /// (blind round 91, Day 183).
+    ///
+    /// `require_flag_value` classifies four states (`Ok` / `FlagLike` / `Empty` /
+    /// `Missing`) and `flag_value` collapses to `Option`, handling `Missing` and
+    /// `Empty` and **not** `FlagLike`. Two of the three are fixtured above
+    /// (`..._when_value_missing`, `..._for_empty_string`), which is exactly why the
+    /// third reads as covered.
+    ///
+    /// This test deliberately asserts **nothing** about the `FlagLike` gap — a
+    /// fixture pinning a known-wrong output would convert the defect into a green
+    /// invariant. It pins the opposite direction: the values a future fix must
+    /// **not** start refusing. A negative number is a legitimate value whose first
+    /// byte is `-`, and `require_flag_value` already exempts it on purpose.
+    #[test]
+    fn flag_value_keeps_negative_numbers_which_a_flaglike_fix_must_not_refuse() {
+        let args = vec!["yoyo".into(), "--temperature".into(), "-0.1".into()];
+        assert_eq!(
+            flag_value(&args, &["--temperature"]),
+            Some("-0.1".into()),
+            "a negative number is a real value, not a flag; refusing it would be a \
+             regression dressed as a fix"
+        );
+
+        let int_args = vec!["yoyo".into(), "--offset".into(), "-5".into()];
+        assert_eq!(
+            flag_value(&int_args, &["--offset"]),
+            Some("-5".into()),
+            "negative integers too"
+        );
+    }
+
+    /// Near-miss guard #2, and the reason the obvious one-line fix is **not**
+    /// landable: `flag_value` is shared by identifier-shaped flags (`--model`,
+    /// `--provider`, `--api-key`, `--base-url`) *and* by free-text flags — the
+    /// `--prompt` / `-p` alias pair this very module's `test_flag_value_supports_aliases`
+    /// exercises. A prompt may legitimately begin with `-`, so teaching `flag_value`
+    /// to refuse every `FlagLike` token globally would silently drop a working
+    /// invocation, which is worse than accepting an odd one.
+    ///
+    /// Pinning it makes that constraint executable instead of prose: whoever closes
+    /// the gap has to keep this green, which forces the fix to be scoped to the
+    /// flags whose values genuinely cannot start with `-`.
+    #[test]
+    fn flag_value_keeps_free_text_beginning_with_a_dash() {
+        let args = vec!["yoyo".into(), "-p".into(), "-- summarize this diff".into()];
+        assert_eq!(
+            flag_value(&args, &["--prompt", "-p"]),
+            Some("-- summarize this diff".into()),
+            "a prompt is free text and may begin with '-'; this is why a blanket \
+             FlagLike refusal in flag_value would be a regression"
+        );
+    }
+
+    /// Near-miss guard #3 — the asymmetry itself, asserted as a fact about the
+    /// **classifier** rather than as a blessing of `flag_value`'s behaviour.
+    ///
+    /// `require_flag_value` is the module's stated answer to "what follows this
+    /// flag?", and it draws the discrimination the two guards above depend on: a
+    /// negative number is `Ok`, a flag name is `FlagLike`. If a future edit ever
+    /// flattened that distinction, both guards above would still pass while the
+    /// property they protect had quietly evaporated, so this pins the discriminator
+    /// on both sides — a discriminator tested only where it fires is vacuous green.
+    #[test]
+    fn require_flag_value_separates_negative_numbers_from_flag_names() {
+        let neg = String::from("-0.1");
+        let flag = String::from("--summarize");
+        assert_eq!(
+            require_flag_value(Some(&neg)),
+            FlagValueCheck::Ok("-0.1"),
+            "a negative number must stay Ok, or the exemption is gone"
+        );
+        assert_eq!(
+            require_flag_value(Some(&flag)),
+            FlagValueCheck::FlagLike("--summarize"),
+            "a flag name must stay FlagLike, or the classifier no longer classifies"
+        );
+        assert_ne!(
+            require_flag_value(Some(&neg)),
+            require_flag_value(Some(&flag)),
+            "anti-vacuous: the two tokens must land in different states, so a \
+             classifier collapsed to one value cannot satisfy this test"
+        );
+    }
+
     #[test]
     fn test_require_flag_value_empty_is_empty() {
         // `--model ""` — the value exists but is empty. Should be classified as Empty.
