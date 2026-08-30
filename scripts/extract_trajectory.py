@@ -1620,6 +1620,210 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
     return "\n".join(lines)
 
 
+# --- Module-size headroom (from tests/module_size.rs, fail-soft) ---
+#
+# WHY THIS EXISTS. `tests/module_size.rs` has three branches; two of them are
+# deliberately NON-fatal (Day 165/166 repriced them, because a gate whose only
+# remedy is a whole-task revert eats the correct work sitting beside the
+# violation — #719 and #739, the second dying to a FOUR-line overshoot). Those
+# two branches warn to the stderr of a *passing* test, and the only consumer of
+# `cargo test` in the evolve loop reads the EXIT CODE. So nothing read them:
+# Day 174 paid off 11 entries carrying up to +480 lines of absorbed drift, and
+# by Day 183 three more warnings had accumulated unread, one of them a file 8
+# lines from FATAL with an open issue queued against it.
+#
+# This is the reader, on my side of the protected-`evolve.sh` boundary. It does
+# NOT make the gate stricter — the consts and branches are untouched.
+#
+# SINGLE AUTHORITY: every number is parsed out of `tests/module_size.rs`
+# itself. Two hand-written copies of a rule agree on the day they are written
+# and diverge forever after, which is the whole duplication lesson.
+
+MODULE_GATE_REL_PATH = "tests/module_size.rs"
+
+# Report register drift once it passes this fraction of the gate's own drift
+# grace band. A judgment threshold, not a measurement: it exists so the +1/+2
+# creep that makes up most of a register's noise does not crowd the section,
+# while a file heading for the fatal branch is named well before it arrives.
+MODULE_DRIFT_REPORT_FRACTION = 0.25
+
+MODULE_GATE_OK = "module-gate-ok"
+MODULE_GATE_UNREADABLE = "module-gate-unreadable"
+
+
+@dataclass
+class ModuleGateSpec:
+    """The gate's own rules, parsed from its source. Never a second copy."""
+
+    max_lines: int
+    overshoot_grace: int
+    drift_grace: int
+    register: dict  # path -> recorded lines
+    ok: bool
+
+
+@dataclass
+class ModuleRisk:
+    """What the gate would say, plus the number it never prints: headroom."""
+
+    # (path, lines, headroom_to_fatal) for the worst unlisted file over the cap.
+    worst_unlisted: tuple | None
+    # (path, lines, recorded, headroom_to_fatal) for the worst register drift
+    # past MODULE_DRIFT_REPORT_FRACTION of the grace band.
+    worst_drift: tuple | None
+    scanned: int
+
+
+def count_rs_lines(text: str) -> int:
+    """Match Rust's `content.lines().count()` exactly.
+
+    Deliberately NOT `str.splitlines()`, which also splits on \\x0b, \\x0c and
+    \\u2028 — Rust's `lines()` splits on \\n only (stripping a trailing \\r).
+    A counter that disagrees with the gate is worse than no counter.
+    """
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+_GATE_CONST_RE = re.compile(
+    r"const\s+(MAX_MODULE_LINES|OVERSHOOT_GRACE_LINES|REGISTER_DRIFT_GRACE_LINES)"
+    r"\s*:\s*usize\s*=\s*([0-9_]+)\s*;"
+)
+_GATE_ENTRY_RE = re.compile(r'\(\s*"(src/[^"]+\.rs)"\s*,\s*([0-9_]+)\s*\)')
+
+
+def parse_module_gate(text: str) -> ModuleGateSpec:
+    """Parse the gate's consts and register out of its own source.
+
+    `ok=False` whenever anything needed is missing — a const absent, or ZERO
+    register entries. Zero entries means the parse broke (the register has
+    been non-empty since the gate landed), and a scanner that finds nothing
+    and passes is this very defect wearing the opposite sign.
+    """
+    empty = ModuleGateSpec(0, 0, 0, {}, False)
+    if not text:
+        return empty
+    consts = {m.group(1): int(m.group(2).replace("_", "")) for m in _GATE_CONST_RE.finditer(text)}
+    needed = ("MAX_MODULE_LINES", "OVERSHOOT_GRACE_LINES", "REGISTER_DRIFT_GRACE_LINES")
+    if any(k not in consts for k in needed):
+        return empty
+    # Only the register literal, so the `("src/a.rs", 500)` pairs inside the
+    # gate's own unit-test fixtures are never mistaken for real entries.
+    start = text.find("GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[")
+    if start < 0:
+        return empty
+    end = text.find("\n];", start)
+    if end < 0:
+        return empty
+    register = {
+        m.group(1): int(m.group(2).replace("_", ""))
+        for m in _GATE_ENTRY_RE.finditer(text[start:end])
+    }
+    if not register:
+        return empty
+    return ModuleGateSpec(
+        consts["MAX_MODULE_LINES"],
+        consts["OVERSHOOT_GRACE_LINES"],
+        consts["REGISTER_DRIFT_GRACE_LINES"],
+        register,
+        True,
+    )
+
+
+def module_size_risks(spec: ModuleGateSpec, files) -> ModuleRisk:
+    """Pure: which module is closest to turning a session red, and by how much.
+
+    `files` is [(relpath, lines)]. Reports HEADROOM TO FATAL — the number the
+    gate itself never prints. The gate says "you are 42 over"; it never says
+    "8 more lines reverts your session", and that is the whole point of this
+    section rather than a restatement of the warning.
+    """
+    worst_unlisted = None
+    worst_drift = None
+    drift_floor = spec.drift_grace * MODULE_DRIFT_REPORT_FRACTION
+    for path, lines in files:
+        recorded = spec.register.get(path)
+        if recorded is None:
+            if lines > spec.max_lines:
+                headroom = spec.max_lines + spec.overshoot_grace - lines
+                if worst_unlisted is None or headroom < worst_unlisted[2]:
+                    worst_unlisted = (path, lines, headroom)
+        elif lines > recorded:
+            drift = lines - recorded
+            if drift > drift_floor:
+                headroom = recorded + spec.drift_grace - lines
+                if worst_drift is None or headroom < worst_drift[3]:
+                    worst_drift = (path, lines, recorded, headroom)
+    return ModuleRisk(worst_unlisted, worst_drift, len(files))
+
+
+def collect_module_sizes(root: Path) -> tuple:
+    """I/O half, at ONE call site. Pure line-counting — no subprocess.
+
+    Never shells `cargo` (#832: a nested cargo rebuilds over the shared
+    `target/debug/yoyo` uplift path and reddened CI for three sessions).
+    """
+    try:
+        gate_text = (root / MODULE_GATE_REL_PATH).read_text(errors="replace")
+    except OSError as e:
+        warn(f"could not read {MODULE_GATE_REL_PATH}: {e}")
+        return ModuleGateSpec(0, 0, 0, {}, False), ModuleRisk(None, None, 0)
+    spec = parse_module_gate(gate_text)
+    files = []
+    src = root / "src"
+    for p in sorted(src.rglob("*.rs")) if src.is_dir() else []:
+        try:
+            files.append((p.relative_to(root).as_posix(), count_rs_lines(p.read_text(errors="replace"))))
+        except OSError:
+            continue
+    return spec, module_size_risks(spec, files)
+
+
+def render_module_sizes(spec: ModuleGateSpec, risk: ModuleRisk) -> str:
+    """Three states, none folded into another.
+
+    OK renders NOTHING — silent is the common case and the entire regression
+    surface. AT RISK is at most 2 lines. COULD NOT CHECK says so out loud and
+    states explicitly that it is not a clean bill: "could not check" must
+    never read as "checked; clean".
+
+    Anti-vacuous FIRST: a walk finding zero `src/**/*.rs` files refuses rather
+    than rendering OK, because a scanner that finds nothing and passes is this
+    defect wearing the opposite sign, and it is quieter than the bug.
+    """
+    if risk.scanned == 0:
+        return (
+            "## Module sizes: not checked — the scan found 0 files under src/. "
+            "This is NOT 'no modules at risk'."
+        )
+    if not spec.ok:
+        return (
+            f"## Module sizes: not checked — could not parse {MODULE_GATE_REL_PATH} "
+            f"(consts or register unreadable). This is NOT 'no modules at risk'."
+        )
+    if risk.worst_unlisted is None and risk.worst_drift is None:
+        return ""
+    lines = ["## Module sizes (the size gate warns but only fails on the exit code)"]
+    if risk.worst_unlisted is not None:
+        path, n, headroom = risk.worst_unlisted
+        lines.append(
+            f"{path} is {n} lines, {n - spec.max_lines} past the "
+            f"{spec.max_lines}-line cap and UNLISTED — {headroom} more line(s) "
+            f"makes `cargo test` FATAL, which reverts the whole task. "
+            f'Fix: split it, or add ("{path}", {n}) to '
+            f"GRANDFATHERED_OVERSIZED_MODULES."
+        )
+    if risk.worst_drift is not None:
+        path, n, recorded, headroom = risk.worst_drift
+        lines.append(
+            f"{path} is {n} lines vs its recorded {recorded} (+{n - recorded} drift) "
+            f"— {headroom} more line(s) makes it FATAL. "
+            f'Fix: paste ("{path}", {n}) over its entry.'
+        )
+    return "\n".join(lines)
+
+
 # --- Epistemic blind spots (from `yoyo risk epistemic`, fail-soft) ---
 
 # 3, not 5: the section renders last and absorbs all truncation pressure —
@@ -1988,6 +2192,18 @@ def main() -> int:
     )
     if s:
         sections.append(s)
+    # Day 183: the module-size gate's two non-fatal branches warn to the stderr
+    # of a PASSING test, and the only consumer of `cargo test` in the loop reads
+    # the exit code — so nothing read them and three warnings accumulated, one
+    # of them 8 lines from fatal. This is that reader. Same rule as `ci_unknown`
+    # / `provider_unknown` / `usage_unknown` above: a "could not check" line is
+    # honest but is not trajectory DATA, so it must not suppress the global
+    # "(no trajectory data yet)" state below.
+    module_spec, module_risk = collect_module_sizes(Path.cwd())
+    s = render_module_sizes(module_spec, module_risk)
+    module_unknown = bool(s) and (module_risk.scanned == 0 or not module_spec.ok)
+    if s:
+        sections.append(s)
     # Always rendered when any signal exists (it has its own honest fallback
     # line) so the planner sees the epistemic view even when it's starving.
     # Skipped only when there is no trajectory data at all AND no epistemic
@@ -1998,6 +2214,7 @@ def main() -> int:
         - (1 if ci_unknown else 0)
         - (1 if provider_unknown else 0)
         - (1 if usage_unknown else 0)
+        - (1 if module_unknown else 0)
     )
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))

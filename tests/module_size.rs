@@ -180,7 +180,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
     // Day 174: +3 absorbed since Day 166.
-    ("src/commands_project.rs", 3523),
+    // Day 183: +1 absorbed since Day 179 (#837's auto-context scoring change).
+    // Paid off rather than left as a third unread warning.
+    ("src/commands_project.rs", 3524),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
@@ -241,7 +243,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `print_context_usage` / `contextual_hint` with their doc comments, one
     // source-level wrapper pin, and three test bodies that grew because they
     // went from asserting nothing to asserting both directions.
-    ("src/format/mod.rs", 2568),
+    // Day 183: 2568 -> 2629, +61 absorbed since Day 177 (the `color_enabled`
+    // cfg(test) pin and the three pure-core splits that paid the shared-global
+    // register down). Inside REGISTER_DRIFT_GRACE_LINES, so it warned rather than
+    // failed — and warned unread for six days, which is the finding this task fixes.
+    ("src/format/mod.rs", 2629),
     // Day 162 (#665): +27 lines — the test-output filter is now gated on tool
     // provenance, so read_file results stop being eaten. Signature recorded
     // retroactively during Day 162 reflection: the raise itself shipped
@@ -268,6 +274,17 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: +429 absorbed since Day 166 — second-worst on the register, and
     // 429 lines of ratchet slack the warning branch never got anyone to close.
     ("src/prompt.rs", 3372),
+    // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
+    // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
+    // Registering it is this gate's OWN stated remedy for a grace-band overshoot
+    // ("split it, or add (...) with a reason"), not a way around it: the entry
+    // converts silent headroom into a ratcheted ceiling that branch 3 defends.
+    // The better fix is a SPLIT — precedent `src/prompt_retry_limits.rs`, carved
+    // out of this very file on Day 177 for this very reason — deliberately not
+    // done here: a half-landed pure move is a build failure and a reverted
+    // session, while a register edit cannot half-land. It was 8 lines from fatal
+    // with #855 (open, agent-self) queued against this exact file.
+    ("src/prompt_retry.rs", 2042),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.
