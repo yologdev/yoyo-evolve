@@ -230,7 +230,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
     ("src/dispatch.rs", 2321),
-    ("src/format/cost.rs", 2406), // Day 179: +195 for the user-override consult and its tests (#833).
+    ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
     // Day 162 (#661): +228 lines — bounded inline-marker carry across streaming
     // deltas (split `**bo` + `ld**` pairs now render bold) plus the
     // chunking-independence and carry-safety regression tests.

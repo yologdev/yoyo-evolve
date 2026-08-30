@@ -362,8 +362,32 @@ pub fn format_token_count(count: u64) -> String {
 }
 
 /// Build a context usage bar (e.g., "████████░░░░░░░░░░░░ 40%").
-/// Format cache statistics for display. Returns `None` if there's no caching activity.
+/// Format cache statistics for display.
 /// Example output: `"Cache: 85% hit rate (150.2k read, 12.0k written)"`
+///
+/// **The ratio's denominator is `input + cache_read + cache_write`** — the
+/// fraction of this session's *prompt* tokens served from cache. Output tokens
+/// are not in it. That definition is **upstream's**
+/// (`yoagent::Usage::cache_hit_rate`) and this function only formats it, so the
+/// metric has one statement rather than two that agree today and drift after.
+/// A ratio whose denominator is unstated is unreadable six weeks later, which
+/// is why it is written here and not only in the tests.
+///
+/// Three states, and the silent one is deliberate:
+/// - **Both cache counters zero → `None`, rendering nothing.** A provider with
+///   no prompt cache at all is *indistinguishable* from a session that ran
+///   entirely cold — both report zeros — so printing `0% hit rate` at an
+///   ollama user would be a confident wrong diagnosis. Do not "improve" this
+///   into a 0% line.
+/// - **`cache_read == 0` with `cache_write > 0` → `0%`.** Honest and
+///   actionable: the non-zero write counter proves the cache exists, so this
+///   is a genuinely cold session rather than an absent capability.
+/// - **`cache_read > 0` → the ratio**, with both raw counts beside it so the
+///   percentage is auditable rather than a bare number.
+///
+/// Stated limits: this reports **what the provider told us**, never whether
+/// caching is configured correctly; and it is a **session-level** figure from
+/// the usage in hand, not a per-turn history.
 pub fn format_cache_stats(usage: &yoagent::Usage) -> Option<String> {
     if usage.cache_read == 0 && usage.cache_write == 0 {
         return None;
@@ -2046,6 +2070,115 @@ mod tests {
         assert!(result.contains("72%"), "got: {result}");
         assert!(result.contains("80.0k read"));
         assert!(result.contains("10.0k written"));
+    }
+
+    /// The rendered percentage's **denominator** is
+    /// `input + cache_read + cache_write`. That definition lives **upstream**,
+    /// in `yoagent::Usage::cache_hit_rate`; `format_cache_stats` only formats
+    /// it.
+    ///
+    /// This is pinned because the number a user reads is computed entirely by
+    /// a method this repo does not own. Precedent: yoagent 0.16.6 corrected
+    /// the sonnet-5 preset and `main` was red for 31 hours reporting an
+    /// upstream *fix* as a yoyo regression. The four `test_format_cache_stats_*`
+    /// tests above assert rendered percentages (`93%`, `0%`, `72%`), so an
+    /// upstream denominator change reddens all four at once with receipts that
+    /// read as a **formatting** bug and send the reader into this file — the
+    /// same misattribution. This test names the real suspect in its message.
+    ///
+    /// The expectation is **derived from the formula**, never hardcoded — the
+    /// discipline `test_estimate_cost_sonnet_5_preset` uses against the preset
+    /// table, so the test cannot pass by agreeing with a literal that drifted
+    /// alongside it.
+    /// <!-- yoagent-version-claim: 0.18.1 -->
+    #[test]
+    fn cache_hit_rate_denominator_is_input_plus_read_plus_write() {
+        let usage = yoagent::Usage {
+            input: 20_000,
+            output: 5_000,
+            cache_read: 80_000,
+            cache_write: 10_000,
+            total_tokens: 115_000,
+        };
+
+        let expected =
+            usage.cache_read as f64 / (usage.input + usage.cache_read + usage.cache_write) as f64;
+        assert!(
+            (usage.cache_hit_rate() - expected).abs() < 1e-12,
+            "UPSTREAM semantic change, not a yoyo formatting bug: \
+             yoagent::Usage::cache_hit_rate no longer divides by \
+             input + cache_read + cache_write (got {}, expected {expected})",
+            usage.cache_hit_rate()
+        );
+
+        // Anti-vacuous: the two rival denominators must give visibly different
+        // answers, or the assertion above could not discriminate between them.
+        let without_input = usage.cache_read as f64 / (usage.cache_read + usage.cache_write) as f64;
+        let without_write = usage.cache_read as f64 / (usage.input + usage.cache_read) as f64;
+        assert!(
+            (expected - without_input).abs() > 0.1,
+            "fixture cannot tell the stated denominator from one omitting input"
+        );
+        assert!(
+            (expected - without_write).abs() > 0.05,
+            "fixture cannot tell the stated denominator from one omitting cache_write"
+        );
+    }
+
+    /// An all-zero `Usage` yields `0.0`, **not** `NaN`.
+    ///
+    /// `format_cache_stats` returns `None` before it ever divides, so nothing
+    /// reaches the division with a zero denominator today — but that safety
+    /// sits in two places (my guard and upstream's), and `NaN as u32`
+    /// *saturates to 0* in Rust rather than panicking, so if either half were
+    /// widened the display would render a confident `0% hit rate` instead of
+    /// failing. Pinning the upstream half means only one guard has to hold.
+    /// <!-- yoagent-version-claim: 0.18.1 -->
+    #[test]
+    fn cache_hit_rate_zero_denominator_is_zero_not_nan() {
+        let rate = yoagent::Usage::default().cache_hit_rate();
+        assert!(!rate.is_nan(), "zero-token usage produced NaN");
+        assert_eq!(rate, 0.0);
+    }
+
+    /// Emission-point tie: the percentage a user reads **is** the upstream
+    /// ratio, truncated — asserted by deriving the expected integer from
+    /// `cache_hit_rate()` rather than repeating a literal.
+    #[test]
+    fn rendered_percentage_is_the_upstream_ratio_and_is_glyph_free() {
+        let usage = yoagent::Usage {
+            input: 20_000,
+            output: 5_000,
+            cache_read: 80_000,
+            cache_write: 10_000,
+            total_tokens: 115_000,
+        };
+        let rendered = format_cache_stats(&usage).expect("caching activity present");
+        let expected_pct = (usage.cache_hit_rate() * 100.0) as u32;
+        assert!(
+            rendered.contains(&format!("{expected_pct}%")),
+            "rendered {rendered:?} does not carry the upstream ratio {expected_pct}%"
+        );
+
+        // The line is glyph-free by construction, so it is already safe under
+        // `--screen-reader` and needs no `plain` parameter. Pinned rather than
+        // eyeballed, since every sibling message in this repo states that
+        // convention explicitly.
+        assert!(!rendered.contains('—'), "em dash in {rendered:?}");
+        assert!(rendered.is_ascii(), "non-ascii glyph in {rendered:?}");
+
+        // Near-miss guard, and it is the half that matters: no caching
+        // activity renders nothing at all, so a provider that reports no cache
+        // fields sees output byte-identical to a yoyo with no cache line.
+        // `assert_eq!` rather than `is_none()` so a failure prints what leaked.
+        let no_cache = yoagent::Usage {
+            input: 10_000,
+            output: 5_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 15_000,
+        };
+        assert_eq!(format_cache_stats(&no_cache), None);
     }
 
     // === Day 76: Tests for new model pricing entries ===
