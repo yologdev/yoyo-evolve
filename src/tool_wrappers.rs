@@ -1222,7 +1222,7 @@ pub(crate) fn is_model_unavailable_error(err: &str) -> bool {
 
 /// Auth / permission shapes. A different model on the same credential fails
 /// identically, so these never license a fallback.
-const AUTH_ERROR_SHAPES: &[&str] = &[
+pub(crate) const AUTH_ERROR_SHAPES: &[&str] = &[
     "authentication",
     "unauthorized",
     "invalid api key",
@@ -1230,18 +1230,18 @@ const AUTH_ERROR_SHAPES: &[&str] = &[
     "permission denied",
     "forbidden",
 ];
-const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
+pub(crate) const AUTH_STATUS_CODES: &[&str] = &["401", "403"];
 
 /// Rate-limit / capacity shapes. `prompt_retry_limits.rs` owns that policy and
 /// has a real reset-time rule; a second one here would fight it.
-const RATE_LIMIT_ERROR_SHAPES: &[&str] = &[
+pub(crate) const RATE_LIMIT_ERROR_SHAPES: &[&str] = &[
     "rate limit",
     "rate_limit",
     "overloaded",
     "capacity",
     "quota",
 ];
-const RATE_LIMIT_STATUS_CODES: &[&str] = &["429"];
+pub(crate) const RATE_LIMIT_STATUS_CODES: &[&str] = &["429"];
 
 /// Model-availability shapes — the prose forms providers actually emit.
 const MODEL_UNAVAILABLE_SHAPES: &[&str] = &[

@@ -309,7 +309,7 @@ async fn run_prompt_once_with_messages(
 /// can incidentally contain a retriable keyword (e.g. "incomplete"), but
 /// re-running the identical prompt can reproduce a dropped-args turn and burn a
 /// slot. Surface-and-stop wins here (creator decision, 2026-07-30).
-fn is_dropped_tool_args_error(error_msg: &str) -> bool {
+pub(crate) fn is_dropped_tool_args_error(error_msg: &str) -> bool {
     let lower = error_msg.to_lowercase();
     (lower.contains("tool call") || lower.contains("tool_call") || lower.contains("arguments"))
         && (lower.contains("never assembled")
@@ -1173,6 +1173,9 @@ pub async fn run_prompt_with_changes(
     let mut last_tool_name: Option<String> = None;
     let mut did_overflow_compact = false;
     let mut api_error: Option<String> = None;
+    // Day 183: a budget of its own, separate from `attempt`, so a malformed
+    // tool call still gets its one resample after an unrelated transient retry.
+    let mut malformed_retries: u32 = 0;
 
     // Save message state before the first attempt so we can restore on retry
     let saved_state = match agent.save_messages() {
@@ -1338,7 +1341,32 @@ pub async fn run_prompt_with_changes(
                 // this class of failure, so it is deliberately NOT retried — but it
                 // must not read as a clean `Done` either, so record it as an API
                 // error the caller can see.
+                //
+                // Day 183: one bounded exception. A malformed tool call (#646's
+                // dropped-args shape) is usually a sampling accident, and the
+                // `restore_messages` above rewinds the message list to the
+                // pre-prompt state, so the broken block is not carried into the
+                // resample. `malformed_tool_call_retry` owns the whole decision
+                // and refuses every other shape, including the `pause_turn` half
+                // of this same variant.
                 accumulate_usage(&mut total_usage, &usage);
+                if attempt < MAX_RETRIES
+                    && crate::prompt_retry_limits::malformed_tool_call_retry(
+                        &error_msg,
+                        malformed_retries,
+                    )
+                {
+                    malformed_retries += 1;
+                    if !crate::format::is_quiet() {
+                        eprintln!(
+                            "{DIM}  {}{RESET}",
+                            crate::prompt_retry_limits::malformed_retry_notice(
+                                crate::format::is_plain_output()
+                            )
+                        );
+                    }
+                    continue;
+                }
                 api_error = Some(error_msg);
                 break;
             }
@@ -1524,6 +1552,9 @@ pub async fn run_prompt_with_content_and_changes(
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut api_error: Option<String> = None;
+    // Day 183: a budget of its own, separate from `attempt`, so a malformed
+    // tool call still gets its one resample after an unrelated transient retry.
+    let mut malformed_retries: u32 = 0;
     let user_msg = AgentMessage::Llm(Message::User {
         content: effective_blocks,
         timestamp: now_ms(),
@@ -1626,7 +1657,28 @@ pub async fn run_prompt_with_content_and_changes(
             PromptResult::FatalError { error_msg, usage } => {
                 // #646: surface-and-stop — already printed by handle_agent_end,
                 // never auto-retried, but visible to the caller.
+                //
+                // Day 183: the same single bounded exception as the text path
+                // above. Both doors or neither — wiring one is the "two doors,
+                // one policy, one deaf" shape this repo has shipped eight times.
                 accumulate_usage(&mut total_usage, &usage);
+                if attempt < MAX_RETRIES
+                    && crate::prompt_retry_limits::malformed_tool_call_retry(
+                        &error_msg,
+                        malformed_retries,
+                    )
+                {
+                    malformed_retries += 1;
+                    if !crate::format::is_quiet() {
+                        eprintln!(
+                            "{DIM}  {}{RESET}",
+                            crate::prompt_retry_limits::malformed_retry_notice(
+                                crate::format::is_plain_output()
+                            )
+                        );
+                    }
+                    continue;
+                }
                 api_error = Some(error_msg);
                 break;
             }

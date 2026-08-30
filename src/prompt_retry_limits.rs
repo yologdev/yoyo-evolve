@@ -323,6 +323,76 @@ pub fn rate_limit_giveup_message(retry_after: Duration) -> String {
     )
 }
 
+/// How many extra attempts a malformed tool-call turn is worth.
+///
+/// **This is a judgment threshold, not a measurement.** Nothing measured says 1
+/// is right; it is the point where "one wasted turn" is cheaper than "a dead
+/// run", and it is 1 rather than 3 precisely because #646's original fear is
+/// real and unquantified: nobody has measured how often a resample reproduces
+/// the same malformed turn. One attempt buys the common case (a one-off
+/// sampling accident) without turning a deterministic failure into a burned
+/// budget.
+pub(crate) const MAX_MALFORMED_RETRIES: u32 = 1;
+
+/// Should a fatal turn be resampled because its tool call arrived malformed?
+///
+/// The #646 class — the model emitted a tool call whose arguments never
+/// assembled, so the tool never ran — is usually a sampling accident, and both
+/// API-retry loops in `prompt.rs` rewind the message list to the pre-prompt
+/// state before a retry (`agent.save_messages()` / `restore_messages`), so the
+/// broken block is **not** carried into the resample. That rewind is what makes
+/// one more attempt worth taking; without it a retry would reproduce the
+/// failure deterministically, which is exactly what #646 refused.
+///
+/// **Narrowness is the whole safety property.** Auth and rate-limit shapes are
+/// checked FIRST and always lose, even when the message also names a tool call:
+/// those belong to `is_retriable_error` / `retry_wait_decision`, which own a
+/// real reset-time policy, and a second policy here would fight it. The other
+/// fatal shape — `pause_turn` with no `error_message` — is deliberately
+/// excluded: its cause is not known to be a sampling accident, so a resample is
+/// not known to help, and inventing a retry for it would be a confident guess
+/// wearing a fix's clothes.
+pub(crate) fn malformed_tool_call_retry(err_msg: &str, attempt: u32) -> bool {
+    let lower = err_msg.to_lowercase();
+    let has_code = |codes: &[&str]| {
+        codes
+            .iter()
+            .any(|c| crate::prompt_retry::contains_status_code(&lower, c))
+    };
+
+    // Auth and rate limits are somebody else's policy, and they win outright.
+    // A different sample against a broken credential or a closed door fails
+    // identically, so retrying only spends the budget.
+    if crate::tool_wrappers::AUTH_ERROR_SHAPES
+        .iter()
+        .any(|n| lower.contains(n))
+        || has_code(crate::tool_wrappers::AUTH_STATUS_CODES)
+        || crate::tool_wrappers::RATE_LIMIT_ERROR_SHAPES
+            .iter()
+            .any(|n| lower.contains(n))
+        || has_code(crate::tool_wrappers::RATE_LIMIT_STATUS_CODES)
+    {
+        return false;
+    }
+
+    attempt < MAX_MALFORMED_RETRIES && crate::prompt::is_dropped_tool_args_error(err_msg)
+}
+
+/// The one line printed before a malformed-tool-call resample.
+///
+/// An invisible extra API turn is a bug even when it is the right turn (the
+/// `⚡ auto-continuing` rule), so the retry announces itself. Pure, so the
+/// wording has exactly one statement; the caller owns the `is_quiet()` gate.
+/// Glyph-free under plain output means the marker **and** the em dash.
+pub(crate) fn malformed_retry_notice(plain: bool) -> String {
+    let marker = if plain { "" } else { "⚡ " };
+    let dash = if plain { "-" } else { "—" };
+    format!(
+        "{marker}the model's tool call arrived malformed {dash} resampling once \
+         (this is not a provider failure)"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -861,5 +931,122 @@ mod tests {
             "plain output must carry no glyphs: {plain}"
         );
         assert!(plain.starts_with("waiting"), "plain output shape: {plain}");
+    }
+
+    /// The shapes that MUST fire: a malformed tool call on the first attempt.
+    ///
+    /// Every needle here is one `is_dropped_tool_args_error` really matches, so
+    /// this pins the seam between the two functions rather than restating one.
+    #[test]
+    fn malformed_retry_fires_on_the_dropped_args_shape_once() {
+        let shapes = [
+            "tool call arguments were never assembled",
+            "tool_call never completed",
+            "assistant emitted a tool call with incomplete arguments",
+            "tool call produced no arguments",
+        ];
+        for s in shapes {
+            assert!(
+                malformed_tool_call_retry(s, 0),
+                "first attempt must resample: {s}"
+            );
+            // The bound is the whole safety story: one extra turn, never a chain.
+            assert!(
+                !malformed_tool_call_retry(s, MAX_MALFORMED_RETRIES),
+                "must stop at MAX_MALFORMED_RETRIES: {s}"
+            );
+            assert!(
+                !malformed_tool_call_retry(s, 7),
+                "must never resample deep into a run: {s}"
+            );
+        }
+    }
+
+    /// The near-miss guards, and they are the half that matters — a
+    /// discriminator tested only on the side that fires is vacuous green.
+    #[test]
+    fn malformed_retry_refuses_every_other_shape() {
+        // The OTHER fatal shape. Its cause is not known to be a sampling
+        // accident, so a resample is not known to help. Verbatim from
+        // `prompt.rs`'s empty-message branch.
+        assert!(
+            !malformed_tool_call_retry(
+                "turn ended with an error but no message — treating the response \
+                 as incomplete (no resume path)",
+                0
+            ),
+            "the pause_turn shape must stay surface-and-stop"
+        );
+
+        // Auth and rate limits belong to a policy that already exists.
+        for s in [
+            "401 Unauthorized",
+            "403 Forbidden",
+            "invalid api key",
+            "authentication failed",
+            "permission denied",
+            "429 Too Many Requests",
+            "rate limit exceeded",
+            "the model is overloaded",
+            "quota exhausted",
+            "at capacity",
+        ] {
+            assert!(
+                !malformed_tool_call_retry(s, 0),
+                "auth/rate-limit shape must never resample here: {s}"
+            );
+        }
+
+        // The sharp one: a message carrying BOTH. Auth is checked first and
+        // always wins, so a broken credential cannot buy a wasted turn by
+        // also mentioning a tool call.
+        assert!(
+            !malformed_tool_call_retry(
+                "401 Unauthorized: tool call arguments were never assembled",
+                0
+            ),
+            "auth must win over the malformed shape when a message carries both"
+        );
+
+        // Ordinary failures, transient shapes, and prose that merely says
+        // "tool call" are all untouched.
+        for s in [
+            "the file was not found",
+            "connection reset by peer",
+            "500 Internal Server Error",
+            "tool call failed: exit status 1",
+            "",
+        ] {
+            assert!(
+                !malformed_tool_call_retry(s, 0),
+                "unrelated shape must not resample: {s}"
+            );
+        }
+    }
+
+    /// An invisible extra API turn is a bug even when it is the right turn.
+    #[test]
+    fn malformed_retry_notice_says_what_happened_and_stays_plain_safe() {
+        let notice = malformed_retry_notice(false);
+        assert!(notice.contains("malformed"), "names the cause: {notice}");
+        assert!(notice.contains("once"), "names the bound: {notice}");
+        assert!(
+            notice.contains("not a provider failure"),
+            "a deliberate resample must not read as a crash: {notice}"
+        );
+
+        // Glyph-free under plain output means the marker AND the em dash —
+        // an assertion has caught the em-dash half before.
+        let plain = malformed_retry_notice(true);
+        assert!(
+            plain.is_ascii(),
+            "plain output must carry no glyphs: {plain}"
+        );
+        assert!(!plain.contains('—'), "plain output must carry no em dash");
+        assert!(!plain.contains('⚡'), "plain output must carry no marker");
+        assert!(
+            plain.contains("malformed") && plain.contains("once"),
+            "plain output must say the same thing: {plain}"
+        );
     }
 }
