@@ -1,0 +1,305 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the existing sibling scripts to match their shape, then build the classifier.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la scripts/*.py && wc -l scr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 && echo "-… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Shallow clone, 51 commits. Let me study the sibling's shape and the commit regex.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,90p' scripts/check_ass…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TASK_COMMIT_RE\|REVERT_… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '215,235p' scripts/extrac…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -120 scripts/check_assertio… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def main\|argparse.Argu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== task commits in shallo… ✓ (3ms)
+ ✓ (28ms)
+  6 tools completed in 11.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check where I actually left off before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,460p' scripts/check_… ✓ (2ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+Clean tree, nothing written yet. Let me gather the census data I need, then write the file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== FULL CENSUS ===" && gi… ✓ (29ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**Census in hand: 11 task commits, 7 touch a top-level `tests/*.rs`.** That's 64% addressable — far better than the "3 of 60" the task feared. Now let me write the script.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (670 lines) ✓ (38.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && chmod +x scripts/counterfactual_… ✓ (26ms)
+  2 tools completed in 41.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Now --help (the measure_abstentions.py lesson) and the census — the actual deliverable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (45ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 23.1s (2 ✓)
+
+**The census is in — and it contains a finding the headline number hides. 5 of the 7 "addressable" commits touch only** `tests/module_size.rs`, which is a *debt register* of line counts, not a behavioural test. A pre-task copy of it is structurally guaranteed to fail against post-task src/ whenever a module grew — a false UNEARNED that carries no signal. Let me check and then split the census honestly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for s in 90d89ed0 08a9e36f a35dc… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. 5c82fef5 added the file (no pre-version to restore); 08a9e36f modified it — the one real candidate. The honest denominator is 2 of 11, not 7. Let me split the census so it reports that rather than the flattering 64%.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 14 lines)
+    # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
+    TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
+  + 
+  + # Test files that are DEBT REGISTERS rather than behavioural tests. Their contents are
+  + # recorded line counts and named exceptions, so a PRE-task copy laid over POST-task src/
+  + # fails by construction whenever a module grew — and that failure is the gate working as
+  + # designed (updating the register is the compliant remedy the gate itself prints), not
+  + # evidence of a loosened assertion. Counting those as UNEARNED would be a confident wrong
+  + # verdict, which is the exact over-reach this whole milestone is about.
+  + #
+  + # Only tests/module_size.rs qualifies today: it is the one gate whose register encodes a
+  + # MEASUREMENT of src/ (line counts) that legitimately moves with every commit. The other
+  + # gates' registers name files, tests or reasons, which do not drift when src/ grows.
+  + REGISTER_TEST_FILES = frozenset({"tests/module_size.rs"})
+ ✓ (38.1s)
+    # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
+    TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
+  + 
+  + # Test files that are DEBT REGISTERS rather than behavioural tests. Their contents are
+  + # recorded line counts and named exceptions, so a PRE-task copy laid over POST-task src/
+  + # fails by construction whenever a module grew — and that failure is the gate working as
+  + # designed (updating the register is the compliant remedy the gate itself prints), not
+  + # evidence of a loosened assertion. Counting those as UNEARNED would be a confident wrong
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 13 lines)
+        @property
+        def addressable(self) -> bool:
+            return bool(self.test_files)
+  + 
+  +     @property
+  +     def behavioural(self) -> bool:
+  +         """True when at least one touched test file is NOT a debt register.
+  + 
+  +         This is the denominator that carries signal. A commit touching only
+  +         tests/module_size.rs is addressable in the mechanical sense and worthless in the
+  +         evidential one — see REGISTER_TEST_FILES.
+  +         """
+  +         return any(p not in REGISTER_TEST_FILES for p in self.test_files)
+ ✓ (39.3s)
+        @property
+        def addressable(self) -> bool:
+            return bool(self.test_files)
+  + 
+  +     @property
+  +     def behavioural(self) -> bool:
+  +         """True when at least one touched test file is NOT a debt register.
+  + 
+  ... (5 more lines)
+  2 tools completed in 1m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fold and the render, so the census reports the honest tier rather than the flattering one.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 15 lines)
+    def census_summary(rows: list[CensusRow]) -> dict:
+  -     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero."""
+  +     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
+  + 
+  +     Three tiers, and `behavioural` is the one that carries signal. `register_only` is
+  +     reported separately rather than summed into `addressable`, because folding it in
+  +     produces a flattering headline over commits whose counterfactual verdict is decided
+  +     by construction (see REGISTER_TEST_FILES).
+  +     """
+        return {
+            "task_commits": len(rows),
+            "addressable": sum(1 for r in rows if r.addressable),
+  +         "behavioural": sum(1 for r in rows if r.behavioural),
+  +         "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
+            "not_addressable": sum(1 for r in rows if not r.addressable),
+        }
+ ✓ (39.2s)
+    def census_summary(rows: list[CensusRow]) -> dict:
+  -     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero."""
+  +     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
+  + 
+  +     Three tiers, and `behavioural` is the one that carries signal. `register_only` is
+  +     reported separately rather than summed into `addressable`, because folding it in
+  +     produces a flattering headline over commits whose counterfactual verdict is decided
+  +     by construction (see REGISTER_TEST_FILES).
+  ... (8 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (17 → 31 lines)
+        out.append(f"  task commits found ........... {summary['task_commits']}")
+  +     out.append(f"  NO_TEST_CHANGE ............... {summary['not_addressable']}")
+  +     out.append(f"  touch any tests/*.rs ......... {summary['addressable']}")
+        out.append(
+  -         f"  ADDRESSABLE (touch tests/*.rs)  {summary['addressable']}"
+  -         f"   <- the denominator the milestone can measure"
+  +         f"    of which REGISTER-ONLY ..... {summary['register_only']}"
+  +         "   (debt-register bookkeeping; verdict decided by construction, no signal)"
+        )
+  -     out.append(f"  NO_TEST_CHANGE ............... {summary['not_addressable']}")
+  +     out.append(
+  +         f"    of which BEHAVIOURAL ....... {summary['behavioural']}"
+  +         "   <- the denominator that carries signal"
+  +     )
+        out.append("")
+        if summary["task_commits"]:
+  -         pct = 100.0 * summary["addressable"] / summary["task_commits"]
+  -         out.append(f"  addressable rate ............. {pct:.0f}%")
+  +         addr = 100.0 * summary["addressable"] / summary["task_commits"]
+  +         beh = 100.0 * summary["behavioural"] / summary["task_commits"]
+  ... (17 more lines)
+ ✓ (39.7s)
+        out.append(f"  task commits found ........... {summary['task_commits']}")
+  +     out.append(f"  NO_TEST_CHANGE ............... {summary['not_addressable']}")
+  +     out.append(f"  touch any tests/*.rs ......... {summary['addressable']}")
+        out.append(
+  -         f"  ADDRESSABLE (touch tests/*.rs)  {summary['addressable']}"
+  -         f"   <- the denominator the milestone can measure"
+  +         f"    of which REGISTER-ONLY ..... {summary['register_only']}"
+  +         "   (debt-register bookkeeping; verdict decided by construction, no signal)"
+  ... (13 more lines)
+  2 tools completed in 1m 30s (2 ✓)
+
+Now the self-test rows for the new split, plus a limit naming it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (16 → 44 lines)
+            "addressable + not == total",
+            s["addressable"] + s["not_addressable"] == s["task_commits"],
+            s,
+  +     )
+  + 
+  +     # -- the register-only split: the finding, in both directions ------------------------
+  +     # A commit touching ONLY a debt register is addressable and carries no signal. This
+  +     # row is the near-miss guard for the tier below it: without it, a 64% headline reads
+  +     # as measurable when the real denominator is a fraction of that.
+  +     reg = CensusRow("d" * 40, "Day 1 (0:0): register bump (Task 1)", ["tests/module_size.rs"])
+  +     check("register-only is addressable", reg.addressable, reg)
+  +     check("register-only is NOT behavioural", not reg.behavioural, reg)
+  +     mixed = CensusRow(
+  +         "e" * 40, "Day 1 (0:0): gate + bump (Task 1)",
+  +         ["tests/git_chokepoint.rs", "tests/module_size.rs"],
+  +     )
+  +     check("a mixed commit IS behavioural", mixed.behavioural, mixed)
+  +     plain = CensusRow("f" * 40, "Day 1 (0:0): real test (Task 1)", ["tests/integration.rs"])
+  +     check("a non-register test is behavioural", plain.behavioural, plain)
+  +     none = CensusRow("g" * 40, "Day 1 (0:0): no tests (Task 1)", [])
+  ... (13 more lines)
+ ✓ (38.5s)
+            "addressable + not == total",
+            s["addressable"] + s["not_addressable"] == s["task_commits"],
+            s,
+  +     )
+  + 
+  +     # -- the register-only split: the finding, in both directions ------------------------
+  +     # A commit touching ONLY a debt register is addressable and carries no signal. This
+  +     # row is the near-miss guard for the tier below it: without it, a 64% headline reads
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me add the limit naming this finding, then verify.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 10 lines)
+         buries unit tests inside 91 src/ files behind #[cfg(test)], and those cannot be
+         lifted out without dragging the production code along. That half stays unmeasured,
+         and one number here must never be read as a rate over the whole suite.
+  +   3. A DEBT REGISTER IS NOT A BEHAVIOURAL TEST. tests/module_size.rs records line counts
+  +      of src/, so a PRE-task copy laid over POST-task src/ fails by construction whenever
+  +      a module grew — and that failure is the gate working as designed, since updating the
+  +      register is the compliant remedy the gate itself prints. Those commits are counted
+  +      as REGISTER-ONLY and kept OUT of the behavioural denominator. Read the BEHAVIOURAL
+  +      rate; the addressable rate is the flattering one.
+ ✓ (39.7s)
+         buries unit tests inside 91 src/ files behind #[cfg(test)], and those cannot be
+         lifted out without dragging the production code along. That half stays unmeasured,
+         and one number here must never be read as a rate over the whole suite.
+  +   3. A DEBT REGISTER IS NOT A BEHAVIOURAL TEST. tests/module_size.rs records line counts
+  +      of src/, so a PRE-task copy laid over POST-task src/ fails by construction whenever
+  +      a module grew — and that failure is the gate working as designed, since updating the
+  +      register is the compliant remedy the gate itself prints. Those commits are counted
+  +      as REGISTER-ONLY and kept OUT of the behavioural denominator. Read the BEHAVIOURAL
+  +      rate; the addressable rate is the flattering one.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/  3. INCONCLUSIVE IS N… ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 46.7s (2 ✓)
+
+Self-test caught my own render rename — exactly what it's for. The denominator is now BEHAVIOURAL, so the assertion should name that.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 7 lines)
+        out = render_census(rows, s, "11 commits", None)
+  -     check("render names the denominator", "ADDRESSABLE" in out, out[:200])
+  -     check("render names the window", "11 commits" in out, out[:200])
+  +     check("render names the signal denominator", "BEHAVIOURAL" in out, out[:300])
+  +     check("render names the register tier", "REGISTER-ONLY" in out, out[:300])
+  +     check("render names the window", "11 commits" in out, out[:300])
+        check("limits state the intent boundary", "intent is not" in LIMITS.lower())
+        check("limits state the src/ scope", "165k" in LIMITS)
+  +     check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+ ✓ (38.0s)
+        out = render_census(rows, s, "11 commits", None)
+  -     check("render names the denominator", "ADDRESSABLE" in out, out[:200])
+  -     check("render names the window", "11 commits" in out, out[:200])
+  +     check("render names the signal denominator", "BEHAVIOURAL" in out, out[:300])
+  +     check("render names the register tier", "REGISTER-ONLY" in out, out[:300])
+  +     check("render names the window", "11 commits" in out, out[:300])
+        check("limits state the intent boundary", "intent is not" in LIMITS.lower())
+        check("limits state the src/ scope", "165k" in LIMITS)
+  +     check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (65ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The census, and the honest number is 2 of 11 (18%), not 7 of 11 (64%). Now the positive control — serially, one mutation at a time.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (9 lines) ✓ (40ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired: exactly 3 rows red — the `INCONCLUSIVE reachability row and both precedence rows — while EARNED, UNEARNED`, both near-miss guards and the whole census fold stayed green. Restore and confirm.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cfg.bak scripts/counterf… ✓ (29ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

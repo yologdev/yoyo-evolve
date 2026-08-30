@@ -1,0 +1,261 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading both helpers before changing anything — step 0 says the premise might be wrong.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn flag_value\|fn requi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "flag_value(" src/dispat… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Interesting — there are already tests named as if they anticipate this. Let me read both helpers and the existing tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '535,610p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1000p' src/dispatch_… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.4s (2 ✓)
+
+flag_value does not refuse — and three existing near-miss guards already document the hazard. Let me verify the defect against the real binary and read the setup arm.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,215p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '610,700p' src/dispatch_s… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.8s (2 ✓)
+
+The setup arm appears to take no arguments at all. Let me pin down exact line numbers and check run_setup_wizard.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"setup"' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=160 && NR<=210 {printf … ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've established the key facts. Step 0 found the premise is partly wrong — let me confirm the setup arm precisely and get the production census.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '204,212p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== flag_value used outsid… ✓ (6ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.2s (2 ✓)
+
+Now I have the full picture, and step 0's premise check found the task's headline claim is false. Let me record the exact wording of the sibling warning for consistency, then write the failing test first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '584,625p' src/cli.rs; ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--provider"\|"--model"… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+Confirmed — and this sharpens the finding considerably. --provider/--model are in FLAGS_NEEDING_VALUES, so parse_args warns via check_flag_values (#862), but try_dispatch_subcommand runs before parse_args, so the subcommand path never gets it. Writing the fix now, reusing the existing warning vocabulary.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (7 → 43 lines)
+    pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
+  -     args.iter()
+  -         .position(|a| flag_names.contains(&a.as_str()))
+  -         .and_then(|i| args.get(i + 1))
+  -         .map(|v| v.trim().to_string())
+  +     let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+  +     let next = args.get(i + 1);
+  +     // Day 183: consult the careful classifier that already exists one function
+  +     // down. This WARNS and deliberately does not refuse — see
+  +     // `flag_like_value_warning` for why the value is still returned.
+  +     if let FlagValueCheck::FlagLike(token) = require_flag_value(next) {
+  +         if !is_quiet() {
+  +             eprintln!(
+  +                 "{}",
+  +                 flag_like_value_warning(&args[i], token, is_plain_output())
+  +             );
+  +         }
+  +     }
+  +     next.map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+  ... (27 more lines)
+ ✓ (1m 22s)
+    pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
+  -     args.iter()
+  -         .position(|a| flag_names.contains(&a.as_str()))
+  -         .and_then(|i| args.get(i + 1))
+  -         .map(|v| v.trim().to_string())
+  +     let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+  +     let next = args.get(i + 1);
+  +     // Day 183: consult the careful classifier that already exists one function
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me restructure so the warning decision is itself testable at the emission point, rather than only reachable through stderr.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (43 → 56 lines)
+    pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
+        let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+  -     let next = args.get(i + 1);
+        // Day 183: consult the careful classifier that already exists one function
+        // down. This WARNS and deliberately does not refuse — see
+        // `flag_like_value_warning` for why the value is still returned.
+  -     if let FlagValueCheck::FlagLike(token) = require_flag_value(next) {
+  +     if let Some(warning) = flag_value_warning_for(args, flag_names, is_plain_output()) {
+            if !is_quiet() {
+  -             eprintln!(
+  -                 "{}",
+  -                 flag_like_value_warning(&args[i], token, is_plain_output())
+  -             );
+  +             eprintln!("{warning}");
+            }
+        }
+  -     next.map(|v| v.trim().to_string())
+  +     args.get(i + 1)
+  +         .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+  ... (19 more lines)
+ ✓ (1m 21s)
+    pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
+        let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+  -     let next = args.get(i + 1);
+        // Day 183: consult the careful classifier that already exists one function
+        // down. This WARNS and deliberately does not refuse — see
+        // `flag_like_value_warning` for why the value is still returned.
+  -     if let FlagValueCheck::FlagLike(token) = require_flag_value(next) {
+  +     if let Some(warning) = flag_value_warning_for(args, flag_names, is_plain_output()) {
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the current state compiles and check the line budget.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_sub.rs && sed… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+64 lines before a warning, 114 before fatal. Let me add tight tests at the end of the test module.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/dispatch_sub.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/d… (81 lines) ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.7s (2 ✓)
+
+2014 lines — inside the grace band but over the cap. Let me run the full check suite and see exactly what the gate prints.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 | tail -5 && carg… ✓ (8.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build passes. Now clippy and the test suite, including the module-size gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (137ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.7s (2 ✓)
+
+The gate prints its remedy. But 14 lines over is avoidable churn — let me compress the test boilerplate rather than register permanent debt for it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (781ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+6 over. Let me tighten the longest doc comment while keeping its reasoning intact.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (15 → 12 lines)
+    /// Pure so the wording has one statement and can be asserted without a process.
+    /// The first clause is byte-identical to `cli.rs`'s `FlagIssue::FlagLike` line
+  - /// (`cli.rs:1628`) on purpose: the top-level `parse_args` path has warned about
+  - /// this shape since #862, and two vocabularies for one defect is how the two
+  - /// halves drift. The second clause is what that line does not say and what a
+  - /// user actually needs — *which* flag stopped working.
+  + /// (`cli.rs:1628`) on purpose: `parse_args` has warned about this shape since
+  + /// #862, and two vocabularies for one defect is how the halves drift. The second
+  + /// clause is what that line omits and a user needs — *which* flag stopped working.
+    ///
+  - /// **Warn, never refuse, and the reason is written here rather than only in
+  - /// CLAUDE.md.** Three near-miss guards in this module's own tests already record
+  + /// **Warn, never refuse.** Three near-miss guards in this module already record
+    /// the hazard: a value may legitimately begin with `-` (`--temperature -0.1`,
+    /// `-p "-- summarize this diff"`). `require_flag_value` exempts negative numbers
+  - /// but not free text, so refusing here would break a working invocation to fix a
+  - /// misconfiguration. For a parser, over-blocking costs a working command while
+  - /// under-blocking costs a silent wrong value — and nothing measured licenses the
+  - /// stricter choice, so resolution stays byte-identical and only the silence goes.
+  + /// but not free text, so refusing would break a working invocation to fix a
+  ... (2 more lines)
+ ✓ (1m 23s)
+    /// Pure so the wording has one statement and can be asserted without a process.
+    /// The first clause is byte-identical to `cli.rs`'s `FlagIssue::FlagLike` line
+  - /// (`cli.rs:1628`) on purpose: the top-level `parse_args` path has warned about
+  - /// this shape since #862, and two vocabularies for one defect is how the two
+  - /// halves drift. The second clause is what that line does not say and what a
+  - /// user actually needs — *which* flag stopped working.
+  + /// (`cli.rs:1628`) on purpose: `parse_args` has warned about this shape since
+  + /// #862, and two vocabularies for one defect is how the halves drift. The second
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/dispatch_… ✓ (772ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (4 → 3 lines)
+    /// The warning `flag_value` emits, as a value rather than a side effect.
+  - ///
+  - /// `None` is the common path — no such flag present, or its value is a real
+  - /// value — so an ordinary invocation prints nothing and is byte-identical.
+  + /// `None` is the common path — no such flag, or a real value — so an ordinary
+  + /// invocation prints nothing and is byte-identical.
+ ✓ (1m 23s)
+    /// The warning `flag_value` emits, as a value rather than a side effect.
+  - ///
+  - /// `None` is the common path — no such flag present, or its value is a real
+  - /// value — so an ordinary invocation prints nothing and is byte-identical.
+  + /// `None` is the common path — no such flag, or a real value — so an ordinary
+  + /// invocation prints nothing and is byte-identical.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|  … (11 lines) ✓ (776ms)
+  3 tools completed in 1m 35s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One line over. Let me cut one more, then move to verification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (760ms)
+
+Exactly at the cap, no debt registered. Now the full verification.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean and the module-size gate now prints zero warnings. Now my new tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo flaglike_s… ✓ (17.4s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

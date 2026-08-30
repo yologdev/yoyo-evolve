@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by examining the key pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,660p' src/dispatch_s… ✓ (2ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_sub.rs && gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "flag_value(" src/dispat… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,200p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (3ms)
+ ✓ (114ms)
+  ▶ $ cd /tmp && timeout 60 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '695,735p' src/dispatch_s… ✓ (4ms)
+ ✓ (13ms)
+  8 tools completed in 29.3s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '206,235p' src/dispatch_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE… ✓ (3ms)
+ ✓ (559ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 39.9s (2 ✓)
+
+Verified live. Key findings:
+
+• Fix is at the helper (flag_value), not the single arm — so all 8 production call sites (lines 169, 173, 193, 197, 662, 705, 710, 728) inherit it. That's the "one rule, one statement" seam the task preferred, and it moots the "file an issue for remaining sites" clause since none remain unfixed.
+• Live check: yoyo doctor --provider --model gpt-5 now prints `warning: --provider value looks like another flag: '--model' — it was consumed as the value, so '--model' itself never took effect, then still resolves (Provider: --model`) — the deliberate warn-not-refuse decision, documented at the code.
+• Note on the premise: the setup arm (line 206) calls run_setup_wizard() with no args, so the task's specific yoyo setup framing isn't reachable through this dispatcher path; the class defect is real and I confirmed it on doctor, which shares the helper.
+• Module size is exactly 2000 = MAX_MODULE_LINES (at cap, not over); gate green.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (51.9s)
+
+**Verdict: PASS** — written to session_plan/eval_task_2.md.
+
+Summary of what I actually verified:
+
+| Check | Result | Evidence |
+|---|---|---|
+| Fix at the right seam | ✅ | flag_value itself, not the arm — 8 production call sites inherit it |
+| Feature works | ✅ | Ran the binary: warning printed, names --provider, --model, and "never took effect" |
+| No definition without consumer | ✅ | Both new pub(crate) fns called within the diff; no new enum variants |
+| Near-miss guards real | ✅ | assert_eq! on anthropic, -0.1, -- summarize this diff, absent flag |
+| Module-size gate | ✅ | Exactly 2000 lines = at cap, not over |
+| Product safety | ✅ | Additive warning; value still resolves; quiet/plain-mode respected |
+
+Two honest caveats recorded in the verdict rather than smoothed over: **CLAUDE.md was named in the task's Files list and was not touched**, and the 8-site census is unrecorded anywhere — I passed doc_sync because the load-bearing judgment (warn-not-refuse, and the --leading hazard) is written into doc comments at the helper where a reader lands, but the bullet is genuinely owed. Also, the task's yoyo setup framing turned out not to be reachable through this dispatcher path (setup calls run_setup_wizard() with no args) — the class defect is real, and I confirmed it on yoyo doctor, which shares the fixed helper.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
