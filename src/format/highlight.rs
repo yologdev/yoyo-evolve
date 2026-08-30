@@ -1679,4 +1679,87 @@ mod tests {
             assert!(st.open_string.is_none(), "{lang}: {line}");
         }
     }
+
+    // --- Blind round 90 (Day 183): fixture-shape census guards ---
+    //
+    // The census over this module's own tests found three shapes with ZERO fixtures:
+    // a comment marker inside a string literal, ts/js template-literal parity, and any
+    // Python multi-line construct. The first two render CORRECTLY today and were
+    // unguarded; these are near-miss guards pinning that pass-through byte-identically,
+    // because a discriminator tested only on the side that fires is vacuous green.
+    // The third is a real defect and is filed rather than fixed (one defect per round).
+
+    /// A comment marker INSIDE a string literal must stay string-coloured.
+    ///
+    /// Round 90's h2 predicted this was broken, reasoning from a Day-166 measurement
+    /// that the inline-comment branch is tested before the quote branch. It is — but
+    /// the string branch consumes a literal atomically in its own inner loop, so the
+    /// `//` inside `"https://…"` is never reached at the top of the scan. Measured on
+    /// all four shapes below; the bet was a MISS. These assertions exist so that a
+    /// future change to that precedence cannot silently break the most common shape in
+    /// real source: a URL or a hex colour inside a string.
+    #[test]
+    fn comment_marker_inside_a_string_literal_stays_string_coloured() {
+        // `//` languages: the URL's slashes must not open a comment.
+        assert_eq!(
+            highlight_code_line("rust", "let url = \"https://example.com\";"),
+            format!("{BOLD_CYAN}let{RESET} url = {GREEN}\"https://example.com\"{RESET};")
+        );
+        assert_eq!(
+            highlight_code_line("js", "const u = \"http://x.dev\";"),
+            format!("{BOLD_CYAN}const{RESET} u = {GREEN}\"http://x.dev\"{RESET};")
+        );
+        // `#` languages: the hex colour / shebang must not open a comment.
+        assert_eq!(
+            highlight_code_line("python", "c = \"#ff0000\""),
+            format!("c = {GREEN}\"#ff0000\"{RESET}")
+        );
+        assert_eq!(
+            highlight_code_line("shell", "echo \"#!/bin/sh\""),
+            format!("{BOLD_CYAN}echo{RESET} {GREEN}\"#!/bin/sh\"{RESET}")
+        );
+        // The near-miss on the other side: a REAL trailing comment must still dim, or
+        // the guards above could be satisfied by a highlighter that never comments.
+        assert_eq!(
+            highlight_code_line("rust", "let x = 1; // note"),
+            format!(
+                "{BOLD_CYAN}let{RESET} x = {YELLOW}1{RESET}; {DIM}// note{RESET}"
+            )
+        );
+    }
+
+    /// A TypeScript template literal must behave EXACTLY like a JavaScript one.
+    ///
+    /// `backtick_strings` names only `js` and `go`, and that two-entry table is correct
+    /// only because `normalize_lang` collapses `typescript`/`ts`/`jsx`/`tsx` onto `js`.
+    /// Nothing tied those two facts together: giving `ts` its own normalized name would
+    /// silently stop carrying TS template literals across lines, and no test would fire.
+    /// This is that missing cross-artifact guard — parity is asserted, not merely
+    /// non-emptiness, so it fails in both directions.
+    #[test]
+    fn ts_template_literals_render_identically_to_js_ones() {
+        let lines = ["const q = `SELECT *", "FROM t`;"];
+        for tag in ["ts", "typescript", "tsx", "jsx"] {
+            let mut js_state = HighlightState::default();
+            let mut ts_state = HighlightState::default();
+            for line in lines {
+                let js = highlight_code_line_with("js", line, &mut js_state);
+                let ts = highlight_code_line_with(tag, line, &mut ts_state);
+                assert_eq!(ts, js, "{tag} must render {line:?} exactly as js does");
+            }
+            // Anti-vacuous: the fixture really does leave a literal open after line 1,
+            // so the parity above is over the stateful path and not over two no-ops.
+            assert!(
+                ts_state.open_string.is_none(),
+                "{tag}: the template literal should be closed by line 2"
+            );
+        }
+        // And the near-miss guard: a backtick in a language with no template literals
+        // stays inert, so the parity above is not just "everything is a string".
+        let mut rust_state = HighlightState::default();
+        assert_eq!(
+            highlight_code_line_with("rust", "let a = 1;", &mut rust_state),
+            highlight_code_line("rust", "let a = 1;")
+        );
+    }
 }
