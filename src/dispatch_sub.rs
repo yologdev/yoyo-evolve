@@ -543,11 +543,56 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
 /// follow-up to the Day 38 09:55 task that landed `try_dispatch_subcommand`
 /// (#261) — see `journals/JOURNAL.md` for the full premise correction.
 pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
-    args.iter()
-        .position(|a| flag_names.contains(&a.as_str()))
-        .and_then(|i| args.get(i + 1))
+    let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+    // Day 183: consult the careful classifier that already exists one function
+    // down. This WARNS and deliberately does not refuse — see
+    // `flag_like_value_warning` for why the value is still returned.
+    if let Some(warning) = flag_value_warning_for(args, flag_names, is_plain_output()) {
+        if !is_quiet() {
+            eprintln!("{warning}");
+        }
+    }
+    args.get(i + 1)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+/// The warning `flag_value` emits, as a value rather than a side effect.
+/// `None` is the common path — no such flag, or a real value — so an ordinary
+/// invocation prints nothing and is byte-identical.
+pub(crate) fn flag_value_warning_for(
+    args: &[String],
+    flag_names: &[&str],
+    plain: bool,
+) -> Option<String> {
+    let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+    match require_flag_value(args.get(i + 1)) {
+        FlagValueCheck::FlagLike(token) => Some(flag_like_value_warning(&args[i], token, plain)),
+        _ => None,
+    }
+}
+
+/// Compose the warning for `--flag --another-flag`, where the second flag was
+/// silently eaten as the first one's value.
+///
+/// Pure so the wording has one statement and can be asserted without a process.
+/// The first clause is byte-identical to `cli.rs`'s `FlagIssue::FlagLike` line
+/// (`cli.rs:1628`) on purpose: `parse_args` has warned about this shape since
+/// #862, and two vocabularies for one defect is how the halves drift. The second
+/// clause is what that line omits and a user needs — *which* flag stopped working.
+///
+/// **Warn, never refuse.** Three near-miss guards in this module already record
+/// the hazard: a value may legitimately begin with `-` (`--temperature -0.1`,
+/// `-p "-- summarize this diff"`). `require_flag_value` exempts negative numbers
+/// but not free text, so refusing would break a working invocation to fix a
+/// misconfiguration — over-blocking costs a working command, under-blocking a
+/// silent wrong value, and nothing measured licenses the stricter choice.
+pub(crate) fn flag_like_value_warning(flag: &str, token: &str, plain: bool) -> String {
+    let dash = if plain { "-" } else { "—" };
+    format!(
+        "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{token}' \
+         {dash} it was consumed as the value, so '{token}' itself never took effect"
+    )
 }
 
 /// Outcome of checking whether a flag is followed by a real value.
@@ -1883,5 +1928,73 @@ mod tests {
         let filtered = strip_flag_with_value(&args, "--skills");
         let input = quote_args_as_command(&filtered);
         assert_eq!(input, "/list");
+    }
+}
+
+#[cfg(test)]
+mod flaglike_subcommand_value_tests {
+    use super::*;
+
+    fn argv(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The measured defect (Day 183): `try_dispatch_subcommand` runs BEFORE
+    /// `parse_args`, so this door never reached `check_flag_values`.
+    #[test]
+    fn a_swallowed_flag_is_now_reported_at_the_subcommand_door() {
+        let args = argv(&["yoyo", "doctor", "--provider", "--model", "gpt-5"]);
+        let warning = flag_value_warning_for(&args, &["--provider"], true)
+            .expect("a flag eaten as a value must be reported, not resolved in silence");
+        assert!(warning.contains("--provider"), "names the flag: {warning}");
+        assert!(warning.contains("--model"), "names the token: {warning}");
+        assert!(
+            warning.contains("never took effect"),
+            "says which flag stopped working: {warning}"
+        );
+    }
+
+    /// Near-miss guard: an ordinary value resolves byte-identically and is silent.
+    #[test]
+    fn an_ordinary_value_is_byte_identical_and_silent() {
+        let args = argv(&["yoyo", "doctor", "--provider", "anthropic"]);
+        assert_eq!(flag_value(&args, &["--provider"]), Some("anthropic".into()));
+        assert_eq!(flag_value_warning_for(&args, &["--provider"], true), None);
+    }
+
+    /// Near-miss guard: `-`-leading values are why this warns and never refuses.
+    #[test]
+    fn dash_leading_values_still_resolve() {
+        let neg = argv(&["yoyo", "--temperature", "-0.1"]);
+        assert_eq!(flag_value(&neg, &["--temperature"]), Some("-0.1".into()));
+        assert_eq!(
+            flag_value_warning_for(&neg, &["--temperature"], true),
+            None,
+            "a negative number is a real value; warning here would be noise"
+        );
+
+        let text = argv(&["yoyo", "-p", "-- summarize this diff"]);
+        assert_eq!(
+            flag_value(&text, &["--prompt", "-p"]),
+            Some("-- summarize this diff".into()),
+            "free text beginning with '-' must still resolve — refusing it would \
+             break a working invocation to fix a misconfiguration"
+        );
+    }
+
+    /// Absent flag → no warning, so every unrelated invocation is unchanged.
+    #[test]
+    fn an_absent_flag_warns_about_nothing() {
+        let args = argv(&["yoyo", "doctor"]);
+        assert_eq!(flag_value_warning_for(&args, &["--provider"], true), None);
+        assert_eq!(flag_value(&args, &["--provider"]), None);
+    }
+
+    /// `--screen-reader` gets no em dash.
+    #[test]
+    fn plain_output_is_glyph_free() {
+        let plain = flag_like_value_warning("--provider", "--model", true);
+        assert!(!plain.contains('—'), "em dash reached plain mode: {plain}");
+        assert!(flag_like_value_warning("--provider", "--model", false).contains('—'));
     }
 }
