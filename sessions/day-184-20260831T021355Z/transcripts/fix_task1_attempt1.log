@@ -1,0 +1,245 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the script and the failing self-test.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (8ms)
+ ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.3s (2 ✓)
+
+Let me look at the relevant code sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DEEPEN_NOT_REQUESTED\|D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unrequested deepen rend… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '670,800p' scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,870p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1215p' scripts/coun… ✓ (3ms)
+ ✓ (3ms)
+  5 tools completed in 18.2s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up where I left off. Three things remain: the failing self-test, the reading, and CLAUDE.md. Let me start with the guard/subject disagreement.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepen \.\.\." scripts/… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The guard and its subject disagree. Deciding which is right: the shallow warning should name its own remedy (this repo's standing "the message prints the line to paste" discipline), so the renderer is correct and the guard's blanket substring is wrong. I'll make the guard assert the property it actually means, through a shared constant so the two cannot drift.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '674,682p' scripts/counte… ✓ (3ms)
+  ▶ edit scripts/counterfactual_green.py (4 → 12 lines)
+    DEEPEN_ALREADY_DEEP = "already-deep"
+    DEEPEN_TOOK = "took"
+    DEEPEN_DID_NOT_TAKE = "attempted-did-not-take"
+  + 
+  + # The prefix every deepen STATUS line carries, stated ONCE so the renderer and the
+  + # near-miss guard that checks for its absence cannot drift apart. Two hand-written copies
+  + # agree the day they are written and diverge forever after -- and the first version of
+  + # that guard asserted the bare word "deepen" was absent, which collided with the shallow
+  + # warning's own remedy sentence ("re-run with --deepen N") and made a correct renderer
+  + # fail a test written against a different property. A status line is not a mention.
+  + DEEPEN_STATUS_PREFIX = "  deepen ....................... "
+ ✓ (1m 41s)
+    DEEPEN_ALREADY_DEEP = "already-deep"
+    DEEPEN_TOOK = "took"
+    DEEPEN_DID_NOT_TAKE = "attempted-did-not-take"
+  + 
+  + # The prefix every deepen STATUS line carries, stated ONCE so the renderer and the
+  + # near-miss guard that checks for its absence cannot drift apart. Two hand-written copies
+  + # agree the day they are written and diverge forever after -- and the first version of
+  + # that guard asserted the bare word "deepen" was absent, which collided with the shallow
+  ... (3 more lines)
+  2 tools completed in 1m 48s (2 ✓)
+
+Now route the three status lines through that one constant:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (14 → 11 lines)
+        out = []
+        if deepen_state == DEEPEN_TOOK:
+  -         out.append(f"  deepen ....................... TOOK: {deepen_detail}")
+  +         out.append(f"{DEEPEN_STATUS_PREFIX}TOOK: {deepen_detail}")
+        elif deepen_state == DEEPEN_DID_NOT_TAKE:
+  -         out.append(
+  -             f"  deepen ....................... ATTEMPTED AND DID NOT TAKE: "
+  -             f"{deepen_detail}"
+  -         )
+  +         out.append(f"{DEEPEN_STATUS_PREFIX}ATTEMPTED AND DID NOT TAKE: {deepen_detail}")
+            out.append(
+                "                                 the window below is the one that already "
+                "existed, not the one asked for."
+            )
+        elif deepen_state == DEEPEN_ALREADY_DEEP:
+  -         out.append(f"  deepen ....................... NOT NEEDED: {deepen_detail}")
+  +         out.append(f"{DEEPEN_STATUS_PREFIX}NOT NEEDED: {deepen_detail}")
+ ✓ (1m 39s)
+        out = []
+        if deepen_state == DEEPEN_TOOK:
+  -         out.append(f"  deepen ....................... TOOK: {deepen_detail}")
+  +         out.append(f"{DEEPEN_STATUS_PREFIX}TOOK: {deepen_detail}")
+        elif deepen_state == DEEPEN_DID_NOT_TAKE:
+  -         out.append(
+  -             f"  deepen ....................... ATTEMPTED AND DID NOT TAKE: "
+  -             f"{deepen_detail}"
+  ... (9 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard itself — asserting the real property (no status line) rather than a blanket substring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEAR-MISS GUARD: no --d… ✓ (3ms)
+  ▶ edit scripts/counterfactual_green.py (3 → 26 lines)
+  -     # NEAR-MISS GUARD: no --deepen means no deepen line at all.
+  +     # NEAR-MISS GUARD: no --deepen means no deepen STATUS line -- asserted against the
+  +     # one shared prefix constant, never against the bare word "deepen", which the shallow
+  +     # warning legitimately uses to name its own remedy. The first version of this guard
+  +     # asserted the word and so failed a correct renderer: a mention is not a status line.
+        quiet = "\n".join(window_note(True, "59", DEEPEN_NOT_REQUESTED, ""))
+  -     check("unrequested deepen renders no deepen line", "deepen" not in quiet, quiet)
+  +     check(
+  +         "unrequested deepen renders no deepen status line",
+  +         DEEPEN_STATUS_PREFIX not in quiet,
+  +         quiet,
+  +     )
+  +     # ...and none of the three verdict words leaks either, so the guard cannot pass by
+  +     # the prefix merely being reworded out from under it.
+  +     check(
+  +         "unrequested deepen renders no deepen verdict",
+  +         not any(w in quiet for w in ("TOOK", "DID NOT TAKE", "NOT NEEDED")),
+  +         quiet,
+  +     )
+  +     # The other side of the same discriminator: when a deepen IS requested, the status
+  ... (8 more lines)
+ ✓ (1m 40s)
+  -     # NEAR-MISS GUARD: no --deepen means no deepen line at all.
+  +     # NEAR-MISS GUARD: no --deepen means no deepen STATUS line -- asserted against the
+  +     # one shared prefix constant, never against the bare word "deepen", which the shallow
+  +     # warning legitimately uses to name its own remedy. The first version of this guard
+  +     # asserted the word and so failed a correct renderer: a mention is not a status line.
+        quiet = "\n".join(window_note(True, "59", DEEPEN_NOT_REQUESTED, ""))
+  -     check("unrequested deepen renders no deepen line", "deepen" not in quiet, quiet)
+  +     check(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 58s (3 ✓)
+
+--test is green. Let me verify the exit code cleanly and check a count discrepancy I noticed in that output:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RUN_VERDICTS = " -A 12 … ✓ (3ms)
+ ✓ (43ms)
+  2 tools completed in 43ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+RUN_VERDICTS is 6 because NO_TEST_CHANGE is decided without a run — 6 run verdicts + 1 census-side = the documented 7. No discrepancy. Gate 1 met.
+
+Now Step 2 — the reading. First the pre-deepen baseline so the before/after is real:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "shallow: $(git rev-parse -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (6ms)
+ ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+The LIMITS block goes to stderr and head truncated it. Let me capture properly, then run the deepen:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (89ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pre-deepen baseline captured. Now the actual deepen — timed, so I can back off if it's slow:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git remote -v 2>&1 | head -3; ec… ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+2.2 seconds — suspiciously fast for a 400-commit fetch. Let me read what actually happened rather than assume it worked:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 /tmp/census_400.txt  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "shallow now: $(git rev-par… ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 9ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The deepen took: 60 → 460 commits (+400) in 2.2s, and the behavioural denominator moved 0 → 11. That is the task's specified reading. Since the fetch cost is negligible (2.2s), let me compute what depth ≥20 would need rather than guess:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+~836 commits for 20 behavioural. The fetch is cheap, so let me buy that sample rather than record a blocked milestone:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time (timeout 560 python3 script… ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+15 behavioural at 910 commits — rate holding ~8%. Still short of 20. One more bounded deepen:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time (timeout 560 python3 script… ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+19 — one short. One more:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time (timeout 560 python3 script… ✓ (1.8s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+20 behavioural at depth 2010 — the ≥20 threshold is met. But note touch tests/*.rs went 91→92 while task commits went 304→419: the signal has saturated. Let me confirm that rather than assert it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "oldest commit touching tes… ✓ (18ms)
+ ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+Confirmed — the oldest tests/*.rs was added Day 137, so the last 115 task commits bought only +1 behavioural. The signal has saturated; depth is no longer the binding constraint. Now the positive control, run serially:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+Control passes: census still runs (exit 0), prints ATTEMPTED AND DID NOT TAKE ... exited 128 and disowns the window rather than falling silent. Now restore — serially:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cfg_backup.py scripts/co… ✓ (47ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "counterfactual_green" C… ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+The commit touches only the script — CLAUDE.md was not updated. Let me verify the feature works and confirm the doc gap.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e… ✓ (7ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.9s (2 ✓)
+
+Two decisive problems. Let me confirm the feature at least runs, to characterize accurately.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count… ✓ (90ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count… ✓ (91ms)
+  2 tools completed in 5.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have decisive evidence. Writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/unrequested deepen rend… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the contradiction is entirely internal to this diff. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 26s)
+
+**Verdict: FAIL**
+
+Two independent gates from the task description are unmet, both verified by running things rather than reading the diff:
+
+1. The diff's own self-tests fail (exit 1).
+```
+SELF-TESTS FAILED (1):
+  - unrequested deepen renders no deepen line
+```
+The near-miss guard added in this diff asserts "deepen" not in quiet, while window_note's shallow branch — added in the same diff at line 760 — emits `"Re-run with --deepen N to buy sample...". The guard and its subject contradict each other. The task made this an explicit gate: *"--test` — must stay ALL PASSED, exit 0"*, and the positive-control step required restoring and re-confirming exactly that. cargo test is structurally blind to it (the script is correctly not wired into cargo test), which is why the harness reported "Tests: PASS".
+
+2. CLAUDE.md was never touched, and the number was never recorded.
+git diff HEAD~1 --name-only returns only scripts/counterfactual_green.py. The task's Files: line named CLAUDE.md, Step 3 required the dated census, and Step 2 stated the deliverable outright: "The deliverable is the number, in either direction... it must be written down as such — a negative result's only job is to stop a retry, and it can only do that if it is recorded."
+
+Running the census myself shows the reading that went unrecorded:
+```
+window: 60 commits reachable from HEAD (60 total, shallow=yes)
+task commits found ..... 15
+NO_TEST_CHANGE ......... 11
+touch any tests/*.rs ... 4
+  of which REGISTER-ONLY  4
+  of which BEHAVIOURAL .. 0   <- the denominator that carries signal
+```
+Still shallow=yes at 60 commits — no evidence --deepen 400 (or 200, or 100) was ever run, so the task's central purpose (buy sample) produced no measured change, and the negative result that would stop a later session retrying is written down nowhere.
+
+What does work, for the record: --deepen is wired end-to-end, classify_deepen keeps its four states genuinely distinct with None shallowness not folded into False, the deepen runs before the log walk (avoiding the read-the-world-after-your-own-action defect), it never uses --unshallow, it only touches the object store rather than the working tree, and the shallow-window warning renders loudly and differently from the complete-log branch. The mechanism is sound — it is the gating and the recording that were skipped.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

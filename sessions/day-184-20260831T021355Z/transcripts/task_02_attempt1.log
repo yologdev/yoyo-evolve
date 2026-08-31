@@ -1,0 +1,191 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code involved, then make the first concrete change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TRUST_PROJECT\|set_trus…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_trust_project\|set_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1390,1440p' src/dispatch… ✓ (4ms)
+ ✓ (15ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Cd" src/d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '75,110p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dir_is_trusted\|trusted… ✓ (3ms)
+ ✓ (6ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1400..1440  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1085..1155 ✓ (0ms)
+ ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs:270..320  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1495..1555 ✓ (0ms)
+ ✓ (1ms)
+  10 tools completed in 13.6s (10 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_trust_project" test… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the first concrete change — the OnceLock → AtomicBool conversion that unblocks everything:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:79..103 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (12 → 130 lines)
+    /// home/XDG configs are never affected.
+  - static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  + ///
+  + /// **An `AtomicBool`, not a `OnceLock` (Day 184).** Trust is a property of a
+  + /// *directory*, and `/cd` moves the session to a different one — so the cell has
+  + /// to be re-settable in **both** directions or the startup answer silently governs
+  + /// a directory nobody ever answered for. It was write-once until Day 184, and
+  + /// `set_trust_project()` therefore no-opped on every call after the first.
+  + ///
+  + /// Deliberately **not** the same decision as `config::loaded_config_is_project_local`,
+  + /// which stays a write-once `OnceLock` on purpose: that one records *which file this
+  + /// session actually loaded*, a historical fact about an act already taken, and a later
+  + /// `cd` must not retroactively rewrite it. This cell records *what is trusted right
+  + /// now*, which is exactly the thing a `cd` changes. Do not "restore" the `OnceLock`
+  + /// here on the strength of that comment over there.
+  + static TRUST_PROJECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    
+    /// Enable the opt-in project-config trust (`--trust-project`).
+    pub fn set_trust_project() {
+  -     let _ = TRUST_PROJECT.set(true);
+  ... (113 more lines)
+ ✓ (14.9s)
+    /// home/XDG configs are never affected.
+  - static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  + ///
+  + /// **An `AtomicBool`, not a `OnceLock` (Day 184).** Trust is a property of a
+  + /// *directory*, and `/cd` moves the session to a different one — so the cell has
+  + /// to be re-settable in **both** directions or the startup answer silently governs
+  + /// a directory nobody ever answered for. It was write-once until Day 184, and
+  + /// `set_trust_project()` therefore no-opped on every call after the first.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 49.2s (2 ✓)
+
+Exactly the rule — definitions without consumers. Wiring the call site now:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (8 → 24 lines)
+                        Ok(target) => match std::env::set_current_dir(&target) {
+                            Ok(()) => {
+  +                             // Trust is per-directory, and the startup answer belonged to
+  +                             // the *startup* directory. Re-ask the user-level store for the
+  +                             // directory we just moved into, in the safe direction only:
+  +                             // the store may grant, a project-local file never can, and a
+  +                             // `--trust-project` flag does not follow the user here (Day 184).
+  +                             let change = crate::cli::reevaluate_trust_on_cd(&target);
+                                println!("  {}", target.display());
+  +                             if !crate::format::is_quiet() {
+  +                                 if let Some(msg) = crate::cli::trust_changed_on_cd_message(
+  +                                     &target,
+  +                                     change.was_trusted,
+  +                                     change.now_trusted,
+  +                                     crate::format::is_plain_output(),
+  +                                 ) {
+  +                                     eprintln!("{YELLOW}{msg}{RESET}");
+  +                                 }
+  +                             }
+                                println!(
+  ... (2 more lines)
+ ✓ (14.9s)
+                        Ok(target) => match std::env::set_current_dir(&target) {
+                            Ok(()) => {
+  +                             // Trust is per-directory, and the startup answer belonged to
+  +                             // the *startup* directory. Re-ask the user-level store for the
+  +                             // directory we just moved into, in the safe direction only:
+  +                             // the store may grant, a project-local file never can, and a
+  +                             // `--trust-project` flag does not follow the user here (Day 184).
+  +                             let change = crate::cli::reevaluate_trust_on_cd(&target);
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (7 → 0 lines)
+  - impl TrustChange {
+  -     /// Whether the answer moved. `false` is the common case and prints nothing.
+  -     pub fn changed(self) -> bool {
+  -         self.was_trusted != self.now_trusted
+  -     }
+  - }
+  - 
+ ✓ (2m 9s)
+  - impl TrustChange {
+  -     /// Whether the answer moved. `false` is the common case and prints nothing.
+  -     pub fn changed(self) -> bool {
+  -         self.was_trusted != self.now_trusted
+  -     }
+  - }
+  - 
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | tai… ✓ (1m 14s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 32s (2 ✓)
+
+Green. Now the tests — emission point, both directions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5395,5432p' src/cli.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 146 lines)
+  +     /// Restore the trust cell around a test that writes it, so one test can never
+  +     /// hand its answer to the ~5,000 tests scheduled after it in the same binary.
+  +     fn with_trust_state<T>(start: bool, f: impl FnOnce() -> T) -> T {
+  +         let prior = is_trust_project();
+  +         set_trust_project_to(start);
+  +         let out = f();
+  +         set_trust_project_to(prior);
+  +         out
+  +     }
+  + 
+  +     #[test]
+  +     #[serial_test::serial]
+  +     fn cd_reevaluates_trust_from_the_store_in_both_directions() {
+  +         // Emission point: the value every consumer reads (`is_trust_project()`,
+  +         // which `gate_goal_verify` calls at *call* time), never a helper below it.
+  +         // Fabricated paths and an injected lookup: no store, no HOME, no cwd move.
+  +         let listed = std::path::Path::new("/home/u/trusted-proj");
+  +         let unlisted = std::path::Path::new("/tmp/strangers-repo");
+  +         let store = |d: &std::path::Path| d == listed;
+  + 
+  ... (126 more lines)
+ ✓ (2m 8s)
+  +     /// Restore the trust cell around a test that writes it, so one test can never
+  +     /// hand its answer to the ~5,000 tests scheduled after it in the same binary.
+  +     fn with_trust_state<T>(start: bool, f: impl FnOnce() -> T) -> T {
+  +         let prior = is_trust_project();
+  +         set_trust_project_to(start);
+  +         let out = f();
+  +         set_trust_project_to(prior);
+  +         out
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,96p' tests/global_sta… ✓ (3ms)
+  3 tools completed in 3m 28s (3 ✓)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/global_state_races.rs (1 → 2 lines)
+        "set_trust_project",
+  +     "set_trust_project_to",
+ ✓ (1m 42s)
+        "set_trust_project",
+  +     "set_trust_project_to",
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test global_state_r… ✓ (4.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (161ms)
+  3 tools completed in 1m 53s (3 ✓)
+
+
+I paste the register line the gate itself printed, rather than hand-typing it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '("src/cli.rs", 5349)\|(… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 5349),
+  +     ("src/cli.rs", 5604),
+ ✓ (1m 43s)
+  -     ("src/cli.rs", 5349),
+  +     ("src/cli.rs", 5604),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (188ms)
+  3 tools completed in 1m 48s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,86 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- CLAUDE.md | h… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TRUST_PROJECT\|is_trus… ✓ (14ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 184" CLAUDE.md | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1 --stat | tail -8 ✓ (7ms)
+ ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 35.3s (6 ✓)
+
+CLAUDE.md was not touched by this commit — the two "Day 184" hits belong to Task 1's commit. One focused check on staleness:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "set_trust_project()\` i… ✓ (11ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evidence is complete. CLAUDE.md — explicitly listed in Files:, given its own "Step 3", and called "the required doc" — was not touched by this commit, and the existing cli.rs bullet is now stale in exactly the way this repo documents as costly.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 28s)
+
+**Verdict: FAIL** — written to session_plan/eval_task_2.md.
+
+The implementation itself is genuinely good work, and I want to be clear about that: the OnceLock → `AtomicBool conversion keeps is_trust_project() and every existing caller byte-identical, loaded_config_is_project_local` was correctly left write-once with the distinction spelled out at the new atomic, the re-evaluation consults the store alone (so the flag can't follow a cd and widen a security control), set_current_dir stayed at the one call site with no cwd move in any test, and the test set includes the near-miss guard plus the assert_eq!(…, None) regression pin the task asked for. Both out-of-band registers — GLOBAL_SETTERS and the 5349 → 5604 module-size line — were updated in the same commit rather than left to fail later.
+
+The failure is doc_sync, and it isn't a formality:
+
+• CLAUDE.md is named in Files:, has its own Step 3, and the task states outright "CLAUDE.md is the required doc." git show --stat HEAD shows four files, none of them CLAUDE.md, and git status is clean — so it wasn't deferred to an uncommitted edit. The two Day 184 strings in the file belong to Task 1's commit 0be047ed.
+• The omission actively leaves a false sentence in the file that is re-injected as authoritative context every session: the cli.rs bullet still says set_trust_project() is called from "exactly **one** site in `parse_args`", and /cd is now a second writer through set_trust_project_to. That is the stale-claim shape this repo's own history records as having cost eight sessions on src/gasp.rs.
+• Nothing records the OnceLock → AtomicBool conversion or why loaded_config_is_project_local must stay write-once — the exact "restore" the task predicted a later reader would attempt on the strength of the comment one cell over.
+• The required stated limit — that /cd still reloads no config, permissions, dir_restrictions, hooks, MCP servers or skills, so the old directory's fence stays in force — appears nowhere, so the trust half now reads as a complete /cd reload fix.
+
+The remedy is one paragraph on the cli.rs bullet plus correcting the "exactly one site" clause; the code needs no changes. I also did not find the follow-up issue for the remaining /cd reload gaps that the task's out-of-scope section required, though I judged that on doc_sync rather than raising it as a separate line.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My evaluator work is complete — the verdict is written and the instructions are explicit: write the verdict and stop, do not modify any code. Let me do one verification that my own deliverable parses against the format rules the harness enforces, then stop.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== file exists, line coun… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Deliverable verified and complete. My evaluation is finished — the instructions say to stop after writing the verdict, and I have not modified any code.
+
+Final state: session_plan/eval_task_2.md, 6 lines, format-clean — one Verdict: line, a reason, and all four Checked: lines with valid verdict words. Zero angle-bracket placeholder leaks (the exit code 1 on that last command is grep -c reporting 0 matches, which is the passing outcome).
+
+Verdict: FAIL, driven by doc_sync.
+
+The honest summary of what I found: the code is solid work that follows the task closely — the OnceLock → AtomicBool conversion preserves is_trust_project()'s signature and every existing caller, loaded_config_is_project_local was correctly left write-once, re-evaluation consults the store alone so a --trust-project flag can't follow a cd and widen a security control, set_current_dir stayed at the single call site with no cwd move in any test, and both out-of-band registers (GLOBAL_SETTERS, and the module-size line at 5349 → 5604) were updated in the same commit rather than left to fail later.
+
+What sank it is that CLAUDE.md — named in Files:, given its own Step 3, and called "the required doc" — is absent from the commit, with a clean working tree confirming it wasn't merely uncommitted. That isn't a formality here for three reasons I verified rather than assumed: the cli.rs bullet still asserts `set_trust_project() is called from "exactly **one** site in parse_args`", which this diff falsified; nothing records the atomic conversion or why the sibling cell must stay write-once, which is precisely the "restore" the task predicted a later reader would attempt; and the required stated limit (that /cd still reloads no config, permissions, hooks, MCP or skills) appears nowhere, so the trust fix reads as a complete /cd reload.
+
+Two things I'll flag as scope notes on my own verdict rather than as additional charges: the fix is one paragraph plus a corrected clause — the code needs no changes — and I also did not find the follow-up issue for the remaining /cd reload gaps that the out-of-scope section required, but I judged that under doc_sync rather than inflating it into a separate failure line.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+There is no remaining work — the evaluation is complete, and continuing would mean violating the task's own stop conditions.
+
+Status: done.
+
+• Verdict written to `session_plan/eval_task_2.md (6 lines, format-verified: one Verdict: line, a reason, four Checked:` lines, no placeholder leaks).
+• Verdict: FAIL, forced by doc_sync — CLAUDE.md was named in Files:, given its own Step 3, and called "the required doc", but is absent from the commit with a clean working tree confirming it wasn't just uncommitted. The omission leaves a now-false claim in the file (set_trust_project() "called from exactly one site in parse_args") plus no record of the OnceLock → AtomicBool conversion and no stated limit.
+• intent_alignment, forgotten_touchpoints, and product_surface all passed — the code half is correct and complete.
+
+The remaining instructions are prohibitions, not tasks: don't re-run the suite, don't keep searching for more reasons, don't modify any code, then STOP. I've verified the deliverable twice already; a third pass would be the "keep searching" behaviour the brief explicitly warns against, and any code change would be out of bounds for an evaluator.
+
+The fix for the failing item belongs to the implementing agent, not to me: one paragraph on the cli.rs bullet covering the atomic conversion, why loaded_config_is_project_local stays write-once, the per-directory rule, the preserved fail-safe direction, and the limit — plus correcting the stale "exactly one site" clause. No source changes needed.
+
+Stopping here.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

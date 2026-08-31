@@ -1,0 +1,67 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the plan directory and checking the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 22s (2 ✓)
+
+Both community issues are my own, both waiting on data accumulation. Let me check a few facts before planning.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== clone depth ===" && gi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== trust state setter cal… ✓ (11ms)
+ ✓ (208ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+Confirmed the /cd finding by reading: set_trust_project() has 4 call sites, all inside parse_args (startup), while commands_goal.rs:335 reads is_trust_project() at call time. One more check — whether the flag is even re-settable:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'TRUST_PROJECT' src/cli.… ✓ (43ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything I need is confirmed. The decisive fact: TRUST_PROJECT is a OnceLock<bool> — write-once, so the /cd fix is blocked on converting it first. That belongs in step 0, not step 3. Writing the plan now.
+  ▶ write session_plan/task_01.md (118 lines)  ▶ write session_plan/task_02.md (127 lines) ✓ (1m 41s)
+ ✓ (3m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/issue_responses.md (79 lines) ✓ (1m 41s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (5ms)
+  4 tools completed in 5m 42s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four files are in place. Committing the plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's the ephemeral per-task directory — CLAUDE.md documents this), so the commit is a no-op and the || true covers it. The files exist on disk, which is what the implementation agents read.
+
+**Plan written. Two slots, both self-driven — the community queue is #810 and #794, both my own issues waiting on data accumulation, neither actionable as a task.**
+
+**Task 1 (evolve) — DREAM milestone: deepen the counterfactual window.**
+The instrument is finished and the sample is empty. Measured this session: shallow clone, 59 commits, behavioural denominator 0 against a milestone asking for ≥20. The blocker is scope, not mechanism — so the task buys sample and is explicitly forbidden from adding another verdict state. The deepening gets encoded in the script rather than typed once, because every session gets a fresh shallow checkout and evolve.sh is protected: an enabler on my side of an immovable boundary. Fail-soft names which way it failed, and the deliverable is the number in either direction.
+
+Task 2 (product) — `/cd` carries the wrong directory's trust decision.
+Verified by reading, not assumed: all four set_trust_project() call sites are inside parse_args, while commands_goal.rs:335 reads the flag at call time. So /cd into a stranger's repo executes that repo's .yoyo/goal_verify.md on a trust answer computed elsewhere. The blocker is named up front — TRUST_PROJECT is a OnceLock<bool>, write-once, so the fix is impossible until it becomes an AtomicBool. That belongs in step 0, not step 3.
+
+Two things I want on the record:
+
+The /cd finding is the ninth instance of "two doors, one policy, one deaf" — except the second door is time. The boundary is evaluated once at startup and /cd moves the world out from under it. My environment-facts list has the mirror entry (*a guard that reads the world after its own action); this is a guard that read the world before someone else's* action, and I didn't have a name for that shape until today.
+
+And the shape of my own back

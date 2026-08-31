@@ -1,0 +1,296 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the script to understand its census surface.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --is-shallow-repos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "argparse\|add_argument\… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 640,760p scripts/counterf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 895,1060p scripts/counter… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 596,660p scripts/counterf… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 49.4s (5 ✓)
+
+Now I have the shape. Let me add the pure decision half first (the repo's discipline: pure function + I/O at one call site).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (12 → 121 lines)
+            "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
+            "not_addressable": sum(1 for r in rows if not r.addressable),
+        }
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # Window depth. The census denominator is bounded by how much history is reachable, and
+  + # on this harness that is a per-run fact: `scripts/evolve.sh` checks out shallow and is
+  + # protected, so a `git fetch --deepen` typed by hand is gone by the next session. The
+  + # enabler therefore lives HERE, on my side of that boundary (the standing "an enabler on
+  + # my side of every immovable boundary" rule), rather than in an invocation I retype --
+  + # "any token added to an invocation purely to make it run is an unfiled bug report".
+  + # --------------------------------------------------------------------------------------
+  + 
+  + # Four states, and none is folded into a neighbour. "I did not ask", "there was nothing
+  + # to ask for", "I asked and got more" and "I asked and got nothing" are four different
+  + # facts ABOUT THE DENOMINATOR BELOW, and only the last one means the reported window is
+  + # smaller than the one requested. Folding DID_NOT_TAKE into TOOK would be "could not
+  + # check" reading as "checked; clean" inside the one instrument built to stop me
+  + # over-claiming.
+  ... (95 more lines)
+ ✓ (1m 41s)
+            "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
+            "not_addressable": sum(1 for r in rows if not r.addressable),
+        }
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # Window depth. The census denominator is bounded by how much history is reachable, and
+  + # on this harness that is a per-run fact: `scripts/evolve.sh` checks out shallow and is
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Pure half landed. Now the I/O half — deepen_repo, with the fetch bounded and never --unshallow.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 786,800p scripts/counterf… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 52 lines)
+        if rc != 0:
+            return os.getcwd()
+        return out.strip().splitlines()[0] if out.strip() else os.getcwd()
+  + 
+  + 
+  + def commit_count(root: str):
+  +     """Commits reachable from HEAD, or None if the count could not be read."""
+  +     rc, out = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
+  +     if rc != 0:
+  +         return None
+  +     try:
+  +         return int(out.strip().splitlines()[0])
+  +     except (ValueError, IndexError):
+  +         return None
+  + 
+  + 
+  + def is_shallow_repo(root: str):
+  +     """True / False / None -- None means the probe itself failed, and stays distinct."""
+  +     rc, out = run_cmd(["git", "-C", root, "rev-parse", "--is-shallow-repository"])
+  +     if rc != 0:
+  ... (30 more lines)
+ ✓ (1m 42s)
+        if rc != 0:
+            return os.getcwd()
+        return out.strip().splitlines()[0] if out.strip() else os.getcwd()
+  + 
+  + 
+  + def commit_count(root: str):
+  +     """Commits reachable from HEAD, or None if the count could not be read."""
+  +     rc, out = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 6 lines)
+    DEFAULT_TIMEOUT_SECS = 1800
+  + 
+  + # Ceiling for one bounded `git fetch --deepen`. Generous relative to the fetch it guards
+  + # (a few hundred commits of this repo) and finite on purpose: an instrument that can hang
+  + # is an instrument nobody runs.
+  + DEEPEN_TIMEOUT_SECS = 600
+ ✓ (1m 41s)
+    DEFAULT_TIMEOUT_SECS = 1800
+  + 
+  + # Ceiling for one bounded `git fetch --deepen`. Generous relative to the fetch it guards
+  + # (a few hundred commits of this repo) and finite on purpose: an instrument that can hang
+  + # is an instrument nobody runs.
+  + DEEPEN_TIMEOUT_SECS = 600
+  3 tools completed in 3m 45s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wire the depth facts through collect_census → render_census.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (9 → 9 lines)
+        rc3, out3 = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
+        depth = out3.strip() if rc3 == 0 else "?"
+  -     rc4, out4 = run_cmd(["git", "-C", root, "rev-parse", "--is-shallow-repository"])
+  -     shallow = out4.strip() == "true" if rc4 == 0 else False
+  +     shallow = is_shallow_repo(root)
+        window = (
+            f"{len(all_lines)} commits reachable from HEAD "
+  -         f"({depth} total, shallow={'yes' if shallow else 'no'})"
+  +         f"({depth} total, shallow="
+  +         f"{'yes' if shallow else ('no' if shallow is False else 'UNKNOWN')})"
+        )
+  -     return rows, window, ""
+  +     return rows, window, shallow, depth, ""
+ ✓ (1m 42s)
+        rc3, out3 = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
+        depth = out3.strip() if rc3 == 0 else "?"
+  -     rc4, out4 = run_cmd(["git", "-C", root, "rev-parse", "--is-shallow-repository"])
+  -     shallow = out4.strip() == "true" if rc4 == 0 else False
+  +     shallow = is_shallow_repo(root)
+        window = (
+            f"{len(all_lines)} commits reachable from HEAD "
+  -         f"({depth} total, shallow={'yes' if shallow else 'no'})"
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|^def collect_census(ro… ✓ (6ms)
+  2 tools completed in 1m 45s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 849,858p scripts/counterf… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 10 lines)
+  - def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, str]:
+  -     """Walk the log, classify each task commit. Returns (rows, window, error)."""
+  + def collect_census(root: str, limit: int | None):
+  +     """Walk the log, classify each task commit.
+  + 
+  +     Returns (rows, window, shallow, depth, error). `shallow` is THREE-VALUED (True /
+  +     False / None) and is carried out rather than collapsed here, because the depth of the
+  +     window is a finding about the denominator, not a decoration on the header.
+  +     """
+        rc, out = run_cmd(["git", "-C", root, "log", "--format=%H%x09%s"], timeout=60)
+        if rc != 0:
+  -         return [], "", f"git log failed (rc={rc})"
+  +         return [], "", None, "?", f"git log failed (rc={rc})"
+ ✓ (1m 40s)
+  - def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, str]:
+  -     """Walk the log, classify each task commit. Returns (rows, window, error)."""
+  + def collect_census(root: str, limit: int | None):
+  +     """Walk the log, classify each task commit.
+  + 
+  +     Returns (rows, window, shallow, depth, error). `shallow` is THREE-VALUED (True /
+  +     False / None) and is carried out rather than collapsed here, because the depth of the
+  +     window is a finding about the denominator, not a decoration on the header.
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (6 → 7 lines)
+  - def render_census(rows, summary, window, limit) -> str:
+  + def render_census(rows, summary, window, limit, note=None) -> str:
+        out = []
+        scope = f"last {limit} task commits" if limit else "all reachable task commits"
+        out.append(f"counterfactual-green census over {scope}")
+        out.append(f"  window ....................... {window}")
+  +     out.extend(note or [])
+        out.append("")
+ ✓ (1m 42s)
+  - def render_census(rows, summary, window, limit) -> str:
+  + def render_census(rows, summary, window, limit, note=None) -> str:
+        out = []
+        scope = f"last {limit} task commits" if limit else "all reachable task commits"
+        out.append(f"counterfactual-green census over {scope}")
+        out.append(f"  window ....................... {window}")
+  +     out.extend(note or [])
+        out.append("")
+  3 tools completed in 3m 32s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "add_argument\|rows, win… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1147,1152p scripts/counte… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 12 lines)
+        parser.add_argument(
+            "--limit", type=int, metavar="N", help="census: only the last N task commits"
+  +     )
+  +     parser.add_argument(
+  +         "--deepen",
+  +         type=int,
+  +         metavar="N",
+  +         help=(
+  +             "before the census, fetch N more commits of history if the clone is shallow "
+  +             "(bounded on purpose -- never --unshallow). Fails soft and says so."
+  +         ),
+        )
+ ✓ (1m 40s)
+        parser.add_argument(
+            "--limit", type=int, metavar="N", help="census: only the last N task commits"
+  +     )
+  +     parser.add_argument(
+  +         "--deepen",
+  +         type=int,
+  +         metavar="N",
+  +         help=(
+  ... (4 more lines)
+  3 tools completed in 1m 46s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (22 → 29 lines)
+        if args.census:
+  -         rows, window, err = collect_census(root, args.limit)
+  +         # Deepen BEFORE walking the log, or the census measures the old window and
+  +         # reports the new depth -- a guard that reads the world after its own action.
+  +         deepen_state, deepen_detail = DEEPEN_NOT_REQUESTED, ""
+  +         if args.deepen is not None:
+  +             deepen_state, deepen_detail = deepen_repo(root, args.deepen)
+  +         rows, window, shallow, depth, err = collect_census(root, args.limit)
+            if err:
+                print(f"COULD NOT CHECK: {err}", file=sys.stderr)
+                print(LIMITS, file=sys.stderr)
+                return 1
+            summary = census_summary(rows)
+  +         note = window_note(shallow, depth, deepen_state, deepen_detail)
+            # ANTI-VACUOUS, asserted first: a scan finding no task commits at all must fail
+            # loudly rather than report "0 addressable". A scanner that finds nothing and
+            # passes is this very defect wearing the opposite sign, and it is quieter.
+  ···
+                    "scripts/evolve.sh's commit subjects.",
+                    file=sys.stderr,
+  ... (7 more lines)
+ ✓ (1m 41s)
+        if args.census:
+  -         rows, window, err = collect_census(root, args.limit)
+  +         # Deepen BEFORE walking the log, or the census measures the old window and
+  +         # reports the new depth -- a guard that reads the world after its own action.
+  +         deepen_state, deepen_detail = DEEPEN_NOT_REQUESTED, ""
+  +         if args.deepen is not None:
+  +             deepen_state, deepen_detail = deepen_repo(root, args.deepen)
+  +         rows, window, shallow, depth, err = collect_census(root, args.limit)
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests for the new pure half.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1690,1706p scripts/counte… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (8 → 74 lines)
+        check("render names the signal denominator", "BEHAVIOURAL" in out, out[:300])
+        check("render names the register tier", "REGISTER-ONLY" in out, out[:300])
+        check("render names the window", "11 commits" in out, out[:300])
+  + 
+  +     # -- window depth: four deepen states, none folded into a neighbour -------------------
+  +     # The success test is MOVEMENT, not exit status: a fetch can exit 0 and buy nothing.
+  +     st, det = classify_deepen(True, 0, 59, 400)
+  +     check("deepen that moved the count TOOK", st == DEEPEN_TOOK, (st, det))
+  +     check("deepen detail names both counts", "59" in det and "400" in det, det)
+  +     check("deepen detail names the gain", "+341" in det, det)
+  + 
+  +     st, det = classify_deepen(True, 0, 59, 59)
+  +     check("exit 0 with no movement DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, (st, det))
+  +     check("no-movement detail says so", "did not move" in det, det)
+  + 
+  +     st, det = classify_deepen(True, 128, 59, 59)
+  +     check("non-zero exit DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, (st, det))
+  +     check("failure detail names the exit status", "128" in det, det)
+  + 
+  +     # An unreadable count is not evidence of movement either.
+  ... (52 more lines)
+ ✓ (1m 42s)
+        check("render names the signal denominator", "BEHAVIOURAL" in out, out[:300])
+        check("render names the register tier", "REGISTER-ONLY" in out, out[:300])
+        check("render names the window", "11 commits" in out, out[:300])
+  + 
+  +     # -- window depth: four deepen states, none folded into a neighbour -------------------
+  +     # The success test is MOVEMENT, not exit status: a fetch can exit 0 and buy nothing.
+  +     st, det = classify_deepen(True, 0, 59, 400)
+  +     check("deepen that moved the count TOOK", st == DEEPEN_TOOK, (st, det))
+  ... (13 more lines)
+  2 tools completed in 2m 4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
