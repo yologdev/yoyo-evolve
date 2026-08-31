@@ -679,6 +679,14 @@ DEEPEN_ALREADY_DEEP = "already-deep"
 DEEPEN_TOOK = "took"
 DEEPEN_DID_NOT_TAKE = "attempted-did-not-take"
 
+# The prefix every deepen STATUS line carries, stated ONCE so the renderer and the
+# near-miss guard that checks for its absence cannot drift apart. Two hand-written copies
+# agree the day they are written and diverge forever after -- and the first version of
+# that guard asserted the bare word "deepen" was absent, which collided with the shallow
+# warning's own remedy sentence ("re-run with --deepen N") and made a correct renderer
+# fail a test written against a different property. A status line is not a mention.
+DEEPEN_STATUS_PREFIX = "  deepen ....................... "
+
 
 def classify_deepen(is_shallow, rc, before, after) -> tuple[str, str]:
     """Did the bounded history fetch actually buy sample? Returns (state, detail).
@@ -734,18 +742,15 @@ def window_note(shallow, depth, deepen_state, deepen_detail) -> list[str]:
     """
     out = []
     if deepen_state == DEEPEN_TOOK:
-        out.append(f"  deepen ....................... TOOK: {deepen_detail}")
+        out.append(f"{DEEPEN_STATUS_PREFIX}TOOK: {deepen_detail}")
     elif deepen_state == DEEPEN_DID_NOT_TAKE:
-        out.append(
-            f"  deepen ....................... ATTEMPTED AND DID NOT TAKE: "
-            f"{deepen_detail}"
-        )
+        out.append(f"{DEEPEN_STATUS_PREFIX}ATTEMPTED AND DID NOT TAKE: {deepen_detail}")
         out.append(
             "                                 the window below is the one that already "
             "existed, not the one asked for."
         )
     elif deepen_state == DEEPEN_ALREADY_DEEP:
-        out.append(f"  deepen ....................... NOT NEEDED: {deepen_detail}")
+        out.append(f"{DEEPEN_STATUS_PREFIX}NOT NEEDED: {deepen_detail}")
 
     if shallow:
         out.append(
@@ -1759,9 +1764,32 @@ def run_self_tests():
     check("failed deepen disowns the window", "not the one asked for" in failed, failed)
     took = "\n".join(window_note(False, "400", DEEPEN_TOOK, "59 -> 400 commits (+341)"))
     check("successful deepen reports the gain", "TOOK" in took and "+341" in took, took)
-    # NEAR-MISS GUARD: no --deepen means no deepen line at all.
+    # NEAR-MISS GUARD: no --deepen means no deepen STATUS line -- asserted against the
+    # one shared prefix constant, never against the bare word "deepen", which the shallow
+    # warning legitimately uses to name its own remedy. The first version of this guard
+    # asserted the word and so failed a correct renderer: a mention is not a status line.
     quiet = "\n".join(window_note(True, "59", DEEPEN_NOT_REQUESTED, ""))
-    check("unrequested deepen renders no deepen line", "deepen" not in quiet, quiet)
+    check(
+        "unrequested deepen renders no deepen status line",
+        DEEPEN_STATUS_PREFIX not in quiet,
+        quiet,
+    )
+    # ...and none of the three verdict words leaks either, so the guard cannot pass by
+    # the prefix merely being reworded out from under it.
+    check(
+        "unrequested deepen renders no deepen verdict",
+        not any(w in quiet for w in ("TOOK", "DID NOT TAKE", "NOT NEEDED")),
+        quiet,
+    )
+    # The other side of the same discriminator: when a deepen IS requested, the status
+    # line must be present -- a guard checked only where it fires is vacuous green.
+    for state in (DEEPEN_TOOK, DEEPEN_DID_NOT_TAKE, DEEPEN_ALREADY_DEEP):
+        loud = "\n".join(window_note(True, "59", state, "detail"))
+        check(f"requested deepen renders a status line ({state})",
+              DEEPEN_STATUS_PREFIX in loud, loud)
+    # The shallow warning DOES name its remedy -- that is the behaviour the old guard
+    # mistook for a defect, so it is pinned rather than left to chance.
+    check("shallow window names --deepen as the remedy", "--deepen" in quiet, quiet)
 
     # The note reaches the rendered census (the string an operator actually reads).
     rendered = render_census(rows, s, "11 commits", None, shallow_lines)
