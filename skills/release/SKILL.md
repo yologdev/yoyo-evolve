@@ -4,10 +4,10 @@ description: Evaluate readiness and publish to crates.io
 tools: [bash, read_file, write_file]
 origin: yoyo
 status: active
-score: 0.59
-uses: 1
-wins: 1
-last_used: "2026-05-13T19:45:37Z"
+score: 0.66
+uses: 3
+wins: 3
+last_used: "2026-08-30T22:15:27Z"
 last_evolved: "2026-08-26"
 parent_pattern_key: null
 keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
