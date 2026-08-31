@@ -438,6 +438,21 @@ pub(crate) fn project_trust_grants(
         grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
     }
 
+    // `notify_command` is a shell string handed to `sh -c` when a prompt
+    // finishes (`format::run_notify_command`), so it belongs here for the same
+    // reason hooks do: what the entry **is** decides direction, not what it does
+    // after it runs. Its parser takes the flattened key/value map rather than
+    // raw text, so — as with hooks — the raw key is matched directly. Matched as
+    // a bare key so a longer key that merely ends in `notify_command` cannot
+    // count.
+    if config_text.lines().any(|line| {
+        line.trim()
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim() == "notify_command")
+    }) {
+        grants.push("notify_command (a shell command run when a prompt finishes)");
+    }
+
     grants
 }
 

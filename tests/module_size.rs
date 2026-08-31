@@ -151,7 +151,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // (`--trust-project-always`), its two announcement builders, and their tests.
     // Acknowledged, not absorbed: this crossed the 100-line drift grace band, which
     // is the gate working as designed.
-    ("src/cli.rs", 5604),
+    // Day 184: 5604 -> 5813 (+209), the fifth gate on the project-config trust
+    // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
+    // and their table tests. A project-local `notify_command` is arbitrary shell
+    // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
+    ("src/cli.rs", 5818),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
@@ -229,7 +233,13 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     ("src/config.rs", 3769), // Day 179: +283 for the [model_pricing] reader and its tests (#833).
     // Day 165: 2307 -> 2296. Not a shrink I made this session — the entry was
     // stale-high, and branch 3 (below-ceiling is fatal) is what finally said so.
-    ("src/dispatch.rs", 2321),
+    // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
+    // is empty; this is pre-existing drift the gate had been warning about, from the
+    // `/cd` trust re-evaluation call site (`reevaluate_trust_on_cd` +
+    // `trust_changed_on_cd_message`, ~:1423). Paid here rather than absorbed: Day 174
+    // measured 11 entries carrying +1 to +480 because this branch absorbed drift for
+    // eight days, and a warning nobody pays is how the third accumulation starts.
+    ("src/dispatch.rs", 2337),
     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
     // grace band, for Python triple-quoted strings carried across lines (the

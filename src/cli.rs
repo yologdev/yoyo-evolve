@@ -1198,6 +1198,80 @@ pub(crate) fn project_hook_refusal_message(
     msg
 }
 
+/// Outcome of the project-local `notify_command` trust gate.
+///
+/// Carries the command that survives plus the one that was refused, so the
+/// refusal can be announced with its command named instead of happening
+/// silently — the same shape as [`HookGateOutcome`].
+pub(crate) struct NotifyGateOutcome {
+    pub command: Option<String>,
+    pub refused: Option<String>,
+}
+
+/// Gate the `notify_command` declared by a project-local config.
+///
+/// `notify_command`'s value is a shell command that `format::run_notify_command`
+/// hands to `Command::new("sh").arg("-c")` (`cmd /C` on Windows) when a prompt
+/// finishes, so cloning a stranger's repo whose `.yoyo.toml` carries
+/// `notify_command = "…"` used to run that string with no prompt and no display
+/// of what was about to run. Refused **only** when the loaded config is
+/// project-local and `--trust-project` was not passed; every other input is a
+/// byte-identical pass-through (home/XDG configs, trusted runs, and — the case
+/// that is essentially every user — repos with no `notify_command` at all).
+///
+/// **This is #820 one key over, and it is gated for #820's exact reason.** The
+/// Day-166 direction rule (#749 item 3) keeps a project's `permissions.deny`
+/// and `dir_restrictions` verbatim because those only ever *narrow* yoyo — but
+/// they are **declarative** values yoyo interprets. A `notify_command`'s entire
+/// content is **executable code**, so direction is decided by what the entry
+/// **is**, not by what it does after it runs. Do not "correct" this back on the
+/// grounds that a notification is harmless: the string is arbitrary shell and
+/// yoyo cannot know what it does.
+///
+/// **The 3-second `LONG_PROMPT_THRESHOLD_SECS` bar is not a gate and must not be
+/// mistaken for one** (measured Day 184: two runs under it did not fire, a 27s
+/// run did). It *delays* execution; it never prevents it.
+pub(crate) fn gate_project_notify_command(
+    cmd: Option<String>,
+    project_local: bool,
+    trusted: bool,
+) -> NotifyGateOutcome {
+    // Home/XDG configs and explicitly trusted runs pass through untouched. An
+    // absent `notify_command` also lands here as `None`/`None`, which is
+    // essentially every user and the whole regression surface.
+    if !project_local || trusted {
+        return NotifyGateOutcome {
+            command: cmd,
+            refused: None,
+        };
+    }
+    // Project-local and not vouched for: refuse. `cmd == None` yields
+    // `refused: None` naturally — nothing was declared, so nothing is refused.
+    NotifyGateOutcome {
+        command: None,
+        refused: cmd,
+    }
+}
+
+/// The stderr block shown when a project-local config's `notify_command` is refused.
+///
+/// Pure and ANSI-free (the caller applies color), so the promise a user actually
+/// reads is pinned by a test rather than only the boolean underneath it. The
+/// command is echoed **verbatim** — a user cannot judge what they cannot see —
+/// through the same `hook_command_for_display` cap its sibling uses, so the cut
+/// budget has one statement rather than a second number to drift against.
+/// `plain` drops the glyph and the em dashes for screen-reader output.
+pub(crate) fn project_notify_refusal_message(cmd: &str, plain: bool) -> String {
+    let marker = if plain { "" } else { "⚠ " };
+    format!(
+        "{marker}A project-local .yoyo.toml asked to run a shell command when a prompt finishes. \
+yoyo did not run it:\n    notify_command = {}\n  This config came with the project, not from \
+you. Nothing was executed.\n  Re-run with --trust-project to run it this session, or use \
+--safe-mode to disable\n  all project customizations.",
+        hook_command_for_display(cmd)
+    )
+}
+
 /// The note printed when `--trust-project-always` records this directory.
 ///
 /// Names the directory recorded **and the full path of the store file**, because that
@@ -1504,11 +1578,11 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     {
         crate::format::disable_bell();
     }
-    // Opt-in user notification command: inert unless `notify_command` is set
-    // in the config file (product-safe default).
-    crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
-        &file_config,
-    ));
+    // NOTE: `notify_command` used to be installed here. It moved down beside the
+    // other project-config gates, because it is executable shell and must be
+    // gated — and the gate reads `is_trust_project()`, which is not decided
+    // until the trust prompt runs further below. Installing it here would refuse
+    // a command the user is about to say "yes" to.
     if !args.iter().any(|a| a == "--no-color")
         && std::io::stdout().is_terminal()
         && crate::config::parse_no_color_from_config(&file_config)
@@ -1979,6 +2053,25 @@ directory ({e}); this run is trusted, later runs will not be."
         eprintln!("{YELLOW}{msg}{RESET}");
     }
     let shell_hooks = gated_hooks.hooks;
+
+    // Opt-in user notification command: inert unless `notify_command` is set in
+    // the config file (product-safe default). Gated on the same boundary as the
+    // hooks above and for the same reason — the value is arbitrary shell handed
+    // to `sh -c` when a prompt finishes, so a stranger's repo must not install
+    // one silently. Placed *here*, after the trust prompt, so a user who answers
+    // "yes" gets the command they just approved.
+    let gated_notify = gate_project_notify_command(
+        crate::config::parse_notify_command_from_config(&file_config),
+        crate::config::loaded_config_is_project_local(),
+        is_trust_project(),
+    );
+    if let Some(refused) = &gated_notify.refused {
+        if !is_quiet() {
+            let msg = project_notify_refusal_message(refused, crate::format::is_plain_output());
+            eprintln!("{YELLOW}{msg}{RESET}");
+        }
+    }
+    crate::format::set_notify_command(gated_notify.command);
 
     let mut result = Some(Config {
         model: mc.model,
@@ -5284,6 +5377,112 @@ command = "server-two"
         let short = project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", "echo hi")], true);
         assert!(short.contains("pre.bash = echo hi"), "{short}");
         assert!(!short.contains(marker), "{short}");
+    }
+
+    // === project-local notify_command trust gate (Day 184) ===
+    //
+    // Reproduced before this gate existed: a scratch dir whose `.yoyo.toml`
+    // carried *only* `notify_command = "touch /tmp/probe"` ran that command
+    // after a 27s prompt, with zero trust prompts shown. The 3s
+    // `LONG_PROMPT_THRESHOLD_SECS` bar delays the spawn; it never prevents it
+    // (two sub-3s runs did not fire, which is why the repro needed a long one).
+
+    #[test]
+    fn gate_project_notify_command_table() {
+        let cmd = || Some("touch /tmp/pwned".to_string());
+
+        // (project_local, trusted) -> refused?
+        let cases = [
+            // The one refusing combination: the repo supplied it and the user
+            // has not vouched for this directory.
+            (true, false, true),
+            // Explicitly trusted this run: the user said yes.
+            (true, true, false),
+            // Home/XDG config: the user's own file, never gated.
+            (false, false, false),
+            (false, true, false),
+        ];
+        for (project_local, trusted, expect_refused) in cases {
+            let out = gate_project_notify_command(cmd(), project_local, trusted);
+            if expect_refused {
+                assert_eq!(
+                    out.command, None,
+                    "project_local={project_local} trusted={trusted}: must not install"
+                );
+                assert_eq!(out.refused.as_deref(), Some("touch /tmp/pwned"));
+            } else {
+                assert_eq!(
+                    out.command.as_deref(),
+                    Some("touch /tmp/pwned"),
+                    "project_local={project_local} trusted={trusted}: must pass through"
+                );
+                assert_eq!(out.refused, None);
+            }
+        }
+    }
+
+    #[test]
+    fn gate_project_notify_command_absent_is_byte_identical_in_every_combination() {
+        // Essentially every user has no `notify_command` at all. This is the
+        // whole regression surface, so it is asserted as an equality on the
+        // resolved value rather than a `contains`, in all four combinations —
+        // including the refusing one, where "refused" must stay None rather
+        // than becoming Some("").
+        for (project_local, trusted) in [(true, false), (true, true), (false, false), (false, true)]
+        {
+            let out = gate_project_notify_command(None, project_local, trusted);
+            assert_eq!(
+                out.command, None,
+                "project_local={project_local} trusted={trusted}"
+            );
+            assert_eq!(
+                out.refused, None,
+                "no command means nothing to refuse (project_local={project_local})"
+            );
+        }
+    }
+
+    #[test]
+    fn project_notify_refusal_message_names_the_command_and_both_hatches() {
+        let msg = project_notify_refusal_message("touch /tmp/pwned", false);
+        // A user cannot judge what they cannot see.
+        assert!(msg.contains("notify_command = touch /tmp/pwned"), "{msg}");
+        // The claim that matters: it did not run.
+        assert!(msg.contains("Nothing was executed"), "{msg}");
+        // Both escape hatches, named verbatim.
+        assert!(msg.contains("--trust-project"), "{msg}");
+        assert!(msg.contains("--safe-mode"), "{msg}");
+        assert!(msg.contains('⚠'), "non-plain output carries the marker");
+    }
+
+    #[test]
+    fn project_notify_refusal_message_is_glyph_free_when_plain() {
+        let msg = project_notify_refusal_message("echo hi", true);
+        assert!(!msg.contains('⚠'), "{msg}");
+        // Em dashes are the half an assertion has caught before.
+        assert!(!msg.contains('—'), "{msg}");
+        assert!(msg.is_ascii(), "plain output must be glyph-free: {msg}");
+    }
+
+    #[test]
+    fn project_notify_refusal_message_cuts_a_long_command_on_a_char_boundary() {
+        // Shares `hook_command_for_display`'s budget, so the cut is marked in
+        // band and never lands inside a multi-byte char.
+        let cmd = "✓".repeat(REFUSAL_HOOK_CMD_MAX_BYTES);
+        let msg = project_notify_refusal_message(&cmd, true);
+        let idx = msg.find('…').expect("a cut command marks its cut in band");
+        let kept = msg[..idx]
+            .rsplit("notify_command = ")
+            .next()
+            .expect("the refusal still names the key in file shape");
+        assert!(cmd.starts_with(kept));
+        assert!(cmd.is_char_boundary(kept.len()));
+        assert!(kept.len() <= REFUSAL_HOOK_CMD_MAX_BYTES);
+
+        // Near-miss guard: a command under budget is echoed verbatim, uncut.
+        let short = project_notify_refusal_message("echo hi", true);
+        assert!(short.contains("notify_command = echo hi"), "{short}");
+        assert!(!short.contains('…'), "{short}");
     }
 
     #[test]
