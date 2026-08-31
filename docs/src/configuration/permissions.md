@@ -294,6 +294,20 @@ naming every pattern it dropped:
   Its deny patterns and directory restrictions are still in force — those only reduce access.
 ```
 
+Since Day 184, **a `notify_command` declared by a project-local `.yoyo.toml` is not installed
+either.** That key is handed to `sh -c` (`cmd /C` on Windows) when a prompt finishes, so its
+entire content is executable code — the same test that gates shell hooks. Note that
+`--no-notify` does **not** cover it: that flag gates the desktop-notification branch, not the
+command. The refusal names the command verbatim, in the shape it has in the file:
+
+```
+⚠ A project-local .yoyo.toml asked to run a shell command when a prompt finishes. yoyo did not run it:
+    notify_command = touch /tmp/pwned
+  This config came with the project, not from you. Nothing was executed.
+  Re-run with --trust-project to run it this session, or use --safe-mode to disable
+  all project customizations.
+```
+
 To opt in for that run:
 
 ```bash
@@ -345,7 +359,7 @@ There is deliberately **no un-trust flag**: revoking is deleting the line from t
 both messages above name its full path so you can find it. Both are informational stderr
 output — they are silent under `--quiet` and print without glyphs under `--screen-reader`.
 
-### Only privilege-*granting* fields are gated
+### Only privilege-*granting* fields, and fields that *are* executable code, are gated
 
 The gate is not a symmetric distrust of everything the project says about permissions. Each
 field is sorted by which direction it moves privilege, and only the granting one is refused:
@@ -353,6 +367,7 @@ field is sorted by which direction it moves privilege, and only the granting one
 | Field from a project-local config | Direction | Decision |
 |---|---|---|
 | `[permissions] allow` | **Grants** privilege — auto-approves bash commands | **Refused** unless `--trust-project` |
+| `notify_command` | **Is** executable code — handed to `sh -c` when a prompt finishes | **Refused** unless `--trust-project` |
 | `[permissions] deny` | Reduces privilege — always blocks | Kept verbatim |
 | `[directories] allow` (`dir_restrictions.allow`) | Reduces privilege — the default is unrestricted, so an allow-list can only narrow | Kept verbatim |
 | `[directories] deny` (`dir_restrictions.deny`) | Reduces privilege | Kept verbatim |
@@ -367,7 +382,7 @@ The boundary is deliberately narrow:
 |---|---|
 | `--mcp <command>`, `--allow`, `--deny` typed on the command line | Yes — you typed it |
 | `~/.yoyo.toml` or the XDG config | Yes — you authored it |
-| `./.yoyo.toml` in the working directory — MCP servers and `[permissions] allow` | **No** — needs `--trust-project`, or this exact directory recorded by `--trust-project-always` |
+| `./.yoyo.toml` in the working directory — MCP servers, `[permissions] allow`, shell hooks and `notify_command` | **No** — needs `--trust-project`, or this exact directory recorded by `--trust-project-always` |
 | `./.yoyo.toml` — `[permissions] deny` and `[directories]` | Yes — they only reduce access |
 | Any of the above under `--safe-mode` | No — safe mode disables all customizations |
 
