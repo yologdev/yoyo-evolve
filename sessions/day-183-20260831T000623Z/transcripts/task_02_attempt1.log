@@ -1,0 +1,289 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code before predicting anything about it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_location" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/watch.rs" tests/mod… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Confirmed the defect is structurally present. Now the caller and the #859 ANSI stripping:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors" -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn strip_ansi_escapes" … ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+Both facts confirmed by reading: extract_location scans start+1..start+6 with no header bound, and #859's ANSI strip already happens once at the line-loop site (line 313), so the bound inherits it for free. Step 0 — measure before writing anything, in a /tmp scratch crate (never this repo):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (19 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own destructive-command guard fired on rm -rf /tmp/... — working as designed. Using mktemp -d instead:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (21 lines) ✓ (161ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduced with real output, on the first shape tried. Let me capture it verbatim rather than hand-typing it:
+  ▶ $ source /tmp/loc860_dir; cd "$SCRATCH" (9 lines) ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real capture, not fabricated — and it's a common shape (any typo'd Cargo.toml key plus any type error). Writing the failing test first, before the fix:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors_" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_rust_errors_mo… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.6s (2 ✓)
+
+Now the failing test, with the real capture as the fixture:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (2 → 124 lines)
+  +     /// #860: a diagnostic with no location of its own must NOT absorb the
+  +     /// `-->` belonging to the next diagnostic.
+  +     ///
+  +     /// **This fixture is a real capture, not fabricated** (dated 2026-08-30,
+  +     /// cargo 1.x on this runner). Produced in a scratch crate under `/tmp` —
+  +     /// never this repo, per `run_git`'s `#[cfg(test)]` destructive guard and
+  +     /// #780's cwd lessons — by a `Cargo.toml` carrying one bogus key plus a
+  +     /// `let x: i32 = "not an int";`, captured with
+  +     /// `CARGO_TERM_COLOR=never cargo build 2>&1`. The shape is ordinary rather
+  +     /// than exotic: **any** typo'd manifest key plus **any** type error yields
+  +     /// it, and the located neighbour lands 4 lines below the location-less
+  +     /// header — squarely inside `extract_location`'s 5-line window.
+  +     ///
+  +     /// Before the bound, `warning: Cargo.toml: unused manifest key: …` came
+  +     /// back carrying `src/main.rs:2` — a confident pointer at innocent code,
+  +     /// which `build_watch_fix_prompt` then feeds to
+  +     /// `extract_error_source_context` to quote the wrong source lines at the
+  +     /// fix agent.
+  +     #[test]
+  +     fn parse_rust_errors_location_less_diagnostic_does_not_absorb_its_neighbour_860() {
+  ... (104 more lines)
+ ✓ (12.4s)
+  +     /// #860: a diagnostic with no location of its own must NOT absorb the
+  +     /// `-->` belonging to the next diagnostic.
+  +     ///
+  +     /// **This fixture is a real capture, not fabricated** (dated 2026-08-30,
+  +     /// cargo 1.x on this runner). Produced in a scratch crate under `/tmp` —
+  +     /// never this repo, per `run_git`'s `#[cfg(test)]` destructive guard and
+  +     /// #780's cwd lessons — by a `Cargo.toml` carrying one bogus key plus a
+  +     /// `let x: i32 = "not an int";`, captured with
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy is right — 4 < 6 is vacuous ceremony. Let me derive the index instead of hardcoding it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (4 → 9 lines)
+  +         let arrow_at = raw
+  +             .iter()
+  +             .position(|l| l.trim().starts_with("--> "))
+  +             .expect("fixture drifted: no `-->` anywhere");
+            assert!(
+  -             4 < 6,
+  -             "fixture drifted: the neighbour's `-->` must fall inside the 5-line window",
+  +             arrow_at >= 1 && arrow_at < 6,
+  +             "fixture drifted: the neighbour's `-->` is at {arrow_at}, outside the 5-line \
+  +              window scanned from the location-less header at index 0",
+            );
+ ✓ (12.3s)
+  +         let arrow_at = raw
+  +             .iter()
+  +             .position(|l| l.trim().starts_with("--> "))
+  +             .expect("fixture drifted: no `-->` anywhere");
+            assert!(
+  -             4 < 6,
+  -             "fixture drifted: the neighbour's `-->` must fall inside the 5-line window",
+  +             arrow_at >= 1 && arrow_at < 6,
+  ... (3 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (1 → 1 lines)
+  -             arrow_at >= 1 && arrow_at < 6,
+  +             (1..6).contains(&arrow_at),
+ ✓ (1m 31s)
+  -             arrow_at >= 1 && arrow_at < 6,
+  +             (1..6).contains(&arrow_at),
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me confirm the test fails against the current code — proving the defect empirically, not just structurally:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch::tes… ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**Empirically confirmed** — #860 said "structurally present, NOT empirically confirmed", and it now is: a warning about Cargo.toml reporting file: Some("src/main.rs"), line: Some(2). Now the fix:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (5 → 49 lines)
+  + /// Does this line begin a **new** diagnostic?
+  + ///
+  + /// #860: the bound for [`extract_location`]'s lookahead. rustc emits one
+  + /// diagnostic per header, and a genuine diagnostic's own `-->` always precedes
+  + /// the next header — so anything at or past the next header belongs to that
+  + /// *next* diagnostic, never to this one.
+  + ///
+  + /// The three shapes are the same three [`parse_rust_errors`] itself anchors on
+  + /// (`error…`, `warning…`, `thread '…' panicked at …`), so a line that would
+  + /// start a new entry also stops the previous entry's search. `error` and
+  + /// `warning` are matched as bare prefixes rather than requiring `: ` or `[`,
+  + /// because both the coded (`error[E0308]:`) and uncoded (`error:`) forms must
+  + /// bound, as must cargo's own `warning: \`crate\` (manifest) generated …`
+  + /// summary lines, which carry no location and sit between the two.
+  + ///
+  + /// Input is already ANSI-stripped and `trim_start`ed by `parse_rust_errors`
+  + /// (#859), so this needs no second matcher — without that, the bound would
+  + /// silently never fire for anyone running `color = "always"`.
+  + fn begins_new_diagnostic(line: &str) -> bool {
+  +     let t = line.trim_start();
+  ... (29 more lines)
+ ✓ (1m 38s)
+  + /// Does this line begin a **new** diagnostic?
+  + ///
+  + /// #860: the bound for [`extract_location`]'s lookahead. rustc emits one
+  + /// diagnostic per header, and a genuine diagnostic's own `-->` always precedes
+  + /// the next header — so anything at or past the next header belongs to that
+  + /// *next* diagnostic, never to this one.
+  + ///
+  + /// The three shapes are the same three [`parse_rust_errors`] itself anchors on
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '438,500p' src/watch.rs ✓ (3ms)
+  2 tools completed in 1m 40s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+There's an orphaned doc comment — the old extract_location doc now sits above begins_new_diagnostic. Let me see it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '447,470p' src/watch.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=447 && NR<=452' src/wat… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 1 lines)
+  - /// Look ahead from line `start` for a `  --> path:line:col` location line.
+  - /// Returns (file, line) if found within the next 5 lines.
+    /// Does this line begin a **new** diagnostic?
+ ✓ (1m 38s)
+  - /// Look ahead from line `start` for a `  --> path:line:col` location line.
+  - /// Returns (file, line) if found within the next 5 lines.
+    /// Does this line begin a **new** diagnostic?
+  3 tools completed in 1m 52s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The auto-check output is truncated — let me get the real failure. I expect the module-size gate, since I've added lines to a file registered at exactly its actual count:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch::tes… ✓ (138ms)
+
+All 21 parse_rust_errors_* tests pass, including the pre-existing ones unedited. Now the module-size gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (130ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate fired fatally as predicted and printed its own remedy. Pasting the literal line it produced:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/watch.rs", 4126),
+  +     ("src/watch.rs", 4295),
+ ✓ (1m 17s)
+  -     ("src/watch.rs", 4126),
+  +     ("src/watch.rs", 4295),
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (152ms)
+
+Green with zero warnings printed. Now the positive control — neuter the bound and confirm exactly the absorption test goes red while every near-miss guard stays green. Run serially, one mutation at a time:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/watch… (14 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo watch::tes… ✓ (20.1s)
+  2 tools completed in 22.5s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5391 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That is not a lint failure to fix — that is my deliberately neutered positive control firing, and it fired exactly right: **1 failed (the absorption test), 20 passed* — every near-miss guard and every pre-existing `parse_rust_errors_` test stayed green. That's the direction proving the guards test the pass-through rather than the fix. Restoring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/watch_860_backup.rs src/… ✓ (20.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, 21/21 green. Second control, run serially — make the bound over-aggressive to prove the near-miss guard isn't vacuous:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (20.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+An over-aggressive bound reddens 7 tests — the distance guard and the pre-existing #859 fixtures. Both near-miss guards are non-vacuous. Restoring and running the full verify:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/watch_860_backup.rs src/… ✓ (1m 47s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

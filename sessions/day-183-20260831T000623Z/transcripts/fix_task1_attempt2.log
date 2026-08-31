@@ -1,0 +1,133 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the two identified issues: the missing CLAUDE.md docs sync, and the module-size register line.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GRANDFATHERED_OVERSIZED… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,175p tests/module_siz… ✓ (2ms)
+  4 tools completed in 10.6s (4 ✓)
+
+
+I'll continue from where I left off — the register entry and the CLAUDE.md docs sync.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'src/format' tests/modul… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 228,262p tests/module_siz… ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 233,240p tests/module_siz… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5.6s (3 ✓)
+
+Now the register entry, pasted verbatim from what the gate itself printed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 13 lines)
+        ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
+  +     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
+  +     // grace band, for Python triple-quoted strings carried across lines (the
+  +     // `TripleQuote` open/close branch plus 36 emission-point tests, most of them
+  +     // the near-miss guards that pin every other language byte-identical).
+  +     // REGISTERED RATHER THAN SPLIT, and the distinction matters: registering is
+  +     // this gate's own stated remedy for a grace-band overshoot, while the better
+  +     // fix is a split (precedent: `src/format/highlight_lang.rs`, carved out of
+  +     // this same file on Day 174 for this same reason). Deliberately not done in
+  +     // this pass because a half-landed pure move is a build failure and a reverted
+  +     // session, while a register edit cannot half-land. The file now sits 7 lines
+  +     // from fatal, so the *next* task here is the split, not another entry.
+  +     ("src/format/highlight.rs", 2044),
+ ✓ (1m 14s)
+        ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
+  +     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
+  +     // grace band, for Python triple-quoted strings carried across lines (the
+  +     // `TripleQuote` open/close branch plus 36 emission-point tests, most of them
+  +     // the near-miss guards that pin every other language byte-identical).
+  +     // REGISTERED RATHER THAN SPLIT, and the distinction matters: registering is
+  +     // this gate's own stated remedy for a grace-band overshoot, while the better
+  +     // fix is a split (precedent: `src/format/highlight_lang.rs`, carved out of
+  ... (5 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (152ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register entry accepted, zero warnings printed. Now the docs sync — first let me read the exact sentences the evaluator flagged.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'Still not carried, and … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'Still not carried, and … ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (20ms)
+  3 tools completed in 8.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Still not carried, and this is the whole residue:** `${…}` interpolation inside a JS template literal is treated as string content, not code, so an interpolated expression is not highlighted — this colours a line, it does not lex one. `highlight_code_line(lang, line)` is kept as the stateless wrapper and **is** the byte-identity baseline the regression tests assert against: languages with no block comments (python, shell, yaml, toml, json) and every non-Rust language reset the carried flag… [yoyo: 152 more bytes elided — diff lines are capped at 500 bytes]
+  + (d) Day 183 (#865, the pickup of blind round 90's own finding) carried the fourth delimiter class — **Python triple-quoted strings**, `"""…"""` and `'''…'''` — as `StringDelim::TripleQuote { quote }`, the quote char carried so a `'''` body cannot be closed by a `"""`. **The defect was measured at the emission point, not inferred:** driving a 5-line docstring through `highlight_code_line_with` with one carried state, line 3 rendered `    Uses \e[2m# as a marker.\e[0m` — a `#` opening an… [yoyo: 2695 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 13s)
+  - **Still not carried, and this is the whole residue:** `${…}` interpolation inside a JS template literal is treated as string content, not code, so an interpolated expression is not highlighted — this colours a line, it does not lex one. `highlight_code_line(lang, line)` is kept as the stateless wrapper and **is** the byte-identity baseline the regression tests assert against: languages with no block comments (python, shell, yaml, toml, json) and every non-Rust language reset the carried flag… [yoyo: 152 more bytes elided — diff lines are capped at 500 bytes]
+  + (d) Day 183 (#865, the pickup of blind round 90's own finding) carried the fourth delimiter class — **Python triple-quoted strings**, `"""…"""` and `'''…'''` — as `StringDelim::TripleQuote { quote }`, the quote char carried so a `'''` body cannot be closed by a `"""`. **The defect was measured at the emission point, not inferred:** driving a 5-line docstring through `highlight_code_line_with` with one carried state, line 3 rendered `    Uses \e[2m# as a marker.\e[0m` — a `#` opening an… [yoyo: 2695 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (5 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 17s (2 ✓)
+
+Now extend the pinned-tests list with the new fixtures, and fix the highlight_lang.rs bullet's predicate count in the same edit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 2 lines)
+  - a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them).
+  - - `format/highlight_lang.rs` — the eight per-language predicates and tables the highlighter reads (`normalize_lang`, `lang_keywords`, `lang_types`, `comment_prefix`, `supports_block_comments`, `block_comments_nest`, `multiline_strings`, `backtick_strings`), all `pub(super)` and each answering only *what is true of language X?* — none o
+  + a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them). Day 183 added 36 more in the same shape, and the **near-miss guards are the half that mattered** — this file carried **zero** `"""` fixtures before, and that absence is precisely what hid the defect for as long as it existed: the 5-line docstring fixture in both quote flavours, a `\"""` escape that must *not* close, an anti-vacuous assertion that line 1 still highlights … [yoyo: 976 more bytes elided — diff lines are capped at 500 bytes]
+  + - `format/highlight_lang.rs` — the nine per-language predicates and tables the highlighter reads (`normalize_lang`, `lang_keywords`, `lang_types`, `comment_prefix`, `supports_block_comments`, `block_comments_nest`, `multiline_strings`, `backtick_strings`, `triple_quote_strings`), all `pub(super)` and each answering only *what is true of language X?* — none o
+ ✓ (1m 13s)
+  - a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them).
+  - - `format/highlight_lang.rs` — the eight per-language predicates and tables the highlighter reads (`normalize_lang`, `lang_keywords`, `lang_types`, `comment_prefix`, `supports_block_comments`, `block_comments_nest`, `multiline_strings`, `backtick_strings`), all `pub(super)` and each answering only *what is true of language X?* — none o
+  + a backtick left inert in rust/c, plus a byte-identity check of the stateless path for the single-line forms of all of them). Day 183 added 36 more in the same shape, and the **near-miss guards are the half that mattered** — this file carried **zero** `"""` fixtures before, and that absence is precisely what hid the defect for as long as it existed: the 5-line docstring fixture in both quote flavours, a `\"""` escape that must *not* close, an anti-vacuous assertion that line 1 still highlights … [yoyo: 976 more bytes elided — diff lines are capped at 500 bytes]
+  + - `format/highlight_lang.rs` — the nine per-language predicates and tables the highlighter reads (`normalize_lang`, `lang_keywords`, `lang_types`, `comment_prefix`, `supports_block_comments`, `block_comments_nest`, `multiline_strings`, `backtick_strings`, `triple_quote_strings`), all `pub(super)` and each answering only *what is true of language X?* — none o
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'and `StringDelim` gaine… ✓ (422ms)
+  2 tools completed in 1m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - since Rust has no backtick literal and `significant_braces` therefore never constructs one.
+  + since Rust has no backtick literal and `significant_braces` therefore never constructs one. Day 183 (#865) added a **fourth**, `TripleQuote { quote }` for Python `"""…"""` / `'''…'''`, in exactly that same position — Rust has no triple-quote literal either, so only the highlighter ever opens one and `significant_braces` never constructs one; the quote char is carried so a `'''` body cannot be closed by a `"""`, and `close_open_string` gained the matching arm, which is the single place any … [yoyo: 352 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 13s)
+  - since Rust has no backtick literal and `significant_braces` therefore never constructs one.
+  + since Rust has no backtick literal and `significant_braces` therefore never constructs one. Day 183 (#865) added a **fourth**, `TripleQuote { quote }` for Python `"""…"""` / `'''…'''`, in exactly that same position — Rust has no triple-quote literal either, so only the highlighter ever opens one and `significant_braces` never constructs one; the quote char is carried so a `'''` body cannot be closed by a `"""`, and `close_open_string` gained the matching arm, which is the single place any … [yoyo: 352 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me verify the three flagged claims are actually gone, and that my edits didn't break the doc-version-claim gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "-- stale claims (all shoul… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '.\{110\}(python, shell,… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+The remaining hit is the deliberate superseded-claim quotation. Confirming the live sentence was corrected:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'no block comments \*and… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -iE 'WARN… ✓ (51.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 15s (3 ✓)
+
+All green. Now the positive control, run serially as required:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A4 'pub(super) fn tripl… ✓ (2ms)
+

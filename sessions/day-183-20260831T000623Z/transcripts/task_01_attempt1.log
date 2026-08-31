@@ -1,0 +1,308 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to understand the current state, then make my first concrete change quickly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StringDelim" src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/format/highlight_lang.rs… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,320p' src/commands_re…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,470p' src/format/hig… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,300p' src/format/highl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn scan_block_comments"… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,300p' src/format/high… ✓ (3ms)
+  7 tools completed in 9.4s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check my current state and act.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,95p' src/format/highl… ✓ (2ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=104 && NR<=132' src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "significant_braces\|Str… ✓ (4ms)
+ ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.1s (4 ✓)
+
+Nothing changed yet — let me read the exact elided regions, then edit.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:228..298  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:1..59 ✓ (1ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Now I have the full picture. Step 1 — teach StringDelim the delimiter:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs:106..136 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read enough — time to edit. Step 1:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (5 → 16 lines)
+        /// scanner and never sets it; it lives here because the *closer* rule belongs beside
+        /// its two siblings rather than in a second scanner.
+        Backtick { escapes: bool },
+  +     /// A Python triple-quoted literal (`"""…"""` or `'''…'''`), which spans lines and
+  +     /// honours `\` escapes, so a `\"""` does not close it. `quote` carries which of the
+  +     /// two delimiters opened it, because `'''` must not be closed by `"""`.
+  +     ///
+  +     /// Produced only by `format::highlight` (#865), for the same reason as [`Backtick`]:
+  +     /// Rust has no triple-quoted literal, so [`significant_braces`] can never open one.
+  +     /// The *closer* rule lives here beside its three siblings rather than in a second
+  +     /// scanner — two copies of a delimiter rule is how #759 outlived #770 by a day.
+  +     ///
+  +     /// [`Backtick`]: StringDelim::Backtick
+  +     TripleQuote { quote: char },
+    }
+ ✓ (10.8s)
+        /// scanner and never sets it; it lives here because the *closer* rule belongs beside
+        /// its two siblings rather than in a second scanner.
+        Backtick { escapes: bool },
+  +     /// A Python triple-quoted literal (`"""…"""` or `'''…'''`), which spans lines and
+  +     /// honours `\` escapes, so a `\"""` does not close it. `quote` carries which of the
+  +     /// two delimiters opened it, because `'''` must not be closed by `"""`.
+  +     ///
+  +     /// Produced only by `format::highlight` (#865), for the same reason as [`Backtick`]:
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiler settles the task file's premise: the only match on StringDelim is in close_open_string (line 162) — significant_braces passes delim through without matching, so it needs no arm. Adding the closer:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_refactor.rs (15 → 33 lines)
+                        j += 2;
+                    } else if chars[j] == '`' {
+                        return Some(j + 1);
+  +                 } else {
+  +                     j += 1;
+  +                 }
+  +             }
+  +             None
+  +         }
+  +         StringDelim::TripleQuote { quote } => {
+  +             while j < chars.len() {
+  +                 if chars[j] == '\\' {
+  +                     // Python honours escapes inside a triple-quoted literal, so a
+  +                     // `\"""` does not close it. A trailing `\` escapes the newline,
+  +                     // which just means the literal is still open — j runs off the end.
+  +                     j += 2;
+  +                 } else if chars[j] == quote
+  +                     && chars.get(j + 1) == Some(&quote)
+  +                     && chars.get(j + 2) == Some(&quote)
+  +                 {
+  ... (4 more lines)
+ ✓ (12.3s)
+                        j += 2;
+                    } else if chars[j] == '`' {
+                        return Some(j + 1);
+  +                 } else {
+  +                     j += 1;
+  +                 }
+  +             }
+  +             None
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly my "no definition without its consumer" rule — steps 2 and 3 must land now. Step 2:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight_lang.rs (7 → 23 lines)
+            "go" => Some(false),
+            _ => None,
+        }
+  + }
+  + 
+  + /// Does this language have **triple-quoted** literals (`"""…"""` / `'''…'''`) that span
+  + /// lines?
+  + ///
+  + /// Deliberately separate from [`multiline_strings`] rather than folded into it, because
+  + /// the two ask different questions and the older one is *correct* for Python: a bare
+  + /// `"…"` really does not span lines there. #865 was not a wrong row — it was a table with
+  + /// no **vocabulary** for triple quotes at all, so a docstring body rendered as executable
+  + /// code (a `#` opened an inline comment, `return` highlighted as a keyword).
+  + ///
+  + /// Python only, on purpose. A row nothing exercises is a claim no test can grade, so
+  + /// widening this to another language belongs in the task that brings that language's
+  + /// fixtures with it.
+  + pub(super) fn triple_quote_strings(norm: &str) -> bool {
+  +     norm == "python"
+    }
+ ✓ (12.3s)
+            "go" => Some(false),
+            _ => None,
+        }
+  + }
+  + 
+  + /// Does this language have **triple-quoted** literals (`"""…"""` / `'''…'''`) that span
+  + /// lines?
+  + ///
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 3 — the consumer. First widen the gate:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (5 → 10 lines)
+  -     if !supports_block_comments(norm) {
+  +     // Languages with neither block comments nor triple-quoted literals have no
+  +     // cross-line construct to carry, so they take the stateless fast path. Python is
+  +     // deliberately *not* in that set since #865: it has no `/* … */`, but a docstring
+  +     // spans lines, and this early return used to reset `open_string` and so made the
+  +     // stateful path structurally unreachable for it.
+  +     if !supports_block_comments(norm) && !triple_quote_strings(norm) {
+            state.block_comment_depth = 0;
+            state.open_string = None;
+            return highlight_normalized(norm, line);
+ ✓ (12.3s)
+  -     if !supports_block_comments(norm) {
+  +     // Languages with neither block comments nor triple-quoted literals have no
+  +     // cross-line construct to carry, so they take the stateless fast path. Python is
+  +     // deliberately *not* in that set since #865: it has no `/* … */`, but a docstring
+  +     // spans lines, and this early return used to reset `open_string` and so made the
+  +     // stateful path structurally unreachable for it.
+  +     if !supports_block_comments(norm) && !triple_quote_strings(norm) {
+            state.block_comment_depth = 0;
+            state.open_string = None;
+            return highlight_normalized(norm, line);
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+triple_quote_strings is now consumed. Now the constructor in scan_block_comments — plus gating // on block-comment languages, since // is Python's floor-division operator:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (15 → 22 lines)
+            // A `//` line comment swallows the rest of the line; leave it as code so the
+            // per-line highlighter dims it exactly as it does today.
+  -         if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+  -             break;
+  -         }
+  +         //
+  +         // Gated on the language since #865: `//` is Python's floor-division operator, so
+  +         // an ungated `break` here would stop the scan at `a // b` and miss a `"""` that
+  +         // opens later on the same line. A no-op for rust/js/go/c, which are the only
+  +         // languages that reached this code before.
+  +         if supports_block_comments(norm) {
+  +             if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+  +                 break;
+  +             }
+    
+  -         if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+  -             if seg_start < i {
+  -                 segments.push((SegmentKind::Code, seg_start, i));
+  +             if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+  +                 if seg_start < i {
+  ... (12 more lines)
+ ✓ (12.3s)
+            // A `//` line comment swallows the rest of the line; leave it as code so the
+            // per-line highlighter dims it exactly as it does today.
+  -         if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+  -             break;
+  -         }
+  +         //
+  +         // Gated on the language since #865: `//` is Python's floor-division operator, so
+  +         // an ungated `break` here would stop the scan at `a // b` and miss a `"""` that
+  ... (13 more lines)
+
+Now the opener itself — placed before the single-quote branch, which would otherwise read """ as an empty string plus a runaway literal:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (1 → 19 lines)
+  +         // Python `"""…"""` / `'''…'''`: spans lines (#865). Checked *before* the generic
+  +         // quote branch below, which would otherwise read the first two chars of `"""` as
+  +         // an empty string and let the third open a runaway single-quote literal.
+  +         if triple_quote_strings(norm) && (chars[i] == '"' || chars[i] == '\'') {
+  +             let quote = chars[i];
+  +             if chars.get(i + 1) == Some(&quote) && chars.get(i + 2) == Some(&quote) {
+  +                 let delim = StringDelim::TripleQuote { quote };
+  +                 match close_open_string(chars, i + 3, delim) {
+  +                     Some(end) => i = end,
+  +                     None => {
+  +                         state.open_string = Some(delim);
+  +                         i = len;
+  +                     }
+  +                 }
+  +                 continue;
+  +             }
+  +         }
+  + 
+            if chars[i] == '"' || chars[i] == '\'' {
+ ✓ (1m 35s)
+  +         // Python `"""…"""` / `'''…'''`: spans lines (#865). Checked *before* the generic
+  +         // quote branch below, which would otherwise read the first two chars of `"""` as
+  +         // an empty string and let the third open a runaway single-quote literal.
+  +         if triple_quote_strings(norm) && (chars[i] == '"' || chars[i] == '\'') {
+  +             let quote = chars[i];
+  +             if chars.get(i + 1) == Some(&quote) && chars.get(i + 2) == Some(&quote) {
+  +                 let delim = StringDelim::TripleQuote { quote };
+  +                 match close_open_string(chars, i + 3, delim) {
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three steps landed. Let me verify the build and check the actual behaviour at the emission point:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ec… ✓ (245ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build green, all 97 existing highlight tests pass unedited. Now the tests. Let me see the test module's existing cross-line style:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|fn highlight… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:1620..1670 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+Now I'll write the tests. The fixture from the issue, plus the near-miss guards:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs:1669..1697 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests — inserting after the backtick group:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/highlight.rs (4 → 4 lines) ✓ (1m 35s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me capture real output first rather than hand-typing fixtures:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (20 lines) ✓ (20.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The fix works exactly as designed. Removing the probe and writing the real tests with these captured values:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (19ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
