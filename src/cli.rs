@@ -5441,7 +5441,10 @@ command = "server-two"
         // Granting direction: moving into a recorded directory turns trust on.
         with_trust_state(false, || {
             let change = reevaluate_trust_on_cd_with(listed, &store);
-            assert!(is_trust_project(), "store-listed directory must grant trust");
+            assert!(
+                is_trust_project(),
+                "store-listed directory must grant trust"
+            );
             assert_eq!(
                 change,
                 TrustChange {
@@ -5481,7 +5484,9 @@ command = "server-two"
             assert!(is_trust_project(), "precondition: the flag granted trust");
 
             let change =
-                reevaluate_trust_on_cd_with(std::path::Path::new("/tmp/strangers-repo"), &|_| false);
+                reevaluate_trust_on_cd_with(std::path::Path::new("/tmp/strangers-repo"), &|_| {
+                    false
+                });
 
             assert!(
                 !is_trust_project(),
@@ -5524,7 +5529,10 @@ command = "server-two"
         let granted = trust_changed_on_cd_message(dir, false, true, false).expect("grant speaks");
         assert!(granted.contains("/home/u/proj"));
         assert!(granted.contains("trusted_dirs"), "names where it came from");
-        assert!(granted.contains("goal_verify"), "names the executed capability");
+        assert!(
+            granted.contains("goal_verify"),
+            "names the executed capability"
+        );
 
         let revoked = trust_changed_on_cd_message(dir, true, false, false).expect("revoke speaks");
         assert!(revoked.contains("/home/u/proj"));
@@ -5544,10 +5552,17 @@ command = "server-two"
     fn trust_change_note_is_glyph_free_and_em_dash_free_under_plain_output() {
         // Bullets *and* em dashes — an assertion has caught the em-dash half before.
         for now_trusted in [true, false] {
-            let plain =
-                trust_changed_on_cd_message(std::path::Path::new("/p"), !now_trusted, now_trusted, true)
-                    .expect("state moved");
-            assert!(plain.is_ascii(), "screen-reader output must be plain: {plain}");
+            let plain = trust_changed_on_cd_message(
+                std::path::Path::new("/p"),
+                !now_trusted,
+                now_trusted,
+                true,
+            )
+            .expect("state moved");
+            assert!(
+                plain.is_ascii(),
+                "screen-reader output must be plain: {plain}"
+            );
             assert!(!plain.contains('—'), "no em dash: {plain}");
             // Near-miss guard: the non-plain form really does carry what plain drops,
             // so `is_ascii()` above cannot pass by the message being empty of both.
