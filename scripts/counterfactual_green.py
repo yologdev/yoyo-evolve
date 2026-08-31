@@ -1437,8 +1437,23 @@ def append_ledger(path, line):
 
     The fsync is the point: a verdict costs ~10 minutes of cargo, and a process killed
     by the session budget must not lose one to a buffer that never reached disk.
+
+    Returning the error text rather than raising is deliberate: a ledger failure must
+    never destroy the verdict that was just earned, so the caller prints a WARNING and
+    keeps going. The one thing it must not do is fail silently -- an empty return is the
+    success sentinel, so a writer that cannot write has to say which error stopped it.
     """
-    return ""  # NEUTERED FOR POSITIVE CONTROL
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        return str(exc)
+    return ""
 
 
 def main(argv):
@@ -2431,7 +2446,15 @@ def run_self_tests():
                 path, ledger_line(sha, "p", "1", "s", POP_PLAIN, EARNED, "green", "T", "9")
             )
             check(f"append_ledger({sha}) succeeded", err == "", err)
-        got = [json.loads(ln)["sha"] for ln in open(path).read().splitlines() if ln.strip()]
+        # Read back WITHOUT assuming the file exists. A writer that appends nothing must
+        # produce a clean red here, not a traceback: a self-test that crashes destroys the
+        # very summary that says which OTHER tests were fine, which is what makes the
+        # positive control unreadable.
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                got = [json.loads(ln)["sha"] for ln in fh.read().splitlines() if ln.strip()]
+        else:
+            got = "NO LEDGER FILE WAS WRITTEN"
         check("ledger appends per verdict, in order", got == ["aaa", "bbb", "ccc"], got)
         state, shas, _ = read_ledger(path)
         check("read_ledger sees every appended sha",
