@@ -121,6 +121,8 @@ rather than silently shrinking the census denominator.
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import os
 import re
 import shutil
@@ -1006,7 +1008,7 @@ def collect_census(root: str, limit: int | None):
     return rows, window, shallow, depth, ""
 
 
-def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
+def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
     """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
 
     Returns (verdict, detail). Every landmine from the module doc is enforced here.
@@ -1070,7 +1072,12 @@ def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
     # build over the shared target/debug/yoyo clobbers the binary every integration test
     # resolves through env!("CARGO_BIN_EXE_yoyo"), and it reddened main for three sessions
     # while reading as flakiness.
-    target = os.path.join(tmp, "target")
+    # A BATCH shares one target dir across all its runs (adjacent commits share
+    # dependencies, so runs 2..N are mostly warm -- the difference between one reading
+    # per session and several). A single `--commit` passes None and gets its own, which
+    # is byte-identical to the pre-ledger behaviour. Either way it is under mkdtemp and
+    # NEVER the repo's own target/ (#832).
+    target = target or os.path.join(tmp, "target")
     env = dict(os.environ)
     env["CARGO_TARGET_DIR"] = target
     env.pop("RUSTFLAGS", None)
@@ -1276,6 +1283,164 @@ def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------------------
+# The ledger. The reading ACCUMULATES ACROSS SESSIONS.
+# --------------------------------------------------------------------------------------
+#
+# WHY THIS EXISTS AT ALL. One counterfactual is TWO `cargo test` invocations, so the >=20
+# task commits DREAM.md asks for is many hours -- far more than one session's budget.
+# Without a ledger the reading needs one unbroken block and therefore never happens; with
+# one, it accumulates a few verdicts per session until the milestone is reachable. Four
+# consecutive sessions changed this instrument and exactly ONE live counterfactual had
+# ever been run; this is the scaffolding that makes the reading the deliverable instead.
+#
+# Every design choice below falls out of one sentence: A PROCESS KILLED BY THE SESSION
+# BUDGET MUST KEEP EVERY VERDICT IT EARNED.
+#
+#   * APPEND PER VERDICT, never batch at the end -- and fsync. A batched write loses the
+#     whole session precisely when the budget kills the process mid-run, which is exactly
+#     when it WILL be killed. A verdict costs ~10 minutes of cargo; losing one to a tidy
+#     exit is the expensive mistake.
+#   * A MISSING OR UNREADABLE LEDGER IS ITS OWN STATE, and neither may read as "all
+#     done". That is "could not check" rendering as "checked; clean" -- the refusal this
+#     whole file is built around -- so the fail-safe direction is to skip NOTHING and say
+#     so on stderr.
+
+LEDGER_MISSING = "ledger-missing"
+LEDGER_UNREADABLE = "ledger-unreadable"
+LEDGER_READ = "ledger-read"
+
+
+def ledger_line(sha, parent, day, subject, population, verdict, baseline, ts, depth):
+    """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
+
+    `ts` and `depth` are passed IN rather than read here, so the record is a pure
+    function of its inputs and can be pinned by a self-test byte-for-byte.
+    """
+    return json.dumps(
+        {
+            "sha": sha,
+            "parent": parent,
+            "day": day,
+            "subject": subject,
+            "population": population,
+            "verdict": verdict,
+            "baseline": baseline,
+            "ts": ts,
+            "window_depth": depth,
+        },
+        sort_keys=True,
+    )
+
+
+def parse_ledger(text):
+    """Return (set of shas already recorded, count of lines that would not parse).
+
+    Malformed lines are COUNTED, never silently dropped: a shrinking denominator inside
+    my own meter is the defect this entire family of checks exists for. A blank line is
+    normal JSONL and is neither -- it is not corruption and it is not a record.
+    """
+    shas = set()
+    malformed = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (ValueError, TypeError):
+            malformed += 1
+            continue
+        if not isinstance(obj, dict):
+            malformed += 1
+            continue
+        sha = obj.get("sha")
+        if not isinstance(sha, str) or not sha:
+            malformed += 1
+            continue
+        shas.add(sha)
+    return shas, malformed
+
+
+def baseline_from_verdict(verdict):
+    """What the BASELINE did, derived from the verdict `run_counterfactual` returned.
+
+    Derived rather than threaded out, deliberately: this task's deliverable is the
+    reading, so it adds no new return value to the function the whole tool hangs on.
+    The derivation is forced by ONE property of `run_counterfactual` -- a baseline that
+    is not BASELINE_OK SHORT-CIRCUITS -- so any verdict reached downstream of that branch
+    implies the baseline was green:
+
+      EARNED / UNEARNED / INCONCLUSIVE / REGISTER_DRIFT -> green (past the short-circuit)
+      BASELINE_RED                                      -> red
+      NO_TEST_CHANGE  -> not-run: it returns before the worktree is even created.
+      COULD_NOT_CHECK -> unknown, and that is honest rather than lazy. The machinery can
+                         fail BEFORE the baseline (no parent, git diff, worktree add) or
+                         AFTER it (checkout of sha / of pre-tests), and the verdict alone
+                         cannot tell those apart. Reporting "green" here would be a guess
+                         wearing an observation's clothes.
+    """
+    if verdict in (EARNED, UNEARNED, INCONCLUSIVE, REGISTER_DRIFT):
+        return "green"
+    if verdict == BASELINE_RED:
+        return "red"
+    if verdict == NO_TEST_CHANGE:
+        return "not-run"
+    return "unknown"
+
+
+def select_runnable(rows, population, recorded, max_runs):
+    """Which commits to run, NEWEST FIRST. Pure.
+
+    Newest-first is a cost decision, not a cosmetic one: a newer commit's parent is
+    closer to HEAD, so its dependency set is the one already warm in the shared
+    CARGO_TARGET_DIR and its build is likeliest to resolve against the current
+    toolchain. `rows` already arrive newest-first from `git log`.
+
+    Only BEHAVIOURAL commits of the requested population are eligible -- a register-only
+    commit's verdict is decided by construction (LIMITS item 3) and would spend ten
+    minutes of cargo to learn nothing.
+    """
+    out = []
+    for row in rows:
+        if row.population != population:
+            continue
+        if not row.behavioural:
+            continue
+        if row.sha in recorded:
+            continue
+        out.append(row)
+        if max_runs is not None and len(out) >= max_runs:
+            break
+    return out
+
+
+def read_ledger(path):
+    """(state, shas, malformed). I/O half of `parse_ledger`.
+
+    FAIL-SAFE DIRECTION: a missing or unreadable ledger returns an EMPTY sha set, so
+    nothing is skipped. An unreadable file must never be able to silence the whole run.
+    """
+    if not os.path.exists(path):
+        return LEDGER_MISSING, set(), 0
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return LEDGER_UNREADABLE, set(), 0
+    shas, malformed = parse_ledger(text)
+    return LEDGER_READ, shas, malformed
+
+
+def append_ledger(path, line):
+    """Append ONE line and fsync it. Returns "" on success, else the error text.
+
+    The fsync is the point: a verdict costs ~10 minutes of cargo, and a process killed
+    by the session budget must not lose one to a buffer that never reached disk.
+    """
+    return ""  # NEUTERED FOR POSITIVE CONTROL
+
+
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="counterfactual_green.py",
@@ -1317,13 +1482,44 @@ def main(argv):
         metavar="S",
         help=f"ceiling for one cargo test run (default {DEFAULT_TIMEOUT_SECS}s)",
     )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        metavar="N",
+        help=(
+            "BATCH: run up to N counterfactuals over the behavioural commits of one "
+            "population, newest first. This is the flag that takes a READING."
+        ),
+    )
+    parser.add_argument(
+        "--population",
+        default=POP_PLAIN,
+        choices=[POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX],
+        help=(
+            "batch: which arm to read (default %(default)s). Never summed with another "
+            "-- DREAM.md pre-registers the fix-loop arm as a SEPARATE question."
+        ),
+    )
+    parser.add_argument(
+        "--record",
+        metavar="PATH",
+        help=(
+            "append one JSON line per completed verdict, immediately. This is what "
+            "makes the reading accumulate across sessions instead of needing one block."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip shas already present in --record (a missing ledger skips nothing)",
+    )
     parser.add_argument("--test", action="store_true", help="run self-tests and exit")
     args = parser.parse_args(argv)
 
     if args.test:
         return run_self_tests()
 
-    if not args.census and not args.commit:
+    if not args.census and not args.commit and args.max_runs is None:
         parser.print_help()
         return 2
 
@@ -1359,6 +1555,107 @@ def main(argv):
             return 1
         print(render_census(rows, summary, window, args.limit, note))
         status = 0
+
+    if args.max_runs is not None:
+        # ---- BATCH: the reading. -------------------------------------------------------
+        if args.resume and not args.record:
+            print(
+                "--resume needs --record: there is no ledger to resume FROM.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.deepen is not None and not args.census:
+            deepen_repo(root, args.deepen)
+        rows, window, _shallow, depth, err = collect_census(root, args.limit)
+        if err:
+            print(f"COULD NOT CHECK: {err}", file=sys.stderr)
+            print(LIMITS, file=sys.stderr)
+            return 1
+
+        recorded = set()
+        if args.resume:
+            state, recorded, malformed = read_ledger(args.record)
+            # Three states, none folded -- and neither absent one may read as "all done".
+            if state == LEDGER_MISSING:
+                print(
+                    f"resume: no ledger at {args.record} yet — nothing recorded, "
+                    "so nothing is skipped.",
+                    file=sys.stderr,
+                )
+            elif state == LEDGER_UNREADABLE:
+                print(
+                    f"resume: the ledger at {args.record} EXISTS and could not be READ. "
+                    "This is NOT 'all done' — skipping nothing and running from the top.",
+                    file=sys.stderr,
+                )
+            else:
+                extra = (
+                    f"; {malformed} malformed line(s) COUNTED, not dropped"
+                    if malformed
+                    else ""
+                )
+                print(
+                    f"resume: {len(recorded)} sha(s) already recorded in "
+                    f"{args.record}{extra}.",
+                    file=sys.stderr,
+                )
+
+        todo = select_runnable(rows, args.population, recorded, args.max_runs)
+        eligible = [
+            r for r in rows if r.population == args.population and r.behavioural
+        ]
+        print(f"window: {window}")
+        print(
+            f"batch: population [{args.population}] has {len(eligible)} behavioural "
+            f"commit(s); {len(recorded & {r.sha for r in eligible})} already recorded; "
+            f"running {len(todo)} now (newest first, --max-runs {args.max_runs})."
+        )
+        sys.stdout.flush()
+
+        # ONE shared target dir for the whole batch: adjacent commits share dependencies,
+        # so runs 2..N are mostly warm. Under mkdtemp, never the repo's target/ (#832).
+        shared = tempfile.mkdtemp(prefix="yoyo-counterfactual-batch-")
+        target = os.path.join(shared, "target")
+        try:
+            for i, row in enumerate(todo, 1):
+                rc_p, out_p = run_cmd(
+                    ["git", "-C", root, "rev-parse", f"{row.sha}^"], timeout=60
+                )
+                parent = out_p.strip().splitlines()[0] if rc_p == 0 else ""
+                m = TASK_COMMIT_RE.match(row.subject)
+                day = m.group(1) if m else ""
+
+                print(f"\n[{i}/{len(todo)}] {row.sha[:12]} {row.subject[:70]}")
+                sys.stdout.flush()
+                verdict, detail = run_counterfactual(
+                    root, row.sha, args.timeout, target=target
+                )
+                baseline = baseline_from_verdict(verdict)
+                print(f"  verdict: {verdict}   (baseline: {baseline})")
+                for ln in detail.splitlines()[:6]:
+                    print(f"  {ln}")
+                sys.stdout.flush()
+
+                if args.record:
+                    # APPEND PER VERDICT, right here. A process killed by the session
+                    # budget on run i+1 must keep every verdict it already earned.
+                    ts = (
+                        datetime.datetime.now(datetime.timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
+                    err_w = append_ledger(
+                        args.record,
+                        ledger_line(
+                            row.sha, parent, day, row.subject, row.population,
+                            verdict, baseline, ts, depth,
+                        ),
+                    )
+                    if err_w:
+                        print(f"  WARNING: ledger append failed: {err_w}", file=sys.stderr)
+        finally:
+            shutil.rmtree(shared, ignore_errors=True)
 
     if args.commit:
         verdict, detail = run_counterfactual(root, args.commit, args.timeout)
@@ -2066,6 +2363,81 @@ def run_self_tests():
     check("limits state the intent boundary", "intent is not" in LIMITS.lower())
     check("limits state the src/ scope", "165k" in LIMITS)
     check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
+
+    # -- THE LEDGER: the reading must accumulate across sessions ------------------------
+    # baseline_from_verdict: derived from run_counterfactual's short-circuit, so every
+    # one of the seven states gets a row rather than a shrug.
+    for verdict, expect in (
+        (EARNED, "green"), (UNEARNED, "green"), (INCONCLUSIVE, "green"),
+        (REGISTER_DRIFT, "green"), (BASELINE_RED, "red"),
+        (NO_TEST_CHANGE, "not-run"), (COULD_NOT_CHECK, "unknown"),
+    ):
+        got = baseline_from_verdict(verdict)
+        check(f"baseline_from_verdict({verdict}) == {expect}", got == expect, got)
+
+    line = ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED, "green", "T", "42")
+    back = json.loads(line)
+    check("ledger_line round-trips the sha", back["sha"] == "abc", back)
+    check("ledger_line carries the verdict", back["verdict"] == EARNED, back)
+    check("ledger_line is ONE line", "\n" not in line, line)
+
+    # A malformed line is COUNTED, never silently dropped -- a shrinking denominator
+    # inside my own meter is the defect this family of checks exists for.
+    shas, malformed = parse_ledger(
+        line + "\n"
+        + "{not json at all\n"
+        + "\n"                       # blank: normal JSONL, neither record nor corruption
+        + '{"no_sha": 1}\n'
+        + '["a list"]\n'
+    )
+    check("parse_ledger keeps the good sha", shas == {"abc"}, shas)
+    check("parse_ledger COUNTS the 3 malformed lines", malformed == 3, malformed)
+
+    # select_runnable: population filter, behavioural filter, resume skip, newest-first.
+    def _row(sha, pop_suffix="", reg=()):
+        subj = f"Day 180 (12:00): thing {sha} (Task 1{pop_suffix})"
+        return CensusRow(sha, subj, ["tests/a.rs"], set(reg))
+
+    rows = [_row("s1"), _row("s2"), _row("s3")]
+    rows.append(CensusRow("s4", "Day 180 (12:00): x (Task 1, eval-fix 1)", ["tests/a.rs"]))
+    rows.append(CensusRow("s5", "Day 180 (12:00): y (Task 1)", ["tests/r.rs"], {"tests/r.rs"}))
+
+    picked = [r.sha for r in select_runnable(rows, POP_PLAIN, set(), None)]
+    check("select_runnable takes plain behavioural, newest first",
+          picked == ["s1", "s2", "s3"], picked)
+    picked = [r.sha for r in select_runnable(rows, POP_PLAIN, {"s1"}, None)]
+    check("--resume SKIPS a recorded sha", picked == ["s2", "s3"], picked)
+    picked = [r.sha for r in select_runnable(rows, POP_PLAIN, set(), 2)]
+    check("--max-runs bounds the batch", picked == ["s1", "s2"], picked)
+    picked = [r.sha for r in select_runnable(rows, POP_FIX_LOOP, set(), None)]
+    check("populations are never summed", picked == ["s4"], picked)
+    check("register-only commits are not runnable",
+          "s5" not in [r.sha for r in select_runnable(rows, POP_PLAIN, set(), None)])
+
+    _tmp = tempfile.mkdtemp(prefix="yoyo-ledger-selftest-")
+    try:
+        missing = os.path.join(_tmp, "nope.jsonl")
+        state, shas, _ = read_ledger(missing)
+        # THE FAIL-SAFE DIRECTION: an absent ledger skips NOTHING. If this ever returned a
+        # non-empty set, "could not check" would be reading as "checked; clean".
+        check("missing ledger is its own state", state == LEDGER_MISSING, state)
+        check("missing ledger skips nothing", shas == set(), shas)
+
+        path = os.path.join(_tmp, "led.jsonl")
+        # APPEND PER VERDICT: three separate calls, order preserved, each independently
+        # durable. A process killed after the second must still hold the first two.
+        for sha in ("aaa", "bbb", "ccc"):
+            err = append_ledger(
+                path, ledger_line(sha, "p", "1", "s", POP_PLAIN, EARNED, "green", "T", "9")
+            )
+            check(f"append_ledger({sha}) succeeded", err == "", err)
+        got = [json.loads(ln)["sha"] for ln in open(path).read().splitlines() if ln.strip()]
+        check("ledger appends per verdict, in order", got == ["aaa", "bbb", "ccc"], got)
+        state, shas, _ = read_ledger(path)
+        check("read_ledger sees every appended sha",
+              state == LEDGER_READ and shas == {"aaa", "bbb", "ccc"}, (state, shas))
+    finally:
+        shutil.rmtree(_tmp, ignore_errors=True)
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
