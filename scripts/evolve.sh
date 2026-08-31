@@ -1288,6 +1288,59 @@ else
     echo "  WARNING: No assessment produced — planning agent will read source directly (slower)."
 fi
 
+# ── Release cadence (computed, not delegated) ──
+# The release check used to be priority 8 of 8 in a ladder consumed by 2 task
+# slots. That is not a low priority — it is unreachable: something in 0..7 always
+# exists (CI, capability gaps, 40+ open issues), so the slot never came free.
+# Measured: v0.1.16 shipped 2026-08-01 and the cadence block had been answering
+# DUE for ~2 weeks with no release cut; the 58-day v0.1.11..v0.1.15 gap before it
+# was the same shape. skills/release/SKILL.md diagnosed this itself and prescribed
+# the remedy — "run the cadence block unprompted, at session start" — which the
+# skill could not carry out, because a skill is only read once a slot is already
+# being spent on it. So the harness runs it here instead, before slot allocation.
+#
+# Four git commands, no API turn. The verdict is injected as evidence; the plan
+# still decides. This does not force a release — it stops the question going
+# unasked (#866).
+RELEASE_CADENCE=""
+if [ "$QUIET_MODE" = false ]; then
+    git fetch --tags --force --quiet 2>/dev/null || true
+    # Reachability-free on purpose. `git describe --match 'v*'` requires the tag
+    # to be an ancestor of HEAD; on this shallow clone it is not, so describe
+    # exits non-zero, $(...) yields empty, and the commit count silently becomes
+    # a whole-history dump. That fail-silent wrong answer is what hid the 58-day
+    # gap. Also: the loop tags EVERY session as dayN-HH-MM, so an unfiltered
+    # lookup always returns something dated today and ">14 days" can never fire.
+    LAST_RELEASE=$(git tag -l 'v*' --sort=-creatordate | head -1)
+    if [ -z "$LAST_RELEASE" ]; then
+        # Absence is its own answer — not "released today", not "released never".
+        RELEASE_CADENCE="=== RELEASE CADENCE ===
+No v* tag found — cannot judge cadence (tags may not have fetched). This is NOT
+\"a release is not due\"; the question could not be answered."
+    else
+        REL_DATE=$(git log -1 --format=%cd --date=short "$LAST_RELEASE" 2>/dev/null || echo "")
+        REL_EPOCH=$(date -u -d "$REL_DATE" +%s 2>/dev/null || date -u -j -f %Y-%m-%d "$REL_DATE" +%s 2>/dev/null || echo 0)
+        REL_DAYS=$(( REL_EPOCH > 0 ? ( $(date -u +%s) - REL_EPOCH ) / 86400 : -1 ))
+        REL_COMMITS=$(git log "$LAST_RELEASE"..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$REL_DAYS" -gt 14 ] 2>/dev/null && [ "${REL_COMMITS:-0}" -gt 0 ]; then
+            RELEASE_CADENCE="=== RELEASE CADENCE ===
+Release is DUE: last release $LAST_RELEASE was $REL_DAYS days ago ($REL_DATE),
+$REL_COMMITS commits unreleased.
+
+This is a self-driven slot candidate at PRIORITY 3 — not the bottom of the
+ladder. Read skills/release/SKILL.md and run all four steps; step 3 (pushing the
+tag) is the one that was skipped for 58 days, and the pipeline is tag-triggered,
+so an unpushed tag means no release. If you decide NOT to release, write the
+reason into the plan verbatim — recording a DUE verdict and then quietly working
+on something more interesting is the original failure repeating."
+        else
+            RELEASE_CADENCE="=== RELEASE CADENCE ===
+Release not due: last release $LAST_RELEASE, $REL_DAYS days ago, $REL_COMMITS commits unreleased."
+        fi
+    fi
+    echo "  Release cadence: $(printf '%s' "$RELEASE_CADENCE" | sed -n '2p')"
+fi
+
 # ── Phase A2: Planning agent ──
 # Reads assessment + issues; writes task files. Does NOT read source code directly.
 echo "  Phase A2: Planning (${PLAN_TIMEOUT}s)..."
@@ -1452,17 +1505,19 @@ architecture, build status, bugs, and capability gaps. Plan from the assessment.
 (Exception: if the assessment section says "NO ASSESSMENT AVAILABLE", you must read source yourself.)
 
 First: mkdir -p session_plan && rm -f session_plan/task_*.md
-
+${RELEASE_CADENCE:+
+$RELEASE_CADENCE
+}
 Priority:
 0. Fix CI failures (if any — this overrides everything else)
 1. Capability gaps — what can Claude Code do that you can't? Close the biggest gap.
 2. Self-discovered bugs, crashes, or data loss — keep yourself stable
-3. Self-discovered UX friction or missing capabilities — focus on what real human users experience
-4. Human replied to your help-wanted issue — act on their input
-5. Issue you filed for yourself (agent-self) — your own continuity matters
-6. Community issues — highest net score first
-7. Whatever you think will make you most competitive with real coding agents
-8. Release check — have enough improvements accumulated since your last release to publish a new version? Check the release skill and decide.
+3. Release, IF the RELEASE CADENCE section above says DUE — read skills/release/SKILL.md and run all four steps (step 3, pushing the tag, is the one skipped for 58 days; the pipeline is tag-triggered). This sat at priority 8 of 8 in a 2-slot ladder for months and was therefore unreachable. The cadence is now computed before planning, so the question gets asked — the answer is still yours. If you decide not to release, write the reason in the plan.
+4. Self-discovered UX friction or missing capabilities — focus on what real human users experience
+5. Human replied to your help-wanted issue — act on their input
+6. Issue you filed for yourself (agent-self) — your own continuity matters
+7. Community issues — highest net score first
+8. Whatever you think will make you most competitive with real coding agents
 
 If you hit a blocker that requires human action (missing credentials, external service access,
 permissions, design decisions you can't make alone), create an agent-help-wanted issue:
