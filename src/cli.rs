@@ -83,16 +83,127 @@ pub fn is_wait_for_reset() -> bool {
 /// config declares are refused (with their resolved command lines printed)
 /// instead of being started silently at startup. `--mcp` flags and
 /// home/XDG configs are never affected.
-static TRUST_PROJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+///
+/// **An `AtomicBool`, not a `OnceLock` (Day 184).** Trust is a property of a
+/// *directory*, and `/cd` moves the session to a different one — so the cell has
+/// to be re-settable in **both** directions or the startup answer silently governs
+/// a directory nobody ever answered for. It was write-once until Day 184, and
+/// `set_trust_project()` therefore no-opped on every call after the first.
+///
+/// Deliberately **not** the same decision as `config::loaded_config_is_project_local`,
+/// which stays a write-once `OnceLock` on purpose: that one records *which file this
+/// session actually loaded*, a historical fact about an act already taken, and a later
+/// `cd` must not retroactively rewrite it. This cell records *what is trusted right
+/// now*, which is exactly the thing a `cd` changes. Do not "restore" the `OnceLock`
+/// here on the strength of that comment over there.
+static TRUST_PROJECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Enable the opt-in project-config trust (`--trust-project`).
 pub fn set_trust_project() {
-    let _ = TRUST_PROJECT.set(true);
+    set_trust_project_to(true);
+}
+
+/// Set the project-config trust state explicitly, in either direction.
+///
+/// The revoking direction exists for `/cd`: a flag typed at startup grants only the
+/// directory it was typed in, so moving out of that directory must be able to take
+/// the grant away again.
+pub fn set_trust_project_to(trusted: bool) {
+    TRUST_PROJECT.store(trusted, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether project-local config execution is trusted (default false).
 pub fn is_trust_project() -> bool {
-    *TRUST_PROJECT.get_or_init(|| false)
+    TRUST_PROJECT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The outcome of re-evaluating trust for a new working directory.
+///
+/// Carries both halves because the caller needs the *transition*, not the state: a
+/// message is only honest when the answer actually moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrustChange {
+    /// What was in force before the move.
+    pub was_trusted: bool,
+    /// What is in force now.
+    pub now_trusted: bool,
+}
+
+/// Re-evaluate project trust for `dir`, with the store lookup injected.
+///
+/// **The rule: trust is per-directory, so moving directories re-asks the store, and
+/// a `--trust-project` / `--trust-project-always` flag grants only the directory it
+/// was typed in.** A flag that followed the user into every directory they `cd` to
+/// would be a *widening* of a security control by accident, which is the one
+/// direction that must never happen — so the flag is deliberately not consulted here
+/// and the answer comes from `store_lookup` alone.
+///
+/// **The fail-safe direction is preserved and is the point.** Only the *user-level*
+/// store may grant (see `config_paths::trusted_dirs_path` — there is deliberately no
+/// `./.yoyo/trusted_dirs` lookup), so a stranger's repo you `cd` into cannot grant
+/// itself hooks, MCP servers, `permissions.allow` or `.yoyo/goal_verify.md`. That was
+/// already true when `/cd` reloaded nothing, and it stays true now.
+///
+/// The lookup is a parameter so the decision is testable without touching the real
+/// store, the process CWD or `HOME` — the same injected-resolver discipline
+/// `never_forecast_files` uses for `added_ts`.
+pub(crate) fn reevaluate_trust_on_cd_with(
+    dir: &std::path::Path,
+    store_lookup: &dyn Fn(&std::path::Path) -> bool,
+) -> TrustChange {
+    let was_trusted = is_trust_project();
+    let now_trusted = store_lookup(dir);
+    set_trust_project_to(now_trusted);
+    TrustChange {
+        was_trusted,
+        now_trusted,
+    }
+}
+
+/// [`reevaluate_trust_on_cd_with`] against the real user-level trust store.
+pub(crate) fn reevaluate_trust_on_cd(dir: &std::path::Path) -> TrustChange {
+    reevaluate_trust_on_cd_with(dir, &crate::config_paths::dir_is_trusted)
+}
+
+/// The note printed by `/cd` when the trust answer moved.
+///
+/// `None` when it did not move — which is every user who has never written a trust
+/// store entry, i.e. the whole regression surface, so the common `/cd` is byte-identical.
+///
+/// A silent trust change is a bug in **both** directions: a grant the user did not see
+/// is the state `trusted_by_store_message` exists to prevent, and a revocation the user
+/// did not see reads as yoyo mysteriously refusing things that worked a moment ago. The
+/// wording deliberately mirrors `trusted_by_store_message` rather than inventing a second
+/// vocabulary for the same four capabilities. `plain` drops the glyph **and** the em
+/// dashes for screen-reader output; the caller drops the whole message under `--quiet`.
+pub(crate) fn trust_changed_on_cd_message(
+    dir: &std::path::Path,
+    was_trusted: bool,
+    now_trusted: bool,
+    plain: bool,
+) -> Option<String> {
+    if was_trusted == now_trusted {
+        return None;
+    }
+    let dash = if plain { "," } else { " —" };
+    Some(if now_trusted {
+        let marker = if plain { "" } else { "⚠ " };
+        format!(
+            "{marker}Project trust is now ON for this directory: {}\n  It is listed in your \
+user-level trusted_dirs store{dash} project-local .yoyo.toml MCP servers, permissions.allow, \
+shell hooks and .yoyo/goal_verify.md are live here.",
+            dir.display()
+        )
+    } else {
+        let marker = if plain { "" } else { "✓ " };
+        format!(
+            "{marker}Project trust is now OFF for this directory: {}\n  Trust is per-directory{dash} \
+a --trust-project flag grants only the directory it was typed in. Project-local .yoyo.toml MCP \
+servers, permissions.allow, shell hooks and .yoyo/goal_verify.md will not run here.\n  Run yoyo \
+with --trust-project-always in this directory to record it.",
+            dir.display()
+        )
+    })
 }
 
 /// The provider the session was actually configured with (e.g. "openrouter").
@@ -5305,6 +5416,150 @@ command = "server-two"
             })
             .unwrap_or(false);
         assert_eq!(crate::config_paths::dir_is_trusted(&cwd), listed);
+    }
+
+    /// Restore the trust cell around a test that writes it, so one test can never
+    /// hand its answer to the ~5,000 tests scheduled after it in the same binary.
+    fn with_trust_state<T>(start: bool, f: impl FnOnce() -> T) -> T {
+        let prior = is_trust_project();
+        set_trust_project_to(start);
+        let out = f();
+        set_trust_project_to(prior);
+        out
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cd_reevaluates_trust_from_the_store_in_both_directions() {
+        // Emission point: the value every consumer reads (`is_trust_project()`,
+        // which `gate_goal_verify` calls at *call* time), never a helper below it.
+        // Fabricated paths and an injected lookup: no store, no HOME, no cwd move.
+        let listed = std::path::Path::new("/home/u/trusted-proj");
+        let unlisted = std::path::Path::new("/tmp/strangers-repo");
+        let store = |d: &std::path::Path| d == listed;
+
+        // Granting direction: moving into a recorded directory turns trust on.
+        with_trust_state(false, || {
+            let change = reevaluate_trust_on_cd_with(listed, &store);
+            assert!(is_trust_project(), "store-listed directory must grant trust");
+            assert_eq!(
+                change,
+                TrustChange {
+                    was_trusted: false,
+                    now_trusted: true
+                }
+            );
+        });
+
+        // Revoking direction: moving into an unrecorded directory turns it off.
+        with_trust_state(true, || {
+            let change = reevaluate_trust_on_cd_with(unlisted, &store);
+            assert!(
+                !is_trust_project(),
+                "an unrecorded directory must not inherit the previous directory's trust"
+            );
+            assert_eq!(
+                change,
+                TrustChange {
+                    was_trusted: true,
+                    now_trusted: false
+                }
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a_trust_flag_does_not_follow_a_cd_into_an_unrecorded_directory() {
+        // The near-miss guard, and the half that matters: a discriminator tested
+        // only on the side that fires is vacuous green. `--trust-project` typed at
+        // startup grants the directory it was typed in and nothing else — a flag
+        // that followed the user everywhere would widen a security control by
+        // accident, the one direction that must never happen.
+        with_trust_state(false, || {
+            set_trust_project(); // as `parse_args` does for `--trust-project`
+            assert!(is_trust_project(), "precondition: the flag granted trust");
+
+            let change =
+                reevaluate_trust_on_cd_with(std::path::Path::new("/tmp/strangers-repo"), &|_| false);
+
+            assert!(
+                !is_trust_project(),
+                "the startup flag must not grant a directory the store never recorded"
+            );
+            assert!(change.was_trusted && !change.now_trusted);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_trust_cell_is_settable_in_both_directions() {
+        // The `OnceLock` -> `AtomicBool` conversion *is* the fix: a test that only
+        // ever set it true would pass against the write-once cell, where the second
+        // `set` silently no-ops and `/cd` could never revoke.
+        with_trust_state(false, || {
+            set_trust_project_to(true);
+            assert!(is_trust_project());
+            set_trust_project_to(false);
+            assert!(!is_trust_project(), "the cell must be re-settable to false");
+            set_trust_project_to(true);
+            assert!(is_trust_project(), "and back again");
+        });
+    }
+
+    #[test]
+    fn trust_change_note_is_silent_when_nothing_moved() {
+        // Every user who has never written a store entry: `/cd` is byte-identical.
+        // `assert_eq!` on the whole value, not a `contains`.
+        let dir = std::path::Path::new("/home/u/proj");
+        assert_eq!(trust_changed_on_cd_message(dir, false, false, false), None);
+        assert_eq!(trust_changed_on_cd_message(dir, true, true, false), None);
+        assert_eq!(trust_changed_on_cd_message(dir, false, false, true), None);
+    }
+
+    #[test]
+    fn trust_change_note_names_the_directory_and_what_moved() {
+        let dir = std::path::Path::new("/home/u/proj");
+
+        let granted = trust_changed_on_cd_message(dir, false, true, false).expect("grant speaks");
+        assert!(granted.contains("/home/u/proj"));
+        assert!(granted.contains("trusted_dirs"), "names where it came from");
+        assert!(granted.contains("goal_verify"), "names the executed capability");
+
+        let revoked = trust_changed_on_cd_message(dir, true, false, false).expect("revoke speaks");
+        assert!(revoked.contains("/home/u/proj"));
+        assert!(
+            revoked.contains("--trust-project-always"),
+            "a revocation must name how to record this directory"
+        );
+        for capability in ["MCP", "permissions.allow", "shell hooks", "goal_verify"] {
+            assert!(
+                revoked.contains(capability),
+                "revocation must say which capabilities are now off: {capability}"
+            );
+        }
+    }
+
+    #[test]
+    fn trust_change_note_is_glyph_free_and_em_dash_free_under_plain_output() {
+        // Bullets *and* em dashes — an assertion has caught the em-dash half before.
+        for now_trusted in [true, false] {
+            let plain =
+                trust_changed_on_cd_message(std::path::Path::new("/p"), !now_trusted, now_trusted, true)
+                    .expect("state moved");
+            assert!(plain.is_ascii(), "screen-reader output must be plain: {plain}");
+            assert!(!plain.contains('—'), "no em dash: {plain}");
+            // Near-miss guard: the non-plain form really does carry what plain drops,
+            // so `is_ascii()` above cannot pass by the message being empty of both.
+            let fancy = trust_changed_on_cd_message(
+                std::path::Path::new("/p"),
+                !now_trusted,
+                now_trusted,
+                false,
+            )
+            .expect("state moved");
+            assert!(!fancy.is_ascii(), "the default form carries a glyph");
+        }
     }
 
     #[test]

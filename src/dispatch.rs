@@ -1415,7 +1415,23 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 match resolve_cd_target(&current, arg) {
                     Ok(target) => match std::env::set_current_dir(&target) {
                         Ok(()) => {
+                            // Trust is per-directory, and the startup answer belonged to
+                            // the *startup* directory. Re-ask the user-level store for the
+                            // directory we just moved into, in the safe direction only:
+                            // the store may grant, a project-local file never can, and a
+                            // `--trust-project` flag does not follow the user here (Day 184).
+                            let change = crate::cli::reevaluate_trust_on_cd(&target);
                             println!("  {}", target.display());
+                            if !crate::format::is_quiet() {
+                                if let Some(msg) = crate::cli::trust_changed_on_cd_message(
+                                    &target,
+                                    change.was_trusted,
+                                    change.now_trusted,
+                                    crate::format::is_plain_output(),
+                                ) {
+                                    eprintln!("{YELLOW}{msg}{RESET}");
+                                }
+                            }
                             println!(
                                 "{DIM}  (project context was loaded from the original \
                                  directory and is not reloaded — use /context to review){RESET}\n"
