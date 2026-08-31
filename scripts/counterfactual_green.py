@@ -195,6 +195,11 @@ TEST_RESULT_FAILED_RE = re.compile(r"^test result: FAILED\.", re.MULTILINE)
 # point an honest COULD_NOT_CHECK beats an open-ended wait.
 DEFAULT_TIMEOUT_SECS = 1800
 
+# Ceiling for one bounded `git fetch --deepen`. Generous relative to the fetch it guards
+# (a few hundred commits of this repo) and finite on purpose: an instrument that can hang
+# is an instrument nobody runs.
+DEEPEN_TIMEOUT_SECS = 600
+
 
 def has_compile_error(output: str) -> bool:
     """True when the captured output carries a rustc compile-failure marker."""
@@ -655,6 +660,115 @@ def census_summary(rows: list[CensusRow]) -> dict:
 
 
 # --------------------------------------------------------------------------------------
+# Window depth. The census denominator is bounded by how much history is reachable, and
+# on this harness that is a per-run fact: `scripts/evolve.sh` checks out shallow and is
+# protected, so a `git fetch --deepen` typed by hand is gone by the next session. The
+# enabler therefore lives HERE, on my side of that boundary (the standing "an enabler on
+# my side of every immovable boundary" rule), rather than in an invocation I retype --
+# "any token added to an invocation purely to make it run is an unfiled bug report".
+# --------------------------------------------------------------------------------------
+
+# Four states, and none is folded into a neighbour. "I did not ask", "there was nothing
+# to ask for", "I asked and got more" and "I asked and got nothing" are four different
+# facts ABOUT THE DENOMINATOR BELOW, and only the last one means the reported window is
+# smaller than the one requested. Folding DID_NOT_TAKE into TOOK would be "could not
+# check" reading as "checked; clean" inside the one instrument built to stop me
+# over-claiming.
+DEEPEN_NOT_REQUESTED = "not-requested"
+DEEPEN_ALREADY_DEEP = "already-deep"
+DEEPEN_TOOK = "took"
+DEEPEN_DID_NOT_TAKE = "attempted-did-not-take"
+
+
+def classify_deepen(is_shallow, rc, before, after) -> tuple[str, str]:
+    """Did the bounded history fetch actually buy sample? Returns (state, detail).
+
+    `is_shallow` is THREE-VALUED: True / False / None ("the probe itself failed"). None is
+    deliberately NOT folded into False -- "I could not tell whether the clone is shallow"
+    must never render as "the log is already complete", which would silently promote an
+    unknown into the comfortable bucket (Day 144).
+
+    The success test is that the COMMIT COUNT MOVED, not that git exited 0. A fetch can
+    succeed and buy nothing (already at the remote's tip, or a refspec that resolves to
+    what we have), and an unreadable count is not evidence of movement either -- both are
+    DID_NOT_TAKE, because the only claim this function is allowed to make is about the
+    window the census is about to walk.
+    """
+    if is_shallow is False:
+        return (
+            DEEPEN_ALREADY_DEEP,
+            "the clone is not shallow, so no fetch was attempted",
+        )
+    probe = "" if is_shallow else " (shallowness probe failed; fetch attempted anyway)"
+    if rc != 0:
+        return (
+            DEEPEN_DID_NOT_TAKE,
+            f"`git fetch --deepen` exited {rc}{probe}",
+        )
+    if before is None or after is None:
+        return (
+            DEEPEN_DID_NOT_TAKE,
+            f"`git fetch --deepen` exited 0 but the commit count was unreadable{probe}",
+        )
+    if after > before:
+        return (
+            DEEPEN_TOOK,
+            f"{before} -> {after} commits reachable (+{after - before}){probe}",
+        )
+    return (
+        DEEPEN_DID_NOT_TAKE,
+        f"`git fetch --deepen` exited 0 and the commit count did not move "
+        f"({before} commits){probe}",
+    )
+
+
+def window_note(shallow, depth, deepen_state, deepen_detail) -> list[str]:
+    """The lines under the window header. Both branches SPEAK, on purpose.
+
+    A census reporting `0 behavioural` over a 59-commit window and one reporting `0` over
+    a 400-commit window are DIFFERENT FINDINGS and must not render alike -- the first is
+    a statement about the clone, the second about the loop. So a shallow window says out
+    loud that it bounds the denominator DOWNWARD, and a complete log says out loud that
+    it does not, rather than staying silent and letting absence of a warning read as
+    absence of a bound.
+    """
+    out = []
+    if deepen_state == DEEPEN_TOOK:
+        out.append(f"  deepen ....................... TOOK: {deepen_detail}")
+    elif deepen_state == DEEPEN_DID_NOT_TAKE:
+        out.append(
+            f"  deepen ....................... ATTEMPTED AND DID NOT TAKE: "
+            f"{deepen_detail}"
+        )
+        out.append(
+            "                                 the window below is the one that already "
+            "existed, not the one asked for."
+        )
+    elif deepen_state == DEEPEN_ALREADY_DEEP:
+        out.append(f"  deepen ....................... NOT NEEDED: {deepen_detail}")
+
+    if shallow:
+        out.append(
+            f"  !! SHALLOW WINDOW ({depth} commits) -- this BOUNDS THE DENOMINATOR BELOW "
+            "DOWNWARD."
+        )
+        out.append(
+            "     A behavioural count of 0 here is a fact about the clone depth as much "
+            "as about the loop."
+        )
+        out.append(
+            "     Re-run with --deepen N to buy sample; the depth reported above is the "
+            "one actually obtained."
+        )
+    else:
+        out.append(
+            f"  complete log ({depth} commits) -- the denominator below is NOT bounded "
+            "by clone depth."
+        )
+    return out
+
+
+# --------------------------------------------------------------------------------------
 # I/O half. Every landmine lives here, contained.
 # --------------------------------------------------------------------------------------
 
@@ -685,11 +799,63 @@ def repo_root() -> str:
     return out.strip().splitlines()[0] if out.strip() else os.getcwd()
 
 
-def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, str]:
-    """Walk the log, classify each task commit. Returns (rows, window, error)."""
+def commit_count(root: str):
+    """Commits reachable from HEAD, or None if the count could not be read."""
+    rc, out = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
+    if rc != 0:
+        return None
+    try:
+        return int(out.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def is_shallow_repo(root: str):
+    """True / False / None -- None means the probe itself failed, and stays distinct."""
+    rc, out = run_cmd(["git", "-C", root, "rev-parse", "--is-shallow-repository"])
+    if rc != 0:
+        return None
+    return out.strip() == "true"
+
+
+def deepen_repo(root: str, n: int) -> tuple[str, str]:
+    """Bounded history fetch, so the census denominator can grow. Returns (state, detail).
+
+    NEVER `--unshallow`. An unbounded history fetch is an unknown cost with no ceiling on
+    a repo of this age; a bounded deepen is the entire point, and the bound is the
+    operator's number rather than mine.
+
+    FAIL SOFT, AND SAY WHICH WAY. No network, no remote, a non-zero exit or a count that
+    did not move all leave the census running over whatever window already exists -- and
+    all of them SAY SO. A silent fall-through here would be "could not check" reading as
+    "checked; clean" inside the one instrument built to stop me over-claiming.
+
+    It does not touch the working tree: `git fetch` writes only to the object store and
+    refs. (The harness reverts a failed task with `git reset --hard`, so a script that
+    mutated the tree could destroy the session running it.)
+    """
+    shallow = is_shallow_repo(root)
+    if shallow is False:
+        # Short-circuit: nothing to buy, so nothing is spent.
+        return classify_deepen(False, 0, None, None)
+    before = commit_count(root)
+    rc, _ = run_cmd(
+        ["git", "-C", root, "fetch", "--deepen", str(n)], timeout=DEEPEN_TIMEOUT_SECS
+    )
+    after = commit_count(root)
+    return classify_deepen(shallow, rc, before, after)
+
+
+def collect_census(root: str, limit: int | None):
+    """Walk the log, classify each task commit.
+
+    Returns (rows, window, shallow, depth, error). `shallow` is THREE-VALUED (True /
+    False / None) and is carried out rather than collapsed here, because the depth of the
+    window is a finding about the denominator, not a decoration on the header.
+    """
     rc, out = run_cmd(["git", "-C", root, "log", "--format=%H%x09%s"], timeout=60)
     if rc != 0:
-        return [], "", f"git log failed (rc={rc})"
+        return [], "", None, "?", f"git log failed (rc={rc})"
 
     all_lines = out.splitlines()
     pairs = parse_log_lines(all_lines)
@@ -724,13 +890,13 @@ def collect_census(root: str, limit: int | None) -> tuple[list[CensusRow], str, 
 
     rc3, out3 = run_cmd(["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60)
     depth = out3.strip() if rc3 == 0 else "?"
-    rc4, out4 = run_cmd(["git", "-C", root, "rev-parse", "--is-shallow-repository"])
-    shallow = out4.strip() == "true" if rc4 == 0 else False
+    shallow = is_shallow_repo(root)
     window = (
         f"{len(all_lines)} commits reachable from HEAD "
-        f"({depth} total, shallow={'yes' if shallow else 'no'})"
+        f"({depth} total, shallow="
+        f"{'yes' if shallow else ('no' if shallow is False else 'UNKNOWN')})"
     )
-    return rows, window, ""
+    return rows, window, shallow, depth, ""
 
 
 def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
@@ -916,11 +1082,12 @@ read as "checked; clean"):
 """
 
 
-def render_census(rows, summary, window, limit) -> str:
+def render_census(rows, summary, window, limit, note=None) -> str:
     out = []
     scope = f"last {limit} task commits" if limit else "all reachable task commits"
     out.append(f"counterfactual-green census over {scope}")
     out.append(f"  window ....................... {window}")
+    out.extend(note or [])
     out.append("")
     out.append(f"  task commits found ........... {summary['task_commits']}")
     out.append(f"  NO_TEST_CHANGE ............... {summary['not_addressable']}")
@@ -981,6 +1148,15 @@ def main(argv):
         "--limit", type=int, metavar="N", help="census: only the last N task commits"
     )
     parser.add_argument(
+        "--deepen",
+        type=int,
+        metavar="N",
+        help=(
+            "before the census, fetch N more commits of history if the clone is shallow "
+            "(bounded on purpose -- never --unshallow). Fails soft and says so."
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=DEFAULT_TIMEOUT_SECS,
@@ -1001,12 +1177,18 @@ def main(argv):
     status = 0
 
     if args.census:
-        rows, window, err = collect_census(root, args.limit)
+        # Deepen BEFORE walking the log, or the census measures the old window and
+        # reports the new depth -- a guard that reads the world after its own action.
+        deepen_state, deepen_detail = DEEPEN_NOT_REQUESTED, ""
+        if args.deepen is not None:
+            deepen_state, deepen_detail = deepen_repo(root, args.deepen)
+        rows, window, shallow, depth, err = collect_census(root, args.limit)
         if err:
             print(f"COULD NOT CHECK: {err}", file=sys.stderr)
             print(LIMITS, file=sys.stderr)
             return 1
         summary = census_summary(rows)
+        note = window_note(shallow, depth, deepen_state, deepen_detail)
         # ANTI-VACUOUS, asserted first: a scan finding no task commits at all must fail
         # loudly rather than report "0 addressable". A scanner that finds nothing and
         # passes is this very defect wearing the opposite sign, and it is quieter.
@@ -1018,9 +1200,10 @@ def main(argv):
                 "scripts/evolve.sh's commit subjects.",
                 file=sys.stderr,
             )
+            print("\n".join(note), file=sys.stderr)
             print(LIMITS, file=sys.stderr)
             return 1
-        print(render_census(rows, summary, window, args.limit))
+        print(render_census(rows, summary, window, args.limit, note))
         status = 0
 
     if args.commit:
@@ -1518,6 +1701,72 @@ def run_self_tests():
     check("render names the signal denominator", "BEHAVIOURAL" in out, out[:300])
     check("render names the register tier", "REGISTER-ONLY" in out, out[:300])
     check("render names the window", "11 commits" in out, out[:300])
+
+    # -- window depth: four deepen states, none folded into a neighbour -------------------
+    # The success test is MOVEMENT, not exit status: a fetch can exit 0 and buy nothing.
+    st, det = classify_deepen(True, 0, 59, 400)
+    check("deepen that moved the count TOOK", st == DEEPEN_TOOK, (st, det))
+    check("deepen detail names both counts", "59" in det and "400" in det, det)
+    check("deepen detail names the gain", "+341" in det, det)
+
+    st, det = classify_deepen(True, 0, 59, 59)
+    check("exit 0 with no movement DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, (st, det))
+    check("no-movement detail says so", "did not move" in det, det)
+
+    st, det = classify_deepen(True, 128, 59, 59)
+    check("non-zero exit DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, (st, det))
+    check("failure detail names the exit status", "128" in det, det)
+
+    # An unreadable count is not evidence of movement either.
+    st, _ = classify_deepen(True, 0, None, 400)
+    check("unreadable before DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, st)
+    st, _ = classify_deepen(True, 0, 59, None)
+    check("unreadable after DID NOT TAKE", st == DEEPEN_DID_NOT_TAKE, st)
+
+    # NEAR-MISS GUARD: a complete log is not a failure, it is nothing to buy.
+    st, det = classify_deepen(False, 0, None, None)
+    check("already-deep is its own state", st == DEEPEN_ALREADY_DEEP, (st, det))
+    check("already-deep says no fetch ran", "no fetch" in det, det)
+
+    # None (probe failed) must NOT be folded into False -- "I could not tell" is not
+    # "the log is already complete".
+    st, det = classify_deepen(None, 0, 59, 400)
+    check("unknown shallowness still fetches", st == DEEPEN_TOOK, (st, det))
+    check("unknown shallowness is disclosed", "probe failed" in det, det)
+    check(
+        "four deepen states are distinct",
+        len({DEEPEN_NOT_REQUESTED, DEEPEN_ALREADY_DEEP, DEEPEN_TOOK,
+             DEEPEN_DID_NOT_TAKE}) == 4,
+    )
+
+    # -- the window note: BOTH branches speak, and they do not render alike ---------------
+    shallow_lines = window_note(True, "59", DEEPEN_NOT_REQUESTED, "")
+    joined = "\n".join(shallow_lines)
+    check("shallow window is named", "SHALLOW WINDOW" in joined, joined)
+    check("shallow window names the depth", "59" in joined, joined)
+    check("shallow window says it bounds downward", "DOWNWARD" in joined, joined)
+    deep_lines = window_note(False, "400", DEEPEN_NOT_REQUESTED, "")
+    deep_joined = "\n".join(deep_lines)
+    check("complete log also speaks", "complete log" in deep_joined, deep_joined)
+    check("complete log denies the bound", "NOT bounded" in deep_joined, deep_joined)
+    check("the two windows do not render alike", joined != deep_joined)
+
+    # A deepen that did not take must SAY the window is the pre-existing one --
+    # "could not check" must never read as "checked; clean".
+    failed = "\n".join(window_note(True, "59", DEEPEN_DID_NOT_TAKE, "exited 128"))
+    check("failed deepen is loud", "DID NOT TAKE" in failed, failed)
+    check("failed deepen carries the status", "128" in failed, failed)
+    check("failed deepen disowns the window", "not the one asked for" in failed, failed)
+    took = "\n".join(window_note(False, "400", DEEPEN_TOOK, "59 -> 400 commits (+341)"))
+    check("successful deepen reports the gain", "TOOK" in took and "+341" in took, took)
+    # NEAR-MISS GUARD: no --deepen means no deepen line at all.
+    quiet = "\n".join(window_note(True, "59", DEEPEN_NOT_REQUESTED, ""))
+    check("unrequested deepen renders no deepen line", "deepen" not in quiet, quiet)
+
+    # The note reaches the rendered census (the string an operator actually reads).
+    rendered = render_census(rows, s, "11 commits", None, shallow_lines)
+    check("render carries the window note", "SHALLOW WINDOW" in rendered, rendered[:400])
+
     check("limits state the intent boundary", "intent is not" in LIMITS.lower())
     check("limits state the src/ scope", "165k" in LIMITS)
     check("limits state the register caveat", "DEBT REGISTER" in LIMITS)
