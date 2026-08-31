@@ -1,0 +1,251 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the defect before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD && git… ✓ (5ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Reproduced exactly: MATCH / SKIP / SKIP. And the clone is shallow at 50 again, confirming --deepen doesn't persist. Now let me read the census machinery.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TASK_COMMIT_RE\|class C…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,200p' scripts/counte… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,140p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,700p' scripts/counte… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '854,960p' scripts/counte… ✓ (4ms)
+  5 tools completed in 5.9s (5 ✓)
+
+
+I'll pick up where I left off. I've reproduced the defect (MATCH/SKIP/SKIP) and read the census machinery. Now let me look at render_census and the existing self-tests before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1090,1215p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1405,1450p' scripts/coun… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.1s (2 ✓)
+
+Now I have the picture. Critically, I found a pre-existing self-test row that pins the defect — "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)" sits in the not_task (must-be-rejected) list. That's my archive's "a fixture row asserting a known-wrong output converts a defect into a green invariant". It must be moved deliberately, not quietly. Let me start editing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 23 lines)
+    # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
+  - TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
+  + #
+  + # WIDENED (Day 184, #868), and the widening IS the deliverable. The pattern used to end
+  + # `\(Task\s+\d+\)`, anchoring the subject to STOP at the task number — so every
+  + # `(Task 1, eval-fix 2)` / `(Task 2, build-fix 3)` retry commit matched NOTHING. Measured
+  + # over the Day-184 deepened window: 434 plain task commits visible, 184 fix-loop commits
+  + # invisible, and 0 of the 20 behavioural commits was a fix-loop commit.
+  + #
+  + # That is the worst direction a sampling bug can run: it excluded exactly the population
+  + # DREAM.md's milestone is ABOUT (the pre-registered guess is that fix-loop pressure is
+  + # where unearned green lives) while the surviving sample looked healthy. The optional
+  + # `(?:,\s*[^)]+)?` group admits the suffix; group 3 CAPTURES it, so the classifier reads a
+  + # parsed value rather than re-scanning the raw subject with a second pattern.
+  + TASK_COMMIT_RE = re.compile(
+  +     r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+(?:,\s*([^)]+))?\)\s*$"
+  + )
+  + 
+  + # The two suffix markers `scripts/evolve.sh` writes when a task needed the fix loop, and
+  + # the two DREAM.md names. Matched as substrings of the CAPTURED suffix only — never of the
+  ... (4 more lines)
+ ✓ (1m 13s)
+    # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
+  - TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
+  + #
+  + # WIDENED (Day 184, #868), and the widening IS the deliverable. The pattern used to end
+  + # `\(Task\s+\d+\)`, anchoring the subject to STOP at the task number — so every
+  + # `(Task 1, eval-fix 2)` / `(Task 2, build-fix 3)` retry commit matched NOTHING. Measured
+  + # over the Day-184 deepened window: 434 plain task commits visible, 184 fix-loop commits
+  + # invisible, and 0 of the 20 behavioural commits was a fix-loop commit.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure classifier, placed with the other census decision functions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (13 → 30 lines)
+    class CensusRow:
+        """One task commit and whether it is addressable by the counterfactual."""
+    
+  -     __slots__ = ("sha", "subject", "test_files", "register_only")
+  +     __slots__ = ("sha", "subject", "test_files", "register_only", "population")
+    
+        def __init__(self, sha: str, subject: str, test_files: list[str],
+  -                  register_only: frozenset | set | None = None):
+  +                  register_only: frozenset | set | None = None,
+  +                  population: str | None = None):
+            self.sha = sha
+            self.subject = subject
+            self.test_files = test_files
+            # Paths whose diff in THIS commit was register-only, derived by
+            # `test_diff_is_register_only`. Never a hand-listed filename.
+            self.register_only = frozenset(register_only or ())
+  +         # Which of DREAM.md's two populations this commit belongs to. Derived from the
+  +         # subject by `subject_population`, carried rather than recomputed so the row and
+  +         # the fold cannot disagree about the same commit.
+  +         self.population = population or subject_population(subject) or POP_PLAIN
+  ... (12 more lines)
+ ✓ (1m 12s)
+    class CensusRow:
+        """One task commit and whether it is addressable by the counterfactual."""
+    
+  -     __slots__ = ("sha", "subject", "test_files", "register_only")
+  +     __slots__ = ("sha", "subject", "test_files", "register_only", "population")
+    
+        def __init__(self, sha: str, subject: str, test_files: list[str],
+  -                  register_only: frozenset | set | None = None):
+  ... (13 more lines)
+
+
+I'll continue. I've widened the regex and added population to CensusRow — now I need the subject_population function it references, or the module won't even import.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^class CensusRow\|^def … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '565,570p' scripts/counte… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (6 → 50 lines)
+    # --------------------------------------------------------------------------------------
+    # Census — the deliverable. Pure half here, git I/O at the call site.
+    # --------------------------------------------------------------------------------------
+  + 
+  + # DREAM.md's milestone asks for the rate "reported **separately** for commits whose
+  + # subject carries an `eval-fix` or `build-fix` suffix". These are those two populations,
+  + # plus the third value that keeps an unrecognised suffix from being absorbed by whichever
+  + # neighbour is convenient (Day 144: absence, and anything I cannot classify, gets its own
+  + # name). They are NEVER summed: a fix-loop commit and a first-attempt commit are different
+  + # facts, and pooling them would make the widened pattern actively worse than the narrow
+  + # one it replaced — it would add 184 commits to a denominator whose whole purpose is to be
+  + # split.
+  + POP_PLAIN = "plain"
+  + POP_FIX_LOOP = "fix-loop"
+  + POP_UNKNOWN_SUFFIX = "unknown-suffix"
+  + 
+  + 
+  + def subject_population(subject: str) -> str | None:
+  +     """Which population does this commit subject belong to? `None` if not a task commit.
+  + 
+  ... (30 more lines)
+ ✓ (1m 12s)
+    # --------------------------------------------------------------------------------------
+    # Census — the deliverable. Pure half here, git I/O at the call site.
+    # --------------------------------------------------------------------------------------
+  + 
+  + # DREAM.md's milestone asks for the rate "reported **separately** for commits whose
+  + # subject carries an `eval-fix` or `build-fix` suffix". These are those two populations,
+  + # plus the third value that keeps an unrecognised suffix from being absorbed by whichever
+  + # neighbour is convenient (Day 144: absence, and anything I cannot classify, gets its own
+  ... (13 more lines)
+  3 tools completed in 1m 28s (3 ✓)
+
+
+I'll continue — the classifier now exists. Let me verify the module imports and the regex probe now passes, then split the summary fold.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three probe cases now match, and the self-contamination guard holds (a title about build-fix classifies plain). Now the fold — split by population, never summed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '727,745p' scripts/counte… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (15 → 35 lines)
+            "behavioural": sum(1 for r in rows if r.behavioural),
+            "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
+            "not_addressable": sum(1 for r in rows if not r.addressable),
+  +     }
+  + 
+  + 
+  + def census_by_population(rows: list[CensusRow]) -> dict:
+  +     """Fold the SAME five figures once per population, and never sum them (Day 184, #868).
+  + 
+  +     DREAM.md's milestone asks for the rate "reported **separately** for commits whose
+  +     subject carries an `eval-fix` or `build-fix` suffix" — that split IS the pre-registered
+  +     guess, that fix-loop pressure is where unearned green lives. Pooling the two would
+  +     destroy the only question the widened `TASK_COMMIT_RE` was widened to ask, so the fold
+  +     is per-population and there is deliberately no combined figure anywhere in the return.
+  + 
+  +     `POP_UNKNOWN_SUFFIX` gets its own entry for the same reason: a suffix shape nobody
+  +     enumerated must not be absorbed into whichever neighbour is convenient. Its count is
+  +     normally 0, and the renderer stays silent when it is — but a silent absorption is the
+  +     defect this whole family of checks is about, so the bucket exists before it is needed.
+  +     """
+  ... (4 more lines)
+ ✓ (1m 12s)
+            "behavioural": sum(1 for r in rows if r.behavioural),
+            "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
+            "not_addressable": sum(1 for r in rows if not r.addressable),
+  +     }
+  + 
+  + 
+  + def census_by_population(rows: list[CensusRow]) -> dict:
+  +     """Fold the SAME five figures once per population, and never sum them (Day 184, #868).
+  ... (13 more lines)
+  2 tools completed in 1m 25s (2 ✓)
+
+
+I'll continue — the fold is split. Now the renderer must print both populations separately.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def render_census" scri… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "render_census\|census_s… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+No self-test asserts on the pooled rate line. Now the renderer:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (38 → 85 lines)
+  - def render_census(rows, summary, window, limit, note=None) -> str:
+  + def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+  +     """The same five figures the census has always printed, for ONE population.
+  + 
+  +     Extracted so the two populations cannot drift apart in the report: one statement of
+  +     the shape, called twice. A second copy would agree the day it was written.
+  +     """
+  +     out = [f"  [{label}]{note}"]
+  +     out.append(f"    task commits found ......... {summary['task_commits']}")
+  +     out.append(f"    NO_TEST_CHANGE ............. {summary['not_addressable']}")
+  +     out.append(f"    touch any tests/*.rs ....... {summary['addressable']}")
+  +     out.append(
+  +         f"      of which REGISTER-ONLY ... {summary['register_only']}"
+  +         "   (bookkeeping; verdict decided by construction)"
+  +     )
+  +     out.append(
+  +         f"      of which BEHAVIOURAL ..... {summary['behavioural']}"
+  +         "   <- the denominator that carries signal"
+  +     )
+  +     if summary["task_commits"]:
+  ... (82 more lines)
+ ✓ (1m 12s)
+  - def render_census(rows, summary, window, limit, note=None) -> str:
+  + def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+  +     """The same five figures the census has always printed, for ONE population.
+  + 
+  +     Extracted so the two populations cannot drift apart in the report: one statement of
+  +     the shape, called twice. A second copy would agree the day it was written.
+  +     """
+  +     out = [f"  [{label}]{note}"]
+  ... (13 more lines)
+
+
+I'll continue. The renderer is split. Now let me run the existing self-tests to see what breaks — especially the row that pins the defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (47ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+The predicted collision, live: one pre-existing row asserts (Task 1, eval-fix 1) must be rejected — the defect written as a green invariant. My archive's rule is to invert it deliberately and record what it used to pin, never delete it quietly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TASK_COMMIT_RE, the sec… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

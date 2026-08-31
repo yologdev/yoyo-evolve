@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify" src/cli.rs | he… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/dispatch.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "should_prompt_for_trust… ✓ (4ms)
+ ✓ (198ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,460p' src/config_pat… ✓ (3ms)
+ ✓ (313ms)
+  6 tools completed in 11.7s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Verified: the gate exists and is wired at src/cli.rs:2063 (after the trust prompt at :1720, so a "yes" is honoured), the old ungated set_notify_command install was removed and replaced by a single gated install at :2074, project_trust_grants gained the bare-key match, register entries match wc -l exactly (5818 / 2337) and cargo test --test module_size passes with zero warnings, and grant tests pass.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 24s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Summary of what I actually verified (not just read in the diff):
+
+• **Gate wired, once, in the right place.** `gate_project_notify_command` at `src/cli.rs:1234`, called at `:2063`. `grep -n set_notify_command src/cli.rs returns exactly **one** install site (:2074) — the old ungated call at ~:1509 is genuinely gone, not duplicated. Placement is after should_prompt_for_trust (:1720`), so a user answering "yes" gets the command they approved rather than a refusal for it.
+• **Both halves landed together** (the self-verifying pairing the task required): the gate *and* the `project_trust_grants` entry in `config_paths.rs, matched as a bare key via split_once('=') so a [notify]` section header or a longer key can't manufacture a grant. Its 3 tests pass, including the near-miss guard that this repo's own .yoyo.toml still yields an empty grant list.
+• **Register drift actually paid, not hand-typed. `wc -l` gives 5818 and 2337**, matching the entries exactly, and `cargo test --test module_size` runs 24 passed with zero warnings — the step-3 acceptance criterion, checked by running it rather than trusting the diff.
+• **Regression surface asserted the way the task specified:** `assert_eq!` on the resolved value for the no-`notify_command` case across all four `(project_local, trusted)` combinations, including the refusing one where refused must stay None rather than Some("").
+
+One cleanup note passed on rather than failed: the comment above the cli.rs register entry reads 5604 -> 5813 (+209) while the entry itself is the correct 5818. The value the gate reads is right; only the prose beside it carries a stale number — worth a one-character fix next time this file is touched, and mildly ironic in a repo whose documented failure mode is exactly "a count in prose goes stale silently."
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

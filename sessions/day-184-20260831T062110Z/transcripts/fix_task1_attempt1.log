@@ -1,0 +1,211 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what the self-test failure actually is.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (9ms)
+ ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Confirmed the failure. Let me reproduce Step 0's probe and look at the relevant code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TASK_COMMIT_RE\|FIX_LOO… ✓ (4ms)
+ ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Design landed correctly. Now let me see the failing fixture and its surrounding self-tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1600p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '570,615p' scripts/counte… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.4s (2 ✓)
+
+The failing fixture is the crux: not_task asserted the old narrow behaviour — that a fix-loop commit is not a task commit — which is precisely the defect this task exists to remove. Let me track the work.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Move the superseded fix-loop fixture out of not_ta…' ✓ (0ms)
+  ▶ todo add 'Add Step 2's four guards (near-miss byte-for-byte,…' ✓ (0ms)
+  ▶ todo add 'Run positive control serially; confirm ALL PASSED …' ✓ (0ms)
+  ▶ todo add 'Step 3: re-take census with --deepen 2000, record …' ✓ (0ms)
+  ▶ todo add 'Step 4: CLAUDE.md — correct false receipt (superse…' ✓ (0ms)
+  5 tools completed in 1ms (5 ✓)
+
+
+I'll pick up at todo #1 — the self-test fixture that regressed the suite. Let me re-confirm the live state before editing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1520,1560p' scripts/coun… ✓ (3ms)
+ ✓ (47ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.9s (2 ✓)
+
+Now let me look at the check helper signature and CensusRow's constructor so my guards assert at the right layer.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '613,700p' scripts/counte… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,182p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (3ms)
+ ✓ (35ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.3s (4 ✓)
+
+Now I have everything. Let me make the self-test edit — moving the superseded fixture and adding Step 2's guards.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (9 → 128 lines)
+            "Day 183 (11:42): session wrap-up",
+            "Day 183: bump skill-evolve counter (2)",
+            "dream: progress (day 183)",
+  -         "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)",
+        ]
+        for s in not_task:
+            check(f"non-task subject rejected: {s[:30]}", TASK_COMMIT_RE.match(s) is None)
+  + 
+  +     # SUPERSEDED ASSERTION (Day 184, #868), recorded rather than erased. This list used to
+  +     # carry a sixth entry:
+  +     #
+  +     #     "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)",
+  +     #
+  +     # i.e. it asserted that a fix-loop commit is NOT a task commit. That was a true record
+  +     # of the narrow `TASK_COMMIT_RE` and it was pinning the DEFECT: 184 fix-loop commits in
+  +     # the deepened window were invisible to the census, and they are precisely the
+  +     # population DREAM.md's milestone pre-registers. The fixture is not deleted — it moves
+  +     # below, where the same string is asserted to match and to classify as `POP_FIX_LOOP`.
+  +     # A fixture that outlives its fix converts a defect into a green invariant.
+  +     superseded_fixture = "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)"
+  ... (107 more lines)
+ ✓ (1m 12s)
+            "Day 183 (11:42): session wrap-up",
+            "Day 183: bump skill-evolve counter (2)",
+            "dream: progress (day 183)",
+  -         "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)",
+        ]
+        for s in not_task:
+            check(f"non-task subject rejected: {s[:30]}", TASK_COMMIT_RE.match(s) is None)
+  + 
+  ... (13 more lines)
+
+
+I just landed the self-test edit. Let me verify it actually passes before moving on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (46ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ALL PASSED, exit 0. Let me mark those done and verify I didn't disturb the verdict count (the message says 6, CLAUDE.md says seven states).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (50ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.7s (3 ✓)
+
+Good — 6 is pre-existing and correct (NO_TEST_CHANGE isn't a run verdict), untouched by my diff. Now todo #3: the positive control. The task warns to run multiple file-mutating controls serially — a parallel pair raced once and one falsely passed. Control A first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (11 lines) ✓ (69ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control A: exactly 1 test red — the emission-point flag — while every near-miss guard stayed green. Now restore and run control B serially.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cg_pristine.py scripts/c… ✓ (48ms)
+
+
+Restored and green. Now control B — neutering the classifier itself, which exercises the guards control A could not reach.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (64ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (47ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.5s (2 ✓)
+
+The tool is compressing the middle. Let me capture the full list.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (48ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control B reddens **exactly 8** — every fix-loop assertion — while all near-miss guards stayed green. Note `superseded: ...now matches` stayed green: that correctly isolates the two mechanisms (regex widening = visibility; suffix classification = the split). Restoring now.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cg_pristine.py scripts/c… ✓ (54ms)
+
+
+Restored byte-identically (matching md5) and ALL PASSED, exit 0. Todo #3 done — now the census re-take.
+  ▶ todo done #3 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "depth BEFORE: $(git rev-li… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+51 commits, shallow — exactly as the task predicted; last session's deepen did not persist. Running the census with --deepen 2000.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n /tmp/census.txt ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+--deepen needs a mode flag — the task file's literal command is missing --census (argparse exit 2). Running the correct invocation.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (3.6s)
+
+
+Deepen took: 51 → 2051 commits. Let me read the census output.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n /tmp/census.txt | head -7… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census works — both populations printed separately with all five figures. Let me capture the limits block and inspect the third state before recording.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -25 /tmp/census.txt  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (11 lines) ✓ (3ms)
+ ✓ (83ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.3s (2 ✓)
+
+The third state earns its keep — 5 real instances with human suffixes (prediction, doc fix, step 1). Recording the reading, then CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ todo done #4 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "filed\*\* rather than l… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.2s (2 ✓)
+
+Found the false receipt at line 376. Let me verify the actual filing state before writing the correction.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 868 --json number,…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%H %cI' -- … ✓ (7ms)
+ ✓ (276ms)
+  2 tools completed in 276ms (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

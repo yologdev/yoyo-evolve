@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify" src/cli.rs | he… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat -- CLAUDE…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1570,1600p' src/cli.rs &… ✓ (7ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== files in commit ===" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 cargo test --test mo… ✓ (14ms)
+ ✓ (199ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== any early exit between… ✓ (5ms)
+  7 tools completed in 45.3s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The `std::process::exit(1) sites are fatal error aborts, not skips — any run that reaches the end of parse_args` passes through the new install site. The relocation is safe.
+
+Here's my assessment. The code half is complete and correct; the docs half required by the task was omitted, leaving CLAUDE.md actively asserting a now-false claim.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 25s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+**What's right (and it's most of it):**
+• gate_project_notify_command refuses only on project_local && !trusted; all four combinations table-tested.
+• Placement is correct and deliberate — moved *below* the trust prompt so a user answering "yes" gets the command they just approved. I verified the relocation is safe: zero return statements between the old site (1585) and the new one (2074), only fatal std::process::exit(1) aborts.
+• The absent-notify_command path — essentially every user — is pinned with assert_eq! on the resolved value in all four combinations, including that refused stays None rather than Some("").
+• Step 2 landed too, so the pairing is self-verifying: gating without the grant would refuse users with no way to say yes.
+• Register drift paid for both entries; `cargo test --test module_size` is 24/24 with zero warnings.
+
+Why it fails: the task's ## Docs section was skipped outright. No CLAUDE.md, no docs/. That isn't a style nit here — CLAUDE.md still reads *"shell hooks (#820) and `.yoyo/goal_verify.md` (#761) all consult is_trust_project(), so recording a directory turns all four on"*, and this diff makes that sentence false. It's now five. That's precisely the stale-claim shape this repo has paid for repeatedly (eight sessions on src/gasp.rs reading an authoritative "impossible"), sitting in the one document re-injected as authoritative context every session — and the code comments the diff does write are only visible to someone already reading cli.rs.
+
+The remedy is small and mechanical: update that clause to five, add the notify_command gate to the cli.rs bullet with the mechanism test (what the entry **is**, not what it does after it runs), and record it as the fifth "two doors" instance.
+
+One further gap worth flagging for the next pass, though I did not fail on it since it's a reporting item rather than a code defect: step 4's mechanism sweep of the ~12 parse_*_from_config readers has no visible artifact in the diff or commit — no issue filed, no enumeration recorded. If the sweep found nothing, that measured "this is fine" is itself a result worth writing down so a later session doesn't re-derive it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

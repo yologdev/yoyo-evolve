@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll look at the failing test and the function it exercises before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gate_project_notify_com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (7ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1195,1300p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5375,5440p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.2s (4 ✓)
+
+The failure is diagnostic, not mysterious: the gate body is still in its neutered positive-control state. Let me confirm and see the sibling gate's real shape.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "POSITIVE CONTROL\|neute…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub(crate) fn gate_pro… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.7s (2 ✓)
+
+One neutering site — the positive control was run and I never restored the body. gate_project_hooks shows the canonical shape. Let me read this gate's own doc comment and call site so the restored body matches what they claim.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1201,1250p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2045,2075p' src/cli.rs ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The call site is correct and fully wired — only the gate body needs restoring from its neutered state. Let me make that single edit.
+  ▶ edit src/cli.rs (8 → 17 lines)
+    ) -> NotifyGateOutcome {
+  -     // POSITIVE CONTROL: neutered to the pre-fix behaviour (no gate at all).
+  -     let _ = (project_local, trusted);
+  +     // Home/XDG configs and explicitly trusted runs pass through untouched. An
+  +     // absent `notify_command` also lands here as `None`/`None`, which is
+  +     // essentially every user and the whole regression surface.
+  +     if !project_local || trusted {
+  +         return NotifyGateOutcome {
+  +             command: cmd,
+  +             refused: None,
+  +         };
+  +     }
+  +     // Project-local and not vouched for: refuse. `cmd == None` yields
+  +     // `refused: None` naturally — nothing was declared, so nothing is refused.
+        NotifyGateOutcome {
+  -         command: cmd,
+  -         refused: None,
+  +         command: None,
+  +         refused: cmd,
+        }
+  ... (1 more lines)
+ ✓ (2m 8s)
+    ) -> NotifyGateOutcome {
+  -     // POSITIVE CONTROL: neutered to the pre-fix behaviour (no gate at all).
+  -     let _ = (project_local, trusted);
+  +     // Home/XDG configs and explicitly trusted runs pass through untouched. An
+  +     // absent `notify_command` also lands here as `None`/`None`, which is
+  +     // essentially every user and the whole regression surface.
+  +     if !project_local || trusted {
+  +         return NotifyGateOutcome {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me read the gate's full doc comment to confirm the restored body matches what it claims, then run the failing test.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1208 && NR<=1260' src/c… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The display collapses long comment runs. Let me extract the doc comment verbatim to confirm no claim is left unmet.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Doc comment and body now agree. Let me run the previously-failing test plus its near-miss guards.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo notify 2>&… ✓ (190ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 19 notify tests pass. Now the full verification chain.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build green. My edit changed src/cli.rs's line count, so let me re-check the module-size gate (step 3 required zero warnings).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (176ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own pasteable remedy. Let me paste it verbatim rather than hand-typing the number.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"\|"src/disp… ✓ (3ms)
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 5813),
+  +     ("src/cli.rs", 5818),
+ ✓ (1m 26s)
+  -     ("src/cli.rs", 5813),
+  +     ("src/cli.rs", 5818),
+  2 tools completed in 1m 28s (2 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (195ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Zero warnings — step 3's requirement met. Now the full suite and clippy.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 25s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 5401 passed, 0 failed (was 5400/1). Now clippy.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (168ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy clean. Let me make sure no other positive-control neutering was left behind — that's the actual class of defect here.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "POSITIVE CONTROL\|neut…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== gat… ✓ (10ms)
+ ✓ (18ms)
+  2 tools completed in 18ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No other neutering leftovers (those three hits are unrelated EXXXX error-pattern comments). Let me verify the step-2 half is still intact — the gate and the grant are a pair, and one without the other is a broken state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify" src/config_path…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo project_tr… ✓ (3ms)
+ ✓ (175ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Both halves intact, and the near-miss guard (..._is_empty_for_keys_that_grant_nothing) still passes — this repo's own harmless config still prompts about nothing. Final verification chain:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That ran cargo test three times and timed out. Let me run each step once.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…

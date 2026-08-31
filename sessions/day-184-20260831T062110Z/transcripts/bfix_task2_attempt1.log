@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the register drift the gate printed — step 3 of the task. Let me look at the register entries first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"\|"src/disp… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs src/dispatch.rs… ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.5s (2 ✓)
+
+Both numbers confirmed independently (wc -l matches, files end in newline so it equals Rust's lines().count()). Let me see the register context:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '148,160p' tests/module_s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "=== dis… ✓ (10ms)
+  2 tools completed in 3.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+src/dispatch.rs has no uncommitted diff — its +16 is pre-existing absorbed drift (the warning the task's step 3 names), while src/cli.rs's +209 is this task's gate. Let me attribute the dispatch drift honestly rather than guess:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reevaluate_trust_on_cd\… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed by reading: dispatch.rs's +16 is the Day-184 /cd trust re-evaluation call site. Now paying both entries with the gate's own printed numbers:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/module_size.rs (1 → 5 lines)
+  -     ("src/cli.rs", 5604),
+  +     // Day 184: 5604 -> 5813 (+209), the fifth gate on the project-config trust
+  +     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
+  +     // and their table tests. A project-local `notify_command` is arbitrary shell
+  +     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
+  +     ("src/cli.rs", 5813),
+ ✓ (1m 25s)
+  -     ("src/cli.rs", 5604),
+  +     // Day 184: 5604 -> 5813 (+209), the fifth gate on the project-config trust
+  +     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
+  +     // and their table tests. A project-local `notify_command` is arbitrary shell
+  +     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
+  +     ("src/cli.rs", 5813),
+  ▶ edit tests/module_size.rs (1 → 7 lines)
+  -     ("src/dispatch.rs", 2321),
+  +     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
+  +     // is empty; this is pre-existing drift the gate had been warning about, from the
+  +     // `/cd` trust re-evaluation call site (`reevaluate_trust_on_cd` +
+  +     // `trust_changed_on_cd_message`, ~:1423). Paid here rather than absorbed: Day 174
+  +     // measured 11 entries carrying +1 to +480 because this branch absorbed drift for
+  +     // eight days, and a warning nobody pays is how the third accumulation starts.
+  +     ("src/dispatch.rs", 2337),
+ ✓ (1m 25s)
+  -     ("src/dispatch.rs", 2321),
+  +     // Day 184: 2321 -> 2337 (+16). NOT this task's diff — `git diff src/dispatch.rs`
+  +     // is empty; this is pre-existing drift the gate had been warning about, from the
+  +     // `/cd` trust re-evaluation call site (`reevaluate_trust_on_cd` +
+  +     // `trust_changed_on_cd_message`, ~:1423). Paid here rather than absorbed: Day 174
+  +     // measured 11 entries carrying +1 to +480 because this branch absorbed drift for
+  +     // eight days, and a warning nobody pays is how the third accumulation starts.
+  +     ("src/dispatch.rs", 2337),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (207ms)
+  3 tools completed in 2m 58s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate is green. Let me explicitly confirm zero warnings (they go to raw stderr, so they're easy to miss), then run the full verification:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (178ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+All three are test names containing the word, not gate output. Confirming against the gate's own literal markers:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (174ms)
+
+Zero real gate warnings. Now the full verification chain:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && echo "FMT OK" && ca… ✓ (1.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 24s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 20s (3 ✓)
+
+5616 passed, 0 failed. Now clippy:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (174ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four green. Let me confirm the format check and review the final diff:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff tests/module_size.rs ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.7s (2 ✓)
+
+Fix is exactly the two register entries the gate printed, plus honest attribution — no test weakened, no gate logic touched. Both numbers were independently confirmed by `wc -l`.
+
+The task's "Done when" also requires a positive control on the notify gate I implemented. Let me close that out — it's the difference between a verified fix and an asserted one:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn .*notify" src/cli.rs… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1234,1258p' src/cli.rs ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive control — neutering the gate to its pre-fix behaviour (always pass through). Running serially, per the repo's rule about parallel file-mutating controls racing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo notify 2>&… ✓ (184ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (26 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo notify 2>&… ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 38.7s (3 ✓)
+
+Positive control fired correctly. Let me confirm it failed on the refusal row specifically, not incidentally:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo gate_proje… ✓ (148ms)
+

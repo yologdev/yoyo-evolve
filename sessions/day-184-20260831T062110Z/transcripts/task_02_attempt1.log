@@ -1,0 +1,400 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the defect exists before writing any fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify" src/cli.rs | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify" src/config.rs |… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Confirmed the three structural facts. Now the execution site and the sibling gates:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notify\|NOTIFY" src/for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1480,1530p' src/cli.rs ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '44,132p' src/format/mod.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_trust_grants" -… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 17.0s (4 ✓)
+
+Chain fully confirmed by reading — including the question the assessment left open: maybe_ring_bell runs notify_command in a separate branch from notify_enabled(), so --no-notify does not gate it. Now step 0, the empirical repro:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn gate_project_hooks" … ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, no edits yet. Running the step-0 repro now — outside this repo:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ set -e (10 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own destructive-pattern guard caught that — fair. Avoiding rm -rf:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p /tmp/notify_probe (8 lines) ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-oriented: clean tree, structural confirmation done, repro dir staged. Running the actual repro now:
+  ▶ $ cd /tmp/notify_probe && rm -f /tmp/yoyo_notify_probe_FIRED (7 lines) ✓ (2.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Did not fire in -p mode. Checking where maybe_ring_bell is actually called — the reach of the execution path matters:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "maybe_ring_bell" src/ … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Called from main.rs too, so -p should reach it. Diagnosing why — was the config even loaded, and did the prompt clear the 3s threshold?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/notify_probe && /home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/y…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,455p' src/main.rs; e… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 8ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Config is loaded from the project-local file and shown as active, with no trust prompt. One more timed run to settle whether the spawn fires:
+  ▶ $ cd /tmp/notify_probe && rm -f /tmp/yoyo_notify_probe_FIRED (7 lines) ✓ (3.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The threshold, not a gate — those runs were 2s against a 3s bar. Forcing a longer prompt:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/notify_probe && rm -f /tmp/yoyo_notify_probe_FIRED (10 lines) ✓ (27.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+DEFECT REPRODUCED. 27s prompt (≥3s threshold) → stranger's .yoyo.toml executed touch, with 0 mentions of "trust" in stderr. The earlier non-firing runs were the 3s LONG_PROMPT_THRESHOLD_SECS timing bar — which delays execution, it does not gate it. Now the fix — reading the sibling refusal message to mirror its shape:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1173,1240p' src/cli.rs ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Shape confirmed. Writing the gate now:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1192,1200p' src/cli.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (5 → 74 lines)
+            "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run {them} this session, or use --safe-mode to disable\n  all project customizations."
+        ));
+        msg
+  + }
+  + 
+  + /// Outcome of the project-local `notify_command` trust gate.
+  + ///
+  + /// Carries the command that survives plus the one that was refused, so the
+  + /// refusal can be announced with its command named instead of happening
+  + /// silently — the same shape as [`HookGateOutcome`].
+  + pub(crate) struct NotifyGateOutcome {
+  +     pub command: Option<String>,
+  +     pub refused: Option<String>,
+  + }
+  + 
+  + /// Gate the `notify_command` declared by a project-local config.
+  + ///
+  + /// `notify_command`'s value is a shell command that `format::run_notify_command`
+  + /// hands to `Command::new("sh").arg("-c")` (`cmd /C` on Windows) when a prompt
+  + /// finishes, so cloning a stranger's repo whose `.yoyo.toml` carries
+  ... (53 more lines)
+ ✓ (15.1s)
+            "\n  This config came with the project, not from you. Nothing was executed.\n  Re-run with --trust-project to run {them} this session, or use --safe-mode to disable\n  all project customizations."
+        ));
+        msg
+  + }
+  + 
+  + /// Outcome of the project-local `notify_command` trust gate.
+  + ///
+  + /// Carries the command that survives plus the one that was refused, so the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 38.0s (2 ✓)
+
+My own rule — no definition without its consumer. Wiring the call site now:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "gate_project_hooks(\|pr… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Important placement finding: set_notify_command sits at 1578, but the trust prompt runs at 1715 — so gating in place would refuse even after the user answers "yes". Checking both regions:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1574,1583p' src/cli.rs; … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Moving the install below the trust prompt so a "yes" can actually lift the refusal — placement is the safety property here:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 6 lines)
+  -     // Opt-in user notification command: inert unless `notify_command` is set
+  -     // in the config file (product-safe default).
+  -     crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
+  -         &file_config,
+  -     ));
+  +     // NOTE: `notify_command` used to be installed here. It moved down beside the
+  +     // other project-config gates, because it is executable shell and must be
+  +     // gated — and the gate reads `is_trust_project()`, which is not decided
+  +     // until the trust prompt runs further below. Installing it here would refuse
+  +     // a command the user is about to say "yes" to.
+        if !args.iter().any(|a| a == "--no-color")
+ ✓ (15.2s)
+  -     // Opt-in user notification command: inert unless `notify_command` is set
+  -     // in the config file (product-safe default).
+  -     crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
+  -         &file_config,
+  -     ));
+  +     // NOTE: `notify_command` used to be installed here. It moved down beside the
+  +     // other project-config gates, because it is executable shell and must be
+  +     // gated — and the gate reads `is_trust_project()`, which is not decided
+  ... (3 more lines)
+
+Now the gated install, beside its siblings:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 20 lines)
+        let shell_hooks = gated_hooks.hooks;
+  + 
+  +     // Opt-in user notification command: inert unless `notify_command` is set in
+  +     // the config file (product-safe default). Gated on the same boundary as the
+  +     // hooks above and for the same reason — the value is arbitrary shell handed
+  +     // to `sh -c` when a prompt finishes, so a stranger's repo must not install
+  +     // one silently. Placed *here*, after the trust prompt, so a user who answers
+  +     // "yes" gets the command they just approved.
+  +     let gated_notify = gate_project_notify_command(
+  +         crate::config::parse_notify_command_from_config(&file_config),
+  +         crate::config::loaded_config_is_project_local(),
+  +         is_trust_project(),
+  +     );
+  +     if let Some(refused) = &gated_notify.refused {
+  +         if !is_quiet() {
+  +             let msg = project_notify_refusal_message(refused, crate::format::is_plain_output());
+  +             eprintln!("{YELLOW}{msg}{RESET}");
+  +         }
+  +     }
+  +     crate::format::set_notify_command(gated_notify.command);
+ ✓ (1m 53s)
+        let shell_hooks = gated_hooks.hooks;
+  + 
+  +     // Opt-in user notification command: inert unless `notify_command` is set in
+  +     // the config file (product-safe default). Gated on the same boundary as the
+  +     // hooks above and for the same reason — the value is arbitrary shell handed
+  +     // to `sh -c` when a prompt finishes, so a stranger's repo must not install
+  +     // one silently. Placed *here*, after the trust prompt, so a user who answers
+  +     // "yes" gets the command they just approved.
+  ... (12 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5397 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code compiles and tests pass — the only failure is the module-size gate, which is Step 3 of my task. Getting its own pasteable remedy lines:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (330ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.1s (2 ✓)
+
+Both drift entries identified. Now Step 2 — making the trust prompt name it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (6 → 3 lines)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+        }
+  - 
+  -     grants
+  - }
+ ✓ (360ms)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+        }
+  - 
+  -     grants
+  - }
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My edit dropped the function's tail. Restoring it with the notify branch added:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config_paths.rs (3 → 21 lines)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+  +     }
+  + 
+  +     // `notify_command` is a shell string handed to `sh -c` when a prompt
+  +     // finishes (`format::run_notify_command`), so it belongs here for the same
+  +     // reason hooks do: what the entry **is** decides direction, not what it does
+  +     // after it runs. Its parser takes the flattened key/value map rather than
+  +     // raw text, so — as with hooks — the raw key is matched directly. Matched as
+  +     // a bare key so a longer key that merely ends in `notify_command` cannot
+  +     // count.
+  +     if config_text.lines().any(|line| {
+  +         line.trim()
+  +             .split_once('=')
+  +             .is_some_and(|(k, _)| k.trim() == "notify_command")
+  +     }) {
+  +         grants.push("notify_command (a shell command run when a prompt finishes)");
+        }
+  + 
+  +     grants
+  ... (1 more lines)
+ ✓ (1m 53s)
+        if goal_verify_exists {
+            grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
+  +     }
+  + 
+  +     // `notify_command` is a shell string handed to `sh -c` when a prompt
+  +     // finishes (`format::run_notify_command`), so it belongs here for the same
+  +     // reason hooks do: what the entry **is** decides direction, not what it does
+  +     // after it runs. Its parser takes the flattened key/value map rather than
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiling again. Now the tests — first the gate table and refusal message, beside their siblings:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5355,5380p' src/cli.rs ✓ (3ms)
+
+Now adding the tests for both halves:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 2 lines)
+        #[test]
+        fn test_trust_project_in_known_flags_and_takes_no_value() {
+  -         assert!(KNOWN_FLAGS.contains(&"--trust-project"));
+ ✓ (1m 54s)
+        #[test]
+        fn test_trust_project_in_known_flags_and_takes_no_value() {
+  -         assert!(KNOWN_FLAGS.contains(&"--trust-project"));
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My edit dropped an assert line. Restoring it and adding my tests in one go:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5372,5382p' src/cli.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 5 lines)
+        #[test]
+        fn test_trust_project_in_known_flags_and_takes_no_value() {
+  +         assert!(KNOWN_FLAGS.contains(&"--trust-project"));
+            // It takes no value, so a bare occurrence must not be reported as a
+            // flag missing its value.
+ ✓ (2m 7s)
+        #[test]
+        fn test_trust_project_in_known_flags_and_takes_no_value() {
+  +         assert!(KNOWN_FLAGS.contains(&"--trust-project"));
+            // It takes no value, so a bare occurrence must not be reported as a
+            // flag missing its value.
+  2 tools completed in 2m 11s (2 ✓)
+
+Restored. Now appending the new tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 110 lines)
+            let short = project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", "echo hi")], true);
+            assert!(short.contains("pre.bash = echo hi"), "{short}");
+            assert!(!short.contains(marker), "{short}");
+  +     }
+  + 
+  +     // === project-local notify_command trust gate (Day 184) ===
+  +     //
+  +     // Reproduced before this gate existed: a scratch dir whose `.yoyo.toml`
+  +     // carried *only* `notify_command = "touch /tmp/probe"` ran that command
+  +     // after a 27s prompt, with zero trust prompts shown. The 3s
+  +     // `LONG_PROMPT_THRESHOLD_SECS` bar delays the spawn; it never prevents it
+  +     // (two sub-3s runs did not fire, which is why the repro needed a long one).
+  + 
+  +     #[test]
+  +     fn gate_project_notify_command_table() {
+  +         let cmd = || Some("touch /tmp/pwned".to_string());
+  + 
+  +         // (project_local, trusted) -> refused?
+  +         let cases = [
+  +             // The one refusing combination: the repo supplied it and the user
+  ... (90 more lines)
+ ✓ (2m 5s)
+            let short = project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", "echo hi")], true);
+            assert!(short.contains("pre.bash = echo hi"), "{short}");
+            assert!(!short.contains(marker), "{short}");
+  +     }
+  + 
+  +     // === project-local notify_command trust gate (Day 184) ===
+  +     //
+  +     // Reproduced before this gate existed: a scratch dir whose `.yoyo.toml`
+  ... (13 more lines)
+
+  ✗ Watch still failing after 3 attempts — manual fix needed
+
