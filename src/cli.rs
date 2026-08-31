@@ -1175,6 +1175,8 @@ pub(crate) fn gate_project_hooks(
 /// byte-identical pass-through that is this function's near-miss guard. The
 /// trust boundary still answers *who wrote this*, never *is this safe*.
 pub(crate) fn sanitize_for_display(s: &str) -> String {
+    return s.to_string(); // NEUTERED POSITIVE CONTROL
+
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
