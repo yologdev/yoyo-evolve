@@ -1141,24 +1141,82 @@ pub(crate) fn gate_project_hooks(
     }
 }
 
+/// Render a **repository-authored** string safe to print into a refusal block.
+///
+/// Every refusal message in the trust boundary interpolates a string the
+/// *repository* wrote, not the user — an MCP server command, a `hooks.pre.bash`
+/// line, a `notify_command` — and prints it to the terminal of someone who has
+/// just cloned a repo they explicitly do **not** trust. That is the entire
+/// premise of the gate printing the message. A length cap is not sanitization:
+/// a command carrying `\x1b[2J`, a `\r` or a newline reaches the terminal
+/// intact and can repaint, overwrite or forge the lines *around* the refusal —
+/// including the sentence saying nothing was executed. #859 established in this
+/// repo that unsanitized ANSI is a live class, not a hypothetical.
+///
+/// **Escape, never delete.** A silently dropped byte is the bug: the user must
+/// be able to see that the repo put an escape in the string, because that fact
+/// is itself evidence about the repo.
+///
+/// `\n`, `\r` and `\t` get their familiar named forms; every other
+/// [`char::is_control`] char takes the generic `\xNN` form, which is why ESC
+/// needs no arm of its own (`0x1b` renders as `\x1b`). `is_control` is the
+/// Unicode `Cc` category, so it already covers C0, **DEL** (U+007F) and C1
+/// (U+0080–U+009F) — the widest of those is `0x9f`, so two hex digits always
+/// suffice. Everything else passes through **byte-identically**, including
+/// non-ASCII: a server name may legitimately be UTF-8, and that pass-through is
+/// the entire regression surface.
+///
+/// Never indexes a `&str` by a raw byte offset (rule #250) — it iterates
+/// `chars()`, so a multi-byte char can never be split.
+///
+/// **The stated limit: this makes an untrusted string legible, it does not make
+/// it safe.** Bidi overrides (U+202E) and zero-width characters are *not*
+/// escaped — they are not `Cc`, and widening to them would break the
+/// byte-identical pass-through that is this function's near-miss guard. The
+/// trust boundary still answers *who wrote this*, never *is this safe*.
+pub(crate) fn sanitize_for_display(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Longest hook command echoed verbatim in a refusal block before it is cut.
 ///
 /// Same budget and same in-band cut marker as
 /// `commands_goal::REFUSAL_CMD_MAX_BYTES`; nothing else links the two numbers.
 const REFUSAL_HOOK_CMD_MAX_BYTES: usize = 400;
 
-/// Echo a hook command for display, cutting on a **char** boundary and marking
-/// the cut in band — a silent elision inside a "here is what I refused to run"
-/// block would defeat the block's whole purpose.
+/// Echo a repository-authored command for display: **sanitize first, then cut**
+/// on a **char** boundary, marking the cut in band — a silent elision inside a
+/// "here is what I refused to run" block would defeat the block's whole purpose.
+///
+/// The order is load-bearing rather than stylistic. Escaping *lengthens* the
+/// string, so capping first would let an escaped tail push past the budget
+/// **and** would make the reported dropped-byte count wrong — and a cap marker
+/// that lies is worse than no marker at all. Both numbers in the marker are
+/// therefore measured over the *sanitized* string, which is the string actually
+/// being cut.
+///
+/// Shared by all three trust-boundary refusal messages (hooks, `notify_command`
+/// and MCP servers), so each inherits the escaping with no caller edit.
 fn hook_command_for_display(cmd: &str) -> String {
-    if cmd.len() <= REFUSAL_HOOK_CMD_MAX_BYTES {
-        return cmd.to_string();
+    let safe = sanitize_for_display(cmd);
+    if safe.len() <= REFUSAL_HOOK_CMD_MAX_BYTES {
+        return safe;
     }
-    let head = safe_truncate(cmd, REFUSAL_HOOK_CMD_MAX_BYTES);
+    let head = safe_truncate(&safe, REFUSAL_HOOK_CMD_MAX_BYTES);
     format!(
         "{head}… [yoyo: command truncated for display — {shown} of {total} bytes shown]",
         shown = head.len(),
-        total = cmd.len(),
+        total = safe.len(),
     )
 }
 
@@ -1482,7 +1540,7 @@ fn project_mcp_refusal_message(refused: &[String], plain: bool) -> String {
     );
     for cmd in refused {
         msg.push_str("\n    ");
-        msg.push_str(cmd);
+        msg.push_str(&hook_command_for_display(cmd));
     }
     msg.push_str(
         "\n  This config came with the project, not from you. Re-run with --trust-project to start them,\n  or use --safe-mode to disable all project customizations.",
@@ -5351,6 +5409,162 @@ command = "server-two"
             !singular.contains('\u{26a0}'),
             "plain output must be glyph-free: {singular}"
         );
+    }
+
+    #[test]
+    fn sanitize_for_display_table() {
+        // Each rule its own row. Left = input, right = exactly what a caller
+        // receives — full-string `assert_eq!`, never a `contains`.
+        let cases: &[(&str, &str)] = &[
+            // ESC has no arm of its own; the generic `\xNN` form yields `\x1b`.
+            ("\u{1b}", "\\x1b"),
+            ("evil\u{1b}[31m", "evil\\x1b[31m"),
+            ("\u{1b}[2J", "\\x1b[2J"),
+            // Named forms.
+            ("\n", "\\n"),
+            ("\r", "\\r"),
+            ("\t", "\\t"),
+            ("a\r\nb", "a\\r\\nb"),
+            // Other C0 controls take the generic form.
+            ("\u{0}", "\\x00"),
+            ("\u{7}", "\\x07"),
+            ("\u{1f}", "\\x1f"),
+            // DEL and C1 are `Cc` too, so `is_control` already covers them.
+            ("\u{7f}", "\\x7f"),
+            ("\u{80}", "\\x80"),
+            ("\u{9f}", "\\x9f"),
+            // Near-miss guard: the entire regression surface. Ordinary commands
+            // — including non-ASCII and shell punctuation — must pass through
+            // byte-identically.
+            ("echo hi", "echo hi"),
+            ("", ""),
+            (
+                "npx -y @modelcontextprotocol/server-filesystem /tmp",
+                "npx -y @modelcontextprotocol/server-filesystem /tmp",
+            ),
+            (
+                "cargo test --all -- --nocapture",
+                "cargo test --all -- --nocapture",
+            ),
+            (
+                "echo 'quoted \"stuff\"' | grep -c .",
+                "echo 'quoted \"stuff\"' | grep -c .",
+            ),
+            ("say héllo wörld ✓ 🐙", "say héllo wörld ✓ 🐙"),
+            // A literal backslash is not a control byte and is left alone: the
+            // escapes we emit are the only backslashes we introduce.
+            ("C:\\path\\to\\thing", "C:\\path\\to\\thing"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                &sanitize_for_display(input),
+                want,
+                "sanitize_for_display({input:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_for_display_escapes_rather_than_deletes() {
+        // Deleting a control byte would hide the fact that the repo put one in
+        // the string, and that fact is itself evidence about the repo. So the
+        // output is *longer* and still carries the visible marker.
+        let out = sanitize_for_display("evil\u{1b}[2J\r");
+        assert!(out.len() > "evil[2J".len(), "{out}");
+        assert!(out.contains("\\x1b"), "{out}");
+        assert!(out.contains("\\r"), "{out}");
+        // Nothing was dropped: the ordinary text survives intact.
+        assert!(out.contains("evil"), "{out}");
+        assert!(out.contains("[2J"), "{out}");
+    }
+
+    #[test]
+    fn sanitize_for_display_never_splits_a_multi_byte_char() {
+        // Rule #250: a raw byte index inside a char panics. The 4-byte 🐙 sits
+        // on both sides of the escaped byte on purpose.
+        assert_eq!(sanitize_for_display("🐙\u{1b}🐙"), "🐙\\x1b🐙");
+        assert_eq!(sanitize_for_display("héllo\r\nwörld"), "héllo\\r\\nwörld");
+    }
+
+    #[test]
+    fn sanitize_for_display_output_carries_no_raw_control_byte() {
+        // The property the whole function exists for, asserted on bytes rather
+        // than eyeballed in a terminal: whatever goes in, nothing controlling
+        // comes out.
+        let hostile = "a\u{1b}[31mb\rc\nd\te\u{0}f\u{7f}g\u{9f}h";
+        let out = sanitize_for_display(hostile);
+        assert!(
+            !out.chars().any(|c| c.is_control()),
+            "a raw control char survived: {out:?}"
+        );
+        assert!(!out.as_bytes().contains(&0x1b), "raw ESC byte: {out:?}");
+        assert!(!out.as_bytes().contains(&b'\r'), "raw CR byte: {out:?}");
+        assert!(!out.as_bytes().contains(&b'\n'), "raw LF byte: {out:?}");
+    }
+
+    #[test]
+    fn refusal_messages_escape_control_bytes_from_an_untrusted_repo() {
+        // Emission point: the string a caller of a real refusal message
+        // receives. The interpolated command is repo-authored, so it is the
+        // one surface whose job is to let a user judge an untrusted string —
+        // and therefore the worst place to render it raw.
+        //
+        // Asserted on BYTES, never eyeballed in a terminal.
+        use crate::hooks::HookPhase;
+        let hostile = "evil\u{1b}[31m\rrm -rf /\n";
+
+        let msgs = [
+            (
+                "hook",
+                project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", hostile)], true),
+            ),
+            ("notify", project_notify_refusal_message(hostile, true)),
+            (
+                "mcp",
+                project_mcp_refusal_message(&[hostile.to_string()], true),
+            ),
+        ];
+
+        for (which, msg) in &msgs {
+            assert!(
+                !msg.as_bytes().contains(&0x1b),
+                "{which}: a raw ESC survived: {msg:?}"
+            );
+            assert!(
+                !msg.as_bytes().contains(&b'\r'),
+                "{which}: a raw CR survived: {msg:?}"
+            );
+            // The message is multi-line by design, so a bare `\n` check would
+            // be vacuous. What must not survive is the newline the *repo*
+            // supplied: the interpolated command has to sit on one line, or it
+            // can forge lines around the refusal.
+            assert!(
+                msg.contains("rm -rf /\\n") || msg.contains("rm -rf /\\\\n"),
+                "{which}: the repo's newline was not escaped: {msg:?}"
+            );
+            // Escape, never delete: the user must be able to see the repo put
+            // an escape in the string.
+            assert!(
+                msg.contains("\\x1b"),
+                "{which}: the escape is invisible to the reader: {msg:?}"
+            );
+            // Anti-vacuous: the ordinary text really is still there, so the
+            // assertions above cannot pass by the command having vanished.
+            assert!(msg.contains("evil"), "{which}: {msg:?}");
+        }
+
+        // Near-miss guard, and the entire regression surface: an ordinary
+        // command is echoed byte-identically, in every one of the three
+        // messages. A discriminator tested only on the side that fires is
+        // vacuous green.
+        let clean = "npx -y @modelcontextprotocol/server-filesystem /tmp";
+        assert!(
+            project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", clean)], true)
+                .contains(&format!("pre.bash = {clean}"))
+        );
+        assert!(project_notify_refusal_message(clean, true)
+            .contains(&format!("notify_command = {clean}")));
+        assert!(project_mcp_refusal_message(&[clean.to_string()], true).contains(clean));
     }
 
     #[test]
