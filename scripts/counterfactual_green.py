@@ -155,7 +155,28 @@ RUN_VERDICTS = (
 BASELINE_OK = "BASELINE_OK"
 
 # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
-TASK_COMMIT_RE = re.compile(r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+\)\s*$")
+#
+# WIDENED (Day 184, #868), and the widening IS the deliverable. The pattern used to end
+# `\(Task\s+\d+\)`, anchoring the subject to STOP at the task number — so every
+# `(Task 1, eval-fix 2)` / `(Task 2, build-fix 3)` retry commit matched NOTHING. Measured
+# over the Day-184 deepened window: 434 plain task commits visible, 184 fix-loop commits
+# invisible, and 0 of the 20 behavioural commits was a fix-loop commit.
+#
+# That is the worst direction a sampling bug can run: it excluded exactly the population
+# DREAM.md's milestone is ABOUT (the pre-registered guess is that fix-loop pressure is
+# where unearned green lives) while the surviving sample looked healthy. The optional
+# `(?:,\s*[^)]+)?` group admits the suffix; group 3 CAPTURES it, so the classifier reads a
+# parsed value rather than re-scanning the raw subject with a second pattern.
+TASK_COMMIT_RE = re.compile(
+    r"^Day\s+(\d+)\s+\([^)]+\):\s+(.+?)\s+\(Task\s+\d+(?:,\s*([^)]+))?\)\s*$"
+)
+
+# The two suffix markers `scripts/evolve.sh` writes when a task needed the fix loop, and
+# the two DREAM.md names. Matched as substrings of the CAPTURED suffix only — never of the
+# whole subject, or a task whose title happens to discuss "eval-fix" would misclassify
+# itself. That is the same self-contamination trap `measure_abstentions.py` was built
+# around: my own prose about a marker must never score as the marker.
+FIX_LOOP_MARKERS = ("eval-fix", "build-fix")
 
 # SUPERSEDED (Day 183, #867), recorded rather than erased: this was
 #     REGISTER_TEST_FILES = frozenset({"tests/module_size.rs"})
@@ -545,20 +566,81 @@ def apply_register_drift(
 # Census — the deliverable. Pure half here, git I/O at the call site.
 # --------------------------------------------------------------------------------------
 
+# DREAM.md's milestone asks for the rate "reported **separately** for commits whose
+# subject carries an `eval-fix` or `build-fix` suffix". These are those two populations,
+# plus the third value that keeps an unrecognised suffix from being absorbed by whichever
+# neighbour is convenient (Day 144: absence, and anything I cannot classify, gets its own
+# name). They are NEVER summed: a fix-loop commit and a first-attempt commit are different
+# facts, and pooling them would make the widened pattern actively worse than the narrow
+# one it replaced — it would add 184 commits to a denominator whose whole purpose is to be
+# split.
+POP_PLAIN = "plain"
+POP_FIX_LOOP = "fix-loop"
+POP_UNKNOWN_SUFFIX = "unknown-suffix"
+
+
+def subject_population(subject: str) -> str | None:
+    """Which population does this commit subject belong to? `None` if not a task commit.
+
+    THREE states, none folded into another:
+
+      * `POP_PLAIN`        — a task commit with no suffix: a first-attempt delivery.
+      * `POP_FIX_LOOP`     — the suffix carries `eval-fix` or `build-fix`, i.e. the task
+                             needed the fix loop. This is DREAM.md's pre-registered
+                             population.
+      * `POP_UNKNOWN_SUFFIX` — a suffix is present and matches neither marker. NOT called
+                             fix-loop (that would be a claim I cannot support) and NOT
+                             called plain (it demonstrably carries something), so it gets
+                             its own count and is reported apart. A suffix shape nobody
+                             enumerated is exactly the kind of thing that should surface
+                             rather than join the comfortable bucket.
+
+    The marker test runs against the CAPTURED suffix, never the whole subject: a task
+    whose title discusses "build-fix" (this very session's does) must not classify itself
+    as a fix-loop commit. That is the self-contamination trap — my own prose about a
+    marker scoring as the marker — that `measure_abstentions.py` exists because of.
+    """
+    m = TASK_COMMIT_RE.match(subject)
+    if not m:
+        return None
+    suffix = m.group(3)
+    if not suffix:
+        return POP_PLAIN
+    if any(marker in suffix for marker in FIX_LOOP_MARKERS):
+        return POP_FIX_LOOP
+    return POP_UNKNOWN_SUFFIX
+
 
 class CensusRow:
     """One task commit and whether it is addressable by the counterfactual."""
 
-    __slots__ = ("sha", "subject", "test_files", "register_only")
+    __slots__ = ("sha", "subject", "test_files", "register_only", "population")
 
     def __init__(self, sha: str, subject: str, test_files: list[str],
-                 register_only: frozenset | set | None = None):
+                 register_only: frozenset | set | None = None,
+                 population: str | None = None):
         self.sha = sha
         self.subject = subject
         self.test_files = test_files
         # Paths whose diff in THIS commit was register-only, derived by
         # `test_diff_is_register_only`. Never a hand-listed filename.
         self.register_only = frozenset(register_only or ())
+        # Which of DREAM.md's two populations this commit belongs to. Derived from the
+        # subject by `subject_population`, carried rather than recomputed so the row and
+        # the fold cannot disagree about the same commit.
+        self.population = population or subject_population(subject) or POP_PLAIN
+
+    @property
+    def is_fix_loop(self) -> bool:
+        """True iff the subject carries an `eval-fix` / `build-fix` suffix.
+
+        This is the split DREAM.md's milestone pre-registers: the guess is that fix-loop
+        pressure — 10 build-fix then 9 eval-fix attempts, with nothing in the loop
+        forbidding a pass bought by loosening an assertion — is where unearned green
+        lives. An unrecognised suffix is deliberately NOT True here (see
+        `subject_population`); it is counted apart and never summed into either side.
+        """
+        return self.population == POP_FIX_LOOP
 
     @property
     def addressable(self) -> bool:
@@ -656,6 +738,26 @@ def census_summary(rows: list[CensusRow]) -> dict:
         "behavioural": sum(1 for r in rows if r.behavioural),
         "register_only": sum(1 for r in rows if r.addressable and not r.behavioural),
         "not_addressable": sum(1 for r in rows if not r.addressable),
+    }
+
+
+def census_by_population(rows: list[CensusRow]) -> dict:
+    """Fold the SAME five figures once per population, and never sum them (Day 184, #868).
+
+    DREAM.md's milestone asks for the rate "reported **separately** for commits whose
+    subject carries an `eval-fix` or `build-fix` suffix" — that split IS the pre-registered
+    guess, that fix-loop pressure is where unearned green lives. Pooling the two would
+    destroy the only question the widened `TASK_COMMIT_RE` was widened to ask, so the fold
+    is per-population and there is deliberately no combined figure anywhere in the return.
+
+    `POP_UNKNOWN_SUFFIX` gets its own entry for the same reason: a suffix shape nobody
+    enumerated must not be absorbed into whichever neighbour is convenient. Its count is
+    normally 0, and the renderer stays silent when it is — but a silent absorption is the
+    defect this whole family of checks is about, so the bucket exists before it is needed.
+    """
+    return {
+        pop: census_summary([r for r in rows if r.population == pop])
+        for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
     }
 
 
@@ -1087,31 +1189,74 @@ read as "checked; clean"):
 """
 
 
-def render_census(rows, summary, window, limit, note=None) -> str:
+def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+    """The same five figures the census has always printed, for ONE population.
+
+    Extracted so the two populations cannot drift apart in the report: one statement of
+    the shape, called twice. A second copy would agree the day it was written.
+    """
+    out = [f"  [{label}]{note}"]
+    out.append(f"    task commits found ......... {summary['task_commits']}")
+    out.append(f"    NO_TEST_CHANGE ............. {summary['not_addressable']}")
+    out.append(f"    touch any tests/*.rs ....... {summary['addressable']}")
+    out.append(
+        f"      of which REGISTER-ONLY ... {summary['register_only']}"
+        "   (bookkeeping; verdict decided by construction)"
+    )
+    out.append(
+        f"      of which BEHAVIOURAL ..... {summary['behavioural']}"
+        "   <- the denominator that carries signal"
+    )
+    if summary["task_commits"]:
+        addr = 100.0 * summary["addressable"] / summary["task_commits"]
+        beh = 100.0 * summary["behavioural"] / summary["task_commits"]
+        out.append(f"    addressable rate ........... {addr:.0f}%")
+        out.append(f"    BEHAVIOURAL rate ........... {beh:.0f}%")
+    out.append("")
+    return out
+
+
+def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
     out = []
     scope = f"last {limit} task commits" if limit else "all reachable task commits"
     out.append(f"counterfactual-green census over {scope}")
     out.append(f"  window ....................... {window}")
     out.extend(note or [])
     out.append("")
-    out.append(f"  task commits found ........... {summary['task_commits']}")
-    out.append(f"  NO_TEST_CHANGE ............... {summary['not_addressable']}")
-    out.append(f"  touch any tests/*.rs ......... {summary['addressable']}")
-    out.append(
-        f"    of which REGISTER-ONLY ..... {summary['register_only']}"
-        "   (debt-register bookkeeping; verdict decided by construction, no signal)"
+
+    # TWO POPULATIONS, REPORTED SEPARATELY AND NEVER SUMMED (Day 184, #868).
+    # DREAM.md's milestone asks for the rate "reported separately for commits whose
+    # subject carries an eval-fix or build-fix suffix" — that split is the pre-registered
+    # guess. A pooled headline would destroy the only question the widened
+    # TASK_COMMIT_RE was widened to ask, so there is no pooled rate here on purpose.
+    by_pop = by_pop if by_pop is not None else census_by_population(rows)
+    out.extend(
+        render_population_block(
+            "PLAIN — first-attempt deliveries, no fix-loop suffix",
+            by_pop[POP_PLAIN],
+        )
     )
-    out.append(
-        f"    of which BEHAVIOURAL ....... {summary['behavioural']}"
-        "   <- the denominator that carries signal"
+    out.extend(
+        render_population_block(
+            "FIX-LOOP — subject carries eval-fix / build-fix",
+            by_pop[POP_FIX_LOOP],
+            note="   <- DREAM.md's pre-registered population",
+        )
     )
+    # Silent when zero, which is the normal case: an unrecognised suffix is a shape
+    # nobody enumerated, so it speaks only when it exists rather than adding a
+    # permanent "0" that trains the reader to skip the block.
+    if by_pop[POP_UNKNOWN_SUFFIX]["task_commits"]:
+        out.extend(
+            render_population_block(
+                "UNKNOWN-SUFFIX — a suffix matching neither marker",
+                by_pop[POP_UNKNOWN_SUFFIX],
+                note="   <- NOT summed into either population above",
+            )
+        )
+
+    out.append(f"  (all task commits, both populations: {summary['task_commits']})")
     out.append("")
-    if summary["task_commits"]:
-        addr = 100.0 * summary["addressable"] / summary["task_commits"]
-        beh = 100.0 * summary["behavioural"] / summary["task_commits"]
-        out.append(f"  addressable rate ............. {addr:.0f}%")
-        out.append(f"  BEHAVIOURAL rate ............. {beh:.0f}%   <- read this one")
-        out.append("")
     for r in rows:
         if r.behavioural:
             mark = "*"
@@ -1119,11 +1264,15 @@ def render_census(rows, summary, window, limit, note=None) -> str:
             mark = "r"
         else:
             mark = " "
+        pop = "F" if r.is_fix_loop else (
+            "?" if r.population == POP_UNKNOWN_SUFFIX else " "
+        )
         files = ", ".join(r.test_files) if r.test_files else "(none)"
-        out.append(f"  {mark} {r.sha[:8]}  {r.subject[:58]}")
+        out.append(f"  {mark}{pop} {r.sha[:8]}  {r.subject[:58]}")
         out.append(f"      tests/*.rs touched: {files}")
     out.append("")
     out.append("  legend: * behavioural   r register-only   (blank) NO_TEST_CHANGE")
+    out.append("          F fix-loop commit   ? unrecognised suffix")
     return "\n".join(out)
 
 
