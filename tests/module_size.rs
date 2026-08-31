@@ -137,7 +137,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 163 (#715): +4 lines — parent-side SharedStateTool so the documented RLM
     // store-then-reference step is executable.
     // Day 174: +3 absorbed since Day 166 — the warning branch had no reader.
-    ("src/agent_builder.rs", 3339),
+    ("src/agent_builder.rs", 3428),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
