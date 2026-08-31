@@ -305,14 +305,27 @@ const REFUSAL_CMD_MAX_BYTES: usize = 400;
 /// char boundary with the cut marked in-band if it is huge.
 pub(crate) fn goal_verify_refusal_message(cmd: &str, plain: bool) -> String {
     let marker = if plain { "" } else { "⚠ " };
-    let shown = if cmd.len() <= REFUSAL_CMD_MAX_BYTES {
-        cmd.to_string()
+    // #873: sanitize FIRST, then cut. This block is read by someone who has
+    // just cloned a repo they explicitly do not trust, and `cmd` is a string
+    // that repo authored — a raw `\x1b[2J`, `\r` or newline in it can repaint
+    // or forge the lines around the refusal, including the sentence saying
+    // nothing was executed. A length cap is not sanitization.
+    //
+    // The ordering is load-bearing rather than stylistic: escaping lengthens
+    // the string, so capping first would let an escaped tail push past the
+    // budget AND would make the reported dropped-byte count wrong. Both numbers
+    // in the marker are measured over the sanitized string, because that is the
+    // string actually being cut, and the cut still lands on a `char` boundary.
+    // Same shape as `cli::hook_command_for_display`.
+    let safe = crate::cli::sanitize_for_display(cmd);
+    let shown = if safe.len() <= REFUSAL_CMD_MAX_BYTES {
+        safe
     } else {
-        let head = safe_truncate(cmd, REFUSAL_CMD_MAX_BYTES);
+        let head = safe_truncate(&safe, REFUSAL_CMD_MAX_BYTES);
         format!(
             "{head}… [yoyo: command truncated for display — {shown} of {total} bytes shown]",
             shown = head.len(),
-            total = cmd.len(),
+            total = safe.len(),
         )
     };
     format!(
@@ -1186,6 +1199,103 @@ mod tests {
         assert!(
             tail.contains(&format!("{} of {} bytes shown", kept.len(), cmd.len())),
             "marker numbers disagree with the returned string: {tail}"
+        );
+    }
+
+    // ---- #873: the refused command is repository-authored, so it is escaped ----
+    //
+    // Asserted at the emission point: the `String` a caller of
+    // `goal_verify_refusal_message` receives, never `sanitize_for_display` one
+    // layer below it. This block is printed to someone who has just cloned a
+    // repo they explicitly do NOT trust, so a raw `\x1b[2J` in the command could
+    // repaint or forge the lines around the refusal — including the sentence
+    // saying nothing was executed.
+
+    #[test]
+    fn test_goal_verify_refusal_message_escapes_control_bytes() {
+        let cmd = "make check\x1b[2J\r\ndrop table";
+        // Anti-vacuous: the fixture really carries the hostile bytes, so a
+        // transcription slip cannot make this pass by agreeing with itself.
+        assert!(cmd.as_bytes().contains(&0x1b), "fixture lost its ESC");
+        assert!(cmd.as_bytes().contains(&b'\r'), "fixture lost its CR");
+
+        let msg = goal_verify_refusal_message(cmd, true);
+
+        // No escape byte, and no bare CR, survives into the terminal.
+        assert!(
+            !msg.as_bytes().contains(&0x1b),
+            "ESC byte reached the refusal block: {msg:?}"
+        );
+        assert!(
+            !msg.as_bytes().contains(&b'\r'),
+            "CR byte reached the refusal block: {msg:?}"
+        );
+        // Escaped, never deleted: the user must be able to see that the repo
+        // put an escape in the string — that fact is itself evidence.
+        assert!(msg.contains("make check\\x1b[2J\\r\\ndrop table"), "{msg}");
+        // The refusal's own claim survives intact.
+        assert!(msg.contains("Nothing was executed."), "{msg}");
+    }
+
+    #[test]
+    fn test_goal_verify_refusal_message_leaves_a_clean_command_byte_identical() {
+        // The near-miss guard, and the whole regression surface: every user
+        // whose verify command has no control bytes. Full-string equality, not
+        // a `contains` — a discriminator tested only on the side that fires is
+        // vacuous green.
+        let cmd = "cargo test --workspace && ./scripts/check.sh 'a b' | grep ✓";
+        assert!(
+            !cmd.bytes().any(|b| b.is_ascii_control()),
+            "fixture is supposed to be control-free"
+        );
+        let expected = format!(
+            "A project-local {VERIFY_FILE} holds a shell command. yoyo did not run it:\n    \
+             {cmd}\n  \
+             This file came with the project, not necessarily from you, and yoyo cannot tell \
+             which.\n  \
+             Nothing was executed. Re-run with --trust-project to run it this session, or type\n  \
+             /goal verify '<cmd>' to make it your own command for this session."
+        );
+        assert_eq!(goal_verify_refusal_message(cmd, true), expected);
+    }
+
+    #[test]
+    fn test_goal_verify_refusal_message_caps_the_sanitized_string_not_the_raw_one() {
+        // Escaping LENGTHENS the string, so the ordering is load-bearing: this
+        // command is comfortably under the cap raw (150 bytes) and far over it
+        // once escaped (600), which is exactly the shape a cap-then-sanitize
+        // body would wave through whole — and would then mis-report.
+        let cmd = "\x1b".repeat(150);
+        assert!(
+            cmd.len() <= REFUSAL_CMD_MAX_BYTES,
+            "fixture must be under raw"
+        );
+        let sanitized_len = cmd.len() * 4; // each ESC renders as the 4 chars `\x1b`
+        assert!(
+            sanitized_len > REFUSAL_CMD_MAX_BYTES,
+            "fixture must be over once escaped"
+        );
+
+        let msg = goal_verify_refusal_message(&cmd, true);
+        assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
+
+        // Both numbers in the marker are measured over the SANITIZED string,
+        // because that is the string actually being cut. A marker that lies
+        // about how much it dropped is worse than no marker.
+        let (kept, tail) = msg.split_once('…').expect("over-budget command is marked");
+        let kept = kept
+            .strip_prefix(&format!(
+                "A project-local {VERIFY_FILE} holds a shell command. yoyo did not run it:\n    "
+            ))
+            .expect("refusal block still leads with its header");
+        assert!(
+            kept.len() <= REFUSAL_CMD_MAX_BYTES,
+            "kept {} bytes",
+            kept.len()
+        );
+        assert!(
+            tail.contains(&format!("{} of {sanitized_len} bytes shown", kept.len())),
+            "marker numbers disagree with the sanitized string: {tail}"
         );
     }
 

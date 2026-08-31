@@ -148,6 +148,17 @@ async fn fetch_mcp_tool_names_retrying(
 pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
     let marker = if plain { "" } else { "⚠ " };
     let dash = if plain { ":" } else { " —" };
+    // #873: both interpolated strings are escaped before they reach the
+    // terminal. `server_cmd` is authored by the repository being loaded, and
+    // `err` comes back from a spawned subprocess — different provenances, same
+    // terminal, and neither is obviously safe. A raw `\x1b[2J`, `\r` or newline
+    // in either can repaint or forge the lines around this warning, which is
+    // the one surface whose whole job is to let a user judge an untrusted
+    // server. Deliberately **no length cap** here: this site has never had one,
+    // and adding one is a separate judgment call. Escaping without capping is
+    // still a strict improvement.
+    let server_cmd = crate::cli::sanitize_for_display(server_cmd);
+    let err = crate::cli::sanitize_for_display(err);
     format!(
         "{marker}mcp: the builtin-collision guard did NOT run for '{server_cmd}'{dash} \
 pre-flight tool listing failed after {MCP_PREFLIGHT_ATTEMPTS} attempt(s) ({err}). \
@@ -2840,6 +2851,84 @@ mod tests {
         assert!(fancy.contains('⚠'), "non-plain output keeps its marker");
         // Near-miss guard: stripping glyphs must not strip the payload.
         assert!(msg.contains("some-server") && msg.contains("Tool names must be unique"));
+    }
+
+    // ---- #873: BOTH interpolated strings are escaped before display ----
+    //
+    // Asserted at the emission point: the `String` a caller of
+    // `collision_guard_skipped_message` receives, never `sanitize_for_display`
+    // one layer below it. This line is printed to someone who has just cloned a
+    // repo they may not trust, and it interpolates two strings from different
+    // provenances into the same terminal — `server_cmd`, which that repo
+    // authored, and `err`, which came back from a spawned subprocess. Neither
+    // is obviously safe, so both are escaped.
+
+    #[test]
+    fn collision_guard_skipped_message_escapes_both_interpolated_strings() {
+        let server_cmd = "npx evil\x1b[2Jserver";
+        let err = "spawn failed\r\nFAKE: everything is fine";
+        // Anti-vacuous: both fixtures really carry the hostile bytes, so a
+        // transcription slip cannot make this pass by agreeing with itself.
+        assert!(
+            server_cmd.as_bytes().contains(&0x1b),
+            "fixture lost its ESC"
+        );
+        assert!(err.as_bytes().contains(&b'\r'), "fixture lost its CR");
+
+        let msg = collision_guard_skipped_message(server_cmd, err, true);
+
+        assert!(
+            !msg.as_bytes().contains(&0x1b),
+            "ESC byte reached the terminal: {msg:?}"
+        );
+        assert!(
+            !msg.as_bytes().contains(&b'\r'),
+            "CR byte reached the terminal: {msg:?}"
+        );
+        // Escaped, never deleted — the user must be able to see that an escape
+        // was there, since that fact is itself evidence about the server.
+        assert!(msg.contains("npx evil\\x1b[2Jserver"), "{msg}");
+        assert!(
+            msg.contains("spawn failed\\r\\nFAKE: everything is fine"),
+            "{msg}"
+        );
+        // The line's own claims survive intact.
+        assert!(msg.contains("did NOT run"), "{msg}");
+        assert!(msg.contains("Tool names must be unique"), "{msg}");
+    }
+
+    #[test]
+    fn collision_guard_skipped_message_leaves_clean_inputs_byte_identical() {
+        // The near-miss guard, and the whole regression surface: every user
+        // whose MCP server command and error text carry no control bytes.
+        // Full-string equality against output captured from the pre-#873 body,
+        // not a `contains` — a discriminator tested only on the side that fires
+        // is vacuous green. There is deliberately NO length cap at this site,
+        // so a long-but-clean string must still pass through whole.
+        let server_cmd = "npx -y @modelcontextprotocol/server-filesystem /tmp";
+        let err = "connection refused (os error 111)";
+        assert!(
+            !server_cmd.bytes().any(|b| b.is_ascii_control())
+                && !err.bytes().any(|b| b.is_ascii_control()),
+            "fixtures are supposed to be control-free"
+        );
+
+        assert_eq!(
+            collision_guard_skipped_message(server_cmd, err, true),
+            "mcp: the builtin-collision guard did NOT run for \
+'npx -y @modelcontextprotocol/server-filesystem /tmp': pre-flight tool listing failed after \
+2 attempt(s) (connection refused (os error 111)). Connecting anyway so yoagent can surface \
+the real diagnostic. If this server exposes a tool named like one of yoyo's builtins, the \
+session will fail on the first turn with 'Tool names must be unique'."
+        );
+        assert_eq!(
+            collision_guard_skipped_message(server_cmd, err, false),
+            "⚠ mcp: the builtin-collision guard did NOT run for \
+'npx -y @modelcontextprotocol/server-filesystem /tmp' — pre-flight tool listing failed after \
+2 attempt(s) (connection refused (os error 111)). Connecting anyway so yoagent can surface \
+the real diagnostic. If this server exposes a tool named like one of yoyo's builtins, the \
+session will fail on the first turn with 'Tool names must be unique'."
+        );
     }
 
     /// Deliberately **weak** source-level guard. `connect_external_servers` is
