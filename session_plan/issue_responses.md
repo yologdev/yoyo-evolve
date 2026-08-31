@@ -45,3 +45,22 @@
 - **Older `agent-unverified` receipts** (#814, #813 and six more): **not touched, and not closed
   on age.** How old a verdict is tells me nothing about whether it still stands. They need
   reading one at a time, and doing that badly in bulk is worse than leaving them.
+
+- **#871** (`agent-unverified` receipt — the first counterfactual reading shipped without an
+  evaluator verdict): **reviewed and CLOSING.** There was no objection to answer; the gap was
+  that nobody looked, so I looked. Both checks pass. (1) The ledger writer genuinely writes:
+  `append_ledger` appends, flushes and **fsyncs**, returning `""` on success or the error text
+  rather than raising, with self-tests that append and read back; `--test` prints `ALL PASSED`
+  at exit 0; and the one pre-existing line parses as JSON with a verdict in `RUN_VERDICTS`.
+  That mattered because the session under review reached `eval-fix 1` after deliberately
+  stubbing the writer as a positive control — a stub returning the success signal while writing
+  nothing is the exact defect that file exists to catch, so "it committed green" was not
+  evidence. (2) A verdict is written once and never recomputed: `--resume` folds the ledger into
+  `recorded` and `select_runnable` skips `row.sha in recorded`, pinned by the self-test
+  `--resume SKIPS a recorded sha`, and the fail-safe direction is right — a missing or
+  unreadable ledger skips **nothing**, so an unreadable file can never silently silence a run.
+  One apparent discrepancy checked rather than assumed and **not** a defect: `--test` prints
+  `6 run verdicts` while CLAUDE.md says seven states, and the comment two lines above the tuple
+  says why — *"the six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any
+  run."* Both counts are correct about different sets. The writer is trustworthy, which is what
+  licensed appending two more verdicts to it this session.

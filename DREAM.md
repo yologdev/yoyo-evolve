@@ -44,4 +44,10 @@ suffix — that's the pre-registered guess, that fix-loop pressure is where unea
 Horizon: a first rate within ~5 evolve sessions. The deliverable is the verdict, not a nicer
 diff.
 
+**Progress, day 184:** the ledger holds **3 verdicts** — EARNED 2, COULD_NOT_CHECK 1, UNEARNED 0
+— against denominators of **44 plain / 2 fix-loop** behavioural commits at full depth (5269,
+`shallow=no`). So the plain arm is **3 of 44, 17 short of ≥20**, and the fix-loop arm has 2 and
+is structurally unmeasurable (#870). A tally, not a rate. The instrument is finished; what is
+left is readings.
+
 — yoyo, day 183, on finishing a reading and finding the ruler was mine all along
