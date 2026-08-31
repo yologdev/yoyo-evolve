@@ -1,0 +1,181 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by looking at the actual state of the file — the evaluator says the positive control was left neutered.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --stat && echo "---ST…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEUTERED\|def append_le… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Confirmed — append_ledger was gutted for the positive control and never restored. Let me see the full shape of what was added.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1330,1445p' scripts/coun… ✓ (3ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+The scaffolding is intact — only append_ledger's body was destroyed. Let me check its contract from the self-tests and the call site before restoring.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "append_ledger" scripts/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "append_ledger" -B 12 -A… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2405,2500p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1620,1680p' scripts/coun… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 2.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: append_ledger is still neutered. I have its full contract from the call site (line 1648, if err_w:) and the three self-tests. Restoring it now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 19 lines)
+        The fsync is the point: a verdict costs ~10 minutes of cargo, and a process killed
+        by the session budget must not lose one to a buffer that never reached disk.
+  + 
+  +     Returning the error text rather than raising is deliberate: a ledger failure must
+  +     never destroy the verdict that was just earned, so the caller prints a WARNING and
+  +     keeps going. The one thing it must not do is fail silently -- an empty return is the
+  +     success sentinel, so a writer that cannot write has to say which error stopped it.
+        """
+  -     return ""  # NEUTERED FOR POSITIVE CONTROL
+  +     try:
+  +         parent = os.path.dirname(path)
+  +         if parent:
+  +             os.makedirs(parent, exist_ok=True)
+  +         with open(path, "a", encoding="utf-8") as fh:
+  +             fh.write(line + "\n")
+  +             fh.flush()
+  +             os.fsync(fh.fileno())
+  +     except OSError as exc:
+  +         return str(exc)
+  +     return ""
+ ✓ (1m 13s)
+        The fsync is the point: a verdict costs ~10 minutes of cargo, and a process killed
+        by the session budget must not lose one to a buffer that never reached disk.
+  + 
+  +     Returning the error text rather than raising is deliberate: a ledger failure must
+  +     never destroy the verdict that was just earned, so the caller prints a WARNING and
+  +     keeps going. The one thing it must not do is fail silently -- an empty return is the
+  +     success sentinel, so a writer that cannot write has to say which error stopped it.
+        """
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (51ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 40s (2 ✓)
+
+ALL PASSED, exit 0. Now let me verify the ledger self-tests are complete per the task spec, and check one thing that looks off in the summary line.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RUN_VERDICTS = \|RUN_VE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,160p' scripts/counte… ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-orienting: append_ledger is restored and --test passes. `RUN_VERDICTS holding 6 is correct (7 states total; NO_TEST_CHANGE` is decided by the diff before any run) — nothing to fix there.
+
+Remaining: the positive control, then the actual reading, then CLAUDE.md. First, one problem with the control's legibility:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2425,2452p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+open(path).read() raises FileNotFoundError when the writer is neutered — that aborts the whole run before the summary, so the control can't show "pre-existing tests stay green". A check that crashes instead of failing cleanly destroys the report it exists to produce. Making it fail loudly instead:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 11 lines)
+                check(f"append_ledger({sha}) succeeded", err == "", err)
+  -         got = [json.loads(ln)["sha"] for ln in open(path).read().splitlines() if ln.strip()]
+  +         # Read back WITHOUT assuming the file exists. A writer that appends nothing must
+  +         # produce a clean red here, not a traceback: a self-test that crashes destroys the
+  +         # very summary that says which OTHER tests were fine, which is what makes the
+  +         # positive control unreadable.
+  +         if os.path.exists(path):
+  +             with open(path, "r", encoding="utf-8") as fh:
+  +                 got = [json.loads(ln)["sha"] for ln in fh.read().splitlines() if ln.strip()]
+  +         else:
+  +             got = "NO LEDGER FILE WAS WRITTEN"
+            check("ledger appends per verdict, in order", got == ["aaa", "bbb", "ccc"], got)
+ ✓ (1m 13s)
+                check(f"append_ledger({sha}) succeeded", err == "", err)
+  -         got = [json.loads(ln)["sha"] for ln in open(path).read().splitlines() if ln.strip()]
+  +         # Read back WITHOUT assuming the file exists. A writer that appends nothing must
+  +         # produce a clean red here, not a traceback: a self-test that crashes destroys the
+  +         # very summary that says which OTHER tests were fine, which is what makes the
+  +         # positive control unreadable.
+  +         if os.path.exists(path):
+  +             with open(path, "r", encoding="utf-8") as fh:
+  ... (4 more lines)
+
+Now the positive control, run serially (never two file-mutating controls in parallel — that raced once and one falsely passed):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (23 lines) ✓ (71ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean red, exit 1, exactly 2 failures — both ledger tests — and the summary now prints at all (it crashed before). Note the three `append_ledger(...) succeeded` checks still pass when neutered, because the gutted body returns the success sentinel — that is precisely the defect the evaluator flagged, and it's the read-back of bytes on disk, not the function's claim about itself, that catches it. Now restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cg_restore.py scripts/co… ✓ (54ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passes in both directions, run serially. Now Step 2 — the actual deliverable: run it. First, the CLI surface and how the batch loop is invoked:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Complete CLI surface. Let me check the window depth and get the denominator before running (census shells no cargo, so it's fast):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "depth now: $(git rev-list … ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/coun… ✓ (2.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 600 python3 scripts/coun… ✓ (2.5s)
+  3 tools completed in 9.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census taken at depth 4803. Note the plain arm has 33 behavioural commits, not the 28 the task text assumed — I'll report the measured number. Now launching the batch. Each counterfactual is two cargo test invocations, so this exceeds a single tool call's ceiling — running it in the background and polling, which the per-verdict ledger append makes safe:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p dre… (2 lines) ✓ (32.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Running. The missing-ledger state announced itself correctly (fail-safe: nothing skipped). Polling:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sleep 540; echo "=== log ==="; t… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tool call timed out (my poll, not the job). Let me check the background run survived and poll with an explicit timeout:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pgrep -f counterfactual_green >/… ✓ (17ms)
+
+The background job survived. Polling with an explicit timeout:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sleep 570; echo "=== log ==="; t…

@@ -1,0 +1,187 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by measuring whether the defect actually reproduces (Step 0), before writing any fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---H…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hook_command_for_displa… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+The tree is clean — the previous attempt landed nothing. Let me read the five call sites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1300p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1455,1520p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.4s (2 ✓)
+
+project_mcp_refusal_message pushes the command raw — no cap, no sanitization. Now the other two files:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,175p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '285,340p' src/commands_g… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.4s (2 ✓)
+
+Now Step 0 — measure first. I'll add a temporary probe test that calls the real functions (not a transcription, which would only pin my belief about the code), run it, then revert.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/cli.rs |… ✓ (6ms)
+
+
+I'll continue with Step 0 — the measurement probe.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean — nothing from the prior attempt landed. Adding a temporary probe that calls the real functions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (35 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo step0_prob… ✓ (26.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 33.1s (2 ✓)
+
+The defect reproduces. Let me capture all four lines verbatim:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo step0_prob… ✓ (153ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The escapes survive. Let me capture all four lines to a file (the tool collapses similar lines):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo step0_prob… ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '{print NR". "$0}' /tmp/step… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.7s (2 ✓)
+
+Step 0 measurement — the defect reproduces. All four functions leak control bytes verbatim:
+
+| function | ESC | CR | len |
+|---|---|---|---|
+| project_mcp_refusal_message | 2 | 1 | 289 |
+| collision_guard_skipped_message | 4 | 2 | 410 |
+| hook_command_for_display | 2 | 1 | 48 |
+| goal_verify_refusal_message | 2 | 1 | 379 |
+
+collision_guard_skipped_message shows ESC=4/CR=2 because it interpolates the untrusted string twice (command and error) — confirming both need routing. Now removing the probe and implementing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.rs.step0bak src/cli.… ✓ (8ms)
+
+Now Step 1 — the sanitizer, placed beside the refusal-message family in src/cli.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (8 → 78 lines)
+  + /// Escape control bytes in a string that came from an **untrusted** source
+  + /// before it is rendered into a refusal block.
+  + ///
+  + /// Every [`char::is_control`] char (C0, `\r`, `\n`, `\t`, ESC) plus `DEL`
+  + /// (U+007F) is replaced with its **visible escaped form** — `\x1b`, `\n`,
+  + /// `\r`, `\t`, else `\xNN`. **Escape, never delete:** a silently dropped byte
+  + /// is the bug, because the fact that the repository put an escape sequence in
+  + /// the string is itself evidence about that repository, and the user must be
+  + /// able to see it in order to judge it.
+  + ///
+  + /// Everything else passes through **byte-identically**, including non-ASCII —
+  + /// an MCP server name or a hook command may legitimately be UTF-8, and
+  + /// mangling it would make an honest config look hostile.
+  + ///
+  + /// Why it exists: the five trust-boundary refusal messages interpolate a
+  + /// string the *repository* authored, print it to the terminal, and cap its
+  + /// length. **A length cap is not sanitization.** Measured before the fix (Day
+  + /// 184): a fixture carrying `\x1b[31m`, `\x1b[2J`, `\r` and `\n` reached the
+  + /// returned `String` intact from every one of them — 2 ESC / 1 CR out of
+  + /// `project_mcp_refusal_message`, 4 ESC / 2 CR out of
+  ... (57 more lines)
+ ✓ (2m 11s)
+  + /// Escape control bytes in a string that came from an **untrusted** source
+  + /// before it is rendered into a refusal block.
+  + ///
+  + /// Every [`char::is_control`] char (C0, `\r`, `\n`, `\t`, ESC) plus `DEL`
+  + /// (U+007F) is replaced with its **visible escaped form** — `\x1b`, `\n`,
+  + /// `\r`, `\t`, else `\xNN`. **Escape, never delete:** a silently dropped byte
+  + /// is the bug, because the fact that the repository put an escape sequence in
+  + /// the string is itself evidence about that repository, and the user must be
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Chokepoint wired. Now the remaining three call sites — starting with project_mcp_refusal_message:
+  ▶ edit src/cli.rs (4 → 9 lines)
+        for cmd in refused {
+            msg.push_str("\n    ");
+  -         msg.push_str(cmd);
+  +         // Through the shared chokepoint: this string was authored by the
+  +         // repository, not the user. That escapes control bytes and, as an
+  +         // intended behaviour change, also caps at `REFUSAL_HOOK_CMD_MAX_BYTES`
+  +         // with the existing in-band cut marker — this message used to be
+  +         // uncapped, which is a fix rather than a regression, and is asserted.
+  +         msg.push_str(&hook_command_for_display(cmd));
+        }
+ ✓ (2m 10s)
+        for cmd in refused {
+            msg.push_str("\n    ");
+  -         msg.push_str(cmd);
+  +         // Through the shared chokepoint: this string was authored by the
+  +         // repository, not the user. That escapes control bytes and, as an
+  +         // intended behaviour change, also caps at `REFUSAL_HOOK_CMD_MAX_BYTES`
+  +         // with the existing in-band cut marker — this message used to be
+  +         // uncapped, which is a fix rather than a regression, and is asserted.
+  +         msg.push_str(&hook_command_for_display(cmd));
+        }
+  ▶ edit src/agent_builder.rs (4 → 13 lines)
+    pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+        let dash = if plain { ":" } else { " —" };
+  +     // BOTH interpolations are untrusted: the command comes from a project-local
+  +     // `.yoyo.toml`, and the error text is whatever the server process produced.
+  +     // Measured Day 184, this message leaked 4 ESC / 2 CR from a single fixture
+  +     // precisely because it renders that string twice — sanitizing one and not
+  +     // the other would leave the hole open at half width. No cap is added here;
+  +     // that would be an unasserted behaviour change, and this task's one
+  +     // intended capping change is `project_mcp_refusal_message`'s.
+  +     let server_cmd = crate::cli::sanitize_for_display(server_cmd);
+  +     let err = crate::cli::sanitize_for_display(err);
+        format!(
+ ✓ (2m 11s)
+    pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+        let dash = if plain { ":" } else { " —" };
+  +     // BOTH interpolations are untrusted: the command comes from a project-local
+  +     // `.yoyo.toml`, and the error text is whatever the server process produced.
+  +     // Measured Day 184, this message leaked 4 ESC / 2 CR from a single fixture
+  +     // precisely because it renders that string twice — sanitizing one and not
+  +     // the other would leave the hole open at half width. No cap is added here;
+  ... (5 more lines)
+  2 tools completed in 4m 30s (2 ✓)
+
+Now the fifth — the sharpest one, goal_verify_refusal_message (it executes a shell command):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (3 → 10 lines)
+    pub(crate) fn goal_verify_refusal_message(cmd: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+  +     // Sanitize first, then cap — escaping lengthens the string, so capping
+  +     // first would let an escaped tail push past the budget and would make the
+  +     // reported byte counts describe a string the user is not being shown.
+  +     // This module keeps its own `REFUSAL_CMD_MAX_BYTES`, deliberately
+  +     // unchanged; only the bytes are escaped, never the budget.
+  +     let sanitized = crate::cli::sanitize_for_display(cmd);
+  +     let cmd = sanitized.as_str();
+        let shown = if cmd.len() <= REFUSAL_CMD_MAX_BYTES {

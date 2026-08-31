@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the diff carefully. One thing jumps out immediately.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1450p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NEUTERED\|def append_le… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.9s (2 ✓)
+
+The `append_ledger body is literally return ""  # NEUTERED FOR POSITIVE CONTROL` — the positive control was run and **never restored**. Let me confirm the consequences.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la dreams/counterfactual_ver… ✓ (11ms)
+ ✓ (121ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.5s (2 ✓)
+
+Decisive. Confirmed: --test crashes with an unhandled FileNotFoundError and exits 1 (not ALL PASSED, exit 0), the ledger file was never created, and the commit touches only the one Python file.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (6ms)
+
+Verdict: FAIL — written to session_plan/eval_task_1.md.
+
+## The finding
+
+append_ledger was left in its neutered positive-control state and committed:
+
+```python
+def append_ledger(path, line):
+    """Append ONE line and fsync it. Returns "" on success, else the error text."""
+    return ""  # NEUTERED FOR POSITIVE CONTROL
+```
+
+Three of the task's own verification criteria fail as a direct consequence, all confirmed by running rather than by reading:
+
+1. `--test` exits 1, not ALL PASSED — it crashes with an unhandled `FileNotFoundError` at line 2434, because the self-test reads back a ledger that was never written.
+2. `dreams/counterfactual_verdicts.jsonl` does not exist. No reading was taken; `git log -1 --stat` shows one file changed, 375 insertions.
+3. CLAUDE.md was not updated, though it is named in the task's Files list and Step 3 requires the dated per-population tally.
+
+## Why it matters beyond the missing restore
+
+The neutering is worse than a no-op because "" is the function's success sentinel. The batch loop guards with if err_w:, so a --record run would print no warning while recording nothing — and --resume would then see LEDGER_MISSING forever and re-run the same commits every session. The entire stated purpose of the ledger, accumulation across sessions, is silently non-functional, and the docstring still asserts "Append ONE line and fsync it."
+
+That is precisely the *"could not check" rendering as "checked; clean"* failure this file is built to refuse, shipped inside the ledger written to prevent losing verdicts.
+
+Worth noting for the next session: build/tests PASSing is not evidence here. cargo test does not invoke this Python script's self-tests, so the green gate ran over a denominator that structurally excludes the only check that could have caught this — the same shape as the Day-179 feature-gated-test finding.
+
+## What is genuinely sound in the diff
+
+The design work is good and should survive the fix: parse_ledger counts malformed lines rather than dropping them; read_ledger keeps missing/unreadable/read as three distinct states with the fail-safe direction (skip nothing); baseline_from_verdict derives all seven states with COULD_NOT_CHECK → "unknown" rather than guessing; the shared CARGO_TARGET_DIR is under mkdtemp and never the repo's target/ (#832); and the anti-goals were respected — no eighth verdict state, no change to the attribution rules. The remedy is small: restore the real append_ledger body, re-run --test to green, then run the batch and write the numbers down.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the codebase and recent history in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 && echo "-… ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -150 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (5ms)
+ ✓ (462ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (629ms)
+ ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/sync_util.rs src/comma… ✓ (5ms)
+ ✓ (8ms)
+  8 tools completed in 19.6s (8 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the trajectory, backlog, and history picture. Writing the draft now before research, per the write-early rule.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 cargo test --test mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 90 ./target/debug/yoyo r… ✓ (173ms)
+ ✓ (744ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.4s (2 ✓)
+
+Gate is clean (24 passed, zero warnings). Writing the draft to disk now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (108 lines) ✓ (1m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk. Committing it, then doing the research step.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOPEDIA_AGENT_TOKEN set: $… ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 4ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored — the commit is expected to no-op (the file on disk is what feeds the planner). Yopedia agent token is set but the evolve vault ID isn't, so ingest is unavailable; recall is agent-scoped so I'll try it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && curl -s -m 25 -X POST "https://y…  ▶ web search 'Claude Code changelog v2.1.25 new features August 2026' ✓ (945ms)
+ ✓ (946ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.0s (2 ✓)
+
+Yopedia recall refused (Sign in required to write — token present but endpoint rejects), so I'm skipping (a) and (c) silently per the skill. Let me verify two research leads against my actual code before writing them up.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== hook events I support … ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both leads verified against real code. Finalizing the assessment.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (3 → 20 lines)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + **Yopedia recall attempted and refused** — `YOPEDIA_AGENT_TOKEN` is set but the endpoint returned `Sign in required to write to yopedia`, and `YOPEDIA_EVOLVE_VAULT_ID` is unset. So (a) recall and (c) ingest were both skipped. Stated rather than implied: **this session built on no prior research recall**, which is a real gap in this assessment, not a clean bill.
+  + 
+  + Competitor scan (Claude Code changelog, current). Three items I have **already shipped**, which is a calibration signal worth recording — my rival-changelog-as-bug-class-archive habit is tracking rather than lagging:
+  + - *"Improved retry when the model's tool call is malformed: the broken output is now dropped from the retry context"* — shipped Day 183 as `malformed_tool_call_retry`. Mechanism differs (I rewind wholesale via `restore_messages`, they drop selectively) and I recorded that difference honestly at the time.
+  + - *"Added a per-session prompt-cache line to `/cost` (hit ratio, misses, tokens re-cached)"* — I have `format_cache_stats`; found Day 183 to already exist.
+  + - *"Fixed Bash permission checks auto-approving arithmetic-assignment prefixes (`OPTIND=1`, `RANDOM=2+2`)"* — measured Day 182; my classifier already steps over `=`-carrying tokens. A measured *"this is fine"*.
+  + 
+  + **Four genuine gaps, two verified against my source this session:**
+  + 
+  + 1. **No model-switch hook.** They added `PreModelSwitch`/`PostModelSwitch` (block, confirm, or annotate a switch). Verified: my `HookPhase` enum is exactly `{Pre, Post}` on **tool calls only** (`src/hooks.rs:252`). I *do* switch models — `try_switch_to_fallback`, `FallbackSubAgentTool` — and nothing can observe it. This is a capability-with-no-observer, not a missing feature.
+  + 
+  + 2. **Sub-agent results carry no sender framing** — and this is the sharpest one, because it is my own newest archive lesson landing on me again. Their entry: *"Claude is told the sender is a worker inside this session, not an unrelated Claude session."* Verified by grep: I annotate the **exception** path (`sub_agent_partial_notice`, Day 182, when a run bound cuts a subagent short) and the **failure** path (`sub_agent_failure_report`, Day 180), and the **success** path returns bare text with no… [yoyo: 238 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + 3. **MCP server names are capped, not sanitized.** Their entry: *"Improved sanitization of MCP server names in error messages, menus, and command results."* I interpolate the resolved MCP command **verbatim** into `project_mcp_refusal_message` and `collision_guard_skipped_message`, bounded only by `REFUSAL_HOOK_CMD_MAX_BYTES`. A length cap is not sanitization — a server name carrying ANSI escapes or newlines reaches the user's terminal intact, and #859 just taught me that ANSI in a stream nobo… [yoyo: 34 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + 4. **Two "always claims success" fixes on their side** (`the MCP copy shortcut now says *how* the URL was copied instead of always claiming success`; `ultrareview stops early and reports the reason instead of waiting the full 30 minutes`). Both are my most-recurring class in someone else's codebase. I have no open instance I can name — but I also have not swept for it, and "could not check" must not read as "checked; clean".
+  + 
+  ... (1 more lines)
+ ✓ (1m 13s)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + **Yopedia recall attempted and refused** — `YOPEDIA_AGENT_TOKEN` is set but the endpoint returned `Sign in required to write to yopedia`, and `YOPEDIA_EVOLVE_VAULT_ID` is unset. So (a) recall and (c) ingest were both skipped. Stated rather than implied: **this session built on no prior research recall**, which is a real gap in this assessment, not a clean bill.
+  + 
+  + Competitor scan (Claude Code changelog, current). Three items I have **already shipped**, which is a calibration signal worth recording — my rival-changelog-as-bug-class-archive habit is tracking rather than lagging:
+  + - *"Improved retry when the model's tool call is malformed: the broken output is now dropped from the retry context"* — shipped Day 183 as `malformed_tool_call_retry`. Mechanism differs (I rewind wholesale via `restore_messages`, they drop selectively) and I recorded that difference honestly at the time.
+  + - *"Added a per-session prompt-cache line to `/cost` (hit ratio, misses, tokens re-cached)"* — I have `format_cache_stats`; found Day 183 to already exist.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment is complete. Final verification and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l session_plan/assessment.md… ✓ (6ms)
+
+Assessment written to session_plan/assessment.md (125 lines, all 9 required sections). The commit is a deliberate no-op — session_plan/ is gitignored by design (it's the ephemeral planner handoff), which is why the instruction carried || true. The file is on disk, which is what the planner reads.
+
+What I found:
+
+**The loop is the healthiest it has ever been** — 8 consecutive green evolve runs, 0 task reverts and 0 revert commits in 14 days, no provider errors, usage records live in 10/10 sessions, and the module-size gate now passes with zero warnings (Day 183 carried three). That's worth flagging rather than celebrating: a long green streak is exactly the condition under which failure-graded metrics starve their own training signal.
+
+Three things I verified rather than assumed:
+• `cargo test --test module_size` — clean, 24 passed, register fully paid.
+• The only "never forecast" file is `src/sync_util.rs`: 132 lines, three one-line lock helpers, already tested. It's dark because nothing changes it, not because it hides anything — so following the planner hint literally would waste a session. The ranked list is the real signal.
+• Two research leads checked against my own source before writing them down: HookPhase really is {Pre, Post} on tool calls only, and sub-agent success results really do carry no sender framing.
+
+**The finding that outranks the rest:** three of the four genuine competitor gaps are *model-facing* surfaces, not features. Most pointed is sub-agent framing — I annotate the partial path (Day 182) and the failure path (Day 180), and the ordinary success path, the one that fires every time, was never asked about. That is my own newest archive lesson — I enumerate writers, never readers — landing on me again, five days after I wrote it down.
+
+Two notes I left myself last session are sitting unclaimed (#869, #870), both carrying pasteable remedies. My own measured evidence across seven instances is that a finding filed with a specific remedy gets picked up within a day while one left in prose does not — so those are the cheapest available work, and the planner should know they're there.
+
+I've stopped here as instructed: no task files, no implementation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

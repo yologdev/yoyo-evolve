@@ -1,0 +1,313 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the instrument I'm about to run, so I know exactly where the ledger hooks in.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l scripts/counterfactual_gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def \|^const \|argparse… ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1009,1200p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1279,1400p' scripts/coun… ✓ (3ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 13.3s (4 ✓)
+
+Now the census row structure and the batch entry point I need to extend:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,700p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '956,1010p' scripts/count… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 44.1s (2 ✓)
+
+Depth is 50 — the shallow clone resets every session, exactly as documented. Kicking off the deepen in the background while I write the ledger:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup git fe… (2 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '107,130p' scripts/counte… ✓ (4ms)
+ ✓ (1.3s)
+  2 tools completed in 1.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-orienting after the context cut — checking what landed and whether the deepen completed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git status ==="; git s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,132p' scripts/counte… ✓ (4ms)
+ ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+Deepen took (50 → 4802), tree clean. Now writing the ledger. First the imports:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '121,131p' scripts/counte… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^import \|^from " scrip… ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Deepen took (50 → 4802 commits), tree clean, no ledger yet. Now writing the ledger — imports first:
+  ▶ edit scripts/counterfactual_green.py (3 → 4 lines)
+    import argparse
+  + import json
+    import os
+    import re
+ ✓ (1m 13s)
+    import argparse
+  + import json
+    import os
+    import re
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the ledger itself — pure decisions first, I/O at the call sites, matching the file's existing discipline:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (2 → 170 lines)
+  + # --------------------------------------------------------------------------------------
+  + # The ledger. The reading ACCUMULATES ACROSS SESSIONS.
+  + # --------------------------------------------------------------------------------------
+  + #
+  + # WHY THIS EXISTS AT ALL. One counterfactual is TWO `cargo test` invocations, so the >=20
+  + # task commits DREAM.md asks for is many hours -- far more than one session's budget.
+  + # Without a ledger the reading needs one unbroken block and therefore never happens; with
+  + # one, it accumulates a few verdicts per session until the milestone is reachable. Four
+  + # consecutive sessions changed this instrument and exactly ONE live counterfactual had
+  + # ever been run; this is the scaffolding that makes the reading the deliverable instead.
+  + #
+  + # Every design choice below falls out of one sentence: A PROCESS KILLED BY THE SESSION
+  + # BUDGET MUST KEEP EVERY VERDICT IT EARNED.
+  + #
+  + #   * APPEND PER VERDICT, never batch at the end -- and fsync. A batched write loses the
+  + #     whole session precisely when the budget kills the process mid-run, which is exactly
+  + #     when it WILL be killed. A verdict costs ~10 minutes of cargo; losing one to a tidy
+  + #     exit is the expensive mistake.
+  + #   * A MISSING OR UNREADABLE LEDGER IS ITS OWN STATE, and neither may read as "all
+  + #     done". That is "could not check" rendering as "checked; clean" -- the refusal this
+  ... (150 more lines)
+ ✓ (1m 12s)
+  + # --------------------------------------------------------------------------------------
+  + # The ledger. The reading ACCUMULATES ACROSS SESSIONS.
+  + # --------------------------------------------------------------------------------------
+  + #
+  + # WHY THIS EXISTS AT ALL. One counterfactual is TWO `cargo test` invocations, so the >=20
+  + # task commits DREAM.md asks for is many hours -- far more than one session's budget.
+  + # Without a ledger the reading needs one unbroken block and therefore never happens; with
+  + # one, it accumulates a few verdicts per session until the milestone is reachable. Four
+  ... (13 more lines)
+
+Now the shared target dir (the difference between one run and several) and the new flags:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (1 → 1 lines)
+  - def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
+  + def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
+ ✓ (1m 13s)
+  - def run_counterfactual(root: str, sha: str, timeout: int) -> tuple[str, str]:
+  + def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming. Wiring the shared target dir, then the flags:
+  ▶ edit scripts/counterfactual_green.py (2 → 7 lines)
+  -     target = os.path.join(tmp, "target")
+  +     # A BATCH shares one target dir across all its runs (adjacent commits share
+  +     # dependencies, so runs 2..N are mostly warm -- the difference between one reading
+  +     # per session and several). A single `--commit` passes None and gets its own, which
+  +     # is byte-identical to the pre-ledger behaviour. Either way it is under mkdtemp and
+  +     # NEVER the repo's own target/ (#832).
+  +     target = target or os.path.join(tmp, "target")
+        env = dict(os.environ)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'POP_PLAIN = \|POP_FIX_L… ✓ (1m 13s)
+  -     target = os.path.join(tmp, "target")
+  +     # A BATCH shares one target dir across all its runs (adjacent commits share
+  +     # dependencies, so runs 2..N are mostly warm -- the difference between one reading
+  +     # per session and several). A single `--commit` passes None and gets its own, which
+  +     # is byte-identical to the pre-ledger behaviour. Either way it is under mkdtemp and
+  +     # NEVER the repo's own target/ (#832).
+  +     target = target or os.path.join(tmp, "target")
+        env = dict(os.environ)
+ ✓ (1m 13s)
+  ▶ edit scripts/counterfactual_green.py (1 → 32 lines)
+  +     parser.add_argument(
+  +         "--max-runs",
+  +         type=int,
+  +         metavar="N",
+  +         help=(
+  +             "BATCH: run up to N counterfactuals over the behavioural commits of one "
+  +             "population, newest first. This is the flag that takes a READING."
+  +         ),
+  +     )
+  +     parser.add_argument(
+  +         "--population",
+  +         default=POP_PLAIN,
+  +         choices=[POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX],
+  +         help=(
+  +             "batch: which arm to read (default %(default)s). Never summed with another "
+  +             "-- DREAM.md pre-registers the fix-loop arm as a SEPARATE question."
+  +         ),
+  +     )
+  +     parser.add_argument(
+  +         "--record",
+  ... (12 more lines)
+ ✓ (1m 13s)
+  +     parser.add_argument(
+  +         "--max-runs",
+  +         type=int,
+  +         metavar="N",
+  +         help=(
+  +             "BATCH: run up to N counterfactuals over the behavioural commits of one "
+  +             "population, newest first. This is the flag that takes a READING."
+  +         ),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 39s (3 ✓)
+
+Now the batch loop — the part that actually takes the reading:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (2 → 3 lines)
+    import argparse
+  + import datetime
+    import json
+ ✓ (1m 14s)
+    import argparse
+  + import datetime
+    import json
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming — the entry guard and the batch loop, in one edit each:
+  ▶ edit scripts/counterfactual_green.py (3 → 3 lines)
+  -     if not args.census and not args.commit:
+  +     if not args.census and not args.commit and args.max_runs is None:
+            parser.print_help()
+            return 2
+ ✓ (1m 13s)
+  -     if not args.census and not args.commit:
+  +     if not args.census and not args.commit and args.max_runs is None:
+            parser.print_help()
+            return 2
+  ▶ edit scripts/counterfactual_green.py (1 → 100 lines)
+  +     if args.max_runs is not None:
+  +         # ---- BATCH: the reading. -------------------------------------------------------
+  +         if args.resume and not args.record:
+  +             print(
+  +                 "--resume needs --record: there is no ledger to resume FROM.",
+  +                 file=sys.stderr,
+  +             )
+  +             return 2
+  +         if args.deepen is not None and not args.census:
+  +             deepen_repo(root, args.deepen)
+  +         rows, window, _shallow, depth, err = collect_census(root, args.limit)
+  +         if err:
+  +             print(f"COULD NOT CHECK: {err}", file=sys.stderr)
+  +             print(LIMITS, file=sys.stderr)
+  +             return 1
+  + 
+  +         recorded = set()
+  +         if args.resume:
+  +             state, recorded, malformed = read_ledger(args.record)
+  +             # Three states, none folded -- and neither absent one may read as "all done".
+  ... (80 more lines)
+ ✓ (1m 13s)
+  +     if args.max_runs is not None:
+  +         # ---- BATCH: the reading. -------------------------------------------------------
+  +         if args.resume and not args.record:
+  +             print(
+  +                 "--resume needs --record: there is no ledger to resume FROM.",
+  +                 file=sys.stderr,
+  +             )
+  +             return 2
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 46s (2 ✓)
+
+Missing the finally — the batch must always give its scratch dir back:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (4 → 6 lines)
+                        if err_w:
+                            print(f"  WARNING: ledger append failed: {err_w}", file=sys.stderr)
+  +         finally:
+  +             shutil.rmtree(shared, ignore_errors=True)
+    
+        if args.commit:
+ ✓ (1m 15s)
+                        if err_w:
+                            print(f"  WARNING: ledger append failed: {err_w}", file=sys.stderr)
+  +         finally:
+  +             shutil.rmtree(shared, ignore_errors=True)
+    
+        if args.commit:
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming — adding the ledger self-tests, then verifying:
+  ▶ edit scripts/counterfactual_green.py (1 → 76 lines)
+  +     # -- THE LEDGER: the reading must accumulate across sessions ------------------------
+  +     # baseline_from_verdict: derived from run_counterfactual's short-circuit, so every
+  +     # one of the seven states gets a row rather than a shrug.
+  +     for verdict, expect in (
+  +         (EARNED, "green"), (UNEARNED, "green"), (INCONCLUSIVE, "green"),
+  +         (REGISTER_DRIFT, "green"), (BASELINE_RED, "red"),
+  +         (NO_TEST_CHANGE, "not-run"), (COULD_NOT_CHECK, "unknown"),
+  +     ):
+  +         got = baseline_from_verdict(verdict)
+  +         check(f"baseline_from_verdict({verdict}) == {expect}", got == expect, got)
+  + 
+  +     line = ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED, "green", "T", "42")
+  +     back = json.loads(line)
+  +     check("ledger_line round-trips the sha", back["sha"] == "abc", back)
+  +     check("ledger_line carries the verdict", back["verdict"] == EARNED, back)
+  +     check("ledger_line is ONE line", "\n" not in line, line)
+  + 
+  +     # A malformed line is COUNTED, never silently dropped -- a shrinking denominator
+  +     # inside my own meter is the defect this family of checks exists for.
+  +     shas, malformed = parse_ledger(
+  ... (56 more lines)
+ ✓ (1m 13s)
+  +     # -- THE LEDGER: the reading must accumulate across sessions ------------------------
+  +     # baseline_from_verdict: derived from run_counterfactual's short-circuit, so every
+  +     # one of the seven states gets a row rather than a shrug.
+  +     for verdict, expect in (
+  +         (EARNED, "green"), (UNEARNED, "green"), (INCONCLUSIVE, "green"),
+  +         (REGISTER_DRIFT, "green"), (BASELINE_RED, "red"),
+  +         (NO_TEST_CHANGE, "not-run"), (COULD_NOT_CHECK, "unknown"),
+  +     ):
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Self-tests pass. Positive control now (fast, and serially — before I start the long run):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (23 lines) ✓ (159ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
