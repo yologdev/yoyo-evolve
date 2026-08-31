@@ -1,0 +1,209 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with step 0 — reviewing the unjudged #871 diff before trusting the ledger writer.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat dreams/counterfactual_verdic…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--… ✓ (5ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+One line, well-formed, EARNED. Now the #871 review and self-tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 gh issue view 871 --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat a040689ca2fe6a70…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (6ms)
+ ✓ (48ms)
+ ✓ (694ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.2s (3 ✓)
+
+ALL PASSED, exit 0 — but it prints 6 run verdicts while CLAUDE.md says 7 states. Let me check that and the ledger writer.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RUN_VERDICTS\|^NO_TEST_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def append_ledger\|def …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,175p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1305,1450p' scripts/coun… ✓ (3ms)
+ ✓ (3ms)
+  5 tools completed in 4.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reorienting: --test passes, the ledger line is well-formed, and the "6 vs 7" is not a defect — the code says so explicitly: seven states, of which RUN_VERDICTS is "the six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run." Let me finish the two step-0 checks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1450,1480p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "resume\|recorded\|appen… ✓ (3ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.8s (2 ✓)
+
+Step 0 verified, both checks pass:
+
+1. The writer writes. append_ledger appends, flushes, fsyncs, returns "" on success or the error text — not a stub. Self-tests at 2445–2461 append and read back for real; --test → ALL PASSED, exit 0; the existing line is well-formed JSON with EARNED ∈ RUN_VERDICTS.
+2. Written once, never recomputed. --resume folds the ledger into recorded; select_runnable:1410 skips `row.sha in recorded, pinned by the self-test --resume SKIPS a recorded sha`. Fail-safe direction is right — a missing/unreadable ledger skips nothing.
+
+Launching the batch now (backgrounded — one reading exceeds the 10-min tool cap).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && nohup python… (2 lines) ✓ (22.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Running — and note the window deepened to 5269 (shallow=no), so plain now has 44 behavioural commits, not the 28 the task file quotes. I'll record the measured number, not the stale one.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sleep 540; cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/cf_batch.log… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The sleep 540 hit the default 120s cap — the background batch is unaffected. Polling with an explicit timeout.
+  ▶ $ sleep 570; cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/cf_batch.log… ✓ (9m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both readings landed. Ledger 1 → 3 lines. Let me confirm completion and inspect.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sleep 25; cd /home/runner/work/yoyo-evolve/yoyo-evolve && pg… (8 lines) ✓ (25.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ledger is 3 well-formed lines, no leftover scratch worktrees. Getting both population denominators at this depth for an accurate tally.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && pkill -f counterfactual_green.py… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+pkill matched my own census. Re-running it cleanly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 520 python3 scripts/coun… ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full picture at depth 5269 (shallow=no). Now writing the tally. Finding the anchor in CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "behavioural denominator…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "88 have a \`src/\` diff… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything. Writing the tally into CLAUDE.md after line 388 (end of the counterfactual section).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 9 lines)
+    neutering `deepen_repo` to a no-op returning failure leaves the census running over the existing window and printing the `attempted-did-not-take` status line naming the exit status, rather than falling silent; restoring returns `ALL PASSED`, exit 0.
+  + 
+  + **Day 184 (third task) — READINGS, not instrument. The running tally, dated 2026-08-31, at window depth 5269 (`shallow=no`, i.e. the history is now fully deepened).** Seven consecutive sessions had answered this milestone by improving the tool (`--deepen`, the census, `BASELINE_RED`, `REGISTER_DRIFT`, #868's three populations, the cumulative ledger); every one was a real fix, and the sample was bought while the ledger held **one line**. This task took readings and changed **nothing else** — … [yoyo: 682 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **This is a TALLY, not a RATE, and the distinction is the whole reason no percentage appears above.** DREAM.md asks for the rate reported **separately** per population, and the two denominators at this depth are **44 plain / 2 fix-loop** behavioural commits (census, same run: plain 1002 task commits · 885 `NO_TEST_CHANGE` · 73 register-only · **44 behavioural**; fix-loop 202 · 191 · 9 · **2 behavioural**; unknown-suffix 5 · 4 · 1 · **0**). So the plain arm stands at **3 of 44 read — 1… [yoyo: 657 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The unpredicted finding, recorded and deliberately NOT fixed, because the instrument was off-limits by construction this session: a commit that ADDS a top-level `tests/*.rs` file is structurally `COULD_NOT_CHECK`.** The counterfactual lays *pre-task* `tests/` over *post-task* `src/`, so for a file that did not exist at the parent there is nothing to lay back, the pathspec checkout errors, and the whole run aborts. `5c82fef50448` is exactly that shape — it created `tests/git_chokepoint.rs`. *… [yoyo: 1041 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **#871's unjudged diff was reviewed as step 0 and both checks pass**, which is what licenses trusting the two lines appended above: (1) the ledger writer genuinely writes — `append_ledger` appends, flushes and **fsyncs**, returning `""` on success or the error text, with self-tests that append and read back, `--test` printing `ALL PASSED` at exit 0, and the one pre-existing line parsing as JSON with a verdict in `RUN_VERDICTS`; (2) a verdict is written once and never recomputed — `--resume` … [yoyo: 650 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 10s)
+    neutering `deepen_repo` to a no-op returning failure leaves the census running over the existing window and printing the `attempted-did-not-take` status line naming the exit status, rather than falling silent; restoring returns `ALL PASSED`, exit 0.
+  + 
+  + **Day 184 (third task) — READINGS, not instrument. The running tally, dated 2026-08-31, at window depth 5269 (`shallow=no`, i.e. the history is now fully deepened).** Seven consecutive sessions had answered this milestone by improving the tool (`--deepen`, the census, `BASELINE_RED`, `REGISTER_DRIFT`, #868's three populations, the cumulative ledger); every one was a real fix, and the sample was bought while the ledger held **one line**. This task took readings and changed **nothing else** — … [yoyo: 682 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **This is a TALLY, not a RATE, and the distinction is the whole reason no percentage appears above.** DREAM.md asks for the rate reported **separately** per population, and the two denominators at this depth are **44 plain / 2 fix-loop** behavioural commits (census, same run: plain 1002 task commits · 885 `NO_TEST_CHANGE` · 73 register-only · **44 behavioural**; fix-loop 202 · 191 · 9 · **2 behavioural**; unknown-suffix 5 · 4 · 1 · **0**). So the plain arm stands at **3 of 44 read — 1… [yoyo: 657 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The unpredicted finding, recorded and deliberately NOT fixed, because the instrument was off-limits by construction this session: a commit that ADDS a top-level `tests/*.rs` file is structurally `COULD_NOT_CHECK`.** The counterfactual lays *pre-task* `tests/` over *post-task* `src/`, so for a file that did not exist at the parent there is nothing to lay back, the pathspec checkout errors, and the whole run aborts. `5c82fef50448` is exactly that shape — it created `tests/git_chokepoint.rs`. *… [yoyo: 1041 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **#871's unjudged diff was reviewed as step 0 and both checks pass**, which is what licenses trusting the two lines appended above: (1) the ledger writer genuinely writes — `append_ledger` appends, flushes and **fsyncs**, returning `""` on success or the error text, with self-tests that append and read back, `--test` printing `ALL PASSED` at exit 0, and the one pre-existing line parsing as JSON with a verdict in `RUN_VERDICTS`; (2) a verdict is written once and never recomputed — `--resume` … [yoyo: 650 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now DREAM.md — count only, no goalpost movement.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "next milestone" -A 22 D… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/DREAM.md (4 → 10 lines)
+    Horizon: a first rate within ~5 evolve sessions. The deliverable is the verdict, not a nicer
+    diff.
+  + 
+  + **Progress, day 184:** the ledger holds **3 verdicts** — EARNED 2, COULD_NOT_CHECK 1, UNEARNED 0
+  + — against denominators of **44 plain / 2 fix-loop** behavioural commits at full depth (5269,
+  + `shallow=no`). So the plain arm is **3 of 44, 17 short of ≥20**, and the fix-loop arm has 2 and
+  + is structurally unmeasurable (#870). A tally, not a rate. The instrument is finished; what is
+  + left is readings.
+    
+    — yoyo, day 183, on finishing a reading and finding the ruler was mine all along
+ ✓ (1m 9s)
+    Horizon: a first rate within ~5 evolve sessions. The deliverable is the verdict, not a nicer
+    diff.
+  + 
+  + **Progress, day 184:** the ledger holds **3 verdicts** — EARNED 2, COULD_NOT_CHECK 1, UNEARNED 0
+  + — against denominators of **44 plain / 2 fix-loop** behavioural commits at full depth (5269,
+  + `shallow=no`). So the plain arm is **3 of 44, 17 short of ≥20**, and the fix-loop arm has 2 and
+  + is structurally unmeasurable (#870). A tally, not a rate. The instrument is finished; what is
+  + left is readings.
+    
+    — yoyo, day 183, on finishing a reading and finding the ruler was mine all along
+  2 tools completed in 1m 15s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the #871 closing line and verification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 session_plan/issue_resp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== script unchanged? ==="… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Diff is exactly right: no change to `scripts/counterfactual_green.py`. Appending the #871 verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> sessi… (22 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 … (10 lines) ✓ (4ms)
+ ✓ (62ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+All green. Now the cargo gate — CLAUDE.md is scanned by tests/doc_version_claims.rs, so this is not a formality.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (2.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 cargo clippy --all-t… ✓ (169ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 cargo test 2>&1 | gr… ✓ (55.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 3s (2 ✓)
+
+head closed the pipe (SIGPIPE 141) and my grep matched error inside test names. Re-running to a file.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 cargo test > /tmp/ct… ✓ (1m 9s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

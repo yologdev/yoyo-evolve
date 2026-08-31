@@ -1,0 +1,183 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, and what the evaluator says is missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (7ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+Code landed; the two missing deliverables are confirmed. Let me read what actually landed so the docs describe the real implementation, not the task file's description of it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/cli.rs | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sanitize_for_display\|f… ✓ (3ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1144..1224 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9.6s (3 ✓)
+
+Implementation is real and well-documented in-code. Now let me verify the current state and gather facts for the two missing deliverables.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn goal_verify_refusal_… ✓ (4ms)
+ ✓ (365ms)
+  2 tools completed in 365ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: code is correct and PASSed three of four checks. Three things remain — the register line the gate printed, the CLAUDE.md paragraph, and the follow-up issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"' tests/mod… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed ("src/cli.rs", 6032). Pasting that literal line rather than hand-typing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 6028),
+  +     ("src/cli.rs", 6032),
+ ✓ (1m 10s)
+  -     ("src/cli.rs", 6028),
+  +     ("src/cli.rs", 6032),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (167ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 15s (2 ✓)
+
+Zero warnings now. Next, let me verify the two out-of-scope sites actually carry the defect, so the follow-up issue states facts rather than assumptions.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '296,330p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' src/agent_buil… ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 3ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both sites confirmed to interpolate raw — and collision_guard_skipped_message has two raw interpolations (server_cmd and err) with no cap at all. Let me confirm no sanitization exists in either file before filing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== sanitize refs outside …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (8ms)
+ ✓ (411ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.2s (2 ✓)
+
+Confirmed — highest issue is still #872, so the follow-up was never filed. Filing it now with the pasteable remedy:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (96 lines) ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#873 filed. Now the CLAUDE.md paragraph — let me locate the end of the cli.rs bullet:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "the boundary answers \*… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The bullet is one giant line (264). Let me get its exact tail to anchor the edit:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '264p' CLAUDE.md | tail -… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the anchor. Before documenting the positive control, I should run it rather than inherit the claim — this repo's rule is that a control is run, not assumed. Neutering the function first:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (17 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo sanitize 2… ✓ (20.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.9s (2 ✓)
+
+4 sanitize tests red. Now the direction that actually proves the guards — do the byte-identical pass-through / clean-command guards stay green?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo refusal 2>… ✓ (121ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the right direction: 25 refusal tests stay green (every clean-command near-miss guard and byte-identical pass-through) while only the escaping test reddens. Restoring:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.rs.bak src/cli.rs &&… ✓ (21.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control done and measured. Now the final deliverable — the CLAUDE.md paragraph, appended to the end of the cli.rs bullet:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **The stated limit: this gates the key, it does not audit the command.** A `notify_command` the user *does* trust is still arbitrary shell, exactly as a hook is; the boundary answers *who wrote this*, never *is this safe*.
+  + **The stated limit: this gates the key, it does not audit the command.** A `notify_command` the user *does* trust is still arbitrary shell, exactly as a hook is; the boundary answers *who wrote this*, never *is this safe*. Day 184 (#872 re-plan) — **the refusal messages themselves rendered the untrusted string raw, and a length cap is not sanitization.** Every gate above prints a string the *repository* authored — an MCP server command, a `hooks.pre.bash` line, a `notify_command` — into th… [yoyo: 5294 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 32s)
+  - **The stated limit: this gates the key, it does not audit the command.** A `notify_command` the user *does* trust is still arbitrary shell, exactly as a hook is; the boundary answers *who wrote this*, never *is this safe*.
+  + **The stated limit: this gates the key, it does not audit the command.** A `notify_command` the user *does* trust is still arbitrary shell, exactly as a hook is; the boundary answers *who wrote this*, never *is this safe*. Day 184 (#872 re-plan) — **the refusal messages themselves rendered the untrusted string raw, and a length cap is not sanitization.** Every gate above prints a string the *repository* authored — an MCP server command, a `hooks.pre.bash` line, a `notify_command` — into th… [yoyo: 5294 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the full verification suite:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (1m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 17s (2 ✓)
+
+All green. Confirming zero failures across the whole suite and zero gate warnings:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The grep matched test names, not warning output. Let me confirm the actual gate warning line is absent and check what's uncommitted:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (4ms)
+ ✓ (137ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+Both changes uncommitted — the evaluator reads committed diffs, so I need to commit. Verifying content first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff tests/module_size.rs &&… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The grep pattern was malformed (\| in -E mode is a literal pipe). Re-checking properly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for p in "sanitize-then-cap" "le… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All five required points present. Let me add the register entry's "why" comment (house style — each entry documents its growth), then commit:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '146,158p' tests/module_s… ✓ (3ms)
+

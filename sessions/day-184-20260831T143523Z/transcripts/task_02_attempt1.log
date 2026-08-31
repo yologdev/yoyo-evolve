@@ -1,0 +1,345 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the revert receipt, as instructed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 872 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REFUSAL_HOOK_CMD_MAX_BY… ✓ (3ms)
+ ✓ (814ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1140,1180p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1460,1500p' src/cli.rs &… ✓ (3ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 57.4s (4 ✓)
+
+Clean tree. src/cli.rs at 5818, registered at 5818 — grace is 100, so the register line will need updating. Let me check the existing tests around the capper and MCP message before touching anything.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5350,5380p' src/cli.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project_mcp_refusal_mes… ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me confirm the tree state and re-check the exact insertion point.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree. Step 1: the pure function alone — this is the sequencing rule that would have saved the last attempt.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 48 lines)
+  + /// Render a **repository-authored** string safe to print into a refusal block.
+  + ///
+  + /// Every refusal message in the trust boundary interpolates a string the
+  + /// *repository* wrote, not the user — an MCP server command, a `hooks.pre.bash`
+  + /// line, a `notify_command` — and prints it to the terminal of someone who has
+  + /// just cloned a repo they explicitly do **not** trust. That is the entire
+  + /// premise of the gate printing the message. A length cap is not sanitization:
+  + /// a command carrying `\x1b[2J`, a `\r` or a newline reaches the terminal
+  + /// intact and can repaint, overwrite or forge the lines *around* the refusal —
+  + /// including the sentence saying nothing was executed. #859 established in this
+  + /// repo that unsanitized ANSI is a live class, not a hypothetical.
+  + ///
+  + /// **Escape, never delete.** A silently dropped byte is the bug: the user must
+  + /// be able to see that the repo put an escape in the string, because that fact
+  + /// is itself evidence about the repo.
+  + ///
+  + /// `\n`, `\r` and `\t` get their familiar named forms; every other
+  + /// [`char::is_control`] char takes the generic `\xNN` form, which is why ESC
+  + /// needs no arm of its own (`0x1b` renders as `\x1b`). `is_control` is the
+  + /// Unicode `Cc` category, so it already covers C0, **DEL** (U+007F) and C1
+  ... (28 more lines)
+ ✓ (13.2s)
+  + /// Render a **repository-authored** string safe to print into a refusal block.
+  + ///
+  + /// Every refusal message in the trust boundary interpolates a string the
+  + /// *repository* wrote, not the user — an MCP server command, a `hooks.pre.bash`
+  + /// line, a `notify_command` — and prints it to the terminal of someone who has
+  + /// just cloned a repo they explicitly do **not** trust. That is the entire
+  + /// premise of the gate printing the message. A length cap is not sanitization:
+  + /// a command carrying `\x1b[2J`, a `\r` or a newline reaches the terminal
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Right — the definition-without-consumer rule. The table test is the consumer; adding it in the same edit.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (84 → 2 lines)
+  -     #[test]
+  -     fn sanitize_for_display_table() {
+  -         // Each rule its own row. Left = input, right = exactly what a caller
+  -         // receives — full-string `assert_eq!`, never a `contains`.
+  -         let cases: &[(&str, &str)] = &[
+  -             // ESC has no arm of its own; the generic `\xNN` form yields `\x1b`.
+  -             ("\u{1b}", "\\x1b"),
+  -             ("evil\u{1b}[31m", "evil\\x1b[31m"),
+  -             ("\u{1b}[2J", "\\x1b[2J"),
+  -             // Named forms.
+  -             ("\n", "\\n"),
+  -             ("\r", "\\r"),
+  -             ("\t", "\\t"),
+  -             ("a\r\nb", "a\\r\\nb"),
+  -             // Other C0 controls take the generic form.
+  -             ("\u{0}", "\\x00"),
+  -             ("\u{7}", "\\x07"),
+  -             ("\u{1f}", "\\x1f"),
+  -             // DEL and C1 are `Cc` too, so `is_control` already covers them.
+  -             ("\u{7f}", "\\x7f"),
+  ... (64 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/cli.rs.
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The build is currently red (dead_code — function without consumer). Let me find the exact anchor text.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_hook_refusal_me… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5400,5406p' src/cli.rs |… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/cli.rs (3 → 94 lines)
+  +     #[test]
+  +     fn sanitize_for_display_table() {
+  +         // Each rule its own row. Left = input, right = exactly what a caller
+  +         // receives — full-string `assert_eq!`, never a `contains`.
+  +         let cases: &[(&str, &str)] = &[
+  +             // ESC has no arm of its own; the generic `\xNN` form yields `\x1b`.
+  +             ("\u{1b}", "\\x1b"),
+  +             ("evil\u{1b}[31m", "evil\\x1b[31m"),
+  +             ("\u{1b}[2J", "\\x1b[2J"),
+  +             // Named forms.
+  +             ("\n", "\\n"),
+  +             ("\r", "\\r"),
+  +             ("\t", "\\t"),
+  +             ("a\r\nb", "a\\r\\nb"),
+  +             // Other C0 controls take the generic form.
+  +             ("\u{0}", "\\x00"),
+  +             ("\u{7}", "\\x07"),
+  +             ("\u{1f}", "\\x1f"),
+  +             // DEL and C1 are `Cc` too, so `is_control` already covers them.
+  +             ("\u{7f}", "\\x7f"),
+  ... (74 more lines)
+ ✓ (13.1s)
+  +     #[test]
+  +     fn sanitize_for_display_table() {
+  +         // Each rule its own row. Left = input, right = exactly what a caller
+  +         // receives — full-string `assert_eq!`, never a `contains`.
+  +         let cases: &[(&str, &str)] = &[
+  +             // ESC has no arm of its own; the generic `\xNN` form yields `\x1b`.
+  +             ("\u{1b}", "\\x1b"),
+  +             ("evil\u{1b}[31m", "evil\\x1b[31m"),
+  ... (13 more lines)
+  3 tools completed in 33.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy checks the non-test build too, so the production call site is the required consumer. But first — honor the sequencing rule and verify the core compiles and passes under cfg(test):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo sanitize_f… ✓ (20.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Core verified green before touching any call site — 4/4 passing, \x1b for ESC. That's precisely what the reverted attempt skipped.
+
+Now the cheap reproduction: add the emission-point test before wiring, so I watch it fail.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 64 lines)
+  +     #[test]
+  +     fn refusal_messages_escape_control_bytes_from_an_untrusted_repo() {
+  +         // Emission point: the string a caller of a real refusal message
+  +         // receives. The interpolated command is repo-authored, so it is the
+  +         // one surface whose job is to let a user judge an untrusted string —
+  +         // and therefore the worst place to render it raw.
+  +         //
+  +         // Asserted on BYTES, never eyeballed in a terminal.
+  +         use crate::hooks::HookPhase;
+  +         let hostile = "evil\u{1b}[31m\rrm -rf /\n";
+  + 
+  +         let msgs = [
+  +             ("hook", project_hook_refusal_message(&[hook(HookPhase::Pre, "bash", hostile)], true)),
+  +             ("notify", project_notify_refusal_message(hostile, true)),
+  +             ("mcp", project_mcp_refusal_message(&[hostile.to_string()], true)),
+  +         ];
+  + 
+  +         for (which, msg) in &msgs {
+  +             assert!(
+  +                 !msg.as_bytes().contains(&0x1b),
+  ... (44 more lines)
+ ✓ (13.6s)
+  +     #[test]
+  +     fn refusal_messages_escape_control_bytes_from_an_untrusted_repo() {
+  +         // Emission point: the string a caller of a real refusal message
+  +         // receives. The interpolated command is repo-authored, so it is the
+  +         // one surface whose job is to let a user judge an untrusted string —
+  +         // and therefore the worst place to render it raw.
+  +         //
+  +         // Asserted on BYTES, never eyeballed in a terminal.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo refusal_me… ✓ (20.7s)
+  2 tools completed in 37.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reproduction confirmed on a real message — evil\x1b[31m\r intact, with the \r sitting immediately before rm -rf /, which on a real terminal overwrites the line. Now step 2: the chokepoint — sanitize, then cap.
+  ▶ edit src/cli.rs (14 → 25 lines)
+  - /// Echo a hook command for display, cutting on a **char** boundary and marking
+  - /// the cut in band — a silent elision inside a "here is what I refused to run"
+  - /// block would defeat the block's whole purpose.
+  + /// Echo a repository-authored command for display: **sanitize first, then cut**
+  + /// on a **char** boundary, marking the cut in band — a silent elision inside a
+  + /// "here is what I refused to run" block would defeat the block's whole purpose.
+  + ///
+  + /// The order is load-bearing rather than stylistic. Escaping *lengthens* the
+  + /// string, so capping first would let an escaped tail push past the budget
+  + /// **and** would make the reported dropped-byte count wrong — and a cap marker
+  + /// that lies is worse than no marker at all. Both numbers in the marker are
+  + /// therefore measured over the *sanitized* string, which is the string actually
+  + /// being cut.
+  + ///
+  + /// Shared by all three trust-boundary refusal messages (hooks, `notify_command`
+  + /// and MCP servers), so each inherits the escaping with no caller edit.
+    fn hook_command_for_display(cmd: &str) -> String {
+  -     if cmd.len() <= REFUSAL_HOOK_CMD_MAX_BYTES {
+  -         return cmd.to_string();
+  +     let safe = sanitize_for_display(cmd);
+  ... (12 more lines)
+ ✓ (1m 36s)
+  - /// Echo a hook command for display, cutting on a **char** boundary and marking
+  - /// the cut in band — a silent elision inside a "here is what I refused to run"
+  - /// block would defeat the block's whole purpose.
+  + /// Echo a repository-authored command for display: **sanitize first, then cut**
+  + /// on a **char** boundary, marking the cut in band — a silent elision inside a
+  + /// "here is what I refused to run" block would defeat the block's whole purpose.
+  + ///
+  + /// The order is load-bearing rather than stylistic. Escaping *lengthens* the
+  ... (13 more lines)
+
+Now route the MCP message through the same chokepoint:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (4 → 4 lines)
+        for cmd in refused {
+            msg.push_str("\n    ");
+  -         msg.push_str(cmd);
+  +         msg.push_str(&hook_command_for_display(cmd));
+        }
+ ✓ (1m 45s)
+        for cmd in refused {
+            msg.push_str("\n    ");
+  -         msg.push_str(cmd);
+  +         msg.push_str(&hook_command_for_display(cmd));
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (59.9s)
+  2 tools completed in 2m 49s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5406 pass. Now the positive control, run serially — neuter the function and confirm it reddens exactly the escaping tests while the pass-through guard stays green.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (20 lines) ✓ (1m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (1m 0s)
+  3 tools completed in 4m 30s (2 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired. Let me capture the exact failure set and confirm the pass-through guards stayed green:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (1m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**Positive control, verbatim: exactly 5 red — all 5 the escaping tests — and 5401 green, including both byte-identical pass-through guards.** That's the direction proving the guards test the pass-through, not the fix. Restoring:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/cli.rs.bak src/cli.rs &&… ✓ (1m 23s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored, 5406 green, neuter gone. Now the landmine — run the module-size gate and paste the literal line it prints:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs && timeout 200 … ✓ (8.3s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5407 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the gate fired exactly as the task warned. It printed the literal remedy line; pasting it rather than hand-typing:
+  ▶ edit tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 5818),
+  +     ("src/cli.rs", 6028),
+ ✓ (1m 9s)
+  -     ("src/cli.rs", 5818),
+  +     ("src/cli.rs", 6028),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && timeout 250 bash -c… ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 3s (2 ✓)
+
+All green. Verifying fmt, the register line matches, and the gate prints no warnings:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.2s)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/cli.rs
+
