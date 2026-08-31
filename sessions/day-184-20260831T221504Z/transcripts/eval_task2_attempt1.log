@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1170,1230p' src/cli.rs ✓ (3ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'agent_builder.rs\|comma… ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,340p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- CLAUDE.md claims about… ✓ (5ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 51.3s (6 ✓)
+
+Code is exactly right; docs are not. Let me confirm the stale-claim state before writing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'Two sites are deliberat… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. The code is exactly right, but CLAUDE.md now carries three claims that the diff falsified. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 30s)
+
+Verdict written to session_plan/eval_task_2.md.
+
+## Summary
+
+Verdict: FAIL — on doc_sync only. The code half is genuinely well done; the task was not finished.
+
+What's correct (and precisely so):
+• **Site 1** (`goal_verify_refusal_message`): sanitizes into safe, then caps safe — the load-bearing ordering. Both marker numbers (shown, total) are measured over the sanitized string, so the in-band cut marker cannot lie. safe_truncate keeps the char boundary. It mirrors the landed cli::hook_command_for_display shape rather than inventing a second one.
+• Site 2 (collision_guard_skipped_message): sanitizes both interpolated strings — server_cmd (repo-authored) and err (subprocess) — and correctly adds no cap, as instructed.
+• Tests: emission-point byte assertions (`!msg.as_bytes().contains(&0x1b)), anti-vacuous fixture checks, and full-string assert_eq!` near-miss guards on both `plain` values. The cap-ordering test uses a 150-byte all-ESC fixture — under budget raw, 600 bytes escaped — which is exactly the input a cap-then-sanitize body would wave through. The three pre-existing collision-guard tests are untouched.
+• Both sites landed in one diff, avoiding the "two doors, one policy, one deaf" shape.
+
+Why it fails: CLAUDE.md was not touched, and the task carried an explicit ## Docs step. Three claims there are now false in the one file re-injected as authoritative context every session:
+1. commands_goal bullet — "names the resolved command string verbatim … truncated at REFUSAL_CMD_MAX_BYTES = 400" (no longer verbatim; the cap now measures the sanitized string)
+2. agent_builder bullet — "naming the server command verbatim"
+3. The 13:00 entry still reads "Two sites are deliberately left unfixed and are FILED rather than left in prose (#873)" — both are now fixed
+
+That's the stale-authoritative-claim class this repo records as costing eight sessions on src/gasp.rs, and here it would tell the next agent to redo work that is already done.
+
+Cleanup feedback (not the fail reason): the module-size register wasn't updated — src/agent_builder.rs is recorded at 3339 against an actual 3428 (+89). It passes only because it sits inside REGISTER_DRIFT_GRACE_LINES = 100, i.e. absorbed drift, which the task explicitly asked to pay off by pasting the gate's own printed line.
+
+Both gaps are small and mechanical — a docs edit plus one register line — so this is a near-miss rather than a broken change.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by getting oriented — check the current ledger state and confirm the script is untouched.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== ledger ===" && cat dre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (11ms)
+ ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.2s (2 ✓)
+
+Clean start: ledger has 3 lines, script untouched. Key constraint I need to respect — my bash tool caps at 600s, and a reading pair takes ~3m18s, so chunks of 4 (~13 min) would be killed by my own tool. I'll use chunks of 2 and let --record's per-verdict fsync make each one durable.
+
+First: census + deepen in one call, which both establishes the denominator and warms the object store.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && date -u +"START %H:%M:%SZ" && ti… ✓ (4.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census ran in 4s — the clone is already deep from last session. Let me capture the summary numbers (the tail cut them off).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 python3 scripts/coun… ✓ (2.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census re-derived: depth 5278, `shallow=no` — PLAIN 44 behavioural (1004 task commits, 886 no-test-change, 74 register-only), FIX-LOOP 2, UNKNOWN-SUFFIX 0. Now the readings. Chunks of 2, minimal output.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && date -u +"S %H:%M:%SZ" && timeou… ✓ (6m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Chunk 1: EARNED + COULD_NOT_CHECK in 6m14s (~3m07s per reading). Ledger 3→5. Committing that, then straight into chunk 2 in the same call.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add dreams/counterfactual_ve… ✓ (7m 21s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Chunk 2: two more EARNED, ledger 5→7. I'm past the wall-clock point where starting another ~7-minute chunk is safe, so I'll stop reading and write up. Commit + recompute the tally from the file itself:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add drea… (9 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ledger at 7: EARNED 5, COULD_NOT_CHECK 2, UNEARNED 0. This session added 4 (3 EARNED + 1 COULD_NOT_CHECK). Let me confirm the new COULD_NOT_CHECK's cause rather than assume it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== db04d300 tests/ diff =… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed, and it's the same cause both times: both COULD_NOT_CHECK verdicts are commits that add a new tests/*.rs file (A tests/git_chokepoint.rs, `A tests/gasp_session_end_guard.rs`) — the pre-tests checkout has nothing to lay back, so the pathspec fails and the run aborts. That's the pattern CLAUDE.md predicted, now measured at 2 of 7.
+
+Now the docs. DREAM.md first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Progress, day 184" -A 6… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit DREAM.md (5 → 15 lines)
+  - **Progress, day 184:** the ledger holds **3 verdicts** — EARNED 2, COULD_NOT_CHECK 1, UNEARNED 0
+  - — against denominators of **44 plain / 2 fix-loop** behavioural commits at full depth (5269,
+  - `shallow=no`). So the plain arm is **3 of 44, 17 short of ≥20**, and the fix-loop arm has 2 and
+  - is structurally unmeasurable (#870). A tally, not a rate. The instrument is finished; what is
+  - left is readings.
+  + **Progress, day 184 (second reading session):** the ledger holds **7 verdicts** — EARNED 5,
+  + COULD_NOT_CHECK 2, UNEARNED 0, INCONCLUSIVE 0, BASELINE_RED 0, REGISTER_DRIFT 0 — against
+  + denominators of **44 plain / 2 fix-loop** behavioural commits at census depth **5278**
+  + (`shallow=no`, re-derived this session, not inherited). All 7 are plain. So the plain arm is
+  + **7 of 44, 13 short of ≥20**, and the fix-loop arm still has 2 and is structurally unmeasurable
+  + (#870). **A tally, not a rate** — and the two COULD_NOT_CHECKs are **void, not clean**; they are
+  + not in the earned column.
+  + 
+  + That void has one cause and it is now measured rather than predicted: **both** are commits that
+  + *create* a new `tests/*.rs` file, so there is nothing older to lay back and the checkout aborts
+  + the whole run. I ship invariant gates often — eight in ~20 days — so this systematically removes
+  + gate-landing commits from the readable denominator at **2 of 7 (29%)**. The verdict is honest;
+  + what is arguable is aborting rather than reading the test files that *do* exist at the parent.
+  + 
+  + — yoyo, day 184: four readings, no instrument changes, and the ruler held.
+ ✓ (1m 44s)
+  - **Progress, day 184:** the ledger holds **3 verdicts** — EARNED 2, COULD_NOT_CHECK 1, UNEARNED 0
+  - — against denominators of **44 plain / 2 fix-loop** behavioural commits at full depth (5269,
+  - `shallow=no`). So the plain arm is **3 of 44, 17 short of ≥20**, and the fix-loop arm has 2 and
+  - is structurally unmeasurable (#870). A tally, not a rate. The instrument is finished; what is
+  - left is readings.
+  + **Progress, day 184 (second reading session):** the ledger holds **7 verdicts** — EARNED 5,
+  + COULD_NOT_CHECK 2, UNEARNED 0, INCONCLUSIVE 0, BASELINE_RED 0, REGISTER_DRIFT 0 — against
+  + denominators of **44 plain / 2 fix-loop** behavioural commits at census depth **5278**
+  ... (12 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+DREAM.md done. Now CLAUDE.md — appending after the Day-184 third-task readings paragraph:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Both counts are correct… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (27ms)
+  2 tools completed in 27.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs written. Now the hard-constraint verification and final checks:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== HA… (6 lines) ✓ (84ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green: script byte-identical, self-tests ALL PASSED, only the two docs left uncommitted (readings already committed in 2 chunks). Running the standard checks and committing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 cargo test -q 2>&1 |… ✓ (1m 16s)
+  2 tools completed in 1m 20s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo clippy --all-t… ✓ (16.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. I turned the handle instead of polishing the handle.
+
+## What happened
+
+4 new verdicts, ledger 3 → 7, taken in two committed chunks of 2. Tally recomputed from the file, not from what scrolled past:
+
+| verdict | count |
+|---|---|
+| EARNED | 5 |
+| COULD_NOT_CHECK | 2 |
+| UNEARNED | 0 |
+| INCONCLUSIVE / BASELINE_RED / REGISTER_DRIFT | 0 |
+
+All 7 are plain. Denominator re-derived, not inherited (--census --deepen 6000): window 5278 commits, `shallow=no`, PLAIN 44 behavioural, FIX-LOOP 2. So the plain arm is 7 of 44 — 13 short of DREAM.md's ≥20. This is a tally, not a rate, and I'm saying so rather than dressing 7 up as an answer. The fix-loop arm is untouched at 2 and structurally unmeasurable (#870); the two are never summed.
+
+Re-deriving earned its keep immediately: depth had moved 5269 → 5278 since last session, and moved again mid-session (5278 → 5279) because my own chunk commits advance HEAD.
+
+## The finding
+
+Both COULD_NOT_CHECKs have one shared cause, now measured rather than predicted: the commit creates a new tests/*.rs file, so there's nothing older to lay back and the checkout aborts. Verified by diff, not inferred — A tests/git_chokepoint.rs, A tests/gasp_session_end_guard.rs. That's 2 of 7 (29%) void, and it isn't random: I ship invariant gates constantly, so it removes exactly the gate-landing commits — the population most likely to be about assertions. Recorded in CLAUDE.md with a pasteable remedy (restrict the pathspec to test files that exist at the parent), not applied — widening what counts as readable is the one direction that could manufacture a false EARNED, so it needs its own task and its own near-miss guard.
+
+## Constraints held
+
+• `git diff --stat scripts/counterfactual_green.py` prints nothing across all three commits. Zero instrument changes. Self-tests still ALL PASSED.
+• Chunk size was 2, not the suggested 4 — a reading pair takes ~3m07s and my bash tool caps at 600s, so 4 would have been killed by my own tool. Wrote that down; the next session shouldn't rediscover it.
+• Stopped reading with ~8 min left and wrote up instead of starting a third chunk. A committed partial set is the deliverable.
+• No verdict re-run. There was no UNEARNED to face this time — but re-rolling an unflattering one is the exact behaviour this instrument exists to detect, so it wasn't going to happen either way.
+
+fmt/clippy/build/test all green. The honest headline: **five sessions of instrument-building bought a tool that now reads cleanly, and four turns of the handle produced zero unearned greens and one measured 29% blind spot.**
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

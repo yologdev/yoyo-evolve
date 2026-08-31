@@ -1,0 +1,253 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two target sites and the landed shape I'm supposed to mirror.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1150,1230p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,360p' src/commands_g… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.7s (2 ✓)
+
+Both sites confirmed. Let me check existing tests for both, and site 2's body.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,190p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "goal_verify_refusal_mes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collision_guard_skipped… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4.6s (3 ✓)
+
+Both confirmed. Step 1 — src/commands_goal.rs. Writing the test first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1145,1190p' src/commands… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check what state the working tree is in before continuing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — nothing landed earlier. Starting Step 1 now: tests first for src/commands_goal.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1172,1195p' src/commands… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now inserting the tests for site 1:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (9 → 99 lines)
+            assert!(
+                tail.contains(&format!("{} of {} bytes shown", kept.len(), cmd.len())),
+                "marker numbers disagree with the returned string: {tail}"
+  +         );
+  +     }
+  + 
+  +     // ---- #873: the refused command is repository-authored, so it is escaped ----
+  +     //
+  +     // Asserted at the emission point: the `String` a caller of
+  +     // `goal_verify_refusal_message` receives, never `sanitize_for_display` one
+  +     // layer below it. This block is printed to someone who has just cloned a
+  +     // repo they explicitly do NOT trust, so a raw `\x1b[2J` in the command could
+  +     // repaint or forge the lines around the refusal — including the sentence
+  +     // saying nothing was executed.
+  + 
+  +     #[test]
+  +     fn test_goal_verify_refusal_message_escapes_control_bytes() {
+  +         let cmd = "make check\x1b[2J\r\ndrop table";
+  +         // Anti-vacuous: the fixture really carries the hostile bytes, so a
+  +         // transcription slip cannot make this pass by agreeing with itself.
+  ... (76 more lines)
+ ✓ (2m 2s)
+            assert!(
+                tail.contains(&format!("{} of {} bytes shown", kept.len(), cmd.len())),
+                "marker numbers disagree with the returned string: {tail}"
+  +         );
+  +     }
+  + 
+  +     // ---- #873: the refused command is repository-authored, so it is escaped ----
+  +     //
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tests are in. Let me confirm they fail for the right reason before making the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo test --… ✓ (178ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both new escaping tests fail for exactly the right reason; the near-miss guard and all 3 pre-existing tests pass unedited. Now the fix:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (12 → 25 lines)
+    pub(crate) fn goal_verify_refusal_message(cmd: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+  -     let shown = if cmd.len() <= REFUSAL_CMD_MAX_BYTES {
+  -         cmd.to_string()
+  +     // #873: sanitize FIRST, then cut. This block is read by someone who has
+  +     // just cloned a repo they explicitly do not trust, and `cmd` is a string
+  +     // that repo authored — a raw `\x1b[2J`, `\r` or newline in it can repaint
+  +     // or forge the lines around the refusal, including the sentence saying
+  +     // nothing was executed. A length cap is not sanitization.
+  +     //
+  +     // The ordering is load-bearing rather than stylistic: escaping lengthens
+  +     // the string, so capping first would let an escaped tail push past the
+  +     // budget AND would make the reported dropped-byte count wrong. Both numbers
+  +     // in the marker are measured over the sanitized string, because that is the
+  +     // string actually being cut, and the cut still lands on a `char` boundary.
+  +     // Same shape as `cli::hook_command_for_display`.
+  +     let safe = crate::cli::sanitize_for_display(cmd);
+  +     let shown = if safe.len() <= REFUSAL_CMD_MAX_BYTES {
+  +         safe
+        } else {
+  ... (9 more lines)
+ ✓ (2m 13s)
+    pub(crate) fn goal_verify_refusal_message(cmd: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+  -     let shown = if cmd.len() <= REFUSAL_CMD_MAX_BYTES {
+  -         cmd.to_string()
+  +     // #873: sanitize FIRST, then cut. This block is read by someone who has
+  +     // just cloned a repo they explicitly do not trust, and `cmd` is a string
+  +     // that repo authored — a raw `\x1b[2J`, `\r` or newline in it can repaint
+  +     // or forge the lines around the refusal, including the sentence saying
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo goal_verif… ✓ (177ms)
+  2 tools completed in 2m 16s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Site 1 green (10/10, including the 3 pre-existing unedited). Running the full gate before touching site 2:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (2m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Site 1 fully landed: 5409 passed, 0 failed, clippy clean. Now site 2 — reading the existing tests I must not break:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2795,2860p' src/agent_bu… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three existing fixtures are control-free, so they're my regression evidence. Capturing the exact pre-change output for the byte-identical guard rather than hand-typing it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/a… (12 lines) ✓ (24.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Captured the real pre-change output. Removing the temporary capture module now:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the real tests for site 2:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 75 lines)
+            // Near-miss guard: stripping glyphs must not strip the payload.
+            assert!(msg.contains("some-server") && msg.contains("Tool names must be unique"));
+  +     }
+  + 
+  +     // ---- #873: BOTH interpolated strings are escaped before display ----
+  +     //
+  +     // Asserted at the emission point: the `String` a caller of
+  +     // `collision_guard_skipped_message` receives, never `sanitize_for_display`
+  +     // one layer below it. This line is printed to someone who has just cloned a
+  +     // repo they may not trust, and it interpolates two strings from different
+  +     // provenances into the same terminal — `server_cmd`, which that repo
+  +     // authored, and `err`, which came back from a spawned subprocess. Neither
+  +     // is obviously safe, so both are escaped.
+  + 
+  +     #[test]
+  +     fn collision_guard_skipped_message_escapes_both_interpolated_strings() {
+  +         let server_cmd = "npx evil\x1b[2Jserver";
+  +         let err = "spawn failed\r\nFAKE: everything is fine";
+  +         // Anti-vacuous: both fixtures really carry the hostile bytes, so a
+  +         // transcription slip cannot make this pass by agreeing with itself.
+  ... (55 more lines)
+ ✓ (2m 0s)
+            // Near-miss guard: stripping glyphs must not strip the payload.
+            assert!(msg.contains("some-server") && msg.contains("Tool names must be unique"));
+  +     }
+  + 
+  +     // ---- #873: BOTH interpolated strings are escaped before display ----
+  +     //
+  +     // Asserted at the emission point: the `String` a caller of
+  +     // `collision_guard_skipped_message` receives, never `sanitize_for_display`
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo collision_… ✓ (178ms)
+  2 tools completed in 2m 4s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fails for exactly the right reason, and the byte-identical guard already passes against the pre-fix body — so it's a true regression check. Now the fix:
+  ▶ edit src/agent_builder.rs (4 → 15 lines)
+    pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+        let dash = if plain { ":" } else { " —" };
+  +     // #873: both interpolated strings are escaped before they reach the
+  +     // terminal. `server_cmd` is authored by the repository being loaded, and
+  +     // `err` comes back from a spawned subprocess — different provenances, same
+  +     // terminal, and neither is obviously safe. A raw `\x1b[2J`, `\r` or newline
+  +     // in either can repaint or forge the lines around this warning, which is
+  +     // the one surface whose whole job is to let a user judge an untrusted
+  +     // server. Deliberately **no length cap** here: this site has never had one,
+  +     // and adding one is a separate judgment call. Escaping without capping is
+  +     // still a strict improvement.
+  +     let server_cmd = crate::cli::sanitize_for_display(server_cmd);
+  +     let err = crate::cli::sanitize_for_display(err);
+        format!(
+ ✓ (2m 12s)
+    pub(crate) fn collision_guard_skipped_message(server_cmd: &str, err: &str, plain: bool) -> String {
+        let marker = if plain { "" } else { "⚠ " };
+        let dash = if plain { ":" } else { " —" };
+  +     // #873: both interpolated strings are escaped before they reach the
+  +     // terminal. `server_cmd` is authored by the repository being loaded, and
+  +     // `err` comes back from a spawned subprocess — different provenances, same
+  +     // terminal, and neither is obviously safe. A raw `\x1b[2J`, `\r` or newline
+  +     // in either can repaint or forge the lines around this warning, which is
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo collision_… ✓ (178ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 19s (2 ✓)
+
+Both sites fixed. Now the full gate, including the module-size landmine:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test m… ✓ (11.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/2 (50.0%) — reactive was 50.0%
+     Predicted correctly: src/agent_builder.rs
+     Surprises (not predicted): src/commands_goal.rs
+

@@ -1,0 +1,133 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — the code is landed and green, the docs step was skipped. Let me look at what's there.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---H…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '295,360p' src/commands_g… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Code at site 1 is correct. Let me verify site 2 and check the module-size gate the evaluator flagged.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,185p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (3ms)
+ ✓ (195ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+Both sites are correct. Two things to fix: the absorbed register drift (the gate printed the exact line to paste), and the CLAUDE.md doc step. Let me handle the register first.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'agent_builder\|commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/c… ✓ (2ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+The gate printed ("src/agent_builder.rs", 3428) — pasting that literally rather than hand-typing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/agent_builder.rs", 3339),
+  +     ("src/agent_builder.rs", 3428),
+ ✓ (1m 46s)
+  -     ("src/agent_builder.rs", 3339),
+  +     ("src/agent_builder.rs", 3428),
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: register line pasted. Let me verify the gate is now clean and locate the three stale claims in CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'resolved command string… ✓ (8ms)
+ ✓ (201ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.6s (2 ✓)
+
+Gate is clean (24 passed, zero warnings). CLAUDE.md lines are enormous, so let me extract just the matched fragments rather than whole lines.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o -n '.\{160\}resolved com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o -n '.\{130\}naming the s… ✓ (25ms)
+ ✓ (135ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.7s (2 ✓)
+
+Found all three. Let me read the full extent of site 3 (the 13:00 entry) so the correction is accurate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o '\*\*Two sites are delib… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have all three. Let me make the corrections, starting with site 3 — the 13:00 entry, where the house convention is to record the superseded claim rather than erase it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Two sites are deliberately left unfixed and are FILED rather than left in prose (#873)** — `src/commands_goal.rs::goal_verify_refusal_message` (caps at `REFUSAL_CMD_MAX_BYTES = 400`, interpolates raw) and `src/agent_builder.rs::collision_guard_skipped_message`; reaching for them is exactly what made the reverted attempt three files wide.
+  + **Superseded the same day, recorded rather than erased — and the prediction this sentence carried is now evidence rather than a claim:** it read "**Two sites are deliberately left unfixed and are FILED rather than left in prose (#873)** — `src/commands_goal.rs::goal_verify_refusal_message` (caps at `REFUSAL_CMD_MAX_BYTES = 400`, interpolates raw) and `src/agent_builder.rs::collision_guard_skipped_message`; reaching for them is exactly what made the reverted attempt three files wide." That is… [yoyo: 856 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 45s)
+  - **Two sites are deliberately left unfixed and are FILED rather than left in prose (#873)** — `src/commands_goal.rs::goal_verify_refusal_message` (caps at `REFUSAL_CMD_MAX_BYTES = 400`, interpolates raw) and `src/agent_builder.rs::collision_guard_skipped_message`; reaching for them is exactly what made the reverted attempt three files wide.
+  + **Superseded the same day, recorded rather than erased — and the prediction this sentence carried is now evidence rather than a claim:** it read "**Two sites are deliberately left unfixed and are FILED rather than left in prose (#873)** — `src/commands_goal.rs::goal_verify_refusal_message` (caps at `REFUSAL_CMD_MAX_BYTES = 400`, interpolates raw) and `src/agent_builder.rs::collision_guard_skipped_message`; reaching for them is exactly what made the reverted attempt three files wide." That is… [yoyo: 856 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register is clean and site 3 corrected. Now the two remaining stale claims. Site 1 — the commands_goal.rs bullet:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - names the **resolved command string verbatim** (the whole point — a user cannot judge what they cannot see; truncated at `REFUSAL_CMD_MAX_BYTES = 400` on a char boundary with the cut marked in-band)
+  + names the **resolved command string** (the whole point — a user cannot judge what they cannot see), **sanitized through `cli::sanitize_for_display` and then capped** at `REFUSAL_CMD_MAX_BYTES = 400` on a char boundary with the cut marked in-band (Day 184, #873 — **superseded claim, recorded rather than erased: this read "verbatim" until then**, and a length cap is not sanitization). **The sanitize-then-cap ordering is load-bearing rather than stylistic:** escaping *lengthens* the string, so … [yoyo: 440 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 45s)
+  - names the **resolved command string verbatim** (the whole point — a user cannot judge what they cannot see; truncated at `REFUSAL_CMD_MAX_BYTES = 400` on a char boundary with the cut marked in-band)
+  + names the **resolved command string** (the whole point — a user cannot judge what they cannot see), **sanitized through `cli::sanitize_for_display` and then capped** at `REFUSAL_CMD_MAX_BYTES = 400` on a char boundary with the cut marked in-band (Day 184, #873 — **superseded claim, recorded rather than erased: this read "verbatim" until then**, and a length cap is not sanitization). **The sanitize-then-cap ordering is load-bearing rather than stylistic:** escaping *lengthens* the string, so … [yoyo: 440 more bytes elided — diff lines are capped at 500 bytes]
+
+Now site 2 — the agent_builder.rs bullet, where the "no cap" fact must be stated plainly rather than implied:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - naming the server command **verbatim** (a user cannot act on a server they cannot identify); the error that stopped it;
+  + naming the server command (a user cannot act on a server they cannot identify); the error that stopped it;
+ ✓ (1m 46s)
+  - naming the server command **verbatim** (a user cannot act on a server they cannot identify); the error that stopped it;
+  + naming the server command (a user cannot act on a server they cannot identify); the error that stopped it;
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me append the mechanism detail to that bullet. Let me see what follows it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'the symptom to expect.\… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o 'naming the server comma… ✓ (8ms)
+  2 tools completed in 2.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My greps are failing on the long-context pattern. Let me use Python for reliable extraction.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The edit applied. Now let me append the #873 mechanism where that sentence ends:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Glyph-free under `is_plain_output()` (bullets *and* em dashes), matching `project_mcp_refusal_message`; the existing quiet-gating is unchanged.
+  + Glyph-free under `is_plain_output()` (bullets *and* em dashes), matching `project_mcp_refusal_message`; the existing quiet-gating is unchanged. **Day 184 (#873): BOTH interpolated strings are sanitized through `cli::sanitize_for_display` before they reach the terminal, and this site deliberately has NO CAP — stated plainly rather than implied, because it is the one asymmetry with its three siblings.** The two strings have **different provenance and the same terminal**, which is why neither is … [yoyo: 2081 more bytes elided — diff lines are capped at 500 bytes]

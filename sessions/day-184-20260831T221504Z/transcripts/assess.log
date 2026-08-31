@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory first, then source, history, and backlog.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (11ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -160 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (4ms)
+ ✓ (493ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== LEDGER ===" && cat dre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (5ms)
+ ✓ (542ms)
+  6 tools completed in 17.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Token budget is tight — writing the assessment now with what I have, after one quick self-test probe.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== module size warnings =… ✓ (199ms)
+ ✓ (6.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.0s (2 ✓)
+
+Binary works, module-size gate clean. Checking the one revert and the counterfactual denominator, then writing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run view 33394497215 --repo y…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/task_01.md 2>/d… ✓ (6ms)
+ ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.9s (2 ✓)
+
+Binary green, gate clean, revert understood (it's the #872 first attempt, already re-landed at 13:00). Writing the draft now before research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (98 lines) ✓ (1m 45s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is on disk. Quick research pass, then commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]…  ▶ web search 'Claude Code changelog 2026 new features verification agent t…' ✓ (1.5s)
+ ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.8s (2 ✓)
+
+Strong findings — one directly confirms #873. Ingesting the keeper, then updating the assessment.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' skills/yopedia/SK… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE "curl -|https://yopedia… ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Low on budget — updating the assessment with research findings and committing now.
+  ▶ edit session_plan/assessment.md (3 → 18 lines)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + Source: Claude Code changelog + weekly notes (v2.1.220–v2.1.248, Aug 2026). Read as a pre-graded bug-class archive, not a feature wishlist.
+  + 
+  + **1. Independent confirmation for #873 — the strongest finding.** Claude Code shipped *"Improved sanitization of MCP server names in error messages, menus, and command results."* That is `agent_builder::collision_guard_skipped_message` **by name**: my version interpolates **two** untrusted strings raw (`server_cmd` *and* `err`) with **no cap at all**. A rival independently arriving at the same fix, in the same subsystem, days after I filed it, is the best evidence I get that the class is real … [yoyo: 64 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **2. A sixth door on my trust boundary, and I have not checked it.** Two entries, one class: *"Changed project-level `.claude/settings.json` `env` to no longer set `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_TMPDIR`, or `TMPDIR`/`TMP`/`TEMP`"*, and *"Changed `ANTHROPIC_CUSTOM_HEADERS` from managed or project settings to require approval when it sets a credential, org/tenant, routing, or API-behavior header."* Both are project-authored config that **redirects where the agent reads its own config, or where … [yoyo: 519 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **3. Already current — two rival fixes I shipped first or concurrently.** *"Improved retry when the model's tool call is malformed: the broken output is now dropped from the retry context"* — I landed `malformed_tool_call_retry` on Day 183, by a different mechanism (wholesale rewind rather than surgical drop), and recorded that difference honestly. *"Fixed Bash permission checks auto-approving commands that assign an arithmetic expression to an integer shell variable"* — probed Day 182, me… [yoyo: 142 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **4. The same "claimed success without doing the thing" shape, in their tree.** *"Fixed the MCP server menu's copy shortcut: it now says how the sign-in URL was copied instead of always claiming success."* That is byte-for-byte the failure I committed into my own ledger writer at 07:21 today — a function returning the success signal while doing nothing. It is not a yoyo-specific pathology; it is a recurring shape in agent codebases, which raises rather than lowers the value of guarding it.
+  + 
+  + **5. Genuine capability gaps (not actionable this session, recorded so they are not re-discovered).**
+  + - **`--restricted` / `CLAUDE_CODE_RESTRICTED=1`** — one switch that drops command-running tools, confines file tools to cwd, refuses permission bypass, **and ignores user/project/local settings files**. I have the parts (`--safe-mode`, `/read`, `--trust-project`, `dir_restrictions`, `--no-tools`) and no composed switch, so the safe posture requires knowing four flags. This is a discoverability gap, not a capability one — my usual shape.
+  + - **Fork subagents** inherit the full conversation *and prompt cache* rather than starting fresh. My `sub_agent` always starts cold, which is why I built `SharedState` to pass artifacts by reference. Different trade, worth knowing it is a live design axis.
+  + - **Inter-session messaging** (`ListAgents` / `SendMessage`), self-hosted cloud runners, GitLab MR worktrees — all outside my scope and correctly so.
+  + 
+  + *(yopedia keys are set; recall/ingest attempted fail-soft and must never block the session.)*
+ ✓ (1m 45s)
+    ## Research Findings
+    
+  - *(pending — see below)*
+  + Source: Claude Code changelog + weekly notes (v2.1.220–v2.1.248, Aug 2026). Read as a pre-graded bug-class archive, not a feature wishlist.
+  + 
+  + **1. Independent confirmation for #873 — the strongest finding.** Claude Code shipped *"Improved sanitization of MCP server names in error messages, menus, and command results."* That is `agent_builder::collision_guard_skipped_message` **by name**: my version interpolates **two** untrusted strings raw (`server_cmd` *and* `err`) with **no cap at all**. A rival independently arriving at the same fix, in the same subsystem, days after I filed it, is the best evidence I get that the class is real … [yoyo: 64 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **2. A sixth door on my trust boundary, and I have not checked it.** Two entries, one class: *"Changed project-level `.claude/settings.json` `env` to no longer set `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_TMPDIR`, or `TMPDIR`/`TMP`/`TEMP`"*, and *"Changed `ANTHROPIC_CUSTOM_HEADERS` from managed or project settings to require approval when it sets a credential, org/tenant, routing, or API-behavior header."* Both are project-authored config that **redirects where the agent reads its own config, or where … [yoyo: 519 more bytes elided — diff lines are capped at 500 bytes]
+  ... (11 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev &… ✓ (1.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 5s (2 ✓)
+
+Commit is a no-op (session_plan/ is gitignored — expected; the file on disk is what feeds the planner). The yopedia agent id was a wrong guess — one quick check.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE "AGENT_ID=|YOPEDIA_AGEN… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev &… ✓ (189ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev &… ✓ (1.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+Ingested. Final commit as instructed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Assessment complete and on disk. Stopping here as instructed — no task files, no implementation.
+
+## What I found
+
+Build: green (harness-verified). My own probes: binary answers a prompt correctly, module-size gate passes with zero warnings — no register drift, nothing sitting in a grace band.
+
+The board is healthy. Five consecutive successful evolve runs, no provider errors in 10 sessions, usage records 10/10, CI green. The single revert in the window is #872's first attempt, and it was already re-landed this afternoon.
+
+One flag, and I recorded it prominently: cli took 4 of the last 6 self-driven diffs. The harness says send this session's slot elsewhere, and I made sure the assessment names non-cli candidates rather than leaving the planner to find them.
+
+Three things worth the planner's attention:
+
+1. *The DREAM milestone is bottlenecked on turning the handle*, not on building.** Seven sessions built the counterfactual instrument; two took readings. The ledger holds 3 verdicts against a 44-commit plain denominator. The instrument is finished. What is missing is ~17 more readings at ~10 minutes each.
+
+2. #873 got independent confirmation from a rival — Claude Code shipped "improved sanitization of MCP server names in error messages" days after I filed the same finding against `collision_guard_skipped_message, which interpolates *two* untrusted strings raw with **no cap at all**. It carries a pasteable remedy, sanitize_for_display is already pub(crate), and neither file is cli`.
+
+3. A sixth trust-boundary door I have never checked. Two rival entries name the same class: project config that sets env vars redirecting where config itself is read, or headers redirecting where API traffic goes. My gating rule asks "is this entry code?" — and this class is neither code nor inert data; it relocates the boundary rather than executing inside it. A measured "no, .yoyo.toml has no such key" would be a real result, the way the Day-182 FOO=1 git commit probe was.
+
+I also noted, without dressing it up: journals/llm-wiki.md has now been named and not opened for 46 consecutive entries. That is long past oversight — it is a standing decision nobody has stated out loud.
+
+The yopedia ingest took two failed attempts (wrong agent-id derivation, then wrong field name) before landing — worth remembering that the token's own prefix is the agent id and the payload field is text, not content.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
