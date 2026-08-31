@@ -1576,10 +1576,129 @@ def run_self_tests():
         "Day 183 (11:42): session wrap-up",
         "Day 183: bump skill-evolve counter (2)",
         "dream: progress (day 183)",
-        "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)",
     ]
     for s in not_task:
         check(f"non-task subject rejected: {s[:30]}", TASK_COMMIT_RE.match(s) is None)
+
+    # SUPERSEDED ASSERTION (Day 184, #868), recorded rather than erased. This list used to
+    # carry a sixth entry:
+    #
+    #     "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)",
+    #
+    # i.e. it asserted that a fix-loop commit is NOT a task commit. That was a true record
+    # of the narrow `TASK_COMMIT_RE` and it was pinning the DEFECT: 184 fix-loop commits in
+    # the deepened window were invisible to the census, and they are precisely the
+    # population DREAM.md's milestone pre-registers. The fixture is not deleted — it moves
+    # below, where the same string is asserted to match and to classify as `POP_FIX_LOOP`.
+    # A fixture that outlives its fix converts a defect into a green invariant.
+    superseded_fixture = "Day 183 (11:42): One bounded retry (Task 1, eval-fix 1)"
+    check(
+        "superseded: the fix-loop fixture that used to be rejected now matches",
+        TASK_COMMIT_RE.match(superseded_fixture) is not None,
+    )
+    check(
+        "superseded: and it classifies as fix-loop, not merely as visible",
+        subject_population(superseded_fixture) == POP_FIX_LOOP,
+        subject_population(superseded_fixture),
+    )
+
+    # -- NEAR-MISS GUARD, and it is the half that matters --------------------------------
+    # This widening's whole risk is changing what an ALREADY-VISIBLE commit means. A plain
+    # `(Task N)` subject must still match AND still parse to byte-identical values, so the
+    # assertion is on the parsed day and title verbatim rather than on `is not None` — a
+    # regex that matched but captured a different title would sail past a match-only check.
+    plain_subject = "Day 182 (20:35): #863 swept at the chokepoint — git path-quoting (Task 1)"
+    m_plain = TASK_COMMIT_RE.match(plain_subject)
+    check("near-miss: plain task subject still matches", m_plain is not None)
+    if m_plain:
+        check("near-miss: plain day parsed byte-for-byte", m_plain.group(1) == "182",
+              m_plain.group(1))
+        check(
+            "near-miss: plain title parsed byte-for-byte",
+            m_plain.group(2) == "#863 swept at the chokepoint — git path-quoting",
+            m_plain.group(2),
+        )
+        check("near-miss: plain subject captures no suffix", m_plain.group(3) is None,
+              m_plain.group(3))
+    check(
+        "near-miss: plain subject classifies as POP_PLAIN",
+        subject_population(plain_subject) == POP_PLAIN,
+        subject_population(plain_subject),
+    )
+
+    # A fix-loop subject parses its day and title byte-for-byte too — the suffix must be
+    # peeled off the title, not absorbed into it, or the census would key rows on a string
+    # that differs from the plain twin's.
+    m_fix = TASK_COMMIT_RE.match("Day 184 (00:08): thing here (Task 1, eval-fix 2)")
+    check("fix-loop subject matches", m_fix is not None)
+    if m_fix:
+        check("fix-loop day parsed", m_fix.group(1) == "184", m_fix.group(1))
+        check("fix-loop title excludes the suffix", m_fix.group(2) == "thing here",
+              m_fix.group(2))
+        check("fix-loop suffix captured", m_fix.group(3) == "eval-fix 2", m_fix.group(3))
+
+    # -- subject_population / is_fix_loop, in BOTH directions ----------------------------
+    # A discriminator tested only on the side that fires is vacuous green.
+    for subj, expected in [
+        ("Day 184 (00:08): thing (Task 1)", POP_PLAIN),
+        ("Day 184 (00:08): thing (Task 1, eval-fix 1)", POP_FIX_LOOP),
+        ("Day 184 (00:08): thing (Task 2, build-fix 3)", POP_FIX_LOOP),
+        ("Day 184 (00:08): thing (Task 2,  build-fix 12)", POP_FIX_LOOP),
+        # A suffix that matches NEITHER marker is its own third state. Calling it
+        # fix-loop would be a claim I cannot support; calling it plain would let an
+        # unrecognised shape join the comfortable bucket (Day 144).
+        ("Day 184 (00:08): thing (Task 1, checkpoint-retry)", POP_UNKNOWN_SUFFIX),
+        ("cargo fmt", None),
+        ("Merge pull request #1 from x/y", None),
+        ("Day 183 (14:32): assessment", None),
+    ]:
+        got = subject_population(subj)
+        check(f"population: {subj[:38]}", got == expected, got)
+
+    # SELF-CONTAMINATION GUARD: the marker test runs against the CAPTURED SUFFIX, never
+    # the whole subject. This session's own commit subject contains the literal string
+    # "build-fix" in its TITLE, so a whole-subject scan would score this very task as a
+    # fix-loop commit — my own prose about a marker scoring as the marker, which is the
+    # founding defect of `measure_abstentions.py`.
+    contaminated = "Day 184 (04:20): make the census see build-fix commits (Task 1)"
+    check(
+        "self-contamination: a marker in the TITLE is not a fix-loop commit",
+        subject_population(contaminated) == POP_PLAIN,
+        subject_population(contaminated),
+    )
+
+    # -- the same question at the EMISSION POINT: the row a caller receives --------------
+    # `subject_population` is one layer below `CensusRow`; the census reads `is_fix_loop`,
+    # so that is where the split has to be true.
+    row_plain = CensusRow("a" * 40, "Day 184 (00:08): thing (Task 1)", ["tests/x.rs"])
+    row_fix = CensusRow("b" * 40, "Day 184 (00:08): thing (Task 1, eval-fix 1)",
+                        ["tests/x.rs"])
+    row_unknown = CensusRow("c" * 40, "Day 184 (00:08): thing (Task 1, checkpoint-retry)",
+                            ["tests/x.rs"])
+    check("row: plain commit is not fix-loop", row_plain.is_fix_loop is False,
+          row_plain.is_fix_loop)
+    check("row: fix-loop commit is fix-loop", row_fix.is_fix_loop is True,
+          row_fix.is_fix_loop)
+    check("row: unknown suffix is NOT counted as fix-loop", row_unknown.is_fix_loop is False,
+          row_unknown.is_fix_loop)
+    check("row: unknown suffix keeps its own population",
+          row_unknown.population == POP_UNKNOWN_SUFFIX, row_unknown.population)
+
+    # -- the fold: two populations, NEVER summed ------------------------------------------
+    # Pooling them would destroy the only question the widening was made to ask, so the
+    # fold is asserted to keep them apart rather than merely to count correctly.
+    folded = census_by_population([row_plain, row_fix, row_unknown])
+    check("fold: plain population holds exactly its own commit",
+          folded[POP_PLAIN]["task_commits"] == 1, folded[POP_PLAIN]["task_commits"])
+    check("fold: fix-loop population holds exactly its own commit",
+          folded[POP_FIX_LOOP]["task_commits"] == 1, folded[POP_FIX_LOOP]["task_commits"])
+    check("fold: unknown suffix is counted apart from both",
+          folded[POP_UNKNOWN_SUFFIX]["task_commits"] == 1,
+          folded[POP_UNKNOWN_SUFFIX]["task_commits"])
+    check(
+        "fold: the two populations are disjoint, never pooled",
+        folded[POP_PLAIN]["task_commits"] + folded[POP_FIX_LOOP]["task_commits"] == 2,
+    )
 
     # -- parse_log_lines ------------------------------------------------------------------
     pairs = parse_log_lines(
