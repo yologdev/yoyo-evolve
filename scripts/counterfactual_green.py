@@ -726,6 +726,54 @@ def behavioural_test_files(paths: list[str], register_only=None) -> list[str]:
     return [p for p in top_level_test_files(paths) if p not in (register_only or ())]
 
 
+def parent_test_pathspec(
+    post_task_test_files: list[str], parent_test_files
+) -> tuple[list[str], list[str]]:
+    """Split the rollback set into what EXISTS at the parent and what does not.
+
+    Day 185. The counterfactual lays PRE-task `tests/` over POST-task `src/`, so a test
+    file the commit CREATED has nothing older to lay back — `git checkout <parent> --
+    tests/new.rs` fails with `pathspec ... did not match any file(s) known to git` and,
+    before this, **aborted the whole run**. Measured over the first 7 verdicts: 2 were
+    COULD_NOT_CHECK and both had exactly that cause (`5c82fef5` adds
+    tests/git_chokepoint.rs, `db04d300` adds tests/gasp_session_end_guard.rs).
+
+    That void is **not random**. This repo ships invariant gates constantly — nine in
+    ~20 days — so aborting systematically removes GATE-LANDING commits, i.e. the
+    population most likely to be *about* assertions, from the readable denominator.
+
+    The verdict was honest for the new file and wrong for its neighbours: pre-task tests
+    genuinely have nothing to say about a file that did not exist, but they have plenty
+    to say about the ones that did. So the pathspec is the INTERSECTION, and the truthful
+    overlay is "the tests that existed before, as they were before" — the new files are
+    simply ABSENT.
+
+    Returns `(kept, absent)`, both in the caller's order so the pathspec is stable:
+
+      * `kept`   — files present at the parent. This is the checkout pathspec.
+      * `absent` — files the commit created. REPORTED, never silently dropped: a partial
+                   overlay reported as a whole one is the same category error as
+                   "could not check" reading as "checked; clean", and a shrinking
+                   denominator inside my own meter is the defect this instrument exists
+                   to refuse.
+
+    THE DANGEROUS BRANCH IS THE CALLER'S, AND IT IS AN EMPTY `kept`. If every test file
+    the commit touches is new there is nothing older to lay back; proceeding would run
+    POST-task tests against POST-task `src/`, which is just the baseline again, and would
+    manufacture a **false EARNED**. Widening what counts as readable is exactly the
+    direction that can invent an earned green, so the caller must branch on it explicitly
+    rather than falling through.
+
+    Byte-identical when the commit adds no new test file — `kept` is the input list and
+    `absent` is empty. That is every one of the 7 readings taken so far and the whole
+    regression surface.
+    """
+    parent = set(parent_test_files or ())
+    kept = [p for p in post_task_test_files if p in parent]
+    absent = [p for p in post_task_test_files if p not in parent]
+    return kept, absent
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -1109,12 +1157,46 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
 
         # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
         # are deliberately NOT rolled back — see behavioural_test_files.
+        #
+        # Day 185: only the files that EXISTED at the parent may be laid back. A commit
+        # that CREATES a test file has nothing older for it, and checking out the whole
+        # post-task list used to fail the pathspec and ABORT the run — 2 of the first 7
+        # verdicts were voided that way, and not randomly: this repo ships invariant
+        # gates constantly, so the abort removed gate-landing commits (the population
+        # most likely to be about assertions) from the readable denominator.
+        rc_ls, ls_out = run_cmd(
+            ["git", "-C", root, "ls-tree", "--name-only", parent, "--", "tests/"],
+            timeout=60,
+        )
+        if rc_ls != 0:
+            return COULD_NOT_CHECK, f"ls-tree of parent tests/ failed (rc={rc_ls})"
+        kept, absent = parent_test_pathspec(
+            rollback, top_level_test_files(ls_out.splitlines())
+        )
+        absent_note = ""
+        if absent:
+            # REPORTED, never silently dropped: a partial overlay reported as a whole one
+            # is the same category error as "could not check" reading as "checked; clean".
+            absent_note = (
+                f"PARTIAL OVERLAY: {len(absent)} test file(s) did not exist at the parent "
+                f"and were left at their shipped version ({', '.join(absent)}). "
+            )
+            print(f"    {absent_note.strip()}", flush=True)
+        if not kept:
+            # THE DANGEROUS BRANCH, explicit and never a fall-through. Every touched test
+            # file is new, so there is nothing older to lay back; proceeding would run
+            # POST-task tests against POST-task src/ — just the baseline again — and would
+            # manufacture a FALSE EARNED. Widening what counts as readable is exactly the
+            # direction that can invent an earned green.
+            return COULD_NOT_CHECK, (
+                "every touched test file is NEW at this commit ("
+                + ", ".join(absent)
+                + ") — nothing older to lay back, so there is no counterfactual to run"
+            )
         rc, out = run_cmd(
-            ["git", "-C", wt, "checkout", parent, "--"] + rollback, timeout=120
+            ["git", "-C", wt, "checkout", parent, "--"] + kept, timeout=120
         )
         if rc != 0:
-            # A test file that did not exist at the parent cannot be checked out. That is
-            # a brand-new test file, which is not a counterfactual question at all.
             return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
 
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
@@ -1129,7 +1211,8 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
         })
         if verdict == REGISTER_DRIFT:
             return verdict, (
-                "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+                absent_note
+                + "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
                 + why + ". " + summarise(out)
             )
         return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
@@ -2255,6 +2338,67 @@ def run_self_tests():
         "register-only still counts as a touched top-level test file",
         top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
     )
+
+    # -- parent_test_pathspec (Day 185): lay back only what EXISTED at the parent --------
+    # THE NEAR-MISS GUARD, and the half that matters: a commit that adds NO new test file
+    # must produce a BYTE-IDENTICAL pathspec and an empty absent list. That is every one
+    # of the 7 readings taken so far and the whole regression surface, so it is a full
+    # equality and never a `contains` — a discriminator tested only on the side that
+    # fires is vacuous green.
+    kept, absent = parent_test_pathspec(
+        ["tests/integration.rs", "tests/module_size.rs"],
+        ["tests/integration.rs", "tests/module_size.rs", "tests/other.rs"],
+    )
+    check(
+        "no new test file -> pathspec is byte-identical to the input",
+        kept == ["tests/integration.rs", "tests/module_size.rs"],
+        kept,
+    )
+    check("no new test file -> nothing reported absent", absent == [], absent)
+
+    # The defect itself: a commit that CREATES a test file keeps its neighbours instead of
+    # aborting the whole run. `5c82fef5` adds tests/git_chokepoint.rs.
+    kept, absent = parent_test_pathspec(
+        ["tests/git_chokepoint.rs", "tests/integration.rs"],
+        ["tests/integration.rs", "tests/module_size.rs"],
+    )
+    check(
+        "a new test file is dropped from the pathspec, its neighbours are kept",
+        kept == ["tests/integration.rs"],
+        kept,
+    )
+    check(
+        "the new test file is REPORTED absent, never silently dropped",
+        absent == ["tests/git_chokepoint.rs"],
+        absent,
+    )
+
+    # THE DANGEROUS BRANCH: every touched test file is new, so there is nothing older to
+    # lay back. An empty `kept` must be visible to the caller as empty — proceeding would
+    # run POST-task tests against POST-task src/ (just the baseline again) and manufacture
+    # a FALSE EARNED. This is the safety property of the whole change.
+    kept, absent = parent_test_pathspec(
+        ["tests/git_chokepoint.rs", "tests/gasp_session_end_guard.rs"],
+        ["tests/integration.rs"],
+    )
+    check("all-new test set -> empty pathspec (caller must refuse)", kept == [], kept)
+    check(
+        "all-new test set -> every file reported absent",
+        absent == ["tests/git_chokepoint.rs", "tests/gasp_session_end_guard.rs"],
+        absent,
+    )
+
+    # A parent with no tests/ at all is the same dangerous branch, not a crash.
+    kept, absent = parent_test_pathspec(["tests/integration.rs"], [])
+    check("empty parent set -> empty pathspec", kept == [], kept)
+    check("empty parent set -> the file is reported absent", absent == ["tests/integration.rs"], absent)
+
+    # Order is the CALLER'S order, so the emitted pathspec is stable across runs.
+    kept, _ = parent_test_pathspec(
+        ["tests/b.rs", "tests/a.rs"], ["tests/a.rs", "tests/b.rs"]
+    )
+    check("kept preserves the caller's order, not the parent's", kept == ["tests/b.rs", "tests/a.rs"], kept)
+
     plain = CensusRow("f" * 40, "Day 1 (0:0): real test (Task 1)", ["tests/integration.rs"])
     check("a non-register test is behavioural", plain.behavioural, plain)
     none = CensusRow("g" * 40, "Day 1 (0:0): no tests (Task 1)", [])
