@@ -1215,7 +1215,14 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
                 + "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
                 + why + ". " + summarise(out)
             )
-        return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+        # `absent_note` rides EVERY return, not just the VOID one. This is the path the
+        # Day-185 intersection fix creates, so it is the exact path on which a partial
+        # overlay must not be recorded as a whole one — a verdict that silently drops the
+        # absent files is the shrinking-denominator defect this instrument exists to
+        # refuse, one layer inside the instrument itself.
+        return verdict, (
+            absent_note + "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+        )
     finally:
         # LANDMINE 1, the other half: always give the worktree back.
         run_cmd(["git", "-C", root, "worktree", "remove", "--force", wt], timeout=120)
@@ -1763,6 +1770,54 @@ def main(argv):
             print("  ---")
             for ln in detail.splitlines():
                 print(f"  {ln}")
+
+        if args.record:
+            # Day 185. `--record` was PARSED, ADVERTISED IN --help, AND READ BY NOTHING on
+            # this path: the append lived in the `--max-runs` arm only, so a single-commit
+            # reading printed its verdict and left the ledger untouched. A flag with a
+            # description and no consumer is the shape that costs a session -- this one
+            # cost exactly that: the mandated verification reading ran for three minutes,
+            # the verdict scrolled past, and the ledger stayed at 7 lines, which reads
+            # from the outside as "the reading was never taken".
+            #
+            # Same append, same per-verdict flush, same pure `ledger_line` as the batch
+            # arm -- the resolution I/O is here at the call site and the record itself
+            # stays a pure function of its inputs.
+            rc_s, out_s = run_cmd(
+                ["git", "-C", root, "rev-parse", args.commit], timeout=60
+            )
+            full_sha = out_s.strip().splitlines()[0] if rc_s == 0 else args.commit
+            rc_p, out_p = run_cmd(
+                ["git", "-C", root, "rev-parse", f"{args.commit}^"], timeout=60
+            )
+            parent = out_p.strip().splitlines()[0] if rc_p == 0 else ""
+            rc_su, out_su = run_cmd(
+                ["git", "-C", root, "log", "-1", "--format=%s", args.commit], timeout=60
+            )
+            subject = out_su.strip().splitlines()[0] if rc_su == 0 else ""
+            m = TASK_COMMIT_RE.match(subject)
+            day = m.group(1) if m else ""
+            rc_d, out_d = run_cmd(
+                ["git", "-C", root, "rev-list", "--count", "HEAD"], timeout=60
+            )
+            depth = out_d.strip() if rc_d == 0 else "?"
+            ts = (
+                datetime.datetime.now(datetime.timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            err_w = append_ledger(
+                args.record,
+                ledger_line(
+                    full_sha, parent, day, subject, subject_population(subject),
+                    verdict, baseline_from_verdict(verdict), ts, depth,
+                ),
+            )
+            if err_w:
+                print(f"  WARNING: ledger append failed: {err_w}", file=sys.stderr)
+            else:
+                print(f"  recorded to {args.record}")
 
     print(LIMITS, file=sys.stderr)
     return status
