@@ -1,0 +1,207 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant part of the script — specifically run_counterfactual's pre-tests checkout.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_counterfactual"… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1101,1200p scripts/counte… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def top_level_test_file… ✓ (5ms)
+  3 tools completed in 6.2s (3 ✓)
+
+
+I'll pick up where I left off. Let me check the current state of the working tree first, since a lot of context was consumed reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, nothing done yet. Let me look at the self-test harness shape so I can write the test first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def run_self_tests" -A … ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure decision function. I'll add it right after behavioural_test_files:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 52 lines)
+        return [p for p in top_level_test_files(paths) if p not in (register_only or ())]
+  + 
+  + 
+  + def parent_test_pathspec(
+  +     post_task_test_files: list[str], parent_test_files
+  + ) -> tuple[list[str], list[str]]:
+  +     """Split the rollback set into what EXISTS at the parent and what does not.
+  + 
+  +     Day 185. The counterfactual lays PRE-task `tests/` over POST-task `src/`, so a test
+  +     file the commit CREATED has nothing older to lay back — `git checkout <parent> --
+  +     tests/new.rs` fails with `pathspec ... did not match any file(s) known to git` and,
+  +     before this, **aborted the whole run**. Measured over the first 7 verdicts: 2 were
+  +     COULD_NOT_CHECK and both had exactly that cause (`5c82fef5` adds
+  +     tests/git_chokepoint.rs, `db04d300` adds tests/gasp_session_end_guard.rs).
+  + 
+  +     That void is **not random**. This repo ships invariant gates constantly — nine in
+  +     ~20 days — so aborting systematically removes GATE-LANDING commits, i.e. the
+  +     population most likely to be *about* assertions, from the readable denominator.
+  + 
+  +     The verdict was honest for the new file and wrong for its neighbours: pre-task tests
+  ... (32 more lines)
+ ✓ (1m 16s)
+        return [p for p in top_level_test_files(paths) if p not in (register_only or ())]
+  + 
+  + 
+  + def parent_test_pathspec(
+  +     post_task_test_files: list[str], parent_test_files
+  + ) -> tuple[list[str], list[str]]:
+  +     """Split the rollback set into what EXISTS at the parent and what does not.
+  + 
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "d… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The pure function landed. Now the self-tests (test-first discipline says these next, before wiring):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 2 lines)
+        # -- reachability: one row per state, so no branch can be arithmetically dead --------
+        # EARNED
+  -     v = classify_counterfactual(0, "running 42 tests\ntest result: ok. 42 passed; 0 failed\n")
+ ✓ (1m 16s)
+        # -- reachability: one row per state, so no branch can be arithmetically dead --------
+        # EARNED
+  -     v = classify_counterfactual(0, "running 42 tests\ntest result: ok. 42 passed; 0 failed\n")
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That edit was wrong — I dropped a line. Restoring immediately:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 3 lines)
+        # -- reachability: one row per state, so no branch can be arithmetically dead --------
+        # EARNED
+  +     v = classify_counterfactual(0, "running 42 tests\ntest result: ok. 42 passed; 0 failed\n")
+ ✓ (1m 15s)
+        # -- reachability: one row per state, so no branch can be arithmetically dead --------
+        # EARNED
+  +     v = classify_counterfactual(0, "running 42 tests\ntest result: ok. 42 passed; 0 failed\n")
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored cleanly — 48 insertions, 0 deletions. Now the self-tests. Let me find a landmark to insert at:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "behavioural_test_files\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2296,2306p' scripts/coun… ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (6 → 67 lines)
+        check(
+            "register-only still counts as a touched top-level test file",
+            top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
+  +     )
+  + 
+  +     # -- parent_test_pathspec (Day 185): lay back only what EXISTED at the parent --------
+  +     # THE NEAR-MISS GUARD, and the half that matters: a commit that adds NO new test file
+  +     # must produce a BYTE-IDENTICAL pathspec and an empty absent list. That is every one
+  +     # of the 7 readings taken so far and the whole regression surface, so it is a full
+  +     # equality and never a `contains` — a discriminator tested only on the side that
+  +     # fires is vacuous green.
+  +     kept, absent = parent_test_pathspec(
+  +         ["tests/integration.rs", "tests/module_size.rs"],
+  +         ["tests/integration.rs", "tests/module_size.rs", "tests/other.rs"],
+  +     )
+  +     check(
+  +         "no new test file -> pathspec is byte-identical to the input",
+  +         kept == ["tests/integration.rs", "tests/module_size.rs"],
+  +         kept,
+  +     )
+  ... (46 more lines)
+ ✓ (1m 15s)
+        check(
+            "register-only still counts as a touched top-level test file",
+            top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
+  +     )
+  + 
+  +     # -- parent_test_pathspec (Day 185): lay back only what EXISTED at the parent --------
+  +     # THE NEAR-MISS GUARD, and the half that matters: a commit that adds NO new test file
+  +     # must produce a BYTE-IDENTICAL pathspec and an empty absent list. That is every one
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (51ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 19s (2 ✓)
+
+Tests pass. Now wire it into run_counterfactual — the actual behaviour change:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1152,1172p' scripts/coun… ✓ (3ms)
+
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (9 → 43 lines)
+            # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
+            # are deliberately NOT rolled back — see behavioural_test_files.
+  +         #
+  +         # Day 185: only the files that EXISTED at the parent may be laid back. A commit
+  +         # that CREATES a test file has nothing older for it, and checking out the whole
+  +         # post-task list used to fail the pathspec and ABORT the run — 2 of the first 7
+  +         # verdicts were voided that way, and not randomly: this repo ships invariant
+  +         # gates constantly, so the abort removed gate-landing commits (the population
+  +         # most likely to be about assertions) from the readable denominator.
+  +         rc_ls, ls_out = run_cmd(
+  +             ["git", "-C", root, "ls-tree", "--name-only", parent, "--", "tests/"],
+  +             timeout=60,
+  +         )
+  +         if rc_ls != 0:
+  +             return COULD_NOT_CHECK, f"ls-tree of parent tests/ failed (rc={rc_ls})"
+  +         kept, absent = parent_test_pathspec(
+  +             rollback, top_level_test_files(ls_out.splitlines())
+  +         )
+  +         absent_note = ""
+  +         if absent:
+  ... (26 more lines)
+ ✓ (1m 15s)
+            # Lay the PRE-task BEHAVIOURAL tests back over the POST-task src/. Debt registers
+            # are deliberately NOT rolled back — see behavioural_test_files.
+  +         #
+  +         # Day 185: only the files that EXISTED at the parent may be laid back. A commit
+  +         # that CREATES a test file has nothing older for it, and checking out the whole
+  +         # post-task list used to fail the pathspec and ABORT the run — 2 of the first 7
+  +         # verdicts were voided that way, and not randomly: this repo ships invariant
+  +         # gates constantly, so the abort removed gate-landing commits (the population
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now thread absent_note into the recorded verdict detail, so the ledger carries it too:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1195,1215p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 5 lines)
+            if verdict == REGISTER_DRIFT:
+                return verdict, (
+  -                 "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+  +                 absent_note
+  +                 + "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+                    + why + ". " + summarise(out)
+ ✓ (1m 16s)
+            if verdict == REGISTER_DRIFT:
+                return verdict, (
+  -                 "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+  +                 absent_note
+  +                 + "BASELINE: green. COUNTERFACTUAL: red, but VOID — "
+                    + why + ". " + summarise(out)
+  2 tools completed in 1m 20s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

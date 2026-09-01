@@ -1,0 +1,185 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams/counterfactual_verd… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.9s (2 ✓)
+
+Working tree is clean; the code landed in 62608c52. Two deliverables are missing. Let me read what actually landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat 62608c52  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parent_test_pathspec" s… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,800p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1260p' scripts/coun… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8.6s (4 ✓)
+
+Code half is correct. Three things to do: the evaluator's cleanup note (absent_note missing from the common return), then the mandatory real reading, then CLAUDE.md. Order matters — the cleanup changes the recorded note, so it must land before the reading.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "absent_note\|return ver…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (4ms)
+ ✓ (51ms)
+  2 tools completed in 51ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: self-tests pass, code half is correct. Remaining: (a) the evaluator's cleanup note, (b) the mandatory real reading, (c) CLAUDE.md.
+
+Starting with the cleanup, since it changes the note that gets recorded — it must land before the reading.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1202,1220p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The common EARNED/UNEARNED return drops absent_note — and that is precisely the path this fix creates, so a partial overlay would land in the ledger claiming to be a whole one. Fixing it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 8 lines)
+  -         return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+  +         # `absent_note` rides EVERY return, not just the VOID one. This is the path the
+  +         # Day-185 intersection fix creates, so it is the exact path on which a partial
+  +         # overlay must not be recorded as a whole one — a verdict that silently drops the
+  +         # absent files is the shrinking-denominator defect this instrument exists to
+  +         # refuse, one layer inside the instrument itself.
+  +         return verdict, (
+  +             absent_note + "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+  +         )
+ ✓ (1m 15s)
+  -         return verdict, "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+  +         # `absent_note` rides EVERY return, not just the VOID one. This is the path the
+  +         # Day-185 intersection fix creates, so it is the exact path on which a partial
+  +         # overlay must not be recorded as a whole one — a verdict that silently drops the
+  +         # absent files is the shrinking-denominator defect this instrument exists to
+  +         # refuse, one layer inside the instrument itself.
+  +         return verdict, (
+  +             absent_note + "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+  +         )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (49ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 20s (2 ✓)
+
+Now the mandatory verification step. Let me check the invocation surface first so I get it right in one shot — the task says run it once and report verbatim.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (50ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: cleanup landed, self-tests green. Now the mandatory verification step — one real reading, run once, reported verbatim.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --verify 5c82fef5^… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Commit is reachable and adds tests/git_chokepoint.rs — the exact shape. Note its only tests/ change is that added file, so the intersection may be empty (pre-registered outcome 2). Running the reading once, as specified:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time python3 scripts/counterfact… ✓ (3m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reading complete: COULD_NOT_CHECK — pre-registered outcome 2. Not re-running it, not loosening the branch. Let me confirm what landed in the ledger and characterize the void honestly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l dreams/counterfactual_verd…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== db04d300 tests/ diff =… ✓ (4ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+Two findings, and the first is a defect. The ledger is still 7 lines — --record did not append. Let me check how --record is wired:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "args.record\|args.commi… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found a real defect: --record is only wired into the batch path — the --commit path parses it and ignores it, which is why the ledger is unchanged. That's a flag with no consumer, and it's the exact mechanism the mandatory step depends on. Let me read both paths:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1706,1775p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1744,1764p' scripts/coun… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1744 && NR<=1760' scrip… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (18ms)
+  4 tools completed in 9.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The bash view keeps collapsing repeated lines. Using the file reader instead:
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:1744..1764 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    depth\|^    window… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:1040..1054  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py:1626..1638 ✓ (0ms)
+ ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 29.9s (4 ✓)
+
+Now I'll fix it. --record was parsed, advertised in --help, and read by nothing on the --commit path — a flag with a description and no consumer, which is exactly why the reading scrolled past and the ledger stayed at 7.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (8 → 56 lines)
+                print("  ---")
+                for ln in detail.splitlines():
+                    print(f"  {ln}")
+  + 
+  +         if args.record:
+  +             # Day 185. `--record` was PARSED, ADVERTISED IN --help, AND READ BY NOTHING on
+  +             # this path: the append lived in the `--max-runs` arm only, so a single-commit
+  +             # reading printed its verdict and left the ledger untouched. A flag with a
+  +             # description and no consumer is the shape that costs a session -- this one
+  +             # cost exactly that: the mandated verification reading ran for three minutes,
+  +             # the verdict scrolled past, and the ledger stayed at 7 lines, which reads
+  +             # from the outside as "the reading was never taken".
+  +             #
+  +             # Same append, same per-verdict flush, same pure `ledger_line` as the batch
+  +             # arm -- the resolution I/O is here at the call site and the record itself
+  +             # stays a pure function of its inputs.
+  +             rc_s, out_s = run_cmd(
+  +                 ["git", "-C", root, "rev-parse", args.commit], timeout=60
+  +             )
+  +             full_sha = out_s.strip().splitlines()[0] if rc_s == 0 else args.commit
+  ... (31 more lines)
+ ✓ (1m 26s)
+                print("  ---")
+                for ln in detail.splitlines():
+                    print(f"  {ln}")
+  + 
+  +         if args.record:
+  +             # Day 185. `--record` was PARSED, ADVERTISED IN --help, AND READ BY NOTHING on
+  +             # this path: the append lived in the `--max-runs` arm only, so a single-commit
+  +             # reading printed its verdict and left the ledger untouched. A flag with a
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (91ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests green. Now the ledger line must be written by the instrument — hand-appending it would be fabricating the very evidence this tool exists to check. That means one re-run, forced by the recording bug rather than by the verdict:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time python3 scripts/counterfact…

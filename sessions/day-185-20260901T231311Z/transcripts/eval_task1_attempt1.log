@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test neutered_guard… ✓ (301ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.5s (2 ✓)
+
+Gate is live: 9/9 green, scope note printed through raw stderr on a passing run (no --nocapture needed), 136 files scanned. Now the one control that matters — does it actually fire?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && printf 'x=1 # %s%s left here\n' … ✓ (271ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired end-to-end and restored cleanly (git status --porcelain empty). Verifying the enum-variant touchpoint (#647 trap) and then writing the verdict.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== variants constructed v… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three enum variants have match arms; every new definition has its consumer in this diff. Writing the verdict.
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 16s)
+
+Verdict: PASS — written to session_plan/eval_task_1.md.
+
+The decisive evidence was running the gate rather than reading it. I planted a runtime-assembled marker in a scratch scripts/*.sh file and the run went red with the message naming the file, the line, "RESTORE THE GUARD YOU BROKE" first, and the pasteable register line; removing it returned 9/9 green with a clean `git status --porcelain. That hit landed in a .sh file — precisely the silent case the task claims as its genuinely new value, since cargo test otherwise gives scripts/` zero coverage.
+
+Three things I specifically confirmed rather than assumed:
+
+• The scope note prints on a *passing* run with no --nocapture, so the raw std::io::stderr() handle is doing its job and libtest isn't discarding it.
+• The `.md` exclusion works: CLAUDE.md now contains all four marker words as bare literals and the gate is still green — the exclusion is load-bearing, not decorative.
+• All three enum variants have match arms (lines 169/181/188), which is the #647 trap that has caused reverts before; every other new definition also has its consumer inside this diff.
+
+One cleanup nit noted in the Reason rather than failed on: the module doc's census says "135 files scanned" while CLAUDE.md and the live run both say 136. The gate file itself landed between the scan and the doc write. It's a stale prose number of exactly the kind this repo keeps correcting — worth fixing next time this file is touched, though the authoritative count is printed on every passing run, so nothing downstream reads the stale one.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

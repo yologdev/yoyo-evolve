@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state — what landed, what didn't.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff b54bad16..HEAD --numsta… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff b54bad16..HEAD -- scrip… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (51ms)
+  4 tools completed in 14.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Re-orienting: code fix landed and self-tests pass. Two things remain — the mandated reading, and CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '726,780p' scripts/counte… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1155,1235p' scripts/coun… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1771,1825p' scripts/coun… ✓ (3ms)
+  4 tools completed in 9.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me check the CLI shape so I invoke the reading correctly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 python3 scripts/count… ✓ (51ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-parse --is-shallow-repos… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.9s (2 ✓)
+
+5c82fef5 is reachable and adds tests/git_chokepoint.rs — exactly the target shape. Taking the mandated reading now (one commit, ~3m):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && time python3 scripts/counterfact… ✓ (2m 59s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The reading landed. Verbatim result:
+
+```
+counterfactual verdict for 5c82fef5: COULD_NOT_CHECK
+  ---
+  every touched test file is NEW at this commit (tests/git_chokepoint.rs) — nothing older to lay back, so there is no counterfactual to run
+  recorded to dreams/counterfactual_verdicts.jsonl
+```
+
+That is pre-registered outcome 2. I will not re-run it and will not loosen the branch. Verifying the ledger:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l < drea… (8 lines) ✓ (28ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Reading is recorded — ledger 7 → 8, tally now **EARNED 5, COULD_NOT_CHECK 3**. Now recomputing the census from the tool rather than inheriting DREAM.md's numbers (depth is 54 at session start — `--deepen` does not persist):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 python3 scripts/coun… ✓ (3.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census recomputed at depth 5293 (fully deepened, shallow=no): plain arm 45 behavioural (was 44 — Task 1 of this session added one), fix-loop 2, unknown-suffix 0.
+
+Now the honest question the fix raises: how much of the void does it actually recover? Computing it with the tool's own functions rather than a second copy of the rule:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 … (28 lines) ✓ (2.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def collect_census" -A … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 … (28 lines) ✓ (2.6s)
+  3 tools completed in 20.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+This is the finding, and it is the unflattering one. Let me run the two required positive controls serially before writing it up — each as one atomic mutate→run→restore so the restore cannot be forgotten:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (79ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired (exit 1) but I need the names to prove the direction — new tests red, near-miss guard green:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (170ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (73ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== the near-miss guard, a… ✓ (3ms)
+  3 tools completed in 15.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2396,2420p' scripts/coun… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (127ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.0s (2 ✓)
+
+Both controls verified. Control 1: 6 new tests red, near-miss guard stayed green (0 matches) — the direction that proves it tests the pass-through. Control 2 ran end-to-end on real data (5c82fef5 → COULD_NOT_CHECK, never a verdict). Confirming control 2 at unit level, then locating the CLAUDE.md anchors:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (11 lines) ✓ (52ms)
+
+  watch: no files changed this turn — skipping
+

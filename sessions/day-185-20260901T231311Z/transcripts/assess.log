@@ -1,0 +1,213 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying the current state — trajectory first, then source, history, and memory.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null; ec… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+The top commit is a red flag: "a positive control was committed still neutered, and main has been red ~22h". Let me dig into that immediately.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show ef1fe11a --stat && echo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -3 --format='%H %an %ae … ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.4s (2 ✓)
+
+This is the most important finding of the session. My creator fixed main from outside the loop — a neutered positive control shipped via an ungated wrap-up commit, and four sessions saw 8 failed and reported success. Let me verify current state and investigate the mechanism.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -20; e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (5 lines) ✓ (26ms)
+ ✓ (558ms)
+  2 tools completed in 559ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is green now (CI success on ef1fe11a), and no other neutered controls remain. Let me gather the remaining facts in one batch, then write the assessment early as instructed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue lis… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list … (4 lines) ✓ (421ms)
+ ✓ (495ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.1s (2 ✓)
+
+I have enough for the draft. Writing it now per the write-early rule, then I'll enrich with self-test and research.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (155 lines) ✓ (1m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Draft is safe on disk. Let me commit it, then run the self-test and research.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/assessment.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls tests/*.rs && echo "=== does … ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 7ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored (so the commit is a no-op by design — the file on disk is what feeds the planner). Confirmed: none of the 12 test files scans for sabotage markers. Now the self-test and research.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 ./target/debug/yoyo -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git-status gate exists… ✓ (6ms)
+ ✓ (735ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+Binary works (v0.1.17, ef1fe11a). Let me confirm the ungated wrap-up path and do the research step.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3425,3442p' scripts/evol…  ▶ web search 'coding agent test sabotage guard "positive control" left in …' ✓ (1.7s)
+ ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.8s (2 ✓)
+
+Direct hit. mustfail (MIT, new) does exactly my DREAM counterfactual — and pw-ai-agent-code-core's rule #1 names the missing half: "Break every guard on purpose and watch it fail by name. **Then restore it and watch it pass.**" Let me save this and finalize.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -n "$YOPEDIA_AGENT_TOKEN" ]…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "positive control" CLAUD… ✓ (2ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured: CLAUDE.md documents 27 positive controls but only 20 restore claims — 7 with no recorded restore. Finalizing the assessment now.
+  ▶ edit session_plan/assessment.md (3 → 14 lines)
+    ## Self-Test Results
+    
+  - *(filled in below — see Bugs / Friction)*
+  + Ran the built binary rather than re-running the suite (the harness already verified this SHA):
+  + 
+  + - `./target/debug/yoyo --version` → `yoyo v0.1.17 (ef1fe11a 2026-09-01) linux-x86_64`. Correct sha,
+  +   correct day. Works.
+  + - `./target/debug/yoyo risk epistemic` → renders, no panic. Top dark rooms:
+  +   `src/commands_info.rs` (1.0, 31 snapshots), `src/hooks.rs` (0.9, 24), `src/repl.rs` (0.7, 11),
+  +   `src/commands.rs` (0.6, 10), `src/commands_git.rs` (0.5, 6). Agrees with the trajectory block.
+  + - `git status --short` → empty. `grep` for sabotage markers across `src/` and `tests/` → nothing.
+  +   **The tree is genuinely clean now**, which is the thing worth confirming by hand today.
+  + 
+  + No friction found in the binary itself. The friction this session is entirely in the *harness path*
+  + and in *my own discipline*, not in the product.
+ ✓ (1m 15s)
+    ## Self-Test Results
+    
+  - *(filled in below — see Bugs / Friction)*
+  + Ran the built binary rather than re-running the suite (the harness already verified this SHA):
+  + 
+  + - `./target/debug/yoyo --version` → `yoyo v0.1.17 (ef1fe11a 2026-09-01) linux-x86_64`. Correct sha,
+  +   correct day. Works.
+  + - `./target/debug/yoyo risk epistemic` → renders, no panic. Top dark rooms:
+  ... (7 more lines)
+  ▶ edit session_plan/assessment.md (3 → 10 lines)
+    ## Capability Gaps
+    
+  - *(filled in below — see Research Findings)*
+  + The honest answer today is not a feature gap against Claude Code — it is a **verification-integrity
+  + gap against my own claims**, and the research below shows the field has already named it and shipped
+  + a tool for it while I was building half of one.
+  + 
+  + Standing product gaps, unchanged and not this session's story: no LSP/go-to-definition beyond the
+  + text-based `/def`, no interactive review UI, `--features gasp` invisible to the harness's plain
+  + `cargo test`, and ~157k lines of unit tests buried in `src/` behind `#[cfg(test)]` that my
+  + counterfactual instrument structurally cannot reach (#870).
+ ✓ (1m 16s)
+    ## Capability Gaps
+    
+  - *(filled in below — see Research Findings)*
+  + The honest answer today is not a feature gap against Claude Code — it is a **verification-integrity
+  + gap against my own claims**, and the research below shows the field has already named it and shipped
+  + a tool for it while I was building half of one.
+  + 
+  + Standing product gaps, unchanged and not this session's story: no LSP/go-to-definition beyond the
+  ... (3 more lines)
+  ▶ edit session_plan/assessment.md (3 → 46 lines)
+    ## Research Findings
+    
+  - *(filled in below)*
+  + ### `mustfail` (greenlitbooks, MIT) — my DREAM milestone, already built, by someone else
+  + 
+  + > "reverts the source files your coding agent just changed, keeps the tests it just wrote exactly as
+  + > written, and runs the checks again. A check that still passes did not test the work."
+  + 
+  + That is **my counterfactual-green mechanism**, and its framing question — *"if this change vanished,
+  + would anything have noticed?"* — is the one DREAM.md says mutation testing never asked. Independent
+  + confirmation the mechanism is right. Three things it has that `scripts/counterfactual_green.py` does
+  + not, each directly usable:
+  + 
+  + 1. **A positive control as step 2 of every run** — checks must pass against the work *as written*
+  +    before the negative control is trusted, "without this step, a worktree missing its dependencies
+  +    would appear to detect everything, and the tool would be confidently useless." I built exactly
+  +    this as `BASELINE_RED` (Day 183) for the same stated reason. Convergent, and it validates the
+  +    design.
+  + 2. **Localize** — when a control is not detected, revert each source file *alone* so the output names
+  +    the uncovered file rather than shouting at the whole diff. I have no equivalent.
+  ... (27 more lines)
+ ✓ (1m 14s)
+    ## Research Findings
+    
+  - *(filled in below)*
+  + ### `mustfail` (greenlitbooks, MIT) — my DREAM milestone, already built, by someone else
+  + 
+  + > "reverts the source files your coding agent just changed, keeps the tests it just wrote exactly as
+  + > written, and runs the checks again. A check that still passes did not test the work."
+  + 
+  ... (13 more lines)
+  3 tools completed in 4m 8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the one thing the planner most needs — an explicit priority signal — then commit.
+  ▶ edit session_plan/assessment.md (3 → 25 lines)
+    ## Bugs / Friction Found
+  + 
+  + ### 0. Priority signal for the planner (read this first)
+  + 
+  + The dominant finding is not a feature gap. It is that **`main` was red for ~22 hours, four sessions
+  + reported "tests OK" over it, and a human had to fix it from outside the loop.** Three distinct
+  + defects compose here, and they are separable tasks:
+  + 
+  + - **(a) No gate catches a neutered positive control.** 12 test files in `tests/`; **zero** scan for
+  +   sabotage markers (verified by grep). This is the cheapest, highest-value fix, it lives entirely on
+  +   my side of the protected boundary, and it is the same shape as the eight gates I already ship.
+  + - **(b) The wrap-up commit is ungated.** `scripts/evolve.sh:3436-3439` is literally
+  +   `git add -A` → `git commit -m "session wrap-up"`, with no build/test check — confirmed by reading
+  +   it. Protected file, so the enabler must be a gate on my side (a) rather than a harness edit.
+  + - **(c) "tests OK" was reported over a red suite.** The outcome record and my trajectory block both
+  +   said `build OK, tests OK` for a session with 8 failing tests. Whatever computes that summary is
+  +   not reading what it claims to read.
+  + 
+  + (a) is the one I would spend the self-driven slot on. It would have failed *at the task gate, in the
+  + session that introduced the defect*, before the wrap-up ever ran.
+  ... (5 more lines)
+ ✓ (1m 16s)
+    ## Bugs / Friction Found
+  + 
+  + ### 0. Priority signal for the planner (read this first)
+  + 
+  + The dominant finding is not a feature gap. It is that **`main` was red for ~22 hours, four sessions
+  + reported "tests OK" over it, and a human had to fix it from outside the loop.** Three distinct
+  + defects compose here, and they are separable tasks:
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/assessme… ✓ (9ms)
