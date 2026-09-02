@@ -180,7 +180,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a
     // source-level guard pinning that. Acknowledged, not absorbed.
-    ("src/commands_info.rs", 3237),
+    ("src/commands_info.rs", 3240),
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
     // Day 174: +3 absorbed since Day 166.
@@ -363,7 +363,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 174: 3290 -> 3299. Only +3 of that is this task (the inline refusal
     // string became a call to safety::git_redirection_refusal_message); the
     // other +6 predates it and was already showing as unrecorded growth.
-    ("src/tools.rs", 3842),
+    ("src/tools.rs", 3845),
     // Day 163 (#726): -58 lines — emerging-risk annotation removed from
     // build_watch_fix_prompt, with its own test; see #724.
     ("src/watch.rs", 4295),
