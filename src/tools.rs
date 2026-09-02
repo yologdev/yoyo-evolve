@@ -2123,7 +2123,10 @@ mod tests {
         // of that contract here: ordinary codes are unchanged from the
         // pre-#878 `format!("Exit code: {exit_code}")`, and a signal death now
         // carries its name.
-        assert_eq!(format!("Exit code: {}", describe_exit_code(0)), "Exit code: 0");
+        assert_eq!(
+            format!("Exit code: {}", describe_exit_code(0)),
+            "Exit code: 0"
+        );
         assert_eq!(
             format!("Exit code: {}", describe_exit_code(42)),
             "Exit code: 42"
