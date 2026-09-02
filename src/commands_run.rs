@@ -627,8 +627,7 @@ mod tests {
         let result = run_shell_command("kill -9 $$");
         assert!(!result.success);
         assert_eq!(
-            result.exit_code,
-            -9,
+            result.exit_code, -9,
             "a SIGKILL death must be reported as -9, not as -1"
         );
         // And it must not be confused with the wait-error branch.
