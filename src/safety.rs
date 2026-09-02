@@ -2307,6 +2307,74 @@ static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 
 /// Mask common credential shapes. Pure; safe on any UTF-8 input (regex crate
 /// operates on chars, never raw byte offsets we choose ourselves).
+/// Does `url` denote exactly the same thing as the link text, minus a scheme?
+///
+/// This is the *degenerate* auto-link shape only: `[notes.md](http://notes.md)`.
+/// A real markdown link (`[click](https://x.com)`) answers `false` and is left alone.
+fn autolink_url_matches_text(url: &str, text: &str) -> bool {
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    // A trailing slash is added by auto-linkers and is not part of a filename.
+    stripped.trim_end_matches('/') == text
+}
+
+/// Unwrap a markdown auto-link that a model leaked into a *path* argument.
+///
+/// Transferred bug class (CommandCode harness notes, #874): open-weight models are
+/// post-trained to auto-link filenames in conversational output and carry that prior
+/// across the tool boundary, so a path argument arrives as
+/// `/Users/x/proj/[notes.md](http://notes.md)` and the file tool obediently creates a
+/// file literally named `[notes.md](http://notes.md)`. This is not a hallucination —
+/// it is the chat distribution leaking into a slot headed for `fopen`.
+///
+/// **Only the degenerate case is unwrapped**, where the link text equals the URL with
+/// its scheme (and any trailing slash) removed. A genuine markdown link is returned
+/// **byte-identically**, because a path may legitimately contain brackets and
+/// rewriting one would be silent corruption — the very failure the source notes
+/// report from their first, greedier attempt.
+///
+/// Returns `Cow::Borrowed` — byte-identical — for every input carrying no degenerate
+/// auto-link, which is every path any well-behaved model sends.
+pub(crate) fn unwrap_markdown_autolink_path(path: &str) -> std::borrow::Cow<'_, str> {
+    // Cheap reject: no `](` anywhere means no link shape at all.
+    if !path.contains("](") {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    let mut out = String::new();
+    let mut rest = path;
+    let mut changed = false;
+    while let Some(open) = rest.find('[') {
+        // `[` is one ASCII byte, so `open + 1` is always a char boundary.
+        let after_open = &rest[open + 1..];
+        let Some(mid) = after_open.find("](") else {
+            break;
+        };
+        let text = &after_open[..mid];
+        // `](` is two ASCII bytes.
+        let after_mid = &after_open[mid + 2..];
+        let Some(close) = after_mid.find(')') else {
+            break;
+        };
+        let url = &after_mid[..close];
+        if !text.is_empty() && autolink_url_matches_text(url, text) {
+            out.push_str(&rest[..open]);
+            out.push_str(text);
+            changed = true;
+        } else {
+            // Not the degenerate shape: keep the whole `[text](url)` span verbatim.
+            out.push_str(&rest[..open + 1 + mid + 2 + close + 1]);
+        }
+        rest = &after_mid[close + 1..];
+    }
+    if !changed {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 pub(crate) fn redact_secrets(s: &str) -> String {
     let mut out = s.to_string();
     for (i, re) in SECRET_PATTERNS.iter().enumerate() {
@@ -4287,5 +4355,71 @@ mod command_separator_guards {
                 "`{benign}` must not be flagged as a write"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod autolink_path_tests {
+    use super::unwrap_markdown_autolink_path as unwrap;
+
+    /// The degenerate auto-link shape the source notes report, in the positions it
+    /// actually arrives in. Asserted on the `String` a caller receives.
+    #[test]
+    fn degenerate_autolink_is_unwrapped_at_the_emission_point() {
+        for (input, want) in [
+            // The verbatim shape from the write-up.
+            (
+                "/Users/x/proj/[notes.md](http://notes.md)",
+                "/Users/x/proj/notes.md",
+            ),
+            // https, and a bare relative path.
+            ("[notes.md](https://notes.md)", "notes.md"),
+            // Auto-linkers append a trailing slash; it is not part of a filename.
+            ("src/[a.rs](http://a.rs/)", "src/a.rs"),
+            // No scheme at all — text still equals url.
+            ("[README.md](README.md)", "README.md"),
+            // Two of them in one path.
+            ("[a](http://a)/[b](http://b)", "a/b"),
+        ] {
+            assert_eq!(unwrap(input), want, "input: {input}");
+        }
+    }
+
+    /// NEAR-MISS GUARD, and the entire regression surface: anything that is not the
+    /// degenerate shape must come back **byte-identical**. A path may legitimately
+    /// carry brackets, and rewriting one is silent corruption.
+    #[test]
+    fn every_other_shape_is_byte_identical() {
+        for input in [
+            // Ordinary paths — what every well-behaved model sends.
+            "src/main.rs",
+            "/abs/path/to/file.txt",
+            "",
+            // A real markdown link: text != url-without-scheme. Left alone.
+            "[click](https://x.com)",
+            "docs/[click](https://example.com/page)",
+            // Brackets that are genuinely part of a filename.
+            "src/[id].tsx",
+            "a[b]c.rs",
+            // Link shape with an empty text: nothing to substitute.
+            "[](http://)",
+            // Unterminated shapes must not eat the rest of the string.
+            "src/[notes.md](http://notes.md",
+            "src/[notes.md",
+            "src/](http://x)",
+            // Non-ASCII, to prove no byte indexing lands mid-character.
+            "src/näme.rs",
+            "src/[näme.rs](http://x.rs)",
+            "🐙/[a](https://b)",
+        ] {
+            assert_eq!(unwrap(input), input, "input: {input}");
+        }
+    }
+
+    /// Non-ASCII inside the degenerate shape still unwraps whole characters.
+    #[test]
+    fn non_ascii_degenerate_shape_unwraps_without_splitting_a_char() {
+        assert_eq!(unwrap("dir/[näme.rs](http://näme.rs)"), "dir/näme.rs");
+        assert_eq!(unwrap("🐙/[a.md](http://a.md)"), "🐙/a.md");
     }
 }
