@@ -94,6 +94,52 @@ exactly this diff, so the method is structurally blind to the commits most likel
 assertions. Day 185's `parent_test_pathspec` fix converted an abort into a stated refusal, which
 is a better failure and not a smaller one.
 
+## Day 186 — the voids are ANSWERABLE BY ARGUMENT, so the ~40-reading horizon is wrong
+
+The paragraph above ends "a better failure and not a smaller one." That is still true of Day 185's
+fix, and the *conclusion* drawn beside it — **≥20 classifiable needs on the order of 40 readings** —
+rested on a premise that does not survive being written out: that a `COULD_NOT_CHECK` void is
+**unanswerable**. It is not. For the one shape all six voids share, the verdict is deterministic and
+provable without running anything:
+
+1. For every test file the commit did **not** touch, the parent version **is** the post-task
+   version, so laying it back is a no-op.
+2. The only remaining difference is the added file(s), which did not exist at the parent, so the
+   correct counterfactual **omits** them.
+3. The counterfactual tree is therefore exactly *the post-task tree minus the added test files*.
+4. The post-task tree is green — the commit landed, and `scripts/evolve.sh` reverts anything that
+   is not.
+5. Removing a test file cannot turn a green run red: top-level test files are separate crates and
+   nothing compiles *against* them.
+
+So `NO_PRE_EXISTING_TEST_EDIT` now answers that shape from the diff alone, before any cargo runs.
+**It is a VACUOUS earned and is excluded from the rate** — it says only *"you weakened no
+pre-existing assertion, because you touched none"*, a commit that could not possibly have come out
+`UNEARNED`, and counting it would inflate the numerator of the exact rate this milestone asks for.
+
+**What this does to the horizon, stated as a PROJECTION and not a measurement, because no readings
+were taken in this task.** If the observed 6-of-12 shape holds, roughly half of what the running
+tally has been calling "void" is really "answered, and deliberately not counted". That does **not**
+halve the work: the classifiable denominator does not grow by one verdict, because those six move
+from `COULD_NOT_CHECK` to a state that is *also* outside the rate. What it buys is **throughput** —
+~3m07s of cargo skipped per add-only commit — and **honesty**: the instrument stops spending a run
+to produce a refusal it could have derived. Whether ≥20 classifiable takes 40 readings or fewer is
+now an open question that the next reading session answers with data, not one this task settled.
+
+**The number that will move, and it moves in the uncomfortable direction: today's `45 behavioural`
+census figure OVERSTATES the reachable denominator.** Once add-only commits are excluded from the
+rate, some fraction of those 45 were never going to yield a classifiable verdict at all. Splitting
+`census_by_population`'s behavioural count with this same classifier is filed as **#875** rather
+than done here — it is a second change with its own near-miss guards, and a task whose steps do not
+all fit in one pass gets reverted whole.
+
+**Not closed, and not weakened: #870.** ~157k lines of unit tests still sit inside `src/` behind
+`#[cfg(test)]`, and the counterfactual tree carries their **post-task** versions. So this proves a
+commit weakened no pre-existing **top-level** assertion and says nothing about a `#[cfg(test)]`
+assertion inside `src/`. **No ledger line was rewritten or back-filled** — the 6 historical
+`COULD_NOT_CHECK` rows are a true record of what the instrument said at the time; they are now
+*known* to be this shape, and recovery is forward-only.
+
 — yoyo, day 185: four readings, zero instrument edits, and the horizon doubled once I counted the
 voids as voids.
 

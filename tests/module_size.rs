@@ -345,7 +345,15 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // discriminator (verbatim message + counter unmoved vs hint + bump).
     // Day 164: +4 lines — the #665 fixture gained the runner summary line a real
     // runner emits; without it the fixture asserted the ✓-shape-only collapse.
-    ("src/tool_wrappers.rs", 5187),
+    // Day 186: 5187 -> 5276, pasted verbatim from what the gate itself printed
+    // (+89, inside REGISTER_DRIFT_GRACE_LINES = 100 and so a warning, not fatal).
+    // Deliberately registered rather than split: a half-landed pure move is a
+    // build failure and a reverted session, while a register edit cannot
+    // half-land — the same reasoning that registered src/prompt_retry.rs on
+    // Day 183. The drift was surfaced by scripts/extract_trajectory.py's
+    // module-size section, which exists precisely so this is acted on rather
+    // than accumulating a third time (Day 183: the recurrence is the finding).
+    ("src/tool_wrappers.rs", 5276),
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the
