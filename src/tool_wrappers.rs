@@ -55,6 +55,28 @@ fn is_deterministic_refusal(err: &str) -> bool {
 /// Intercepts the `"path"` parameter from tool arguments and validates it against
 /// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
 /// an error without executing the inner tool.
+/// Repair a leaked markdown auto-link in a tool call's `path` argument.
+///
+/// Open-weight models are post-trained to auto-link filenames and carry that prior
+/// across the tool boundary, so `path` can arrive as `dir/[notes.md](http://notes.md)`
+/// (#874). This runs **before** the directory fence reads `path`, because otherwise the
+/// security check and the file tool both act on a string that is not the path the model
+/// meant — a confidently wrong verdict, not merely a missing one.
+///
+/// Only the degenerate shape is touched (see `safety::unwrap_markdown_autolink_path`);
+/// every other input is returned **byte-identical**, which is the whole regression
+/// surface. Non-`path` arguments — `content`, `old_text`, `new_text` — are never
+/// inspected: rewriting file *content* that happens to look like a link is the silent
+/// corruption this repair exists to avoid.
+fn repair_path_argument(mut params: serde_json::Value) -> serde_json::Value {
+    if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+        if let std::borrow::Cow::Owned(fixed) = crate::safety::unwrap_markdown_autolink_path(path) {
+            params["path"] = serde_json::Value::String(fixed);
+        }
+    }
+    params
+}
+
 pub(crate) struct GuardedTool {
     inner: Box<dyn AgentTool>,
     restrictions: cli::DirectoryRestrictions,
@@ -83,6 +105,10 @@ impl AgentTool for GuardedTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Repair a leaked markdown auto-link BEFORE the fence reads the path (#874):
+        // otherwise the restriction check, and then the file tool, both act on a
+        // string that is not the path the model meant.
+        let params = repair_path_argument(params);
         // Check the "path" parameter against directory restrictions
         if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
             if let Err(reason) = self.restrictions.check_path(path) {
@@ -142,6 +168,10 @@ impl AgentTool for ArcGuardedTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Repair a leaked markdown auto-link BEFORE the fence reads the path (#874):
+        // otherwise the restriction check, and then the file tool, both act on a
+        // string that is not the path the model meant.
+        let params = repair_path_argument(params);
         // Check the "path" parameter against directory restrictions
         if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
             if let Err(reason) = self.restrictions.check_path(path) {
@@ -5183,5 +5213,46 @@ mod diagnostic_sub_agent_tests {
             assert_eq!(result.content.len(), 1, "no block added to a refusal");
             assert_eq!(first_text(&result), refusal, "refusal survives verbatim");
         }
+    }
+}
+
+#[cfg(test)]
+mod path_argument_repair_tests {
+    use super::repair_path_argument;
+    use serde_json::json;
+
+    /// Emission point: the params the fence and the inner tool actually receive.
+    #[test]
+    fn leaked_autolink_path_is_repaired_before_the_fence_sees_it() {
+        let got = repair_path_argument(json!({
+            "path": "src/[notes.md](http://notes.md)",
+            "content": "hello"
+        }));
+        assert_eq!(got, json!({"path": "src/notes.md", "content": "hello"}));
+    }
+
+    /// NEAR-MISS GUARD — the entire regression surface. Every shape that is not a
+    /// degenerate auto-link must come back byte-identical, asserted as a whole value.
+    #[test]
+    fn everything_else_is_byte_identical() {
+        for v in [
+            json!({"path": "src/main.rs"}),
+            json!({"path": "src/main.rs", "content": "a](http://a)"}),
+            json!({"path": "docs/[click](https://x.com)"}),
+            json!({"path": "src/[id].tsx"}),
+            json!({"command": "ls"}),
+            json!({"path": 7}),
+            json!({}),
+        ] {
+            assert_eq!(repair_path_argument(v.clone()), v, "input: {v}");
+        }
+    }
+
+    /// Content is never inspected — rewriting a link inside file content would be the
+    /// silent corruption the repair exists to avoid.
+    #[test]
+    fn content_carrying_a_degenerate_autolink_is_left_alone() {
+        let v = json!({"path": "a.md", "content": "[notes.md](http://notes.md)"});
+        assert_eq!(repair_path_argument(v.clone()), v);
     }
 }
