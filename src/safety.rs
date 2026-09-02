@@ -96,7 +96,7 @@ const SAFETY_CHECKS: &[SafetyCheck] = &[
 /// than a missing one. The bare `&` (background) separator is likewise left
 /// out, so this const changes no site's behaviour except the one that was
 /// short.
-const COMMAND_SEPARATORS: &[&str] = &[";", "&&", "||", "|"];
+pub(crate) const COMMAND_SEPARATORS: &[&str] = &[";", "&&", "||", "|"];
 
 /// Analyze a bash command for potentially dangerous patterns.
 /// Returns `Some(reason)` if the command looks destructive.
@@ -1870,7 +1870,7 @@ pub(crate) const COMMAND_WRAPPERS: &[&str] = &["sudo", "env", "command", "nohup"
 /// that a `>` (or a write verb) inside a string literal — `echo "use >
 /// carefully"` — is never mistaken for a real redirection. The returned
 /// string is only scanned, never indexed back into the original.
-fn strip_quoted_regions(cmd: &str) -> String {
+pub(crate) fn strip_quoted_regions(cmd: &str) -> String {
     let mut out = String::with_capacity(cmd.len());
     let mut chars = cmd.chars();
     let mut in_single = false;
