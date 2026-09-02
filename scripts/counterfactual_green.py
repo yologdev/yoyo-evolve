@@ -732,6 +732,18 @@ TEST_DIFF_NONE = "TEST_DIFF_NONE"
 TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
 TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
 
+# The fourth value, and it belongs to the SHAPE LOOKUP rather than to the classifier: the
+# `git diff` failed, the commit has no parent (root / shallow boundary), the output would
+# not parse, or the answer contradicts what the census already measured. It is NEITHER
+# `add_only` NOR `signal_bearing`.
+#
+# CHECK THE ERROR DIRECTION BEFORE PICKING A FALLBACK (Day 186, #875). Folding an unknown
+# into `add_only` UNDERSTATES the reachable denominator, which is the flattering direction
+# — it makes the milestone look closer than it is. Folding it into `signal_bearing`
+# OVERSTATES it, which is the exact defect #875 exists to remove. So it gets its own name,
+# is counted and reported, and is summed into neither.
+SHAPE_UNKNOWN = "SHAPE_UNKNOWN"
+
 
 def classify_test_diff_shape(rows) -> str:
     """Is this commit's `tests/` diff strictly ADD-ONLY? Decided from the diff alone.
@@ -900,6 +912,73 @@ def census_by_population(rows: list[CensusRow]) -> dict:
         pop: census_summary([r for r in rows if r.population == pop])
         for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
     }
+
+
+def census_shape_split(rows: list[CensusRow], shape_of) -> dict:
+    """Split the BEHAVIOURAL count by test-diff shape. Pure: `shape_of` is injected.
+
+    Day 186, #875. WHY THIS EXISTS, and it is a correction to my own headline rather than
+    a new feature. Every running tally has been phrased "N of 45, M short of >=20", where
+    45 is the behavioural count. But an ADD-ONLY commit can never yield a classifiable
+    verdict — `classify_test_diff_shape` answers it from the diff as
+    `NO_PRE_EXISTING_TEST_EDIT`, a VACUOUS earned that is deliberately excluded from the
+    rate — so some fraction of that 45 was never reachable. Measured Day 186: 5 of 8
+    sampled behavioural commits were add-only. The behavioural figure OVERSTATES the
+    reachable denominator, and this says by how much.
+
+    THREE STATES, NEVER TWO, and the third is the safety property:
+
+      * `signal_bearing`  — TEST_DIFF_TOUCHES_PRE_EXISTING. The ONLY commits that can
+                            produce EARNED / UNEARNED / INCONCLUSIVE. This, not
+                            `behavioural`, is the denominator DREAM.md's rate can use.
+      * `add_only`        — TEST_DIFF_ADD_ONLY. Answered from the diff, outside the rate.
+      * `shape_unknown`   — SHAPE_UNKNOWN. Counted and reported, summed into neither. See
+                            the constant for why the error direction forbids a fallback.
+
+    `TEST_DIFF_NONE` coming back for a row the census already called behavioural is a
+    DISAGREEMENT between two lookups (`--name-only` over the whole commit vs
+    `--name-status` scoped to `tests/`), not a fourth shape, so it lands in
+    `shape_unknown` — the bucket for "the lookup did not give a usable answer".
+
+    INJECTION IS THE POINT: `shape_of(sha) -> str` keeps this table-testable with
+    fabricated shapes and no git at all, the same discipline `added_ts` uses in
+    `never_forecast_files` and the resolved title uses in `revisit_add_at`.
+
+    COST, stated so nobody widens it by accident: `shape_of` is asked ONLY for rows the
+    census already classified behavioural (~47 across all three populations today), never
+    for the ~1014 task commits. Do not move this into the main log walk.
+    """
+    beh = [r for r in rows if r.behavioural]
+    counts = {"behavioural": len(beh), "signal_bearing": 0, "add_only": 0,
+              "shape_unknown": 0}
+    for r in beh:
+        shape = shape_of(r.sha)
+        if shape == TEST_DIFF_TOUCHES_PRE_EXISTING:
+            counts["signal_bearing"] += 1
+        elif shape == TEST_DIFF_ADD_ONLY:
+            counts["add_only"] += 1
+        else:
+            counts["shape_unknown"] += 1
+    # ANTI-VACUOUS, and it is asserted by the RENDERER first (see
+    # `render_population_block`): behavioural > 0 with EVERY lookup unknown must say so
+    # out loud rather than print "0 add-only". A scanner that finds nothing and reports a
+    # clean split is this very defect wearing the opposite sign, and it is quieter.
+    counts["all_unknown"] = bool(beh) and counts["shape_unknown"] == len(beh)
+    return counts
+
+
+def census_shape_split_by_population(rows: list[CensusRow], shape_of) -> dict:
+    """One shape split per population, never summed — same rule as `census_by_population`.
+
+    The populations stay separate for DREAM.md's reason: the fix-loop arm IS the
+    pre-registered guess, and pooling it away destroys the only question the widened
+    `TASK_COMMIT_RE` was widened to ask.
+    """
+    return {
+        pop: census_shape_split([r for r in rows if r.population == pop], shape_of)
+        for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+    }
+
 
 
 # --------------------------------------------------------------------------------------
@@ -1094,7 +1173,31 @@ def deepen_repo(root: str, n: int) -> tuple[str, str]:
     return classify_deepen(shallow, rc, before, after)
 
 
-def collect_census(root: str, limit: int | None):
+def commit_test_diff_shape(root: str, sha: str) -> str:
+    """The I/O half of the shape split: what shape is THIS commit's `tests/` diff?
+
+    Day 186, #875. Returns one of `TEST_DIFF_TOUCHES_PRE_EXISTING` / `TEST_DIFF_ADD_ONLY`
+    / `TEST_DIFF_NONE`, or `SHAPE_UNKNOWN` when the question could not be asked.
+
+    EVERY PIECE HERE ALREADY EXISTED — this reuses and never re-derives. `run_cmd` issues
+    the diff, `parse_name_status` parses it, `classify_test_diff_shape` classifies it, and
+    scope comes from `top_level_test_files` inside that classifier. There is deliberately
+    no second `tests/*.rs` predicate: two copies of a rule agree the day they are written
+    and diverge forever after (the `significant_braces` precedent, which #875 names).
+
+    A `<sha>^` that does not resolve — a root commit, or a shallow-clone boundary — is
+    `SHAPE_UNKNOWN`, not a crash and not a fallback into either real bucket.
+    """
+    rc, out = run_cmd(
+        ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha, "--", "tests/"],
+        timeout=60,
+    )
+    if rc != 0:
+        return SHAPE_UNKNOWN
+    return classify_test_diff_shape(parse_name_status(out))
+
+
+
     """Walk the log, classify each task commit.
 
     Returns (rows, window, shallow, depth, error). `shallow` is THREE-VALUED (True /
@@ -1399,11 +1502,17 @@ read as "checked; clean"):
 """
 
 
-def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+def render_population_block(label: str, summary: dict, note: str = "",
+                            split: dict | None = None) -> list[str]:
     """The same five figures the census has always printed, for ONE population.
 
     Extracted so the two populations cannot drift apart in the report: one statement of
     the shape, called twice. A second copy would agree the day it was written.
+
+    `split` (Day 186, #875) adds the shape three-way under the behavioural figure and
+    names the REACHABLE denominator, which is `signal_bearing` and not `behavioural`.
+    Omitted -> the block is byte-identical to before, which is every caller that does not
+    ask for a split and is the whole regression surface.
     """
     out = [f"  [{label}]{note}"]
     out.append(f"    task commits found ......... {summary['task_commits']}")
@@ -1417,6 +1526,32 @@ def render_population_block(label: str, summary: dict, note: str = "") -> list[s
         f"      of which BEHAVIOURAL ..... {summary['behavioural']}"
         "   <- the denominator that carries signal"
     )
+    if split is not None and split["behavioural"]:
+        # ANTI-VACUOUS, ASSERTED FIRST: behavioural commits exist but not one shape lookup
+        # answered. Saying "0 add-only" there would be this very defect wearing the
+        # opposite sign, and quieter than the bug.
+        if split["all_unknown"]:
+            out.append(
+                f"        COULD NOT CHECK ...... all {split['shape_unknown']} shape "
+                "lookup(s) failed"
+            )
+            out.append(
+                "        This is a REFUSAL, not '0 add-only': the reachable denominator "
+                "is UNKNOWN here."
+            )
+        else:
+            out.append(
+                f"        SIGNAL-BEARING ....... {split['signal_bearing']}"
+                "   <- the REACHABLE denominator (can yield EARNED/UNEARNED/INCONCLUSIVE)"
+            )
+            out.append(
+                f"        add-only ............. {split['add_only']}"
+                "   (answered from the diff; VACUOUS earned, outside the rate)"
+            )
+            out.append(
+                f"        shape UNKNOWN ........ {split['shape_unknown']}"
+                "   (summed into neither)"
+            )
     if summary["task_commits"]:
         addr = 100.0 * summary["addressable"] / summary["task_commits"]
         beh = 100.0 * summary["behavioural"] / summary["task_commits"]
@@ -1426,7 +1561,9 @@ def render_population_block(label: str, summary: dict, note: str = "") -> list[s
     return out
 
 
-def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
+
+def render_census(rows, summary, window, limit, note=None, by_pop=None,
+                  shape_split=None) -> str:
     out = []
     scope = f"last {limit} task commits" if limit else "all reachable task commits"
     out.append(f"counterfactual-green census over {scope}")
@@ -1440,10 +1577,15 @@ def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
     # guess. A pooled headline would destroy the only question the widened
     # TASK_COMMIT_RE was widened to ask, so there is no pooled rate here on purpose.
     by_pop = by_pop if by_pop is not None else census_by_population(rows)
+    # `shape_split` is OPTIONAL and defaults to absent rather than being computed here:
+    # it costs one `git diff` per behavioural commit, and a pure renderer must not shell
+    # out. Omitted -> the block is byte-identical to the pre-#875 report.
+    sp = shape_split or {}
     out.extend(
         render_population_block(
             "PLAIN — first-attempt deliveries, no fix-loop suffix",
             by_pop[POP_PLAIN],
+            split=sp.get(POP_PLAIN),
         )
     )
     out.extend(
@@ -1451,6 +1593,7 @@ def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
             "FIX-LOOP — subject carries eval-fix / build-fix",
             by_pop[POP_FIX_LOOP],
             note="   <- DREAM.md's pre-registered population",
+            split=sp.get(POP_FIX_LOOP),
         )
     )
     # Silent when zero, which is the normal case: an unrecognised suffix is a shape
@@ -1462,6 +1605,7 @@ def render_census(rows, summary, window, limit, note=None, by_pop=None) -> str:
                 "UNKNOWN-SUFFIX — a suffix matching neither marker",
                 by_pop[POP_UNKNOWN_SUFFIX],
                 note="   <- NOT summed into either population above",
+                split=sp.get(POP_UNKNOWN_SUFFIX),
             )
         )
 
@@ -1772,7 +1916,14 @@ def main(argv):
             print("\n".join(note), file=sys.stderr)
             print(LIMITS, file=sys.stderr)
             return 1
-        print(render_census(rows, summary, window, args.limit, note))
+        # #875: the shape split, computed ONLY over rows already classified behavioural
+        # (~47 today, not the ~1014 task commits). The resolver is injected so the tally
+        # stays pure and table-testable.
+        shape_split = census_shape_split_by_population(
+            rows, lambda sha: commit_test_diff_shape(root, sha)
+        )
+        print(render_census(rows, summary, window, args.limit, note,
+                            shape_split=shape_split))
         status = 0
 
     if args.max_runs is not None:
@@ -2564,6 +2715,106 @@ def run_self_tests():
     check("NO_PRE_EXISTING_TEST_EDIT is distinct from every other state",
           len({NO_TEST_CHANGE, NO_PRE_EXISTING_TEST_EDIT, EARNED, UNEARNED,
                INCONCLUSIVE, COULD_NOT_CHECK, BASELINE_RED, REGISTER_DRIFT}) == 8)
+
+    # -- census_shape_split (Day 186, #875): the behavioural count, split by shape -------
+    # WHY: every running tally reads "N of 45", but an add-only commit can NEVER yield a
+    # classifiable verdict, so `behavioural` OVERSTATES the reachable denominator. The
+    # resolver is injected, so this is a pure table over fabricated shapes with no git.
+    def _row(sha, subject="Day 1 (00:00): x (Task 1)", files=("tests/a.rs",), reg=()):
+        return CensusRow(sha, subject, list(files), set(reg))
+
+    shapes = {
+        "sig1": TEST_DIFF_TOUCHES_PRE_EXISTING,
+        "sig2": TEST_DIFF_TOUCHES_PRE_EXISTING,
+        "add1": TEST_DIFF_ADD_ONLY,
+        "unk1": SHAPE_UNKNOWN,
+    }
+    mixed_rows = [_row("sig1"), _row("sig2"), _row("add1"), _row("unk1")]
+    sp = census_shape_split(mixed_rows, lambda sha: shapes[sha])
+    check("split counts signal-bearing", sp["signal_bearing"] == 2)
+    check("split counts add-only", sp["add_only"] == 1)
+    check("split counts shape-unknown", sp["shape_unknown"] == 1)
+    check("split carries the behavioural total", sp["behavioural"] == 4)
+    # NEVER SUMMED, and the three must exhaust the behavioural count with nothing lost:
+    # a shrinking denominator inside my own meter is the defect this all exists for.
+    check("the three states exhaust behavioural, nothing dropped",
+          sp["signal_bearing"] + sp["add_only"] + sp["shape_unknown"]
+          == sp["behavioural"])
+    # THE NEAR-MISS GUARD and it is the half that matters: the positive control neuters
+    # the resolver to ADD_ONLY, and this row must stay signal-bearing under a correct one.
+    check("a TOUCHES_PRE_EXISTING row tallies as signal-bearing",
+          census_shape_split([_row("sig1")],
+                             lambda _s: TEST_DIFF_TOUCHES_PRE_EXISTING)
+          ["signal_bearing"] == 1)
+    check("an ADD_ONLY row is NOT signal-bearing",
+          census_shape_split([_row("add1")], lambda _s: TEST_DIFF_ADD_ONLY)
+          ["signal_bearing"] == 0)
+    # ERROR DIRECTION: an unknown joins NEITHER real bucket. Folding it into add_only
+    # understates the denominator (flattering); into signal_bearing overstates it, which
+    # is the exact defect #875 removes.
+    unk = census_shape_split([_row("unk1")], lambda _s: SHAPE_UNKNOWN)
+    check("an unknown shape is neither add-only nor signal-bearing",
+          unk["add_only"] == 0 and unk["signal_bearing"] == 0
+          and unk["shape_unknown"] == 1)
+    # A disagreement between the two lookups (`--name-only` over the commit vs
+    # `--name-status` scoped to tests/) is NOT a fourth shape: it is an unusable answer.
+    check("TEST_DIFF_NONE on a behavioural row lands in shape_unknown",
+          census_shape_split([_row("sig1")], lambda _s: TEST_DIFF_NONE)
+          ["shape_unknown"] == 1)
+    # COST GUARD: only behavioural rows are asked. A register-only row is addressable and
+    # must never spend a `git diff`.
+    asked = []
+    reg_row = _row("regonly", files=("tests/module_size.rs",),
+                   reg=("tests/module_size.rs",))
+    sp_reg = census_shape_split(
+        [reg_row, _row("sig1")],
+        lambda sha: (asked.append(sha), TEST_DIFF_TOUCHES_PRE_EXISTING)[1],
+    )
+    check("only behavioural rows are asked for a shape", asked == ["sig1"])
+    check("a register-only row is outside the split", sp_reg["behavioural"] == 1)
+    # ANTI-VACUOUS: behavioural > 0 with EVERY lookup unknown is a REFUSAL, not a clean
+    # split. Asserted on the flag AND at the emission point below.
+    allunk = census_shape_split([_row("unk1"), _row("unk2")],
+                                lambda _s: SHAPE_UNKNOWN)
+    check("all-unknown raises the refusal flag", allunk["all_unknown"] is True)
+    check("a partial unknown does NOT raise it", sp["all_unknown"] is False)
+    check("zero behavioural rows do not raise it",
+          census_shape_split([], lambda _s: SHAPE_UNKNOWN)["all_unknown"] is False)
+    # Populations stay separate and are never summed (the DREAM.md rule).
+    pop_rows = [
+        _row("sig1", "Day 1 (00:00): x (Task 1)"),
+        _row("add1", "Day 1 (00:00): x (Task 1, eval-fix 2)"),
+    ]
+    by_shape = census_shape_split_by_population(pop_rows, lambda sha: shapes[sha])
+    check("per-population split keeps plain separate",
+          by_shape[POP_PLAIN]["signal_bearing"] == 1
+          and by_shape[POP_PLAIN]["add_only"] == 0)
+    check("per-population split keeps fix-loop separate",
+          by_shape[POP_FIX_LOOP]["add_only"] == 1
+          and by_shape[POP_FIX_LOOP]["signal_bearing"] == 0)
+    check("per-population split has an unknown-suffix bucket",
+          by_shape[POP_UNKNOWN_SUFFIX]["behavioural"] == 0)
+
+    # -- render: the split appears, names the reachable denominator, and refuses ---------
+    blk = "\n".join(render_population_block("P", census_summary(mixed_rows), split=sp))
+    check("rendered split names SIGNAL-BEARING", "SIGNAL-BEARING" in blk)
+    check("rendered split names the reachable denominator",
+          "REACHABLE denominator" in blk)
+    check("rendered split shows add-only", "add-only ............. 1" in blk)
+    check("rendered split shows shape UNKNOWN", "shape UNKNOWN" in blk)
+    refusal = "\n".join(
+        render_population_block("P", census_summary([_row("unk1"), _row("unk2")]),
+                                split=allunk)
+    )
+    check("all-unknown renders a REFUSAL, not a clean split",
+          "COULD NOT CHECK" in refusal and "REFUSAL" in refusal)
+    check("the refusal never claims 0 add-only",
+          "add-only ............. 0" not in refusal)
+    # NEAR-MISS: with no split the block is byte-identical to the pre-#875 report, which
+    # is every caller that does not ask and the whole regression surface.
+    plain_blk = "\n".join(render_population_block("P", census_summary(mixed_rows)))
+    check("omitting the split leaves the block unchanged",
+          "SIGNAL-BEARING" not in plain_blk and "shape UNKNOWN" not in plain_blk)
 
     # -- parent_test_pathspec (Day 185): lay back only what EXISTED at the parent --------
     # THE NEAR-MISS GUARD, and the half that matters: a commit that adds NO new test file
