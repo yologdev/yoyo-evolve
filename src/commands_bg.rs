@@ -151,7 +151,12 @@ impl BackgroundJobTracker {
                 j.finished.store(true, Ordering::Relaxed);
                 let mut code = lock_or_recover(&j.exit_code);
                 if code.is_none() {
-                    *code = Some(-1); // killed
+                    // We killed it, but the waiter has not reported a code yet,
+                    // so we do not know one. Deliberately NOT `-1`: since #878
+                    // that is the encoding of a SIGHUP death, and this row would
+                    // render a confident `exit -1 (SIGHUP)` for a job we killed
+                    // ourselves. "Killed" is real; the code is undetermined.
+                    *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
                 }
             }
             true
@@ -217,7 +222,7 @@ async fn run_background_command(
             stamp_runtime(&runtime, started_at);
             finished.store(true, Ordering::Relaxed);
             let mut code = lock_or_recover(&exit_code);
-            *code = Some(-1);
+            *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
             return;
         }
     };
@@ -285,11 +290,13 @@ async fn run_background_command(
     match child.wait().await {
         Ok(status) => {
             let mut code = lock_or_recover(&exit_code);
-            *code = Some(status.code().unwrap_or(-1));
+            // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+            // determine" were the same number, and `-1` is literally SIGHUP (#878).
+            *code = Some(crate::tools::exit_code_of(&status));
         }
         Err(_) => {
             let mut code = lock_or_recover(&exit_code);
-            *code = Some(-1);
+            *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
         }
     }
 
@@ -414,7 +421,12 @@ fn handle_bg_list(tracker: &BackgroundJobTracker) {
         let status = if job.finished {
             match job.exit_code {
                 Some(0) => format!("{GREEN}✓ done{RESET}"),
-                Some(code) => format!("{RED}✗ exit {code}{RESET}"),
+                // Name the signal when there is one (#878) — an ordinary code
+                // renders byte-identically to before.
+                Some(code) => format!(
+                    "{RED}✗ exit {}{RESET}",
+                    crate::tools::describe_exit_code(code)
+                ),
                 None => format!("{RED}✗ done{RESET}"),
             }
         } else {

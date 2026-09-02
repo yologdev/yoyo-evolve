@@ -154,6 +154,96 @@ fn pipeline_success(exit_code: i64) -> bool {
     exit_code == 0 || exit_code == 141
 }
 
+/// The exit code reported when we genuinely could not determine one: the child
+/// gave us neither an exit status nor a signal, or we failed to `wait()` for it
+/// at all.
+///
+/// **The value is chosen to be un-confusable, and that is the whole point** (#878).
+/// A signal death is encoded as `-sig`, and `SIGHUP` is signal 1 — so the obvious
+/// `-1` sentinel is *literally the encoding of a real signal death*, and `/run`
+/// used it for both meanings at once. `/fix` reads `LAST_FAILED_RUN`, so an
+/// OOM-killed build and "I could not wait for the child" arrived as the same
+/// number and it debugged an unnamed failure. This sits far outside both the
+/// `0..=255` exit-code range and the `1..=64` signal range, so no signal and no
+/// exit status can ever produce it.
+pub(crate) const EXIT_CODE_UNDETERMINED: i32 = -1000;
+
+/// The highest signal number this decoder will read back out of an exit code.
+///
+/// Real signals are 1..=64 (31 standard + 33 realtime on Linux). Used only to
+/// decide whether a negative exit code is a *signal encoding* or the
+/// undetermined sentinel above.
+const MAX_SIGNAL: i32 = 64;
+
+/// The one statement of "what exit code did this process produce?".
+///
+/// Three consumers — `StreamingBashTool` (model-facing), `/run` and `/bg` — so
+/// this is extracted rather than copied a third time (the `significant_braces` /
+/// `char_literal_len` precedent: two copies of a rule agree the day they are
+/// written and diverge forever after).
+///
+/// - a normal exit → its code, `0..=255`, byte-identical to `status.code()`
+/// - killed by a signal (unix) → `-sig`, e.g. `SIGKILL` → `-9`
+/// - neither available → [`EXIT_CODE_UNDETERMINED`], **never** `-1`
+///
+/// Signal decoding is unix-only (`std::os::unix::process::ExitStatusExt`); on
+/// every other platform a code-less status is simply undetermined, because the
+/// platform did not tell us a signal and inventing one would be worse than
+/// saying we do not know.
+pub(crate) fn exit_code_of(status: &std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return -sig;
+        }
+    }
+    EXIT_CODE_UNDETERMINED
+}
+
+/// Name a signal number, or `None` when we do not know it.
+///
+/// `None` is a real answer and is deliberately not a fabricated one: a caller
+/// that wants a placeholder chooses its own, so "could not name it" can never
+/// read as "named". The table is the portable subset — a platform-specific or
+/// realtime signal number returns `None` rather than a guess.
+pub(crate) fn signal_name(sig: i32) -> Option<&'static str> {
+    Some(match sig {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        6 => "SIGABRT",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        13 => "SIGPIPE",
+        14 => "SIGALRM",
+        15 => "SIGTERM",
+        _ => return None,
+    })
+}
+
+/// Render an exit code the way a human should read it: a signal death carries
+/// its name, everything else is the bare number.
+///
+/// Kept beside the decoder so the three consumers cannot disagree about what a
+/// negative number means. An unknown signal number renders the generic
+/// `(signal)` — the *number* still says which one it was, and the fallback word
+/// is the caller's choice rather than [`signal_name`] inventing a name.
+pub(crate) fn describe_exit_code(exit_code: i32) -> String {
+    if (-MAX_SIGNAL..0).contains(&exit_code) {
+        let sig = -exit_code;
+        let sig_name = signal_name(sig).unwrap_or("signal");
+        format!("{exit_code} ({sig_name})")
+    } else {
+        format!("{exit_code}")
+    }
+}
+
 /// Commands that use a *specific* non-zero exit as a result, not an error.
 ///
 /// `grep` exiting 1 means "no lines matched" — a fact about the world, not a
@@ -470,42 +560,17 @@ impl AgentTool for StreamingBashTool {
         // Wait for the reader to finish consuming remaining buffered output
         let _ = tokio::time::timeout(Duration::from_secs(2), reader_handle).await;
 
-        let exit_code = exit_status.code().unwrap_or_else(|| {
-            // On Unix, if code() is None the process was killed by a signal.
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::ExitStatusExt;
-                if let Some(sig) = exit_status.signal() {
-                    return -sig; // e.g. SIGSEGV=11 → -11
-                }
-            }
-            -1
-        });
+        // One statement of the decode/render rule, shared with `/run` and `/bg`
+        // (#878) — this used to be an inline copy here and a bare
+        // `unwrap_or(-1)` in both of those.
+        let exit_code = exit_code_of(&exit_status);
         let output = accumulated.lock().await.clone();
 
         // One final update with the complete output
         emit_update(&ctx, &output);
 
         // Include signal name when the process was killed by a signal
-        let exit_line = if exit_code < 0 && exit_code != -1 {
-            let sig = -exit_code;
-            let sig_name = match sig {
-                1 => "SIGHUP",
-                2 => "SIGINT",
-                4 => "SIGILL",
-                6 => "SIGABRT",
-                8 => "SIGFPE",
-                9 => "SIGKILL",
-                11 => "SIGSEGV",
-                13 => "SIGPIPE",
-                14 => "SIGALRM",
-                15 => "SIGTERM",
-                _ => "signal",
-            };
-            format!("Exit code: {exit_code} ({sig_name})")
-        } else {
-            format!("Exit code: {exit_code}")
-        };
+        let exit_line = format!("Exit code: {}", describe_exit_code(exit_code));
         // Some tools use a non-zero exit as a result, not an error (#876).
         // `None` — the common case — leaves the line byte-identical.
         let exit_line = match benign_exit_note(command, exit_code) {
