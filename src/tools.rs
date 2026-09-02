@@ -154,6 +154,60 @@ fn pipeline_success(exit_code: i64) -> bool {
     exit_code == 0 || exit_code == 141
 }
 
+/// Commands that use a *specific* non-zero exit as a result, not an error.
+///
+/// `grep` exiting 1 means "no lines matched" — a fact about the world, not a
+/// failure. A model trained that non-zero means failure reads an unannotated
+/// `Exit code: 1` as something to retry, which is a paid turn spent learning
+/// nothing (#876).
+///
+/// Keyed on an **exact** code on purpose: `grep` exiting 2 is a real error
+/// (bad pattern, unreadable file) and must stay unannotated. This table is
+/// deliberately tiny — a wrong "not an error" is worse than a missing one.
+const BENIGN_EXITS: &[(&str, i32, &str)] = &[
+    ("grep", 1, "no matches found"),
+    ("egrep", 1, "no matches found"),
+    ("fgrep", 1, "no matches found"),
+    ("rg", 1, "no matches found"),
+    ("ag", 1, "no matches found"),
+    ("ack", 1, "no matches found"),
+    ("diff", 1, "files differ"),
+    ("cmp", 1, "files differ"),
+    ("test", 1, "condition was false"),
+    ("[", 1, "condition was false"),
+];
+
+/// True when `command` is one simple command — no pipeline, no separator, no
+/// substitution.
+///
+/// The exit code of a pipeline can come from *any* stage (this tool runs bash
+/// with `pipefail`), so `grep x f | wc -l` exiting 1 is not evidence that grep
+/// found nothing. Annotating there would be a confident wrong diagnosis, which
+/// is the one failure mode worse than saying nothing.
+fn is_simple_command(command: &str) -> bool {
+    !command.contains(['|', '&', ';', '\n', '`', '(', ')']) && !command.contains("$(")
+}
+
+/// The note for a benign non-zero exit, or `None` when there is nothing true
+/// to add. `None` is the overwhelmingly common case and leaves the exit line
+/// byte-identical.
+fn benign_exit_note(command: &str, exit_code: i32) -> Option<&'static str> {
+    if !is_simple_command(command) {
+        return None;
+    }
+    // Same command-word rule `safety::detect_write_command` uses: step over
+    // leading `VAR=value` assignments and wrapper words.
+    let word = command
+        .split_whitespace()
+        .find(|t| !t.contains('=') && !crate::safety::COMMAND_WRAPPERS.contains(t))?;
+    // `/usr/bin/grep` is still grep.
+    let word = word.rsplit('/').next().unwrap_or(word);
+    BENIGN_EXITS
+        .iter()
+        .find(|(name, code, _)| *name == word && *code == exit_code)
+        .map(|(_, _, note)| *note)
+}
+
 #[async_trait::async_trait]
 impl AgentTool for StreamingBashTool {
     fn name(&self) -> &str {
@@ -451,6 +505,12 @@ impl AgentTool for StreamingBashTool {
             format!("Exit code: {exit_code} ({sig_name})")
         } else {
             format!("Exit code: {exit_code}")
+        };
+        // Some tools use a non-zero exit as a result, not an error (#876).
+        // `None` — the common case — leaves the line byte-identical.
+        let exit_line = match benign_exit_note(command, exit_code) {
+            Some(note) => format!("{exit_line} ({note} - not an error)"),
+            None => exit_line,
         };
         let formatted = format!("{exit_line}\n{output}");
 
@@ -1884,6 +1944,54 @@ mod tests {
     }
 
     // --- pipefail + SIGPIPE-141 guard (#579) ---
+
+    #[test]
+    fn benign_exit_note_fires_only_on_the_exact_command_and_code() {
+        // The cases the annotation exists for.
+        assert_eq!(
+            benign_exit_note("grep foo src/main.rs", 1),
+            Some("no matches found")
+        );
+        assert_eq!(benign_exit_note("rg TODO", 1), Some("no matches found"));
+        assert_eq!(benign_exit_note("diff a.txt b.txt", 1), Some("files differ"));
+        assert_eq!(benign_exit_note("test -f nope", 1), Some("condition was false"));
+        // Wrapper words and env assignments are stepped over, path stripped.
+        assert_eq!(
+            benign_exit_note("sudo /usr/bin/grep foo f", 1),
+            Some("no matches found")
+        );
+        assert_eq!(
+            benign_exit_note("LC_ALL=C grep foo f", 1),
+            Some("no matches found")
+        );
+
+        // --- near-miss guards: everything here must stay unannotated ---
+        // grep 2 is a REAL error (bad pattern / unreadable file).
+        assert_eq!(benign_exit_note("grep foo f", 2), None);
+        // grep 0 found matches; there is nothing to explain.
+        assert_eq!(benign_exit_note("grep foo f", 0), None);
+        // An ordinary command exiting 1 is an ordinary failure.
+        assert_eq!(benign_exit_note("cargo test", 1), None);
+        assert_eq!(benign_exit_note("false", 1), None);
+        // A command merely *containing* the word grep is not grep.
+        assert_eq!(benign_exit_note("./my-grep-wrapper.sh", 1), None);
+        // Empty input must not panic or match.
+        assert_eq!(benign_exit_note("", 1), None);
+    }
+
+    #[test]
+    fn benign_exit_note_refuses_pipelines_and_substitutions() {
+        // With pipefail an exit-1 pipeline may have failed at ANY stage, so
+        // claiming "no matches found" would be a confident wrong diagnosis.
+        assert_eq!(benign_exit_note("grep foo f | wc -l", 1), None);
+        assert_eq!(benign_exit_note("grep foo f && echo hi", 1), None);
+        assert_eq!(benign_exit_note("grep foo f; echo hi", 1), None);
+        assert_eq!(benign_exit_note("grep $(cat pat) f", 1), None);
+        assert_eq!(benign_exit_note("grep foo f || true", 1), None);
+        // ...but the plain simple command still annotates.
+        assert!(is_simple_command("grep foo f"));
+        assert!(!is_simple_command("grep foo f | wc -l"));
+    }
 
     #[test]
     fn test_pipeline_success_helper() {

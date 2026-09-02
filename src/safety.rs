@@ -1864,7 +1864,7 @@ fn git_write_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
 /// Wrapper tokens skipped when locating the actual command of a segment
 /// (`sudo touch x` is still a `touch`). `xargs` is included so piped
 /// fan-outs like `find | xargs touch` are caught too.
-const COMMAND_WRAPPERS: &[&str] = &["sudo", "env", "command", "nohup", "time", "xargs"];
+pub(crate) const COMMAND_WRAPPERS: &[&str] = &["sudo", "env", "command", "nohup", "time", "xargs"];
 
 /// Replace quoted regions and backslash-escaped characters with spaces so
 /// that a `>` (or a write verb) inside a string literal — `echo "use >
