@@ -1,0 +1,232 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two posts, then file findings before writing any code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 curl -fsSL "https://c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 curl -fsSL "https://c… ✓ (269ms)
+ ✓ (313ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.9s (2 ✓)
+
+Both posts fetched. Now let me check my actual code against the strongest candidate mechanisms — starting with exit-code honesty (the pi bug shape), which is the sharpest claim in the shell post.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.code()" src/ --inclu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exit_code\|ExitStatus\|… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,470p src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,260p src/commands_run… ✓ (4ms)
+ ✓ (6ms)
+  4 tools completed in 7.1s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check what already exists before filing anything — pipeline_success looks like it may already cover part of this.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pipeline_success" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "no matches\|benign\|ex… ✓ (4ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 145,175p src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,275p src/tools.rs && … ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 5.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify two more candidate gaps before filing, then file everything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "no matches found\|beni… ✓ (5ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.9s (2 ✓)
+
+Audit complete. Three verified gaps. Step 1 — file everything before writing code (issues survive a git reset --hard; a note in a file does not).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (32 lines) ✓ (1.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#876 filed. Now the other two findings.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (24 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (30 lines) ✓ (1.0s)
+ ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.2s (2 ✓)
+
+All three filed: #876 (benign-exit annotation), #877 (per-line clamp), #878 (signal collapse in /run+/bg).
+
+Step 2 — land one fix: #876. Sequencing by verification cost (Day 184's lesson) — pure function first, green alone, then the call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "COMMAND_WRAPPERS" src/s… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+COMMAND_WRAPPERS is private — I'll widen it to pub(crate) with its consumer in the same diff (the significant_braces precedent) rather than write a second copy. Pure function + tests first, no call site yet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^const COMMAND_WRAPPER… ✓ (5ms)
+  ▶ edit src/tools.rs (3 → 57 lines)
+    fn pipeline_success(exit_code: i64) -> bool {
+        exit_code == 0 || exit_code == 141
+  + }
+  + 
+  + /// Commands that use a *specific* non-zero exit as a result, not an error.
+  + ///
+  + /// `grep` exiting 1 means "no lines matched" — a fact about the world, not a
+  + /// failure. A model trained that non-zero means failure reads an unannotated
+  + /// `Exit code: 1` as something to retry, which is a paid turn spent learning
+  + /// nothing (#876).
+  + ///
+  + /// Keyed on an **exact** code on purpose: `grep` exiting 2 is a real error
+  + /// (bad pattern, unreadable file) and must stay unannotated. This table is
+  + /// deliberately tiny — a wrong "not an error" is worse than a missing one.
+  + const BENIGN_EXITS: &[(&str, i32, &str)] = &[
+  +     ("grep", 1, "no matches found"),
+  +     ("egrep", 1, "no matches found"),
+  +     ("fgrep", 1, "no matches found"),
+  +     ("rg", 1, "no matches found"),
+  +     ("ag", 1, "no matches found"),
+  ... (37 more lines)
+ ✓ (16.0s)
+    fn pipeline_success(exit_code: i64) -> bool {
+        exit_code == 0 || exit_code == 141
+  + }
+  + 
+  + /// Commands that use a *specific* non-zero exit as a result, not an error.
+  + ///
+  + /// `grep` exiting 1 means "no lines matched" — a fact about the world, not a
+  + /// failure. A model trained that non-zero means failure reads an unannotated
+  ... (13 more lines)
+  2 tools completed in 28.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly my own rule firing — and the Day-184 lesson says a test is a consumer too. Adding the table tests now, which makes the core green in isolation before the call site exists.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1938,1950p src/tools.rs ✓ (3ms)
+  ▶ edit src/tools.rs (4 → 52 lines)
+        // --- pipefail + SIGPIPE-141 guard (#579) ---
+  + 
+  +     #[test]
+  +     fn benign_exit_note_fires_only_on_the_exact_command_and_code() {
+  +         // The cases the annotation exists for.
+  +         assert_eq!(
+  +             benign_exit_note("grep foo src/main.rs", 1),
+  +             Some("no matches found")
+  +         );
+  +         assert_eq!(benign_exit_note("rg TODO", 1), Some("no matches found"));
+  +         assert_eq!(benign_exit_note("diff a.txt b.txt", 1), Some("files differ"));
+  +         assert_eq!(benign_exit_note("test -f nope", 1), Some("condition was false"));
+  +         // Wrapper words and env assignments are stepped over, path stripped.
+  +         assert_eq!(
+  +             benign_exit_note("sudo /usr/bin/grep foo f", 1),
+  +             Some("no matches found")
+  +         );
+  +         assert_eq!(
+  +             benign_exit_note("LC_ALL=C grep foo f", 1),
+  +             Some("no matches found")
+  ... (32 more lines)
+ ✓ (16.1s)
+        // --- pipefail + SIGPIPE-141 guard (#579) ---
+  + 
+  +     #[test]
+  +     fn benign_exit_note_fires_only_on_the_exact_command_and_code() {
+  +         // The cases the annotation exists for.
+  +         assert_eq!(
+  +             benign_exit_note("grep foo src/main.rs", 1),
+  +             Some("no matches found")
+  ... (13 more lines)
+  2 tools completed in 28.5s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.17 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: constant `BENIGN_EXITS` is never used[0m
+   [1m[94m--> [0msrc/tools.rs:167:7
+    [1m[94m|[0m
+[1m[94m167[0m [1m[94m|[0m const BENIGN_EXITS: &[(&str, i32, &str)] = &[
+    [1m[94m|[0m       [1m[91m^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `is_simple_command` is never used[0m
+   [1m[94m--> [0msrc/tools.rs:187:4
+    [1m[94m|[0m
+[1m[94m187[0m [1m[94m|[0m fn is_simple_command(command: &str) -> bool {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `benign_exit_note` is never used[0m
+   [1m[94m--> [0msrc/tools.rs:194:4
+    [1m[94m|[0m
+[1m[94m194[0m [1m[94m|[0m fn benign_exit_note(command: &str, exit_code: i32) -> Option<&'static str> {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 3 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dead-code error is on the bin target, where #[cfg(test)] is compiled out — so for a non-test item the production call site is mandatory, not optional. Wiring it now.
+  ▶ edit src/tools.rs (4 → 10 lines)
+            } else {
+                format!("Exit code: {exit_code}")
+  +         };
+  +         // Some tools use a non-zero exit as a result, not an error (#876).
+  +         // `None` — the common case — leaves the line byte-identical.
+  +         let exit_line = match benign_exit_note(command, exit_code) {
+  +             Some(note) => format!("{exit_line} ({note} - not an error)"),
+  +             None => exit_line,
+            };
+            let formatted = format!("{exit_line}\n{output}");
+ ✓ (1m 56s)
+            } else {
+                format!("Exit code: {exit_code}")
+  +         };
+  +         // Some tools use a non-zero exit as a result, not an error (#876).
+  +         // `None` — the common case — leaves the line byte-identical.
+  +         let exit_line = match benign_exit_note(command, exit_code) {
+  +             Some(note) => format!("{exit_line} ({note} - not an error)"),
+  +             None => exit_line,
+            };
+            let formatted = format!("{exit_line}\n{output}");
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo benign_exi… ✓ (176ms)
+  2 tools completed in 1m 59s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both new tests pass. The module-size gate fired as expected — let me read the pasteable line it prints rather than hand-typing a number.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (192ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/tools.rs", 3537)… ✓ (431ms)
+  2 tools completed in 3.6s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 2)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/1 (100.0%) — reactive was 0.0%
+     Surprises (not predicted): src/tools.rs
+

@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (18ms)
+ ✓ (399ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+Issues #876, #877, #878 were filed. Let me verify the filing-before-fix ordering and check the implementation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -2 --format='%H %ci %s' …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,525p' src/tools.rs ✓ (3ms)
+ ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.1s (2 ✓)
+
+Filing (04:20) preceded the fix commit (04:28) — the ordering claim holds. One focused check on the emission point and the size register:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs && grep -n "l… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All checks confirm. Evidence gathered:
+
+• Step 1 (file first): #876, #877, #878 all created at 04:20, the fix commit at 04:28 — the ordering the task made non-negotiable is verifiable in the issue metadata, not just claimed in prose.
+• Step 2 (one fix, ≤3 source files): src/tools.rs + src/safety.rs (visibility only) = 2 source files. src/tool_wrappers.rs untouched, as forbidden.
+• Pure function → emission point: benign_exit_note is pure; wired at exactly one site, the exit_line a caller receives, with None leaving it byte-identical via a match arm returning it unchanged.
+• Near-miss guards: grep at exit 2 and 0, cargo test/false at 1, ./my-grep-wrapper.sh, empty string, and every `|/&&/;/||/$( ) shape all asserted == None with full assert_eq!`.
+• forgotten_touchpoints: COMMAND_WRAPPERS went pub(crate) and its new consumer (src/tools.rs:202) landed in the same diff — the #618/#653/#658 shape avoided.
+• Register: wc -l src/tools.rs = 3651, exactly matching the bumped ("src/tools.rs", 3651) entry — pasted, not guessed.
+  ▶ write session_plan/eval_task_2.md (8 lines) ✓ (1m 27s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+The decisive evidence, in order of how much it moved the verdict:
+
+1. **The file-first ordering is verifiable, not asserted.** This task's whole point was that Day 185 skipped Step 1. `gh issue list` puts #876/#877/#878 at 04:20:29Z/04:20:00Z; git show -s --format=%cI puts the fix commit at 04:28:45Z. The claim in CLAUDE.md is backed by metadata outside the diff, which is exactly the property the task wanted (a filing survives `git reset --hard`; a note in a file does not).
+
+2. The scope limits were respected. 2 source files (src/tools.rs, src/safety.rs), and src/tool_wrappers.rs — explicitly forbidden because it sits 11 lines from a fatal gate — is untouched; it appears in the diff only as unified-diff context.
+
+3. **forgotten_touchpoints is clean in the specific shape that caused #618/#653/#658.** The one visibility widening (COMMAND_WRAPPERS → pub(crate)) has its consumer at src/tools.rs:202 in the same diff. And the size register was paid with a number that matches reality: wc -l returns exactly 3651.
+
+4. The near-miss guards are real, not decorative. grep at exit 2 and 0, cargo test, false, ./my-grep-wrapper.sh, the empty string, and all five pipeline/separator/substitution shapes are asserted == None with full assert_eq!. That is the side that proves the pass-through, and it is the side a vacuous test would have omitted.
+
+One thing I could not exercise directly, stated rather than glossed: the emission point lives in StreamingBashTool::execute, which spawns real processes and needs an API key, so I verified the wiring by reading the match arm (the None branch returns exit_line unbound) rather than by running the tool end-to-end. The diff's own CLAUDE.md text makes the same admission, which is the honest framing.
+
+The .yoyo/risk_validations.jsonl line is harness bookkeeping swept in — noted as cleanup feedback, not grounds for failure.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

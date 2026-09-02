@@ -1,0 +1,224 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — verify the premise before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parent_test_pathspec" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RUN_VERDICTS\|COULD_NOT… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,175p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,800p' scripts/counte… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1050,1230p' scripts/coun… ✓ (4ms)
+  5 tools completed in 7.7s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up from Step 0 — I confirmed parent_test_pathspec exists and the empty-kept branch explicitly returns COULD_NOT_CHECK, and RUN_VERDICTS holds 6. Two premise checks left:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "len… (8 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.6s (2 ✓)
+
+Step 0 premise VERIFIED, all three parts, and the sixth is the one that matters:
+
+| check | result |
+|---|---|
+| parent_test_pathspec exists, empty kept → COULD_NOT_CHECK | ✅ explicit branch, never a fall-through (:1191) |
+| RUN_VERDICTS holds 6; --test prints len(RUN_VERDICTS) | ✅ :2669, not hand-typed |
+| ledger COULD_NOT_CHECK rows | 6 of 12 (EARNED 6) |
+| all 6 are add-only shape | ✅ 6 for 6, one A each, zero M/D/R, read from git diff --name-status not inferred |
+
+Now Step 1 — the classifier first, because it carries all the risk:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def test_diff_is_regis… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Premise verified 6/6. Now Step 1 — the classifier, built and green in isolation before anything is wired (Day 184's sequencing rule):
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 3 lines)
+    NO_TEST_CHANGE = "NO_TEST_CHANGE"
+  + NO_PRE_EXISTING_TEST_EDIT = "NO_PRE_EXISTING_TEST_EDIT"
+    EARNED = "EARNED"
+ ✓ (1m 14s)
+    NO_TEST_CHANGE = "NO_TEST_CHANGE"
+  + NO_PRE_EXISTING_TEST_EDIT = "NO_PRE_EXISTING_TEST_EDIT"
+    EARNED = "EARNED"
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 3 lines)
+  - # The six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  + # The six a live run can produce. NO_TEST_CHANGE and NO_PRE_EXISTING_TEST_EDIT are both
+  + # decided by the DIFF, before any run, so neither is in here.
+    RUN_VERDICTS = (
+ ✓ (1m 14s)
+  - # The six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+  + # The six a live run can produce. NO_TEST_CHANGE and NO_PRE_EXISTING_TEST_EDIT are both
+  + # decided by the DIFF, before any run, so neither is in here.
+    RUN_VERDICTS = (
+  2 tools completed in 2m 33s (2 ✓)
+
+Now the pure classifier, placed beside top_level_test_files so it can reuse that scope predicate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 1 lines)
+    def parent_test_pathspec(
+  -     post_task_test_files: list[str], parent_test_files
+  - ) -> tuple[list[str], list[str]]:
+ ✓ (1m 14s)
+    def parent_test_pathspec(
+  -     post_task_test_files: list[str], parent_test_files
+  - ) -> tuple[list[str], list[str]]:
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I truncated parent_test_pathspec's signature with that edit — restoring it and inserting the new function ahead of it in one go:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 92 lines)
+  + TEST_DIFF_NONE = "TEST_DIFF_NONE"
+  + TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
+  + TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
+  + 
+  + 
+  + def classify_test_diff_shape(rows) -> str:
+  +     """Is this commit's `tests/` diff strictly ADD-ONLY? Decided from the diff alone.
+  + 
+  +     Day 186. `rows` are `(status, path)` pairs as produced by
+  +     `git diff --name-status <parent> <sha> -- tests/`. Scope is decided by
+  +     `top_level_test_files`, NEVER by a second `tests/*.rs` predicate — two copies of a
+  +     rule agree the day they are written and diverge forever after.
+  + 
+  +     WHY THIS EXISTS. Measured Day 185: the void rate was 6 of 12, and all six voids were
+  +     the SAME shape — a commit adding exactly one new top-level `tests/*.rs` and modifying
+  +     no pre-existing one, so `parent_test_pathspec` returned an empty `kept` and the run
+  +     refused. Those six are not unanswerable. They are answerable BY ARGUMENT, and running
+  +     them is pure cost (~3m07s of cargo per reading):
+  + 
+  +       1. For every test file the commit did NOT touch, the parent version IS the post-task
+  ... (72 more lines)
+ ✓ (1m 14s)
+  + TEST_DIFF_NONE = "TEST_DIFF_NONE"
+  + TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
+  + TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
+  + 
+  + 
+  + def classify_test_diff_shape(rows) -> str:
+  +     """Is this commit's `tests/` diff strictly ADD-ONLY? Decided from the diff alone.
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 19s (2 ✓)
+
+Signature restored. Now the self-tests for it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parent_test_pathspec (D… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 58 lines)
+  +     # -- classify_test_diff_shape (Day 186): add-only is answerable WITHOUT a cargo run --
+  +     A, M, D = "A", "M", "D"
+  +     # Anti-vacuous, asserted FIRST: an empty diff can never be ADD_ONLY.
+  +     check("empty diff is NONE, never ADD_ONLY",
+  +           classify_test_diff_shape([]) == TEST_DIFF_NONE)
+  +     check("out-of-scope-only diff is NONE",
+  +           classify_test_diff_shape([(A, "src/lib.rs"), (M, "tests/common/mod.rs")])
+  +           == TEST_DIFF_NONE)
+  +     # The real shape of all 6 historical voids, verified by git diff --name-status.
+  +     check("one added top-level test file is ADD_ONLY",
+  +           classify_test_diff_shape([(A, "tests/git_chokepoint.rs")])
+  +           == TEST_DIFF_ADD_ONLY)
+  +     check("two adds are ADD_ONLY",
+  +           classify_test_diff_shape([(A, "tests/a.rs"), (A, "tests/b.rs")])
+  +           == TEST_DIFF_ADD_ONLY)
+  +     check("adds beside out-of-scope noise are still ADD_ONLY",
+  +           classify_test_diff_shape([(A, "tests/a.rs"), (M, "src/cli.rs"),
+  +                                     (M, "tests/common/mod.rs")])
+  +           == TEST_DIFF_ADD_ONLY)
+  +     # THE NEAR-MISS GUARD, and it is the half that matters: a mixed diff misread as
+  ... (38 more lines)
+ ✓ (1m 14s)
+  +     # -- classify_test_diff_shape (Day 186): add-only is answerable WITHOUT a cargo run --
+  +     A, M, D = "A", "M", "D"
+  +     # Anti-vacuous, asserted FIRST: an empty diff can never be ADD_ONLY.
+  +     check("empty diff is NONE, never ADD_ONLY",
+  +           classify_test_diff_shape([]) == TEST_DIFF_NONE)
+  +     check("out-of-scope-only diff is NONE",
+  +           classify_test_diff_shape([(A, "src/lib.rs"), (M, "tests/common/mod.rs")])
+  +           == TEST_DIFF_NONE)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (52ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Step 1 green in isolation. Now Step 2 — wire it before the baseline run so an add-only commit costs zero cargo invocations:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 23 lines)
+  +     # ---- ADD-ONLY (Day 186): answerable by ARGUMENT, so no cargo runs at all. ----------
+  +     # Decided from the diff, so it sits here with NO_TEST_CHANGE — ahead of everything a
+  +     # run can produce. BASELINE_RED, INCONCLUSIVE and REGISTER_DRIFT are all run-derived
+  +     # and cannot compete with it, because no run happens. This is also where the
+  +     # throughput comes from: ~3m07s of cargo per reading, skipped on 6 of the first 12.
+  +     rc_ns, ns_out = run_cmd(
+  +         ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "tests/"],
+  +         timeout=60,
+  +     )
+  +     if rc_ns != 0:
+  +         # Could not read the shape -> fall through and RUN it. An unknown must never be
+  +         # promoted into the comfortable bucket (Day 144).
+  +         pass
+  +     elif classify_test_diff_shape(parse_name_status(ns_out)) == TEST_DIFF_ADD_ONLY:
+  +         return NO_PRE_EXISTING_TEST_EDIT, (
+  +             "tests/ diff is strictly ADD-ONLY ("
+  +             + ", ".join(rollback)
+  +             + ") — no pre-existing assertion could have been weakened, so the "
+  +             "counterfactual is the post-task tree minus the added file(s) and is green "
+  +             "by construction. VACUOUS earned: excluded from the rate. No cargo run."
+  ... (3 more lines)
+ ✓ (1m 14s)
+  +     # ---- ADD-ONLY (Day 186): answerable by ARGUMENT, so no cargo runs at all. ----------
+  +     # Decided from the diff, so it sits here with NO_TEST_CHANGE — ahead of everything a
+  +     # run can produce. BASELINE_RED, INCONCLUSIVE and REGISTER_DRIFT are all run-derived
+  +     # and cannot compete with it, because no run happens. This is also where the
+  +     # throughput comes from: ~3m07s of cargo per reading, skipped on 6 of the first 12.
+  +     rc_ns, ns_out = run_cmd(
+  +         ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "tests/"],
+  +         timeout=60,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the reporting side — it must be on its own line, never summed into EARNED or the classifiable count:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "NO_TEST_CHANGE" scripts… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1570,1600p' scripts/coun… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 3 lines)
+  -     if verdict == NO_TEST_CHANGE:
+  +     if verdict in (NO_TEST_CHANGE, NO_PRE_EXISTING_TEST_EDIT):
+  +         # Both are decided by the DIFF and return before the worktree is even created.
+            return "not-run"
+ ✓ (1m 14s)
+  -     if verdict == NO_TEST_CHANGE:
+  +     if verdict in (NO_TEST_CHANGE, NO_PRE_EXISTING_TEST_EDIT):
+  +         # Both are decided by the DIFF and return before the worktree is even created.
+            return "not-run"
+  3 tools completed in 1m 21s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
