@@ -51,10 +51,6 @@ fn is_deterministic_refusal(err: &str) -> bool {
 // GuardedTool — directory restriction wrapper (Box-based)
 // ---------------------------------------------------------------------------
 
-/// A wrapper tool that checks directory restrictions before delegating to an inner tool.
-/// Intercepts the `"path"` parameter from tool arguments and validates it against
-/// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
-/// an error without executing the inner tool.
 /// Repair a leaked markdown auto-link in a tool call's `path` argument.
 ///
 /// Open-weight models are post-trained to auto-link filenames and carry that prior
@@ -77,6 +73,15 @@ fn repair_path_argument(mut params: serde_json::Value) -> serde_json::Value {
     params
 }
 
+/// The path-argument gate: **always** repairs `path`, and fences it against the
+/// configured `DirectoryRestrictions` when any are configured.
+///
+/// It intercepts the `"path"` parameter, runs `repair_path_argument` on it, and
+/// then validates the repaired value. If the path is blocked the tool returns an
+/// error without executing the inner tool. With an empty `restrictions` the fence
+/// half is a pass-through (`check_path` short-circuits to `Ok`), so an
+/// unrestricted wrapper changes nothing except that the repair runs — which is
+/// exactly why `maybe_guard` wraps unconditionally.
 pub(crate) struct GuardedTool {
     inner: Box<dyn AgentTool>,
     restrictions: cli::DirectoryRestrictions,
@@ -119,19 +124,31 @@ impl AgentTool for GuardedTool {
     }
 }
 
-/// Wrap a tool with directory restrictions if any are configured.
+/// Wrap a tool with the path-argument gate.
+///
+/// **This always wraps, including when no directory restrictions are configured**,
+/// and that is the whole product-safety property rather than an inefficiency to
+/// optimise away. The wrapper does two things and only one of them is conditional:
+/// it *always* repairs the `path` argument (`repair_path_argument`), and it fences
+/// the path only when restrictions exist. `DirectoryRestrictions::check_path`
+/// already short-circuits to `Ok` on an empty config, so an unrestricted wrapper
+/// is a byte-identical pass-through for the fence and costs one `Box` indirection.
+///
+/// **Superseded behaviour, recorded rather than erased:** this returned the bare
+/// `tool` when `restrictions.is_empty()`. That was correct while the wrapper did
+/// nothing but fence — and it silently made the auto-link repair unreachable for
+/// **every default user**, since the file-tool default is unrestricted (this
+/// repo's own `.yoyo.toml` configures no `[directories]` block). A repair wired
+/// only onto a default-off wrapper is not a product fix; it is a fix for the
+/// minority who opted into `--allow-dir`/`--deny-dir`.
 pub(crate) fn maybe_guard(
     tool: Box<dyn AgentTool>,
     restrictions: &cli::DirectoryRestrictions,
 ) -> Box<dyn AgentTool> {
-    if restrictions.is_empty() {
-        tool
-    } else {
-        Box::new(GuardedTool {
-            inner: tool,
-            restrictions: restrictions.clone(),
-        })
-    }
+    Box::new(GuardedTool {
+        inner: tool,
+        restrictions: restrictions.clone(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -182,20 +199,21 @@ impl AgentTool for ArcGuardedTool {
     }
 }
 
-/// Wrap an Arc-based tool with directory restrictions if any are configured.
-/// Used for sub-agent tools which require `Arc<dyn AgentTool>`.
+/// Wrap an Arc-based tool with the path-argument gate. Used for sub-agent tools,
+/// which require `Arc<dyn AgentTool>`.
+///
+/// **Always wraps**, for the same reason as `maybe_guard` above — see that doc
+/// comment for the mechanism and for the superseded default-off behaviour. This
+/// is the seam that carries the repair into the *sub-agent* tool chain, which
+/// receives none of `with_truncation` / `with_recovery_hints` / `maybe_hook`.
 pub(crate) fn maybe_guard_arc(
     tool: Arc<dyn AgentTool>,
     restrictions: &cli::DirectoryRestrictions,
 ) -> Arc<dyn AgentTool> {
-    if restrictions.is_empty() {
-        tool
-    } else {
-        Arc::new(ArcGuardedTool {
-            inner: tool,
-            restrictions: restrictions.clone(),
-        })
-    }
+    Arc::new(ArcGuardedTool {
+        inner: tool,
+        restrictions: restrictions.clone(),
+    })
 }
 
 // ---------------------------------------------------------------------------
