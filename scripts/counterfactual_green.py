@@ -1737,6 +1737,60 @@ def baseline_from_verdict(verdict):
     return "unknown"
 
 
+def order_by_shape_tier(rows, shape_of):
+    """Reorder candidates so SIGNAL-BEARING commits come first. Pure: `shape_of` injected.
+
+    Returns `(ordered, counts)`. Day 186, #882.
+
+    WHY THIS EXISTS, measured rather than assumed. Day 186's reading session took 8
+    readings and produced ZERO classifiable outcomes: 5 of the 8 were add-only, answered
+    from the diff for free by `NO_PRE_EXISTING_TEST_EDIT`. `select_runnable` draws
+    newest-first, and the newest stretch of this repo is dense in gate-landing commits —
+    which ARE the add-only shape. #875 then measured the population rate at 13 of 45
+    (29%), not 62%, so newest-first is not a random sample: it draws from a local density.
+
+    THREE TIERS, in this order, and each rule is a self-test row:
+
+      1. `TEST_DIFF_TOUCHES_PRE_EXISTING` — the ONLY commits that can produce
+         EARNED / UNEARNED / INCONCLUSIVE, so they go first and a ~3m07s cargo pair
+         buys a classification instead of a refusal.
+      2. `TEST_DIFF_ADD_ONLY` — answered from the diff at zero cargo cost.
+      3. `SHAPE_UNKNOWN` (and `TEST_DIFF_NONE`, which for a row the census already called
+         behavioural is a DISAGREEMENT between two lookups, not a fourth shape — same
+         bucketing `census_shape_split` uses, one rule and not two).
+
+    PREFERENCE, NEVER EXCLUSION. Add-only and unknown rows stay reachable and are never
+    dropped: they cost nothing to answer, the ledger wants them recorded, and filtering
+    them out would make it permanently incomplete while making an unfalsifiable claim
+    about what was skipped. An unknown must not be promoted into the comfortable bucket
+    (Day 144) and must not be silently discarded either — a shrinking denominator inside
+    my own meter is the defect this whole instrument is about.
+
+    STABLE WITHIN A TIER: the existing newest-first order is preserved inside each tier,
+    so the ONLY thing that changes is tier grouping. Newest-first is still a cost decision
+    within a tier (a newer commit's parent is warmer in the shared CARGO_TARGET_DIR).
+
+    PERMUTATION INVARIANT: the output is a permutation of the input — same elements, same
+    count, nothing added, nothing lost. That is the cheapest possible regression guard and
+    it fails loudly the moment a tier is ever dropped.
+
+    THE STATED LIMIT: this changes what is SAMPLED. It does not make any commit more
+    answerable, and it does not grow the reachable denominator by one.
+    """
+    tiers = {"signal_bearing": [], "add_only": [], "shape_unknown": []}
+    for row in rows:
+        shape = shape_of(row.sha)
+        if shape == TEST_DIFF_TOUCHES_PRE_EXISTING:
+            tiers["signal_bearing"].append(row)
+        elif shape == TEST_DIFF_ADD_ONLY:
+            tiers["add_only"].append(row)
+        else:
+            tiers["shape_unknown"].append(row)
+    ordered = tiers["signal_bearing"] + tiers["add_only"] + tiers["shape_unknown"]
+    counts = {k: len(v) for k, v in tiers.items()}
+    return ordered, counts
+
+
 def select_runnable(rows, population, recorded, max_runs):
     """Which commits to run, NEWEST FIRST. Pure.
 
@@ -1970,7 +2024,16 @@ def main(argv):
                     file=sys.stderr,
                 )
 
-        todo = select_runnable(rows, args.population, recorded, args.max_runs)
+        todo = select_runnable(rows, args.population, recorded, None)
+        # #882: order by tier BEFORE applying --max-runs, or the bound would slice the
+        # newest-first list and the preference could never take effect. The resolver is
+        # INJECTED (the `added_ts` / `revisit_add_at` discipline) so the self-tests need
+        # no git. One `git diff --name-status` per unrecorded candidate; no cargo.
+        todo, tier_counts = order_by_shape_tier(
+            todo, lambda sha: commit_test_diff_shape(root, sha)
+        )
+        if args.max_runs is not None:
+            todo = todo[: args.max_runs]
         eligible = [
             r for r in rows if r.population == args.population and r.behavioural
         ]
@@ -1978,8 +2041,22 @@ def main(argv):
         print(
             f"batch: population [{args.population}] has {len(eligible)} behavioural "
             f"commit(s); {len(recorded & {r.sha for r in eligible})} already recorded; "
-            f"running {len(todo)} now (newest first, --max-runs {args.max_runs})."
+            f"running {len(todo)} now (--max-runs {args.max_runs})."
         )
+        # A silent reordering is invisible, and the next reading session needs to know
+        # whether there were signal-bearing commits left to pick AT ALL.
+        print(
+            f"tiers: {tier_counts['signal_bearing']} signal-bearing (can produce a "
+            f"classification), {tier_counts['add_only']} add-only (answered from the "
+            f"diff, outside the rate), {tier_counts['shape_unknown']} shape-unknown "
+            "— run in that order, none dropped."
+        )
+        if tier_counts["signal_bearing"] == 0:
+            print(
+                "tiers: NO signal-bearing candidates remain for this population. Every "
+                "reading below is answerable from the diff and CANNOT move the "
+                "classifiable count — the reachable denominator is exhausted here."
+            )
         sys.stdout.flush()
 
         # ONE shared target dir for the whole batch: adjacent commits share dependencies,
@@ -3049,6 +3126,65 @@ def run_self_tests():
     check("populations are never summed", picked == ["s4"], picked)
     check("register-only commits are not runnable",
           "s5" not in [r.sha for r in select_runnable(rows, POP_PLAIN, set(), None)])
+
+    # order_by_shape_tier (#882). ANTI-VACUOUS FIRST: a selector that finds nothing and
+    # returns nothing is this defect wearing the opposite sign, and it is quieter.
+    _tier_rows = [_row("t1"), _row("t2"), _row("t3"), _row("t4")]
+    all_unk, unk_counts = order_by_shape_tier(_tier_rows, lambda _s: SHAPE_UNKNOWN)
+    check("ANTI-VACUOUS: an all-unknown input returns ALL of them, never empty",
+          [r.sha for r in all_unk] == ["t1", "t2", "t3", "t4"], [r.sha for r in all_unk])
+    check("all-unknown counts land in shape_unknown, summed into neither other tier",
+          unk_counts == {"signal_bearing": 0, "add_only": 0, "shape_unknown": 4},
+          unk_counts)
+
+    # NEAR-MISS GUARD, and it is the half that matters: when every row is signal-bearing
+    # the change must do NOTHING. Full list equality, not a membership check — a
+    # discriminator tested only on the side that fires is vacuous green.
+    all_sig, sig_counts = order_by_shape_tier(
+        _tier_rows, lambda _s: TEST_DIFF_TOUCHES_PRE_EXISTING
+    )
+    check("NEAR-MISS: an all-signal-bearing input comes back BYTE-IDENTICAL",
+          all_sig == _tier_rows, [r.sha for r in all_sig])
+    check("all-signal-bearing counts", sig_counts["signal_bearing"] == 4, sig_counts)
+
+    _shapes = {
+        "t1": TEST_DIFF_ADD_ONLY,
+        "t2": SHAPE_UNKNOWN,
+        "t3": TEST_DIFF_TOUCHES_PRE_EXISTING,
+        "t4": TEST_DIFF_ADD_ONLY,
+    }
+    mixed, mixed_counts = order_by_shape_tier(_tier_rows, lambda s: _shapes[s])
+    check("THREE TIERS: signal-bearing, then add-only, then unknown LAST",
+          [r.sha for r in mixed] == ["t3", "t1", "t4", "t2"], [r.sha for r in mixed])
+    check("stable WITHIN a tier: t1 still precedes t4 (newest-first preserved)",
+          mixed.index(_tier_rows[0]) < mixed.index(_tier_rows[3]))
+    check("tier counts are reported separately, never summed",
+          mixed_counts == {"signal_bearing": 1, "add_only": 2, "shape_unknown": 1},
+          mixed_counts)
+    check("PERMUTATION INVARIANT: same elements, same count, nothing lost",
+          sorted(r.sha for r in mixed) == sorted(r.sha for r in _tier_rows)
+          and len(mixed) == len(_tier_rows))
+    # TEST_DIFF_NONE for a row the census called behavioural is a DISAGREEMENT between
+    # two lookups, not a fourth shape -- same bucketing `census_shape_split` uses.
+    _none, none_counts = order_by_shape_tier(_tier_rows, lambda _s: TEST_DIFF_NONE)
+    check("TEST_DIFF_NONE lands in shape_unknown, and is still never dropped",
+          len(_none) == 4 and none_counts["shape_unknown"] == 4, none_counts)
+    check("an empty candidate list is empty, not an error",
+          order_by_shape_tier([], lambda _s: SHAPE_UNKNOWN) == ([], {
+              "signal_bearing": 0, "add_only": 0, "shape_unknown": 0}))
+
+    # The COMPOSITION main performs: filter unbounded, order by tier, THEN bound. This is
+    # the one that matters — bounding first would slice the newest-first list and the
+    # preference could never take effect, which is the whole defect #882 fixes.
+    _c_rows = [_row("c1"), _row("c2"), _row("c3")]
+    _c_shapes = {"c1": TEST_DIFF_ADD_ONLY, "c2": TEST_DIFF_ADD_ONLY,
+                 "c3": TEST_DIFF_TOUCHES_PRE_EXISTING}
+    _picked = select_runnable(_c_rows, POP_PLAIN, set(), None)
+    _picked, _ = order_by_shape_tier(_picked, lambda s: _c_shapes[s])
+    check("ordering happens BEFORE --max-runs: the 1 signal-bearing commit is chosen",
+          [r.sha for r in _picked[:1]] == ["c3"], [r.sha for r in _picked[:1]])
+    check("bounding AFTER ordering still leaves add-only reachable, never excluded",
+          [r.sha for r in _picked] == ["c3", "c1", "c2"], [r.sha for r in _picked])
 
     _tmp = tempfile.mkdtemp(prefix="yoyo-ledger-selftest-")
     try:
