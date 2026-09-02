@@ -614,6 +614,65 @@ mod tests {
         assert_eq!(result.stderr, "oops");
     }
 
+    // --- signal deaths are named, `-1` no longer doubles as "could not wait" (#878) ---
+
+    /// The emission point is `RunResult.exit_code` — the value `/run` prints and
+    /// the value `/fix` consumes out of `LAST_FAILED_RUN`. Driven end-to-end
+    /// through a real shell, the way every other test in this module does.
+    #[cfg(unix)]
+    #[test]
+    fn run_shell_command_reports_a_signal_death_as_the_negative_signal() {
+        // `kill -9 $$` kills the shell itself, so the child dies on SIGKILL and
+        // has no exit code at all — the case that used to collapse to -1.
+        let result = run_shell_command("kill -9 $$");
+        assert!(!result.success);
+        assert_eq!(
+            result.exit_code,
+            -9,
+            "a SIGKILL death must be reported as -9, not as -1"
+        );
+        // And it must not be confused with the wait-error branch.
+        assert_ne!(result.exit_code, crate::tools::EXIT_CODE_UNDETERMINED);
+    }
+
+    /// Near-miss guard, and the whole regression surface: every existing `/run`
+    /// user is on this path. An ordinary non-zero exit is byte-identical to
+    /// before — a discriminator tested only on the side that fires is vacuous
+    /// green.
+    #[test]
+    fn run_shell_command_leaves_an_ordinary_exit_code_untouched() {
+        let result = run_shell_command("exit 3");
+        assert!(!result.success);
+        assert_eq!(result.exit_code, 3);
+
+        let ok = run_shell_command("exit 0");
+        assert!(ok.success);
+        assert_eq!(ok.exit_code, 0);
+
+        // The rendered text `print_run_result` builds is the bare number for an
+        // ordinary code, exactly as it was before #878.
+        assert_eq!(crate::tools::describe_exit_code(3), "3");
+        assert_eq!(crate::tools::describe_exit_code(0), "0");
+    }
+
+    /// The un-overloading itself: the "could not wait for the child" branch
+    /// returns a sentinel no signal and no exit status can produce, so `-1`
+    /// stops meaning two things at once.
+    #[test]
+    fn the_wait_error_sentinel_is_not_a_value_any_signal_could_produce() {
+        let undetermined = crate::tools::EXIT_CODE_UNDETERMINED;
+        // -1 is SIGHUP, so the sentinel must not be it.
+        assert_ne!(undetermined, -1);
+        // No signal number in the decodable range can produce it.
+        for sig in 1..=64 {
+            assert_ne!(-sig, undetermined);
+        }
+        // Nor can any ordinary exit code.
+        for code in 0..=255 {
+            assert_ne!(code, undetermined);
+        }
+    }
+
     #[test]
     fn test_run_shell_command_streams_multiline() {
         let result = run_shell_command("echo line1; echo line2; echo line3");

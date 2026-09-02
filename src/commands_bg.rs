@@ -591,6 +591,61 @@ mod tests {
         assert_eq!(id2, 2);
     }
 
+    // --- signal deaths are named, `-1` no longer doubles as "could not wait" (#878) ---
+
+    /// Poll until the job reports finished, so the assertion is about the
+    /// decoded exit code rather than about how fast this runner is.
+    async fn wait_for_finish(tracker: &BackgroundJobTracker, id: u32) {
+        for _ in 0..100 {
+            if tracker.is_finished(id) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("job {id} never finished");
+    }
+
+    /// The emission point is `JobSnapshot.exit_code` — the value `/bg list`
+    /// renders. A job killed by a signal used to report the same `-1` as
+    /// "could not wait for the child".
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bg_reports_a_signal_death_as_the_negative_signal() {
+        let tracker = create_tracker();
+        // `kill -9 $$` kills the shell itself, so the child dies on SIGKILL and
+        // has no exit code at all.
+        let id = tracker.launch("kill -9 $$");
+        wait_for_finish(&tracker, id).await;
+
+        let jobs = tracker.list();
+        let job = jobs.iter().find(|j| j.id == id).expect("job present");
+        assert_eq!(
+            job.exit_code,
+            Some(-9),
+            "a SIGKILL death must be reported as -9, not as -1"
+        );
+        assert_ne!(job.exit_code, Some(crate::tools::EXIT_CODE_UNDETERMINED));
+        // And it renders with the signal named, which is the point of the fix.
+        assert_eq!(crate::tools::describe_exit_code(-9), "-9 (SIGKILL)");
+    }
+
+    /// Near-miss guard, and the whole regression surface: every existing `/bg`
+    /// user is on this path. An ordinary non-zero exit is byte-identical to
+    /// before — a discriminator tested only on the side that fires is vacuous
+    /// green.
+    #[tokio::test]
+    async fn bg_leaves_an_ordinary_exit_code_untouched() {
+        let tracker = create_tracker();
+        let id = tracker.launch("exit 3");
+        wait_for_finish(&tracker, id).await;
+
+        let jobs = tracker.list();
+        let job = jobs.iter().find(|j| j.id == id).expect("job present");
+        assert_eq!(job.exit_code, Some(3));
+        // The rendered status carries the bare number, exactly as before #878.
+        assert_eq!(crate::tools::describe_exit_code(3), "3");
+    }
+
     #[test]
     fn test_tail_lines() {
         let text = "line1\nline2\nline3\nline4\nline5\n";

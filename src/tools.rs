@@ -2008,6 +2008,132 @@ mod tests {
         assert_eq!(result.details["success"], false);
     }
 
+    // --- exit-code decoding: signal deaths vs "could not determine" (#878) ---
+
+    /// Build a unix wait status the way `waitpid` reports one, so the decoder is
+    /// driven by the same bit layout a real child produces rather than by a
+    /// value invented to agree with it.
+    #[cfg(unix)]
+    fn exited(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        // WIFEXITED: low 7 bits clear, exit code in bits 8..15.
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(unix)]
+    fn signalled(sig: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        // WIFSIGNALED: signal number in the low 7 bits, no core-dump bit.
+        std::process::ExitStatus::from_raw(sig)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_code_of_reports_the_signal_as_a_negative_number() {
+        // A signal death is `-sig`, so the number itself says which signal.
+        for (sig, want) in [(9, -9), (15, -15), (11, -11), (1, -1)] {
+            assert_eq!(
+                exit_code_of(&signalled(sig)),
+                want,
+                "signal {sig} should decode to {want}"
+            );
+        }
+        // Near-miss guard, and the whole regression surface: an ordinary exit
+        // is passed through unchanged, on every path that reads this.
+        for code in [0, 1, 3, 42, 141, 255] {
+            assert_eq!(
+                exit_code_of(&exited(code)),
+                code,
+                "ordinary exit {code} must pass through untouched"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_name_names_what_it_knows_and_refuses_what_it_does_not() {
+        assert_eq!(signal_name(9), Some("SIGKILL"));
+        assert_eq!(signal_name(15), Some("SIGTERM"));
+        assert_eq!(signal_name(11), Some("SIGSEGV"));
+        assert_eq!(signal_name(1), Some("SIGHUP"));
+        // An unknown or realtime signal returns `None` rather than a fabricated
+        // name — a confidently wrong name is worse than an honest absence.
+        for sig in [7, 34, 40, 62, 64, 0, -9] {
+            assert_eq!(signal_name(sig), None, "signal {sig} must not be named");
+        }
+    }
+
+    /// The collision the sentinel exists for: `-SIGHUP` is literally `-1`, so
+    /// "died on SIGHUP" and "could not determine" cannot be told apart by the
+    /// number alone unless the sentinel sits outside every signal's range.
+    #[test]
+    fn undetermined_sentinel_can_never_be_confused_with_a_signal() {
+        // Outside the signal range, so no `-sig` can produce it, and outside
+        // the ordinary exit-code range, so no exit can either. Checked at
+        // compile time — this is a property of the constants, not of a run.
+        const {
+            assert!(EXIT_CODE_UNDETERMINED < -MAX_SIGNAL);
+            assert!(EXIT_CODE_UNDETERMINED < 0);
+            // The specific collision, pinned deliberately: SIGHUP is -1 and the
+            // sentinel is not, so the two are distinguishable.
+            assert!(EXIT_CODE_UNDETERMINED != -1);
+        }
+        // Every signal this decoder will name is distinct from the sentinel.
+        for sig in 1..=MAX_SIGNAL {
+            assert_ne!(
+                -sig, EXIT_CODE_UNDETERMINED,
+                "signal {sig} collides with the undetermined sentinel"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_exit_code_names_signals_and_leaves_ordinary_codes_alone() {
+        // A signal death carries its name, which is what makes it legible.
+        assert_eq!(describe_exit_code(-9), "-9 (SIGKILL)");
+        assert_eq!(describe_exit_code(-15), "-15 (SIGTERM)");
+        // The collision case: -1 renders as SIGHUP, not as "could not wait".
+        assert_eq!(describe_exit_code(-1), "-1 (SIGHUP)");
+        // A signal we cannot name still says it was a signal rather than
+        // inventing one.
+        assert_eq!(describe_exit_code(-34), "-34 (signal)");
+
+        // Near-miss guard — the half that matters, since every existing user is
+        // on this path. An ordinary code renders byte-identically to before:
+        // the bare number and nothing else.
+        for code in [0, 1, 3, 42, 141, 255] {
+            assert_eq!(
+                describe_exit_code(code),
+                code.to_string(),
+                "ordinary exit {code} must render as the bare number"
+            );
+        }
+        // The sentinel is out of the signal band, so it is not dressed up as a
+        // signal death either.
+        assert_eq!(
+            describe_exit_code(EXIT_CODE_UNDETERMINED),
+            EXIT_CODE_UNDETERMINED.to_string()
+        );
+    }
+
+    #[test]
+    fn the_rendered_exit_line_is_byte_identical_for_an_ordinary_code() {
+        // `StreamingBashTool::execute` builds its line as
+        // `format!("Exit code: {}", describe_exit_code(code))`. Pin both halves
+        // of that contract here: ordinary codes are unchanged from the
+        // pre-#878 `format!("Exit code: {exit_code}")`, and a signal death now
+        // carries its name.
+        assert_eq!(format!("Exit code: {}", describe_exit_code(0)), "Exit code: 0");
+        assert_eq!(
+            format!("Exit code: {}", describe_exit_code(42)),
+            "Exit code: 42"
+        );
+        assert_eq!(
+            format!("Exit code: {}", describe_exit_code(-9)),
+            "Exit code: -9 (SIGKILL)"
+        );
+    }
+
     // --- pipefail + SIGPIPE-141 guard (#579) ---
 
     #[test]
