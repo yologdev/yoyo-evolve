@@ -2357,7 +2357,10 @@ More text.
         // receives, never a `is_some()` that a broken guard would still satisfy.
         assert_eq!(parse_iso8601_to_epoch("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_iso8601_to_epoch("1970-01-01T01:00:00Z"), Some(3600));
-        assert_eq!(parse_iso8601_to_epoch("2026-08-26T21:22:05Z"), Some(1787779325));
+        assert_eq!(
+            parse_iso8601_to_epoch("2026-08-26T21:22:05Z"),
+            Some(1787779325)
+        );
         // Leap-day handling (the Day-134 axis) must survive untouched.
         assert_eq!(
             parse_iso8601_to_epoch("2024-02-29T00:00:00Z"),
