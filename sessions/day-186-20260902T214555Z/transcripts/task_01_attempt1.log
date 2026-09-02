@@ -1,0 +1,245 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the file — specifically select_runnable, commit_test_diff_shape, and the shape constants — so I'm wiring into what already exists rather than rebuilding it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def select_runnable\|de… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1170,1215p' scripts/coun… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me see the caller of select_runnable in main and the shape constants block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "select_runnable" script… ✓ (7ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've read enough to build. Let me see the two remaining spots I need to wire into — the main call site and the existing select_runnable self-tests:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1955,2000p' scripts/coun… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything I need. Step 1: the pure ordering function, built and verified alone before touching select_runnable — this sequencing is the whole lesson from #872's revert.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 56 lines)
+  + def order_by_shape_tier(rows, shape_of):
+  +     """Reorder candidates so SIGNAL-BEARING commits come first. Pure: `shape_of` injected.
+  + 
+  +     Returns `(ordered, counts)`. Day 186, #882.
+  + 
+  +     WHY THIS EXISTS, measured rather than assumed. Day 186's reading session took 8
+  +     readings and produced ZERO classifiable outcomes: 5 of the 8 were add-only, answered
+  +     from the diff for free by `NO_PRE_EXISTING_TEST_EDIT`. `select_runnable` draws
+  +     newest-first, and the newest stretch of this repo is dense in gate-landing commits —
+  +     which ARE the add-only shape. #875 then measured the population rate at 13 of 45
+  +     (29%), not 62%, so newest-first is not a random sample: it draws from a local density.
+  + 
+  +     THREE TIERS, in this order, and each rule is a self-test row:
+  + 
+  +       1. `TEST_DIFF_TOUCHES_PRE_EXISTING` — the ONLY commits that can produce
+  +          EARNED / UNEARNED / INCONCLUSIVE, so they go first and a ~3m07s cargo pair
+  +          buys a classification instead of a refusal.
+  +       2. `TEST_DIFF_ADD_ONLY` — answered from the diff at zero cargo cost.
+  +       3. `SHAPE_UNKNOWN` (and `TEST_DIFF_NONE`, which for a row the census already called
+  +          behavioural is a DISAGREEMENT between two lookups, not a fourth shape — same
+  ... (36 more lines)
+ ✓ (1m 14s)
+  + def order_by_shape_tier(rows, shape_of):
+  +     """Reorder candidates so SIGNAL-BEARING commits come first. Pure: `shape_of` injected.
+  + 
+  +     Returns `(ordered, counts)`. Day 186, #882.
+  + 
+  +     WHY THIS EXISTS, measured rather than assumed. Day 186's reading session took 8
+  +     readings and produced ZERO classifiable outcomes: 5 of the 8 were add-only, answered
+  +     from the diff for free by `NO_PRE_EXISTING_TEST_EDIT`. `select_runnable` draws
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now its self-tests — anti-vacuous asserted first, then the near-miss guard:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 48 lines)
+        check("register-only commits are not runnable",
+              "s5" not in [r.sha for r in select_runnable(rows, POP_PLAIN, set(), None)])
+  + 
+  +     # order_by_shape_tier (#882). ANTI-VACUOUS FIRST: a selector that finds nothing and
+  +     # returns nothing is this defect wearing the opposite sign, and it is quieter.
+  +     _tier_rows = [_row("t1"), _row("t2"), _row("t3"), _row("t4")]
+  +     all_unk, unk_counts = order_by_shape_tier(_tier_rows, lambda _s: SHAPE_UNKNOWN)
+  +     check("ANTI-VACUOUS: an all-unknown input returns ALL of them, never empty",
+  +           [r.sha for r in all_unk] == ["t1", "t2", "t3", "t4"], [r.sha for r in all_unk])
+  +     check("all-unknown counts land in shape_unknown, summed into neither other tier",
+  +           unk_counts == {"signal_bearing": 0, "add_only": 0, "shape_unknown": 4},
+  +           unk_counts)
+  + 
+  +     # NEAR-MISS GUARD, and it is the half that matters: when every row is signal-bearing
+  +     # the change must do NOTHING. Full list equality, not a membership check — a
+  +     # discriminator tested only on the side that fires is vacuous green.
+  +     all_sig, sig_counts = order_by_shape_tier(
+  +         _tier_rows, lambda _s: TEST_DIFF_TOUCHES_PRE_EXISTING
+  +     )
+  +     check("NEAR-MISS: an all-signal-bearing input comes back BYTE-IDENTICAL",
+  ... (28 more lines)
+ ✓ (1m 14s)
+        check("register-only commits are not runnable",
+              "s5" not in [r.sha for r in select_runnable(rows, POP_PLAIN, set(), None)])
+  + 
+  +     # order_by_shape_tier (#882). ANTI-VACUOUS FIRST: a selector that finds nothing and
+  +     # returns nothing is this defect wearing the opposite sign, and it is quieter.
+  +     _tier_rows = [_row("t1"), _row("t2"), _row("t3"), _row("t4")]
+  +     all_unk, unk_counts = order_by_shape_tier(_tier_rows, lambda _s: SHAPE_UNKNOWN)
+  +     check("ANTI-VACUOUS: an all-unknown input returns ALL of them, never empty",
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is written. Now the critical part of the sequencing — verify it green alone before touching `select_runnable`:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (54ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 green alone. Step 2 — wire it. I'll compose in main so all five existing select_runnable self-tests stay untouched as a regression guard, while shapes get resolved once per unrecorded candidate and ordering happens before max_runs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (11 → 34 lines)
+  -         todo = select_runnable(rows, args.population, recorded, args.max_runs)
+  +         todo = select_runnable(rows, args.population, recorded, None)
+  +         # #882: order by tier BEFORE applying --max-runs, or the bound would slice the
+  +         # newest-first list and the preference could never take effect. The resolver is
+  +         # INJECTED (the `added_ts` / `revisit_add_at` discipline) so the self-tests need
+  +         # no git. One `git diff --name-status` per unrecorded candidate; no cargo.
+  +         todo, tier_counts = order_by_shape_tier(
+  +             todo, lambda sha: commit_test_diff_shape(root, sha)
+  +         )
+  +         if args.max_runs is not None:
+  +             todo = todo[: args.max_runs]
+            eligible = [
+                r for r in rows if r.population == args.population and r.behavioural
+            ]
+  ···
+            print(
+                f"batch: population [{args.population}] has {len(eligible)} behavioural "
+                f"commit(s); {len(recorded & {r.sha for r in eligible})} already recorded; "
+  -             f"running {len(todo)} now (newest first, --max-runs {args.max_runs})."
+  +             f"running {len(todo)} now (--max-runs {args.max_runs})."
+  ... (16 more lines)
+ ✓ (1m 13s)
+  -         todo = select_runnable(rows, args.population, recorded, args.max_runs)
+  +         todo = select_runnable(rows, args.population, recorded, None)
+  +         # #882: order by tier BEFORE applying --max-runs, or the bound would slice the
+  +         # newest-first list and the preference could never take effect. The resolver is
+  +         # INJECTED (the `added_ts` / `revisit_add_at` discipline) so the self-tests need
+  +         # no git. One `git diff --name-status` per unrecorded candidate; no cargo.
+  +         todo, tier_counts = order_by_shape_tier(
+  +             todo, lambda sha: commit_test_diff_shape(root, sha)
+  ... (13 more lines)
+
+Now a self-test pinning the composition — the exact ordering the live path performs, since that's where the ordering-before-max_runs rule actually has to hold:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 16 lines)
+        check("an empty candidate list is empty, not an error",
+              order_by_shape_tier([], lambda _s: SHAPE_UNKNOWN) == ([], {
+                  "signal_bearing": 0, "add_only": 0, "shape_unknown": 0}))
+  + 
+  +     # The COMPOSITION main performs: filter unbounded, order by tier, THEN bound. This is
+  +     # the one that matters — bounding first would slice the newest-first list and the
+  +     # preference could never take effect, which is the whole defect #882 fixes.
+  +     _c_rows = [_row("c1"), _row("c2"), _row("c3")]
+  +     _c_shapes = {"c1": TEST_DIFF_ADD_ONLY, "c2": TEST_DIFF_ADD_ONLY,
+  +                  "c3": TEST_DIFF_TOUCHES_PRE_EXISTING}
+  +     _picked = select_runnable(_c_rows, POP_PLAIN, set(), None)
+  +     _picked, _ = order_by_shape_tier(_picked, lambda s: _c_shapes[s])
+  +     check("ordering happens BEFORE --max-runs: the 1 signal-bearing commit is chosen",
+  +           [r.sha for r in _picked[:1]] == ["c3"], [r.sha for r in _picked[:1]])
+  +     check("bounding AFTER ordering still leaves add-only reachable, never excluded",
+  +           [r.sha for r in _picked] == ["c3", "c1", "c2"], [r.sha for r in _picked])
+ ✓ (1m 13s)
+        check("an empty candidate list is empty, not an error",
+              order_by_shape_tier([], lambda _s: SHAPE_UNKNOWN) == ([], {
+                  "signal_bearing": 0, "add_only": 0, "shape_unknown": 0}))
+  + 
+  +     # The COMPOSITION main performs: filter unbounded, order by tier, THEN bound. This is
+  +     # the one that matters — bounding first would slice the newest-first list and the
+  +     # preference could never take effect, which is the whole defect #882 fixes.
+  +     _c_rows = [_row("c1"), _row("c2"), _row("c3")]
+  ... (8 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the positive control — one atomic mutate→run→restore, run serially (two file-mutating controls in one parallel block raced once and one falsely passed):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (7 lines) ✓ (121ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exit 1 confirms it fails — but the whole point of the control is which tests go red versus stay green. Let me capture that precisely:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (5 lines) ✓ (123ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control fired in **exactly the right direction**: the two preference tests went red (THREE TIERS got ['t1','t2','t3','t4'] — no tiering; ordering BEFORE --max-runs picked c1 instead of the signal-bearing `c3), while the **near-miss guard, permutation invariant and anti-vacuous branch all stayed green** — that's what proves those guards test the pass-through rather than the fix. Restored, ALL PASSED`.
+
+Now the dry check against the real repo — no cargo, just the selection path:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 … (19 lines) ✓ (4.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The dry check confirms it works on real data — and the contrast with last session is stark: 23 of 26 unrecorded candidates are signal-bearing, and the first three picks are all TOUCHES_PRE_EXISTING, where newest-first gave last session 5 add-only out of 8. Now the docs:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "characterising the popu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Line 467 contains a claim my own change just made stale (select_runnable is untouched) — per my own rule, I record the supersession rather than erasing it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 3 lines)
+    Sampling newest-first drew from a recent stretch unusually dense in gate-landing commits — exactly the add-only shape — so **a sample drawn newest-first is not a random sample**, and I read a local density as a population rate.
+  + 
+  + **Day 186 (#882) — the selector prefers signal-bearing commits, and the "`select_runnable` is **untouched**" clause immediately above is superseded, recorded rather than erased.** That sentence is a true record of what the #875 task did and is **false as a description of the code**; the reasoning in it was right and is why this landed next — it named the throughput fix, priced it, and deferred it rather than half-doing it. **The measured reason:** Day 186's reading session took **8 readings … [yoyo: 3630 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+    Sampling newest-first drew from a recent stretch unusually dense in gate-landing commits — exactly the add-only shape — so **a sample drawn newest-first is not a random sample**, and I read a local density as a population rate.
+  + 
+  + **Day 186 (#882) — the selector prefers signal-bearing commits, and the "`select_runnable` is **untouched**" clause immediately above is superseded, recorded rather than erased.** That sentence is a true record of what the #875 task did and is **false as a description of the code**; the reasoning in it was right and is why this landed next — it named the throughput fix, priced it, and deferred it rather than half-doing it. **The measured reason:** Day 186's reading session took **8 readings … [yoyo: 3630 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Final verification. No Rust changed, but cargo test is the gate that decides revert, so I verify it rather than assume:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --quiet 2… ✓ (1m 13s)
+  3 tools completed in 2m 36s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

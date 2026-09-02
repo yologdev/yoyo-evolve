@@ -1,0 +1,191 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by registering my hypotheses before opening the file. First, let me verify the round number and check the repair history.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (18 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 92 confirmed. Now the mandatory history grep — not reading the file is the discipline; not reading its history is laziness wearing the discipline's clothes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== CL… (5 lines) ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+History is real: parse_iso8601_to_epoch already got a leap-year fix, handle_evolution was rewritten by #832, and format_cache_stats is already at both doors. Let me gather caller-side evidence (allowed — the blindfold covers the target file, not its contracts) before predicting.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== gi… (3 lines) ✓ (43ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 92, evidence gathered: `ROUTED_SUBCOMMANDS routes status/version/changelog/evolution but not tokens/cost/model/provider/think/profile; parse_iso8601_to_epoch` already got a day-of-month fix (Day 134); format_cache_stats is already at both /tokens and /cost doors. Writing the prediction now, before opening the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head -20 &&… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree. Writing the sealed prediction:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (43 lines) ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction sealed. Now opening the file — h0 first (the derivable bet).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_iso8601_to_epo… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h0's mechanism is confirmed exactly: trim_end_matches('Z') then a strict 3-part split(':') means +00:00 yields 4 parts → None, and .123Z fails sec.parse() → None. Now h1 and h2, fast:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== h1… (3 lines) ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+h1 looks like a hit in the inverse direction — the hint says <model-name> while the handler implements list/info. Confirming reachability + h2's rendering:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== /m… (2 lines) ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+**h0 pays off in a direction I didn't predict, and it's a real defect in the target file. The Day-134 commit hardened the *calendar-within-year* axis; the year** axis was never guarded. `for y in 1970..year` is an *empty range* when `year < 1970`, so a pre-1970 date returns Some(garbage) rather than None — the exact "overflowing forward into a garbage epoch" failure the Day-134 fix was written for, one axis over. Let me confirm empirically before claiming it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cat > y.rs <<'EOF' (29 lines) ✓ (233ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed, and the worst case is the collision: `1900-01-01T00:00:00Z` → `Some(0)`, byte-identical to `1970-01-01T00:00:00Z`. Offsets/fractions return None honestly (no defect there). Applying the one-line guard + tests:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_iso8601_to_epoch"… ✓ (8ms)
+  ▶ edit src/commands_info.rs (3 → 21 lines)
+        let year: u64 = date_parts[0].parse().ok()?;
+        let month: u64 = date_parts[1].parse().ok()?;
+        let day: u64 = date_parts[2].parse().ok()?;
+  + 
+  +     // A year before 1970 has no representation in this unsigned epoch, and without
+  +     // this guard it does not fail — it succeeds with a garbage value. `for y in
+  +     // 1970..year` is an EMPTY range when `year < 1970`, so the year contributes
+  +     // nothing and the month/day arithmetic below projects forward from 1970-01-01:
+  +     // `1969-12-31` returned `Some(31449600)` (i.e. 1970-12-31), and every
+  +     // `YYYY-01-01T00:00:00Z` before 1970 — 1900, 0001 — returned `Some(0)`, which
+  +     // is byte-identical to the epoch itself and so indistinguishable from a real
+  +     // `1970-01-01T00:00:00Z`. Refusing is the honest answer and the safe direction:
+  +     // this returns `Option`, and every caller already handles `None`.
+  +     //
+  +     // Same failure mode as the Day-134 repair one axis over. That commit guarded the
+  +     // calendar WITHIN a year (2021-02-30, 2021-04-31 "slipped past the range check
+  +     // and produced a garbage epoch by overflowing forward") and left the YEAR axis
+  +     // unguarded, because the range check it strengthened never looked at the year.
+  +     if year < 1970 {
+  +         return None;
+  ... (1 more lines)
+ ✓ (1m 47s)
+        let year: u64 = date_parts[0].parse().ok()?;
+        let month: u64 = date_parts[1].parse().ok()?;
+        let day: u64 = date_parts[2].parse().ok()?;
+  + 
+  +     // A year before 1970 has no representation in this unsigned epoch, and without
+  +     // this guard it does not fail — it succeeds with a garbage value. `for y in
+  +     // 1970..year` is an EMPTY range when `year < 1970`, so the year contributes
+  +     // nothing and the month/day arithmetic below projects forward from 1970-01-01:
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 59s (2 ✓)
+
+Now the tests, at the emission point, with the near-miss guard beside them:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2318,2334p' src/commands… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_info.rs (2 → 57 lines)
+  +     #[test]
+  +     fn parse_iso8601_refuses_pre_1970_instead_of_returning_a_garbage_epoch() {
+  +         // Blind round 92. Measured BEFORE the fix, not inferred: `for y in 1970..year`
+  +         // is an EMPTY range when `year < 1970`, so the year contributed nothing and the
+  +         // month/day arithmetic projected forward from 1970-01-01. Receipts, verbatim:
+  +         //   "1969-12-31T00:00:00Z" -> Some(31449600)   i.e. 1970-12-31
+  +         //   "1900-01-01T00:00:00Z" -> Some(0)
+  +         //   "0001-01-01T00:00:00Z" -> Some(0)
+  +         // A confident wrong value, not a refusal — and the `Some(0)` cases collide
+  +         // byte-identically with the epoch itself (see the near-miss guard below), so a
+  +         // caller could not tell them apart from a real 1970-01-01T00:00:00Z.
+  +         assert_eq!(parse_iso8601_to_epoch("1969-12-31T00:00:00Z"), None);
+  +         assert_eq!(parse_iso8601_to_epoch("1900-01-01T00:00:00Z"), None);
+  +         assert_eq!(parse_iso8601_to_epoch("0001-01-01T00:00:00Z"), None);
+  +         // The boundary is pinned on BOTH sides: 1969 refuses, 1970 is the epoch.
+  +         // A discriminator tested only on the side that fires is vacuous green.
+  +         assert_eq!(parse_iso8601_to_epoch("1969-12-31T23:59:59Z"), None);
+  +         assert_eq!(parse_iso8601_to_epoch("1970-01-01T00:00:00Z"), Some(0));
+  +     }
+  + 
+  ... (37 more lines)
+ ✓ (1m 51s)
+  +     #[test]
+  +     fn parse_iso8601_refuses_pre_1970_instead_of_returning_a_garbage_epoch() {
+  +         // Blind round 92. Measured BEFORE the fix, not inferred: `for y in 1970..year`
+  +         // is an EMPTY range when `year < 1970`, so the year contributed nothing and the
+  +         // month/day arithmetic projected forward from 1970-01-01. Receipts, verbatim:
+  +         //   "1969-12-31T00:00:00Z" -> Some(31449600)   i.e. 1970-12-31
+  +         //   "1900-01-01T00:00:00Z" -> Some(0)
+  +         //   "0001-01-01T00:00:00Z" -> Some(0)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo parse_iso8… ✓ (173ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 59s (2 ✓)
+
+8/8 green. Now the positive control — one atomic mutate→run→restore, with the marker in place so tests/neutered_guards.rs catches it if the restore ever fails:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (20 lines) ✓ (25.3s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control is textbook: exactly 1 test red (the fix's own), all 7 others green including both near-miss guards — the direction proving they test the pass-through, not the fix — restored byte-identical, 0 markers. Now the grade line, which must land this same pass:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (10.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 92 is closed and the gate passes. Now the register check and the h1 filing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -… (2 lines) ✓ (174ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+73 past — inside the grace band, but I'll pay it rather than absorb it. Pasting the literal line the gate itself printed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"sr… (7 lines) ✓ (457ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_info.rs
+
