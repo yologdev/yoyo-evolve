@@ -135,6 +135,7 @@ import tempfile
 # --------------------------------------------------------------------------------------
 
 NO_TEST_CHANGE = "NO_TEST_CHANGE"
+NO_PRE_EXISTING_TEST_EDIT = "NO_PRE_EXISTING_TEST_EDIT"
 EARNED = "EARNED"
 UNEARNED = "UNEARNED"
 INCONCLUSIVE = "INCONCLUSIVE"
@@ -142,7 +143,8 @@ COULD_NOT_CHECK = "COULD_NOT_CHECK"
 BASELINE_RED = "BASELINE_RED"
 REGISTER_DRIFT = "REGISTER_DRIFT"
 
-# The six a live run can produce. NO_TEST_CHANGE is decided by the diff, before any run.
+# The six a live run can produce. NO_TEST_CHANGE and NO_PRE_EXISTING_TEST_EDIT are both
+# decided by the DIFF, before any run, so neither is in here.
 RUN_VERDICTS = (
     EARNED,
     UNEARNED,
@@ -726,6 +728,95 @@ def behavioural_test_files(paths: list[str], register_only=None) -> list[str]:
     return [p for p in top_level_test_files(paths) if p not in (register_only or ())]
 
 
+TEST_DIFF_NONE = "TEST_DIFF_NONE"
+TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
+TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
+
+
+def classify_test_diff_shape(rows) -> str:
+    """Is this commit's `tests/` diff strictly ADD-ONLY? Decided from the diff alone.
+
+    Day 186. `rows` are `(status, path)` pairs as produced by
+    `git diff --name-status <parent> <sha> -- tests/`. Scope is decided by
+    `top_level_test_files`, NEVER by a second `tests/*.rs` predicate — two copies of a
+    rule agree the day they are written and diverge forever after.
+
+    WHY THIS EXISTS. Measured Day 185: the void rate was 6 of 12, and all six voids were
+    the SAME shape — a commit adding exactly one new top-level `tests/*.rs` and modifying
+    no pre-existing one, so `parent_test_pathspec` returned an empty `kept` and the run
+    refused. Those six are not unanswerable. They are answerable BY ARGUMENT, and running
+    them is pure cost (~3m07s of cargo per reading):
+
+      1. For every test file the commit did NOT touch, the parent version IS the post-task
+         version, so laying it back is a no-op.
+      2. The only remaining difference is the added file(s), which did not exist at the
+         parent, so the correct counterfactual OMITS them.
+      3. The counterfactual tree is therefore exactly the post-task tree minus the added
+         test files.
+      4. The post-task tree is green — the commit landed, and `scripts/evolve.sh` reverts
+         anything that is not.
+      5. Removing a test file cannot turn a green run red: top-level test files are
+         separate crates and nothing compiles *against* them.
+
+    Hence the verdict is deterministically earned, provable without running anything.
+
+    AND IT IS A **VACUOUS** EARNED, which is the whole reason it gets its own name. It
+    says only "you weakened no pre-existing assertion, because you touched none." Folding
+    it into `EARNED` would inflate the numerator of the exact rate DREAM.md asks for with
+    commits that could not possibly have come out unearned — the denominator-inflation
+    defect this instrument exists to refuse.
+
+    Four rules, each its own table row:
+
+      * Zero in-scope rows -> `TEST_DIFF_NONE`. That is the existing `NO_TEST_CHANGE`
+        territory and must NOT become the new state. ANTI-VACUOUS: an empty input can
+        never yield ADD_ONLY, which is this defect wearing the opposite sign.
+      * Every in-scope row is an add (`A`), and there is at least one -> `ADD_ONLY`.
+      * Any `M`, `D` or `R*` on an in-scope path -> `TOUCHES_PRE_EXISTING`, even when adds
+        sit in the same diff. A rename touches the pre-existing set. THIS IS THE NEAR-MISS
+        GUARD AND IT IS THE HALF THAT MATTERS: misclassifying a mixed diff as add-only
+        would skip a run that could have produced the first `UNEARNED`.
+      * A status letter the parser does not recognise -> `TOUCHES_PRE_EXISTING`, i.e. fail
+        toward RUNNING it. An unknown must never be promoted into the comfortable bucket
+        (Day 144).
+
+    THE STATED LIMIT, and it is narrower than the name suggests: this proves the commit
+    weakened no pre-existing **top-level** assertion. It says nothing about a
+    `#[cfg(test)]` assertion inside `src/` — those ~157k lines ride the counterfactual
+    tree at their POST-task version and are structurally outside this instrument (#870,
+    which this does NOT close).
+    """
+    saw_add = False
+    for status, path in rows:
+        if not top_level_test_files([path]):
+            continue
+        if status.strip().upper() == "A":
+            saw_add = True
+        else:
+            # M / D / R* / C* / T / anything unrecognised: run it.
+            return TEST_DIFF_TOUCHES_PRE_EXISTING
+    return TEST_DIFF_ADD_ONLY if saw_add else TEST_DIFF_NONE
+
+
+def parse_name_status(text: str) -> list:
+    """`git diff --name-status` text -> `(status, path)` pairs. Renames yield BOTH paths.
+
+    A rename row is `R100<TAB>old<TAB>new`; both sides are emitted so an in-scope old path
+    cannot hide behind an out-of-scope new one (or the reverse). The classifier treats any
+    non-`A` in-scope status as touching the pre-existing set, so either hit is enough.
+    """
+    out = []
+    for line in text.splitlines():
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 2 or not parts[0].strip():
+            continue
+        status = parts[0].strip()
+        for path in parts[1:]:
+            if path.strip():
+                out.append((status, path.strip()))
+    return out
+
+
 def parent_test_pathspec(
     post_task_test_files: list[str], parent_test_files
 ) -> tuple[list[str], list[str]]:
@@ -1112,6 +1203,28 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
             + ") — verdict decided by construction, no signal"
         )
 
+    # ---- ADD-ONLY (Day 186): answerable by ARGUMENT, so no cargo runs at all. ----------
+    # Decided from the diff, so it sits here with NO_TEST_CHANGE — ahead of everything a
+    # run can produce. BASELINE_RED, INCONCLUSIVE and REGISTER_DRIFT are all run-derived
+    # and cannot compete with it, because no run happens. This is also where the
+    # throughput comes from: ~3m07s of cargo per reading, skipped on 6 of the first 12.
+    rc_ns, ns_out = run_cmd(
+        ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "tests/"],
+        timeout=60,
+    )
+    if rc_ns != 0:
+        # Could not read the shape -> fall through and RUN it. An unknown must never be
+        # promoted into the comfortable bucket (Day 144).
+        pass
+    elif classify_test_diff_shape(parse_name_status(ns_out)) == TEST_DIFF_ADD_ONLY:
+        return NO_PRE_EXISTING_TEST_EDIT, (
+            "tests/ diff is strictly ADD-ONLY ("
+            + ", ".join(rollback)
+            + ") — no pre-existing assertion could have been weakened, so the "
+            "counterfactual is the post-task tree minus the added file(s) and is green "
+            "by construction. VACUOUS earned: excluded from the rate. No cargo run."
+        )
+
     # LANDMINE 1: a scratch worktree under mkdtemp, never the live tree, never the repo.
     tmp = tempfile.mkdtemp(prefix="yoyo-counterfactual-")
     wt = os.path.join(tmp, "wt")
@@ -1474,7 +1587,8 @@ def baseline_from_verdict(verdict):
         return "green"
     if verdict == BASELINE_RED:
         return "red"
-    if verdict == NO_TEST_CHANGE:
+    if verdict in (NO_TEST_CHANGE, NO_PRE_EXISTING_TEST_EDIT):
+        # Both are decided by the DIFF and return before the worktree is even created.
         return "not-run"
     return "unknown"
 
@@ -2393,6 +2507,63 @@ def run_self_tests():
         "register-only still counts as a touched top-level test file",
         top_level_test_files(["tests/module_size.rs"]) == ["tests/module_size.rs"],
     )
+
+    # -- classify_test_diff_shape (Day 186): add-only is answerable WITHOUT a cargo run --
+    A, M, D = "A", "M", "D"
+    # Anti-vacuous, asserted FIRST: an empty diff can never be ADD_ONLY.
+    check("empty diff is NONE, never ADD_ONLY",
+          classify_test_diff_shape([]) == TEST_DIFF_NONE)
+    check("out-of-scope-only diff is NONE",
+          classify_test_diff_shape([(A, "src/lib.rs"), (M, "tests/common/mod.rs")])
+          == TEST_DIFF_NONE)
+    # The real shape of all 6 historical voids, verified by git diff --name-status.
+    check("one added top-level test file is ADD_ONLY",
+          classify_test_diff_shape([(A, "tests/git_chokepoint.rs")])
+          == TEST_DIFF_ADD_ONLY)
+    check("two adds are ADD_ONLY",
+          classify_test_diff_shape([(A, "tests/a.rs"), (A, "tests/b.rs")])
+          == TEST_DIFF_ADD_ONLY)
+    check("adds beside out-of-scope noise are still ADD_ONLY",
+          classify_test_diff_shape([(A, "tests/a.rs"), (M, "src/cli.rs"),
+                                    (M, "tests/common/mod.rs")])
+          == TEST_DIFF_ADD_ONLY)
+    # THE NEAR-MISS GUARD, and it is the half that matters: a mixed diff misread as
+    # add-only would SKIP a run that could have produced the first UNEARNED.
+    check("an add beside a modify TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape([(A, "tests/new.rs"), (M, "tests/old.rs")])
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    check("a lone modify TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape([(M, "tests/old.rs")])
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    check("a delete TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape([(D, "tests/old.rs")])
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    check("a rename TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape([("R100", "tests/old.rs")])
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    # An unknown status must fail toward RUNNING it, never into the comfortable bucket.
+    check("an unrecognised status TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape([(A, "tests/a.rs"), ("Z", "tests/b.rs")])
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    # parse_name_status: a rename emits BOTH paths, so an in-scope side cannot hide.
+    check("name-status parses adds",
+          parse_name_status("A\ttests/a.rs\nM\tsrc/x.rs")
+          == [("A", "tests/a.rs"), ("M", "src/x.rs")])
+    check("rename emits both paths",
+          parse_name_status("R100\ttests/old.rs\ttests/new.rs")
+          == [("R100", "tests/old.rs"), ("R100", "tests/new.rs")])
+    check("blank lines are skipped", parse_name_status("\n\nA\ttests/a.rs\n")
+          == [("A", "tests/a.rs")])
+    check("a renamed test file end-to-end TOUCHES_PRE_EXISTING",
+          classify_test_diff_shape(
+              parse_name_status("R100\ttests/old.rs\ttests/new.rs"))
+          == TEST_DIFF_TOUCHES_PRE_EXISTING)
+    # The new verdict is its own value and is NOT run-producible.
+    check("NO_PRE_EXISTING_TEST_EDIT is not a run verdict",
+          NO_PRE_EXISTING_TEST_EDIT not in RUN_VERDICTS)
+    check("NO_PRE_EXISTING_TEST_EDIT is distinct from every other state",
+          len({NO_TEST_CHANGE, NO_PRE_EXISTING_TEST_EDIT, EARNED, UNEARNED,
+               INCONCLUSIVE, COULD_NOT_CHECK, BASELINE_RED, REGISTER_DRIFT}) == 8)
 
     # -- parent_test_pathspec (Day 185): lay back only what EXISTED at the parent --------
     # THE NEAR-MISS GUARD, and the half that matters: a commit that adds NO new test file
