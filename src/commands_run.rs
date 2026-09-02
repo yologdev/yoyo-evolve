@@ -171,7 +171,7 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
         Err(e) => {
             eprintln!("{RED}  error running command: {e}{RESET}\n");
             return RunResult {
-                exit_code: -1,
+                exit_code: crate::tools::EXIT_CODE_UNDETERMINED,
                 stdout: String::new(),
                 stderr: format!("error running command: {e}"),
                 elapsed: start.elapsed(),
@@ -222,7 +222,9 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
     // Collect exit status
     match child.wait() {
         Ok(status) => {
-            let code = status.code().unwrap_or(-1);
+            // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+            // determine" were the same number, and `-1` is literally SIGHUP (#878).
+            let code = crate::tools::exit_code_of(&status);
             let success = code == 0;
             RunResult {
                 exit_code: code,
@@ -235,7 +237,7 @@ pub fn run_shell_command(cmd: &str) -> RunResult {
         Err(e) => {
             eprintln!("{RED}  error waiting for command: {e}{RESET}\n");
             RunResult {
-                exit_code: -1,
+                exit_code: crate::tools::EXIT_CODE_UNDETERMINED,
                 stdout: stdout_text,
                 stderr: format!("{stderr_text}\nerror waiting for command: {e}"),
                 elapsed,
@@ -251,7 +253,10 @@ pub fn print_run_result(result: &RunResult) {
     if result.success {
         println!("{DIM}  ✓ exit {} ({elapsed}){RESET}\n", result.exit_code);
     } else {
-        println!("{RED}  ✗ exit {} ({elapsed}){RESET}", result.exit_code);
+        println!(
+            "{RED}  ✗ exit {} ({elapsed}){RESET}",
+            crate::tools::describe_exit_code(result.exit_code)
+        );
         // Show a brief stderr preview if available
         if !result.stderr.is_empty() {
             let preview: String = result
