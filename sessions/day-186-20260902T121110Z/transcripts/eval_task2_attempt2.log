@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "truncate_diff_line" sr… ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/output.rs && ca… ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (148ms)
+  3 tools completed in 13.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 6 new tests pass, the register entry (2885) matches wc -l exactly, and the rename left no dangling references. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 26s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Evidence I actually checked:
+
+• The rename is complete. `grep -rn "truncate_diff_line" src/ tests/ returns only three *test names* in diff.rs and the unrelated plural truncate_diff_lines in commands_retry.rs` (a different, untouched function). No dangling call sites — this was the highest-risk touchpoint given the pub(crate) promotion plus a new third parameter.
+• The new tests are real and green. `cargo test --bin yoyo smart_truncate_for_context` → 6 passed / 0 failed, including the step-0 100KB reproduction now asserting the clamped result, the byte-identical near-miss guard on both trailing-newline and no-trailing-newline fixtures, both boundary sides, the multi-byte fixture with an anti-vacuous straddle check, and marker-count agreement.
+• **The register number was not hand-typed.** wc -l src/format/output.rs = 2885, matching the ("src/format/output.rs", 2885) line exactly.
+• The diff renderer is unchanged. All three content-line sites pass "diff lines" — their prior wording — so the pre-existing diff tests stayed green with assertions unedited, only signatures updated.
+
+One piece of cleanup feedback, not a fail: in the early-return rebuild branch, a trailing newline is dropped when a line is over budget, because content.lines() discards it and the loop joins with \n only between lines. That only affects content already being modified, and the pre-existing line-count truncation path has the same property — so it is not a regression, but it is a small asymmetry with the byte-identical guarantee one branch over.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

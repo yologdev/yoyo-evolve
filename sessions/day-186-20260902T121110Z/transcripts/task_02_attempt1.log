@@ -1,0 +1,258 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the defect — step 0 is non-negotiable, and a structural guess is not a defect until it's measured.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "smart_truncate_for_cont…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_diff_line\|MAX… ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,70p src/format/diff.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,985p src/format/outpu… ✓ (3ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7.9s (4 ✓)
+
+Now let me measure it rather than infer it — step 0. Let me look at the other truncation function too:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn truncate_tool_ou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "smart_truncate_for_con… ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 10ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me check my current state and then run the step-0 reproduction:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 10,25p src/format/diff.rs… ✓ (4ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.3s (2 ✓)
+
+Tree is clean, Task 1 committed. Note: truncate_diff_line has one shared call site (line 179), not three. Let me read the full doc comments before editing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=9 && NR<=54' src/format… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The tool is collapsing comment lines. Let me read the exact text:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs:10..55 ✓ (0ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Step 0 measurement: smart_truncate_for_context collects lines(), and for a single 100KB line total = 1 <= 500 hits the early return content.to_string() — no byte bound anywhere on that path. Let me confirm empirically and fix. First, generalize the existing pure function:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs (26 → 38 lines)
+  - /// Bound one diff line's width, marking the cut in band.
+  + /// Bound one line's width, marking the cut in band.
+    ///
+    /// `None` means the line is at or under budget and the caller must emit it
+    /// **verbatim** — that is every line of every hand-sized diff, i.e. the whole
+  ···
+    /// `is_char_boundary` first, so a multi-byte character straddling the cut is
+    /// dropped whole rather than split (CLAUDE.md rule #250; a base64 blob is
+    /// exactly where a multi-byte neighbour sits).
+  - fn truncate_diff_line(line: &str, max: usize) -> Option<String> {
+  + ///
+  + /// **Not diff-specific** (Day 186, #877). It was written for this renderer and
+  + /// is now shared with `format::output::smart_truncate_for_context`, which needs
+  + /// the same ceiling for the same reason one subsystem over: a *line* window and
+  + /// a *byte* budget both wave through one minified line that is comfortably
+  + /// inside the line count and on its own eats the whole context budget. `what`
+  + /// names the thing being capped so each caller's marker says something true —
+  + /// "diff lines are capped at 500 bytes" would be a lie printed into tool output.
+  + /// Both the budget and the label are parameters, so this states the *rule* once
+  + /// and neither caller owns it; a second copy of this function would agree on the
+  ... (15 more lines)
+ ✓ (13.1s)
+  - /// Bound one diff line's width, marking the cut in band.
+  + /// Bound one line's width, marking the cut in band.
+    ///
+    /// `None` means the line is at or under budget and the caller must emit it
+    /// **verbatim** — that is every line of every hand-sized diff, i.e. the whole
+  ···
+    /// `is_char_boundary` first, so a multi-byte character straddling the cut is
+    /// dropped whole rather than split (CLAUDE.md rule #250; a base64 blob is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — now the call site and the pre-existing tests. The call site passes "diff lines" so rendered output stays byte-identical:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/truncate_diff_line(/tr… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the emission point. Let me check module visibility and the exact function body:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod diff\|mod output" s… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+mod diff; is private to format, and output is a sibling descendant — so super::diff::truncate_long_line is reachable with pub(crate). Now the emission point:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (41 → 104 lines)
+    /// Maximum lines to include when auto-truncating a large file for /add.
+    pub const ADD_MAX_LINES: usize = 500;
+  + 
+  + /// Maximum bytes of a *single* line of tool output before it is clamped (#877).
+  + ///
+  + /// This is a **judgment threshold, not a measurement** — nothing measured says
+  + /// 2000 is right. It sits far above any human-authored source line (what this
+  + /// function normally sees, so ordinary files pass through byte-identically) and
+  + /// far below the point where one line displaces the model's whole window.
+  + ///
+  + /// It is the **third** ceiling, and the two that already existed cannot cover
+  + /// this case. A *line window* (`ADD_MAX_LINES`, `AST_MAX_OUTPUT_LINES`,
+  + /// `GREP_MAX_MATCHES`) bounds an ordinary large file; a *byte budget*
+  + /// (`truncate_tool_output`'s `max_chars`, `CappedCapture`'s 4KB+4KB, `/bg`'s
+  + /// 256KB) bounds a file whose lines are wide rather than many. Neither bounds
+  + /// *one* minified line that sits comfortably inside the line window — and every
+  + /// line-count cap waves it through precisely **because it is one line**.
+  + ///
+  + /// Deliberately larger than its siblings rather than a fresh invention:
+  + /// `MAX_DIFF_LINE_WIDTH` = 500 is tuned for *readability* in a rendered diff,
+  ... (77 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs (42 → 105 lines)
+    /// Maximum lines to include when auto-truncating a large file for /add.
+    pub const ADD_MAX_LINES: usize = 500;
+  + 
+  + /// Maximum bytes of a *single* line of tool output before it is clamped (#877).
+  + ///
+  + /// This is a **judgment threshold, not a measurement** — nothing measured says
+  + /// 2000 is right. It sits far above any human-authored source line (what this
+  + /// function normally sees, so ordinary files pass through byte-identically) and
+  + /// far below the point where one line displaces the model's whole window.
+  + ///
+  + /// It is the **third** ceiling, and the two that already existed cannot cover
+  + /// this case. A *line window* (`ADD_MAX_LINES`, `AST_MAX_OUTPUT_LINES`,
+  + /// `GREP_MAX_MATCHES`) bounds an ordinary large file; a *byte budget*
+  + /// (`truncate_tool_output`'s `max_chars`, `CappedCapture`'s 4KB+4KB, `/bg`'s
+  + /// 256KB) bounds a file whose lines are wide rather than many. Neither bounds
+  + /// *one* minified line that sits comfortably inside the line window — and every
+  + /// line-count cap waves it through precisely **because it is one line**.
+  + ///
+  + /// Deliberately larger than its siblings rather than a fresh invention:
+  + /// `MAX_DIFF_LINE_WIDTH` = 500 is tuned for *readability* in a rendered diff,
+  ... (78 more lines)
+ ✓ (1m 55s)
+    /// Maximum lines to include when auto-truncating a large file for /add.
+    pub const ADD_MAX_LINES: usize = 500;
+  + 
+  + /// Maximum bytes of a *single* line of tool output before it is clamped (#877).
+  + ///
+  + /// This is a **judgment threshold, not a measurement** — nothing measured says
+  + /// 2000 is right. It sits far above any human-authored source line (what this
+  + /// function normally sees, so ordinary files pass through byte-identically) and
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 25s (1 ✓, 1 ✗)
+
+Now the tests — the step-0 reproduction plus the near-miss guards:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 400 src/format/output.rs… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (155 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (26.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.5s (2 ✓)
+
+6/6 green. Now the positive control — mandatory, run serially as one atomic mutate → run → restore:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (12 lines) ✓ (25.2s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired: 5 red, 1 green. Let me name the survivor rather than infer it — I'm about to claim a direction:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (11 lines) ✓ (24.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Survivor is exactly the near-miss guard — the direction that proves the guards test the pass-through, not the fix. Now the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (16.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 40s)
+  2 tools completed in 1m 59s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5426 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5425 unit tests pass — the module-size gate fired, exactly as the task anticipated. Let me read the literal line the gate itself prints (never hand-type a number):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (193ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Pasting it verbatim (+205 is past the 100-line grace band, i.e. fatal — the gate working):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/format/output.rs"'… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/format/output.rs", 2680),
+  +     ("src/format/output.rs", 2885),
+ ✓ (1m 15s)
+  -     ("src/format/output.rs", 2680),
+  +     ("src/format/output.rs", 2885),
+  2 tools completed in 1m 17s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

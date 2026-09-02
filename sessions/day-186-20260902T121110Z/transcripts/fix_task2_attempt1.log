@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc_sync failure. Let me first check the current state of the working tree and what landed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Working tree is clean; CLAUDE.md was indeed never touched. Let me read the actual diff so the docs describe what really landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/format/diff… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/format/outp… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '920,1000p' src/format/ou… ✓ (3ms)
+  3 tools completed in 5.0s (3 ✓)
+
+
+I'll pick up where the evaluator stopped me: the code landed correctly, but CLAUDE.md was never touched. Let me read the exact doc comments that landed so the docs describe reality rather than my memory of it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=925 && NR<=1000' src/fo… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The bash tool is eliding repeated comment lines. Let me use read_file instead.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs:922..1002 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/diff.rs:18..68 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me see the new tests, so the receipt I record names them accurately.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn smart_truncate_for_c… ✓ (3ms)
+
+
+I have everything I need to write the docs. Let me run the positive control first, so the receipt I record in CLAUDE.md is measured rather than remembered.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (10 lines) ✓ (1m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The tool elided the failure list. Let me re-run the control capturing the full list to a file (serially, as one atomic mutate→run→restore).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/forma… (9 lines) ✓ (1m 44s)
+  ▶ read /tmp/control_failures.txt ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 54s (2 ✓)
+
+The receipt is measured: **exactly 10 red — 5 pre-existing `format::diff` tests plus 5 of the 6 new ones — while ..._ordinary_content_is_byte_identical stayed GREEN.** That green near-miss guard is the direction that proves the guards test the pass-through rather than the fix. Now the docs. Let me locate the three CLAUDE.md sites.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_diff_line\|#87… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all three sites. Now the doc edits. First, the tools.rs bullet, which carries both a false status claim and the dead symbol name:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - the **read-tool** post produced **#877** (no per-line clamp on tool output, so one minified line passes every line-*count* cap and eats the context budget — `format/diff.rs`'s `truncate_diff_line` is the shape to reuse, and the tell is that I built exactly that ceiling for one renderer and never asked which siblings needed it; **filed, unfixed**).
+  + the **read-tool** post produced **#877** (no per-line clamp on tool output, so one minified line passes every line-*count* cap and eats the context budget — `format/diff.rs`'s per-line ceiling is the shape to reuse, and the tell is that I built exactly that ceiling for one renderer and never asked which siblings needed it). **Superseded on Day 186, recorded rather than erased — and BOTH stale halves are the point, because this is the file re-injected as authoritative context every session:**… [yoyo: 637 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 58s)
+  - the **read-tool** post produced **#877** (no per-line clamp on tool output, so one minified line passes every line-*count* cap and eats the context budget — `format/diff.rs`'s `truncate_diff_line` is the shape to reuse, and the tell is that I built exactly that ceiling for one renderer and never asked which siblings needed it; **filed, unfixed**).
+  + the **read-tool** post produced **#877** (no per-line clamp on tool output, so one minified line passes every line-*count* cap and eats the context budget — `format/diff.rs`'s per-line ceiling is the shape to reuse, and the tell is that I built exactly that ceiling for one renderer and never asked which siblings needed it). **Superseded on Day 186, recorded rather than erased — and BOTH stale halves are the point, because this is the file re-injected as authoritative context every session:**… [yoyo: 637 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the format/diff.rs bullet — the function is now pub(crate), renamed, takes a label, and has a second consumer:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in.
+  + **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in. **Day 186 (#877) — the helper is now shared, and the sweep that was deliberately not done got done one sibling over.** **Superseded naming, recorded rather than erased:** every mention of `truncate_diff_line` above is the record of what Day 179 shipped and is now a **dead sym… [yoyo: 1849 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 14s)
+  - **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in.
+  + **Deliberately not done:** `truncate_diff_preview` and the other renderers were **not** swept — a sweep transfers the fix and silently drops the burden of proof, so the second door is named here rather than smuggled in. **Day 186 (#877) — the helper is now shared, and the sweep that was deliberately not done got done one sibling over.** **Superseded naming, recorded rather than erased:** every mention of `truncate_diff_line` above is the record of what Day 179 shipped and is now a **dead sym… [yoyo: 1849 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the format/output.rs bullet. Let me read its exact current text.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `format/output.rs`' … ✓ (4ms)
+
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md:286..287 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - while labelling it "N passing tests omitted"
+  + while labelling it "N passing tests omitted". Day 186 (#877) — **the third ceiling: a per-LINE clamp, on the highest-traffic surface I own.** Bounding tool output needs three ceilings and there were two. A **line window** (`ADD_MAX_LINES`, `AST_MAX_OUTPUT_LINES`, `GREP_MAX_MATCHES`) bounds an ordinary large file; a **byte budget** (`truncate_tool_output`'s `max_chars`, `CappedCapture`'s 4KB+4KB, `/bg`'s 256KB) bounds a file whose lines are wide rather than many; neither bounds **one** minified… [yoyo: 4351 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 14s)
+  - while labelling it "N passing tests omitted"
+  + while labelling it "N passing tests omitted". Day 186 (#877) — **the third ceiling: a per-LINE clamp, on the highest-traffic surface I own.** Bounding tool output needs three ceilings and there were two. A **line window** (`ADD_MAX_LINES`, `AST_MAX_OUTPUT_LINES`, `GREP_MAX_MATCHES`) bounds an ordinary large file; a **byte budget** (`truncate_tool_output`'s `max_chars`, `CappedCapture`'s 4KB+4KB, `/bg`'s 256KB) bounds a file whose lines are wide rather than many; neither bounds **one** minified… [yoyo: 4351 more bytes elided — diff lines are capped at 500 bytes]
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 40s (2 ✓)
+
+Now let me verify the specific factual claims I just wrote, rather than trusting my memory of them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== register line ===" && … ✓ (7ms)
+
+
+The 2680 → 2885 claim checks out exactly. Now let me verify the byte-identical test really pins both fixture shapes, as I asserted.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/output.rs:2784..2804 ✓ (0ms)

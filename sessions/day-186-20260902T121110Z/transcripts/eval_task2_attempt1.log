@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_diff_line\|tru… ✓ (10ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/output.rs src/f… ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (40ms)
+ ✓ (177ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 39.2s (6 ✓)
+
+Evidence is complete. The code is solid; the docs are not.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict was already written. Let me verify the file is complete and parseable, then stop.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== line count ===" && wc … ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Evaluation complete and verified. The verdict file is well-formed and I modified no code.
+
+## Verdict: FAIL (doc_sync only)
+
+The implementation is genuinely good. I checked it carefully before landing on the failure:
+
+| Requirement | Status |
+|---|---|
+| Step 0 reproduction kept as a permanent test | ✅ ..._clamps_a_single_hundred_kb_line, asserting the fixed behaviour |
+| Extend the existing pure function, no second copy | ✅ truncate_diff_line → pub(crate) truncate_long_line(line, max, what) |
+| Rename's call sites all updated | ✅ zero dangling callers (commands_retry.rs's plural truncate_diff_lines is unrelated) |
+| Consumer lands in the same diff | ✅ format/output.rs:978 |
+| Diff output byte-identical | ✅ call site passes "diff lines"; pre-existing tests updated only at call sites, no assertion weakened |
+| MAX_TOOL_OUTPUT_LINE_BYTES = 2000 as judgment threshold | ✅ doc comment says so, back-references MAX_DIFF_LINE_WIDTH / CAPTURE_*_BYTES |
+| One clamp site, head and tail | ✅ single closure, covers the early-return path too |
+| Near-miss guards | ✅ whole-string assert_eq! on two ordinary fixtures, boundary pinned both sides, multi-byte dropped whole, marker count agrees |
+| Register bumped from what the gate prints | ✅ wc -l = 2885, matches the pasted entry |
+| Stated limit in the doc comment | ✅ names /run, /bg, /ast, bang passthrough as uncovered |
+
+What failed: CLAUDE.md was not touched — the working tree is clean and it is absent from git show --stat. The task listed it in Files and gave it a dedicated Registers and docs section naming both bullets to update. The consequence is concrete rather than cosmetic, and it is the exact failure mode this repo documents repeatedly: the file re-injected as authoritative context every session now says
+
+│ *"the read-tool post produced #877 (no per-line clamp on tool output …) — filed, unfixed; `format/diff.rs's truncate_diff_line` is the shape to reuse"*
+
+— a false status claim plus a dead symbol name, sitting in the document the next session reads as fact. The Definition of Done's positive-control receipt ("commit message or CLAUDE.md") appears in neither; the commit message is the bare subject line.
+
+Per the harness rules, a FAIL on any Checked line forces the overall verdict. The remedy is small and additive — no code needs to change.
+
+  watch: no files changed this turn — skipping
+
