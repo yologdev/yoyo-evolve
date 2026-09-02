@@ -1953,8 +1953,14 @@ mod tests {
             Some("no matches found")
         );
         assert_eq!(benign_exit_note("rg TODO", 1), Some("no matches found"));
-        assert_eq!(benign_exit_note("diff a.txt b.txt", 1), Some("files differ"));
-        assert_eq!(benign_exit_note("test -f nope", 1), Some("condition was false"));
+        assert_eq!(
+            benign_exit_note("diff a.txt b.txt", 1),
+            Some("files differ")
+        );
+        assert_eq!(
+            benign_exit_note("test -f nope", 1),
+            Some("condition was false")
+        );
         // Wrapper words and env assignments are stepped over, path stripped.
         assert_eq!(
             benign_exit_note("sudo /usr/bin/grep foo f", 1),
