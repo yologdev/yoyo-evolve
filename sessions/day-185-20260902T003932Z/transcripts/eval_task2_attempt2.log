@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null && … ✓ (5ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,145p' src/tool_wrappe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "maybe_guard\|maybe_gua… ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat 7d53b600..HEAD &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "874\|autolink\|auto-lin… ✓ (14ms)
+ ✓ (341ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers" tests/mo… ✓ (213ms)
+  7 tools completed in 1m 22s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate confirms correct register handling: safety.rs (+134, past the 100-line grace = fatal) was correctly paid in the diff; tool_wrappers.rs (+89) is inside the grace band and warns non-fatally by design. I have enough evidence for a verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 29s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+The decisive checks:
+
+**The fix is real and correctly ordered.** `repair_path_argument` runs *before* the directory fence reads `path`, and the repaired `params` is what's handed to `self.inner.execute`. Had that ordering been reversed, the fence would have validated one string while the file tool acted on another — a confidently wrong security verdict. It isn't reversed; I read both execute bodies.
+
+Both doors are wired. GuardedTool and ArcGuardedTool (the sub-agent chain, which receives none of with_truncation/with_recovery_hints/maybe_hook) each call the same helper. This repo's recurring "two doors, one policy, one deaf" failure is avoided.
+
+**The always-wrap change is the load-bearing part, not an inefficiency.** `maybe_guard` used to return the bare tool when `restrictions.is_empty()`. Since the file-tool default is unrestricted, wiring the repair onto the old conditional wrapper would have made it unreachable for every default user. label/description/parameters_schema all delegate to inner, so always-wrapping is transparent to tool listing and MCP collision detection.
+
+Byte-identity is structural, not just tested. changed == false returns Cow::Borrowed, so the pass-through can't drift. Char boundaries are safe by construction ([, ](, ) are ASCII), and unterminated shapes break rather than swallowing the tail — I traced "src/[notes.md](http://notes.md", "src/](http://x)", "[](http://)" and "a[b]c.rs" through the loop.
+
+Two cleanup notes, neither fail-worthy:
+• CLAUDE.md's `tool_wrappers.rs` decorator bullet wasn't extended to name the repair layer. It's incomplete rather than wrong — no user-facing doc became false, and the source carries the superseded-behaviour note.
+• cargo test --test module_size prints the pasteable `("src/tool_wrappers.rs", 5276)` remedy for +89 of drift. Non-fatal by explicit design, but it's the gate handing over a one-line fix that was left on the floor — worth taking next session, since the whole point of that grace band is that drift stays visible rather than absorbed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

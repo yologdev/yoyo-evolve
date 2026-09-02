@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by examining the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ 2>/dev/null && … ✓ (6ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub(crate) fn maybe_gua…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "maybe_guard\|maybe_conf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (4 lines) ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la --time-style=+%H:%M sessi… ✓ (7ms)
+  7 tools completed in 1m 12s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Decisive evidence gathered. Writing the verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (5ms)
+
+Verdict written to `session_plan/eval_task_2.md`.
+
+## FAIL
+
+The decisive finding: the new repair_path_argument is invoked from exactly two places — GuardedTool::execute and ArcGuardedTool::execute. Both of those structs are only ever constructed by maybe_guard / maybe_guard_arc, and both of those builders begin:
+
+```rust
+if restrictions.is_empty() {
+    tool          // <- bare tool, no wrapper, repair never runs
+} else {
+    Box::new(GuardedTool { ... })
+}
+```
+
+DirectoryRestrictions::is_empty() is allow.is_empty() && deny.is_empty(), and the file-tool default is unrestricted (CLAUDE.md states this explicitly, and this repo's own .yoyo.toml sets no [directories] block). So for the default configuration — essentially every product user, and yoyo's own evolve loop — the auto-link repair is a no-op.
+
+The unit tests are green because they call the free function `repair_path_argument` directly. That is precisely the "helper one layer below the emission point" the task explicitly forbade testing at, and it is why the green suite is not evidence that the feature reaches anyone.
+
+What is genuinely good in the diff, and I checked rather than assumed:
+• The pure unwrap logic is correct. The span arithmetic `open + 1 + mid + 2 + close + 1 is right, every offset lands just past an ASCII delimiter ([, ](, )`), so no index can fall mid-character; the non-ASCII fixtures confirm it.
+• The near-miss guards are real — full-value assert_eq! on 14 pass-through shapes including real markdown links, src/[id].tsx, unterminated shapes, and multi-byte input.
+• Running the repair before the fence is the correct ordering, and the reasoning in the comment is sound: the fence must judge the string the file tool will actually use.
+• Both doors were wired (GuardedTool and ArcGuardedTool), not one.
+• The module-size register was moved 4291 → 4425 rather than absorbing the drift.
+
+The defect is placement, not logic. Unconditional hosts existed in the same call chain — with_read_guard, with_truncation, with_auto_check all wrap the file tools regardless of configuration.
+
+Secondary findings (each independently marked, though the wiring alone forces the verdict):
+• doc_sync: zero mentions in CLAUDE.md/README/docs of a change that silently rewrites a tool call's path argument, and the default-off limitation is recorded nowhere.
+• Step 4 appears unexecuted: `session_plan/issue_responses.md` still carries the forward-looking "I'll report back on this issue with what I found" text rather than the measured findings the task required, including the "already handled" results.
+
+  watch: no files changed this turn — skipping
+

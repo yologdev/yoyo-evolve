@@ -1,0 +1,154 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/safety.rs ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2300,2385p' src/safety.r… ✓ (4ms)
+  5 tools completed in 5.8s (5 ✓)
+
+
+I'll continue from where I left off — I need to see the full picture of the tool_wrappers.rs half before deciding how to fix the placement defect.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/tool_wrappe… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '990,1130p' src/tools.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_truncation" -A …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct TruncatingTool" … ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_recovery_hints"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== with_truncation caller… ✓ (6ms)
+ ✓ (22ms)
+  6 tools completed in 34.1s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1250,1290p' src/tools.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3660,3740p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "maybe_guard\b" src/ --… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3560,3660p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct MockTool" -A 45 … ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,135p' src/tool_wrappe…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5215,5260p' src/tool_wra… ✓ (4ms)
+ ✓ (4ms)
+  7 tools completed in 1m 14s (7 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the full picture. The fix is to move the repair onto an unconditional seam. maybe_guard/maybe_guard_arc covers all five path-taking tools in both the main chain and the sub-agent chain — and check_path already short-circuits on empty restrictions, so always-wrapping is a pure pass-through for the fence.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (14 → 26 lines)
+  - /// Wrap a tool with directory restrictions if any are configured.
+  + /// Wrap a tool with the path-argument gate.
+  + ///
+  + /// **This always wraps, including when no directory restrictions are configured**,
+  + /// and that is the whole product-safety property rather than an inefficiency to
+  + /// optimise away. The wrapper does two things and only one of them is conditional:
+  + /// it *always* repairs the `path` argument (`repair_path_argument`), and it fences
+  + /// the path only when restrictions exist. `DirectoryRestrictions::check_path`
+  + /// already short-circuits to `Ok` on an empty config, so an unrestricted wrapper
+  + /// is a byte-identical pass-through for the fence and costs one `Box` indirection.
+  + ///
+  + /// **Superseded behaviour, recorded rather than erased:** this returned the bare
+  + /// `tool` when `restrictions.is_empty()`. That was correct while the wrapper did
+  + /// nothing but fence — and it silently made the auto-link repair unreachable for
+  + /// **every default user**, since the file-tool default is unrestricted (this
+  + /// repo's own `.yoyo.toml` configures no `[directories]` block). A repair wired
+  + /// only onto a default-off wrapper is not a product fix; it is a fix for the
+  + /// minority who opted into `--allow-dir`/`--deny-dir`.
+    pub(crate) fn maybe_guard(
+        tool: Box<dyn AgentTool>,
+  ... (15 more lines)
+ ✓ (2m 14s)
+  - /// Wrap a tool with directory restrictions if any are configured.
+  + /// Wrap a tool with the path-argument gate.
+  + ///
+  + /// **This always wraps, including when no directory restrictions are configured**,
+  + /// and that is the whole product-safety property rather than an inefficiency to
+  + /// optimise away. The wrapper does two things and only one of them is conditional:
+  + /// it *always* repairs the `path` argument (`repair_path_argument`), and it fences
+  + /// the path only when restrictions exist. `DirectoryRestrictions::check_path`
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '190,215p' src/tool_wrapp… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (15 → 16 lines)
+  - /// Wrap an Arc-based tool with directory restrictions if any are configured.
+  - /// Used for sub-agent tools which require `Arc<dyn AgentTool>`.
+  + /// Wrap an Arc-based tool with the path-argument gate. Used for sub-agent tools,
+  + /// which require `Arc<dyn AgentTool>`.
+  + ///
+  + /// **Always wraps**, for the same reason as `maybe_guard` above — see that doc
+  + /// comment for the mechanism and for the superseded default-off behaviour. This
+  + /// is the seam that carries the repair into the *sub-agent* tool chain, which
+  + /// receives none of `with_truncation` / `with_recovery_hints` / `maybe_hook`.
+    pub(crate) fn maybe_guard_arc(
+        tool: Arc<dyn AgentTool>,
+        restrictions: &cli::DirectoryRestrictions,
+    ) -> Arc<dyn AgentTool> {
+  -     if restrictions.is_empty() {
+  -         tool
+  -     } else {
+  -         Arc::new(ArcGuardedTool {
+  -             inner: tool,
+  -             restrictions: restrictions.clone(),
+  -         })
+  ... (6 more lines)
+ ✓ (2m 10s)
+  - /// Wrap an Arc-based tool with directory restrictions if any are configured.
+  - /// Used for sub-agent tools which require `Arc<dyn AgentTool>`.
+  + /// Wrap an Arc-based tool with the path-argument gate. Used for sub-agent tools,
+  + /// which require `Arc<dyn AgentTool>`.
+  + ///
+  + /// **Always wraps**, for the same reason as `maybe_guard` above — see that doc
+  + /// comment for the mechanism and for the superseded default-off behaviour. This
+  + /// is the seam that carries the repair into the *sub-agent* tool chain, which
+  ... (13 more lines)
+  3 tools completed in 4m 33s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the struct doc comments, which still describe the old conditional behaviour:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,80p' src/tool_wrapper… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '54,70p' src/tool_wrapper… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:54..72 ✓ (1ms)
+  3 tools completed in 4.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The previous attempt orphaned the GuardedTool struct doc onto the repair function. Let me separate and correct both:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (5 → 1 lines)
+  - /// A wrapper tool that checks directory restrictions before delegating to an inner tool.
+  - /// Intercepts the `"path"` parameter from tool arguments and validates it against
+  - /// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
+  - /// an error without executing the inner tool.
+    /// Repair a leaked markdown auto-link in a tool call's `path` argument.
+ ✓ (2m 11s)
+  - /// A wrapper tool that checks directory restrictions before delegating to an inner tool.
+  - /// Intercepts the `"path"` parameter from tool arguments and validates it against
+  - /// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
+  - /// an error without executing the inner tool.
+    /// Repair a leaked markdown auto-link in a tool call's `path` argument.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (11 → 20 lines)
+        params
+    }
+    
+  + /// The path-argument gate: **always** repairs `path`, and fences it against the
+  + /// configured `DirectoryRestrictions` when any are configured.
+  + ///
+  + /// It intercepts the `"path"` parameter, runs `repair_path_argument` on it, and
+  + /// then validates the repaired value. If the path is blocked the tool returns an
+  + /// error without executing the inner tool. With an empty `restrictions` the fence
+  + /// half is a pass-through (`check_path` short-circuits to `Ok`), so an
+  + /// unrestricted wrapper changes nothing except that the repair runs — which is
+  + /// exactly why `maybe_guard` wraps unconditionally.
+    pub(crate) struct GuardedTool {

@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by fetching the three docs — but first, let me get oriented on what I'm auditing against.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 60 curl -sSL -w "\n[HTTP… ✓ (8ms)
+ ✓ (140ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.0s (2 ✓)
+
+Docs fetched. Let me strip the HTML and read all three properly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && mkdir -p cc && for d in tool-call-repairs read-tool shell-tool; do ti… ✓ (784ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/cc && python3 - <<'PY' (16 lines) ✓ (48ms)
+  2 tools completed in 6.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Resuming. I have the three docs stripped to text. Let me read them compactly.
+  ▶ $ cd /tmp/cc && echo "=== TOOL-CALL-REPAIRS ===" && sed -n '1,90p' tool-call-repai… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/cc && awk 'NR>55' tool-call-repairs.txt | grep -v '^\s*$' | head -80 ✓ (5ms)
+  ▶ $ cd /tmp/cc && awk 'NR>135' tool-call-repairs.txt | grep -v '^\s*$' | head -70 ✓ (5ms)
+  3 tools completed in 7.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough from the repairs doc. Let me get the other two docs' key mechanisms fast, then measure against my own code.
+  ▶ $ cd /tmp/cc && for f in read-tool shell-tool; do echo "=== $f ==="; awk 'NR>60' $…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- autolink/markdown path… ✓ (11ms)
+ ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.6s (2 ✓)
+
+**No markdown-autolink handling anywhere in src/** — and there's a yoyo-side seam (`maybe_guard` wrapping yoagent's file tools). Let me check what that guard reads.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'struct GuardedTool' -A … ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+GuardedTool reads params["path"] — so my own security fence would check the literal [notes.md](http://notes.md) string. Let me find whether there's an unconditional seam.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1000,1035p' src/tools.rs… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'm well over budget — executing now with minimal calls. Decision: the markdown auto-link path leak is the gap to land (absent from src/, product-real for any open-model user, and my own security fence currently checks the malformed string).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^use \|^pub(crate) fn r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (75 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (79 lines) ✓ (23ms)
+  3 tools completed in 31.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (44 lines) ✓ (36.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 50.1s (2 ✓)
+
+8 new tests green. Now the positive control — atomic mutate→run→restore, run serially.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/safet… (8 lines) ✓ (50.9s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired (near-miss guards stayed green, restore clean). Running full verification.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B2 -A12 … ✓ (1m 14s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 14s (2 ✓)
+
+The gate working exactly as designed — pasting the line it printed rather than hand-typing it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/("src\/safety.rs", 429… ✓ (472ms)
+
+  watch: no files changed this turn — skipping
+
