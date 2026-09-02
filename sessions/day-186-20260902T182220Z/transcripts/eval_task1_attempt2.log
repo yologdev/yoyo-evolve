@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the diff carefully, particularly the suspicious-looking section around commit_test_diff_shape.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1165,1215p scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.4s (2 ✓)
+
+The diff shows def collect_census(root: str, limit: int | None): was deleted and its body absorbed as unreachable code after commit_test_diff_shape's return. Let me verify this decisively.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== defs of collect_census…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 120 python3 scripts/coun… ✓ (4ms)
+ ✓ (139ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.8s (2 ✓)
+
+Decisive finding confirmed. collect_census no longer exists — the diff replaced its def line with commit_test_diff_shape, leaving collect_census's body as unreachable code after the new function's return. Both live call sites now raise NameError, so the tool's two real modes (--census and --max-runs) are completely broken. --test passes only because self-tests never call it — a false green.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only; ech… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Three independent failures confirmed. Writing the verdict.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (59.0s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The verdict file was already written before the cutoff. Let me confirm it landed intact and is parseable by the harness.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== file ==="; cat session… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict file is intact and well-formed: 1 verdict line, 4 Checked: lines, 0 leftover placeholders. (The exit code 1 is just grep -c '<' finding zero placeholders — the desired result.)
+
+Evaluation complete. **Verdict: FAIL.**
+
+## What I found
+
+The diff's commit_test_diff_shape hunk replaced the line def collect_census(root: str, limit: int | None): instead of being inserted above it. The result:
+
+• `collect_census` no longer exists. grep -n "def collect_census" returns nothing.
+• Its entire body is now unreachable code sitting after commit_test_diff_shape's return, and that orphaned body references limit, which isn't a parameter of the function now enclosing it.
+• Two live call sites remain — line 1898 (the --census path) and line 1939 (the --max-runs reading path).
+
+Reproduced rather than inferred:
+
+```
+$ python3 scripts/counterfactual_green.py --census --limit 5
+NameError: name 'collect_census' is not defined     EXIT=1
+```
+
+## Why the harness gate missed it
+
+--test passes and cargo build && cargo test pass, because no self-test and no Rust test ever calls collect_census. This is a textbook false green — the same #618/#653/#658 shape the brief flags as first among equals, except here it's a definition removed rather than added without a consumer, so the Python parser can't catch it either.
+
+## Consequences for the task's own deliverable
+
+The task was explicit that the split number is the deliverable — "a task that lands the code and does not report the number has not done the task." Verify step 2 (--census --deepen 6000) crashes, so no measurement could have been taken, and `git diff HEAD~1 --name-only confirms only scripts/counterfactual_green.py` changed — CLAUDE.md and DREAM.md were never updated with the split.
+
+Worth noting for whoever picks this up: the new logic itself is sound. census_shape_split, the three-state split with SHAPE_UNKNOWN summed into neither bucket, the injected resolver, the cost guard asking only behavioural rows, the anti-vacuous refusal branch and the byte-identical no-split near-miss guard all read correctly and are properly table-tested. The fix is restoring the deleted def collect_census(root: str, limit: int | None): line above the orphaned docstring and moving commit_test_diff_shape out to its own definition — not a rewrite.
+
+I modified no code, per the brief.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

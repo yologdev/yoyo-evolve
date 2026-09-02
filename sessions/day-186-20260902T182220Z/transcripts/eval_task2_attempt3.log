@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EXIT_CODE_UNDETERMINED\… ✓ (15ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs && echo "--- … ✓ (12ms)
+ ✓ (182ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo test --bin yoy… ✓ (185ms)
+  5 tools completed in 30.8s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 10 new tests pass, including the end-to-end kill -9 $$ cases that drive a real shell through run_shell_command and the /bg tracker. I have enough evidence.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 12s)
+
+**Verdict: PASS** — written to session_plan/eval_task_2.md.
+
+What I actually checked:
+
+• The three steps landed as specified. The decoder was extracted from `StreamingBashTool::execute's inline block into pub(crate) exit_code_of / signal_name / describe_exit_code` — not copied a third time — and both collapsed sites now call it. The `#[cfg(unix)]` guard around `ExitStatusExt` is present with a sentinel fall-through for other platforms, as the task's Windows note required.
+• The SIGHUP trap is handled. EXIT_CODE_UNDETERMINED = -1000 sits outside both the `0..=255 exit range and the 1..=64 signal range, pinned by a const assertion *and* a loop over every signal. -1` is now produced only by a genuine SIGHUP death, so naming it is the fix rather than a regression.
+• Ran the feature, didn't just read it. 10 tests, 10 passed — including the end-to-end kill -9 $$ cases that drive a real shell and assert -9 at the emission point (RunResult.exit_code, JobSnapshot.exit_code), and the near-miss guards showing exit 3 → exactly 3 rendering as the bare number.
+• Touchpoints. Every new symbol has consumers in this diff (5 sentinel sites, 3 exit_code_of, 3 describe_exit_code); no new enum variants, no renames; no pre-existing tools.rs assertion deleted or weakened.
+• Docs. All three CLAUDE.md bullets updated in-commit, with both stated limits (legible ≠ recovery; non-unix signals still invisible).
+
+One piece of cleanup feedback, not a fail: the register entry reads 3842 while the file is now 3845 — the eval-fix commits added 3 lines after the paste. The gate reports it as a non-fatal grace-band warning and passes green; paste ("src/tools.rs", 3845) next time this file is touched.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

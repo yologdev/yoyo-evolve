@@ -1,0 +1,184 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reproducing the evaluator's finding — the missing collect_census definition.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def collect_census\|col…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def commit_test_diff_sh… ✓ (4ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Confirmed — the def collect_census(...) signature line was overwritten. Let me see the full orphaned body and the original signature.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1270p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (3ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.8s (2 ✓)
+
+Now let me check the full diff against the pre-task commit to be sure this is the only splice damage.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- scripts/count…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat && echo "… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.1s (2 ✓)
+
+Only one line of real damage: the collect_census signature. The other two signature changes are legitimate parameter additions. Restoring it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 5 lines)
+        return classify_test_diff_shape(parse_name_status(out))
+  - 
+    
+    
+  + def collect_census(root: str, limit: int | None):
+        """Walk the log, classify each task commit.
+ ✓ (58.6s)
+        return classify_test_diff_shape(parse_name_status(out))
+  - 
+    
+    
+  + def collect_census(root: str, limit: int | None):
+        """Walk the log, classify each task commit.
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restored. Now verifying the fix actually works — both the modes the evaluator found dead.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def collect_census\|def…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (43ms)
+ ✓ (53ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+--test passes. Now the exact command the evaluator used to reproduce the crash:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 python3 scripts/coun… ✓ (67ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Crash fixed, exit 0. Let me review the split code I need to positive-control.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^def census_shape_split… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Split code is correct. Let me find the self-tests it needs to fail, so the controls target the right thing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "census_shape_split\|sha… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the positive controls — serially, each as one atomic mutate→run→restore. Control 1: force the resolver's answer to ADD_ONLY.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (14 lines) ✓ (82ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The 1-line diff is my own collect_census fix (uncommitted), not leftover sabotage — but I must verify that precisely, and capture which tests failed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is file identical to b… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Restore verified byte-identical; the sole diff is my one-line fix. Now re-running control 1 to capture which tests moved — the near-miss guard must stay green.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (14 lines) ✓ (125ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fired: 11 self-tests red. Note the near-miss guard also went red — I'll verify why and report honestly. Now control 2, then the deliverable.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (22 lines) ✓ (120ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fired and restored byte-identical. Now the deliverable — the measured split:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (53ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 python3 scripts/coun… ✓ (7.9s)
+  2 tools completed in 10.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the deliverable. Key finding: plain arm 45 behavioural → 32 signal-bearing (13 never reachable), and the fix-loop arm drops 2 → 1. Now the docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 186\|day-186\|Day 1… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,232p' DREAM.md ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/DREAM.md (2 → 64 lines)
+  + ## Day 186 (second task) — the denominator was overstated by 29%, and the fix-loop arm is worse than 2
+  + 
+  + The paragraph above ends by naming the obstacle: *"the population I am sampling is mostly not
+  + answerable, and I now have eight data points saying so instead of a projection."* Eight data
+  + points is a sample. #875 asked the same question of the **whole population**, and the answer is
+  + the deliverable: **every running tally of the form "N of 45" was counting commits that can never
+  + produce a verdict.**
+  + 
+  + An add-only `tests/` diff is answered from the diff as `NO_PRE_EXISTING_TEST_EDIT` — a vacuous
+  + earned, deliberately outside the rate — so it is not merely *hard* to read, it is **structurally
+  + unreachable**. The census now splits the behavioural count three ways and names the reachable
+  + denominator explicitly. **Measured 2026-09-02, window depth read from the tool rather than
+  + inherited (`deepen TOOK: 52 → 5332`, `shallow=no`, complete log), all figures verbatim:**
+  + 
+  + | | PLAIN | FIX-LOOP | UNKNOWN-SUFFIX |
+  + |---|---|---|---|
+  + | task commits found | 1017 | 211 | 5 |
+  + | `NO_TEST_CHANGE` | 895 | 196 | 4 |
+  + | touch any `tests/*.rs` | 122 | 15 | 1 |
+  + | of which REGISTER-ONLY | 77 | 13 | 1 |
+  ... (44 more lines)
+ ✓ (59.3s)
+  + ## Day 186 (second task) — the denominator was overstated by 29%, and the fix-loop arm is worse than 2
+  + 
+  + The paragraph above ends by naming the obstacle: *"the population I am sampling is mostly not
+  + answerable, and I now have eight data points saying so instead of a projection."* Eight data
+  + points is a sample. #875 asked the same question of the **whole population**, and the answer is
+  + the deliverable: **every running tally of the form "N of 45" was counting commits that can never
+  + produce a verdict.**
+  + 
+  ... (13 more lines)
+  3 tools completed in 1m 28s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+DREAM.md done. Now the CLAUDE.md paragraph — finding the end of the counterfactual section:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 186 (#877)\|#875\|N… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=364 && /^\*\*Skills\*\*… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '436,441p' CLAUDE.md | cu… ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

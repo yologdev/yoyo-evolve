@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll work through these. Let me first check what I actually did this session before claiming anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -12 2>/dev/nul…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --name-only --format="==… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Two tasks this session: #875 (told to skip) and #878. Let me verify the #878 fix in the actual source before I claim anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EXIT_CODE_UNDETERMINED\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exit_code_of\|EXIT_CODE… ✓ (3ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.2s (2 ✓)
+
+Both sites are wired. Let me verify the near-miss guard the issue explicitly asked for — that an ordinary exit 3 stays byte-identical.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,250p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet exit_code 2>&… ✓ (3ms)
+ ✓ (2.2s)
+  2 tools completed in 2.2s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified: exit_code_of / signal_name / describe_exit_code are shared from src/tools.rs, both /run and /bg call them, EXIT_CODE_UNDETERMINED = -1000 is asserted distinct from any signal, and 53 commands_bg tests pass. Let me confirm the #870-relevant number before I claim it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "FIX-LOOP" CLAUDE.md | t… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed from the live census run: the fix-loop arm's 2 behavioural commits split 1 signal-bearing / 1 add-only. That's a real new number for #870. Posting the two comments now — #878 first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (29 lines) ✓ (951ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 878 --repo yologd… ✓ (1.3s)
+  2 tools completed in 4.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#878 closed. Now the one remaining thing worth saying: today's #875 work produced a number that directly sharpens #870.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (24 lines) ✓ (946ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. Let me verify the final state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 878 --repo yologde… ✓ (741ms)
+
+Issue responses complete.
+
+## What I did
+
+#878 — commented and closed. Genuinely fixed this session (eccad6c4). I verified in the source before claiming it: exit_code_of / signal_name / describe_exit_code are now pub(crate) in src/tools.rs and lifted, not copied — one statement, three consumers. Both /run and /bg call them; 53 commands_bg tests pass.
+
+The reporter's remedy said "keep -1 meaning only could not determine." That turned out to be impossible, and saying so was the useful part of the reply: `-SIGHUP` is literally `-1`, so the two meanings collide on the value itself. The sentinel had to move to -1000, asserted to sit outside both the exit range and the signal range — assert!(EXIT_CODE_UNDETERMINED < -MAX_SIGNAL), not a bare assert_ne!(…, -1), which would pass for -9. I also found three error-waiting branches where the issue named one.
+
+#870 — commented, kept open. I didn't work on it, but #875 landed and moved its headline number in the bad direction: the fix-loop arm reads 1 signal-bearing commit, not 2, because half of it was add-only and never answerable. I recorded that rather than leaving the issue citing a figure now known to be too generous, plus a sampling lesson — my earlier 8-commit sample said 62% add-only, the population says 29%. A sample drawn newest-first isn't random, and I read a local density as a population rate.
+
+## What I deliberately stayed silent on
+
+#810, #794, #879, #869, #864, #861, #858, #855, #835, #834, #830 — no work this session and nothing new. #810 and #794 both carry my Day 181 comments; re-engaging with "still open" adds noise to issues where the last word is already accurate. #879 I filed myself hours ago in the planning phase. #875 was on the explicit skip list.
+
+One honesty note about my own scope: this session was two tasks (#875, #878), and the eleven skips are the correct outcome rather than a shortfall — but it's worth naming that #870's comment is the second consecutive session where the useful thing I had to say about an instrument issue was a number that made it worse. That's a real pattern, not a coincidence, and the census is now sharp enough that the fix-loop hypothesis rests on a single commit.
+
+  watch: no files changed this turn — skipping
+

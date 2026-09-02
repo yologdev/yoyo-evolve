@@ -1,0 +1,209 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the script to understand what already exists.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_name_status\|clas…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def census_by_populatio… ✓ (3ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,830p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,930p' scripts/counte… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1240p' scripts/coun… ✓ (5ms)
+  5 tools completed in 7.8s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collect_census\|render_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1024,1060p' scripts/coun… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1750,1782p' scripts/coun… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.7s (3 ✓)
+
+Now I have the full picture. Let me make the first concrete change — the pure tally plus its constant.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (2 → 14 lines)
+    TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
+    TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
+  + 
+  + # The fourth value, and it belongs to the SHAPE LOOKUP rather than to the classifier: the
+  + # `git diff` failed, the commit has no parent (root / shallow boundary), the output would
+  + # not parse, or the answer contradicts what the census already measured. It is NEITHER
+  + # `add_only` NOR `signal_bearing`.
+  + #
+  + # CHECK THE ERROR DIRECTION BEFORE PICKING A FALLBACK (Day 186, #875). Folding an unknown
+  + # into `add_only` UNDERSTATES the reachable denominator, which is the flattering direction
+  + # — it makes the milestone look closer than it is. Folding it into `signal_bearing`
+  + # OVERSTATES it, which is the exact defect #875 exists to remove. So it gets its own name,
+  + # is counted and reported, and is summed into neither.
+  + SHAPE_UNKNOWN = "SHAPE_UNKNOWN"
+ ✓ (58.6s)
+    TEST_DIFF_ADD_ONLY = "TEST_DIFF_ADD_ONLY"
+    TEST_DIFF_TOUCHES_PRE_EXISTING = "TEST_DIFF_TOUCHES_PRE_EXISTING"
+  + 
+  + # The fourth value, and it belongs to the SHAPE LOOKUP rather than to the classifier: the
+  + # `git diff` failed, the commit has no parent (root / shallow boundary), the output would
+  + # not parse, or the answer contradicts what the census already measured. It is NEITHER
+  + # `add_only` NOR `signal_bearing`.
+  + #
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def census_by_populati… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure tally functions, inserted right after census_by_population:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 70 lines)
+        return {
+            pop: census_summary([r for r in rows if r.population == pop])
+  +         for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+  +     }
+  + 
+  + 
+  + def census_shape_split(rows: list[CensusRow], shape_of) -> dict:
+  +     """Split the BEHAVIOURAL count by test-diff shape. Pure: `shape_of` is injected.
+  + 
+  +     Day 186, #875. WHY THIS EXISTS, and it is a correction to my own headline rather than
+  +     a new feature. Every running tally has been phrased "N of 45, M short of >=20", where
+  +     45 is the behavioural count. But an ADD-ONLY commit can never yield a classifiable
+  +     verdict — `classify_test_diff_shape` answers it from the diff as
+  +     `NO_PRE_EXISTING_TEST_EDIT`, a VACUOUS earned that is deliberately excluded from the
+  +     rate — so some fraction of that 45 was never reachable. Measured Day 186: 5 of 8
+  +     sampled behavioural commits were add-only. The behavioural figure OVERSTATES the
+  +     reachable denominator, and this says by how much.
+  + 
+  +     THREE STATES, NEVER TWO, and the third is the safety property:
+  + 
+  ... (50 more lines)
+ ✓ (58.8s)
+        return {
+            pop: census_summary([r for r in rows if r.population == pop])
+  +         for pop in (POP_PLAIN, POP_FIX_LOOP, POP_UNKNOWN_SUFFIX)
+  +     }
+  + 
+  + 
+  + def census_shape_split(rows: list[CensusRow], shape_of) -> dict:
+  +     """Split the BEHAVIOURAL count by test-diff shape. Pure: `shape_of` is injected.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the injected I/O half — the shape resolver, placed beside collect_census:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def collect_census" sc… ✓ (2ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 24 lines)
+  - def collect_census(root: str, limit: int | None):
+  + def commit_test_diff_shape(root: str, sha: str) -> str:
+  +     """The I/O half of the shape split: what shape is THIS commit's `tests/` diff?
+  + 
+  +     Day 186, #875. Returns one of `TEST_DIFF_TOUCHES_PRE_EXISTING` / `TEST_DIFF_ADD_ONLY`
+  +     / `TEST_DIFF_NONE`, or `SHAPE_UNKNOWN` when the question could not be asked.
+  + 
+  +     EVERY PIECE HERE ALREADY EXISTED — this reuses and never re-derives. `run_cmd` issues
+  +     the diff, `parse_name_status` parses it, `classify_test_diff_shape` classifies it, and
+  +     scope comes from `top_level_test_files` inside that classifier. There is deliberately
+  +     no second `tests/*.rs` predicate: two copies of a rule agree the day they are written
+  +     and diverge forever after (the `significant_braces` precedent, which #875 names).
+  + 
+  +     A `<sha>^` that does not resolve — a root commit, or a shallow-clone boundary — is
+  +     `SHAPE_UNKNOWN`, not a crash and not a fallback into either real bucket.
+  +     """
+  +     rc, out = run_cmd(
+  +         ["git", "-C", root, "diff", "--name-status", f"{sha}^", sha, "--", "tests/"],
+  +         timeout=60,
+  +     )
+  ... (5 more lines)
+ ✓ (58.7s)
+  - def collect_census(root: str, limit: int | None):
+  + def commit_test_diff_shape(root: str, sha: str) -> str:
+  +     """The I/O half of the shape split: what shape is THIS commit's `tests/` diff?
+  + 
+  +     Day 186, #875. Returns one of `TEST_DIFF_TOUCHES_PRE_EXISTING` / `TEST_DIFF_ADD_ONLY`
+  +     / `TEST_DIFF_NONE`, or `SHAPE_UNKNOWN` when the question could not be asked.
+  + 
+  +     EVERY PIECE HERE ALREADY EXISTED — this reuses and never re-derives. `run_cmd` issues
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the renderer — three lines under each population's behavioural figure, with the anti-vacuous branch asserted first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (25 → 57 lines)
+  - def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+  + def render_population_block(label: str, summary: dict, note: str = "",
+  +                             split: dict | None = None) -> list[str]:
+        """The same five figures the census has always printed, for ONE population.
+    
+        Extracted so the two populations cannot drift apart in the report: one statement of
+        the shape, called twice. A second copy would agree the day it was written.
+  + 
+  +     `split` (Day 186, #875) adds the shape three-way under the behavioural figure and
+  +     names the REACHABLE denominator, which is `signal_bearing` and not `behavioural`.
+  +     Omitted -> the block is byte-identical to before, which is every caller that does not
+  +     ask for a split and is the whole regression surface.
+        """
+        out = [f"  [{label}]{note}"]
+        out.append(f"    task commits found ......... {summary['task_commits']}")
+  ···
+            f"      of which BEHAVIOURAL ..... {summary['behavioural']}"
+            "   <- the denominator that carries signal"
+        )
+  +     if split is not None and split["behavioural"]:
+  ... (28 more lines)
+ ✓ (58.6s)
+  - def render_population_block(label: str, summary: dict, note: str = "") -> list[str]:
+  + def render_population_block(label: str, summary: dict, note: str = "",
+  +                             split: dict | None = None) -> list[str]:
+        """The same five figures the census has always printed, for ONE population.
+    
+        Extracted so the two populations cannot drift apart in the report: one statement of
+        the shape, called twice. A second copy would agree the day it was written.
+  + 
+  ... (13 more lines)
+
+Now thread the split through render_census and the --census call site:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (77 lines) ✓ (29ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests. Let me find the insertion point:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_name_status(\"R10… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2711,2722p' scripts/coun… ✓ (2ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll insert the split self-tests right after that block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (117 lines) ✓ (78ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests pass. Now the positive controls — serially, each as one atomic mutate→run→restore:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (16 lines) ✓ (87ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && md5sum scrip… (17 lines) ✓ (87ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.9s (2 ✓)
+
+Control 1 fired, restore verified byte-identical. Full failure list, then control 2:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== control 1 failures ===… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

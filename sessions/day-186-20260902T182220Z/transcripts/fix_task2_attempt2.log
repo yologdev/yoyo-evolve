@@ -1,0 +1,135 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc sync issue. Let me first look at the current state of the relevant CLAUDE.md lines.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "filed, unfixed" CLAUDE.… ✓ (4ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.3s (2 ✓)
+
+Let me review the actual diff so the docs describe what shipped, not what I assume shipped.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 -- src/tools.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 -- src/commands_… ✓ (5ms)
+ ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '154,250p' src/tools.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 -- src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 -- src/tools.rs … ✓ (5ms)
+ ✓ (6ms)
+  5 tools completed in 8.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Code is done; the only FAIL was doc sync. Let me get the test names and the two bullets I need to amend.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~2 -- src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_run.rs`' C… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== commands_run.rs new te… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (20ms)
+  4 tools completed in 6.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three facts verified. Now the three CLAUDE.md edits — the two bullets plus the stale #878 status claim.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index.
+  + The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index. **Day 186 (#878) — a signal death is named, and `-1` stops meaning two things at once.** The measured defect: `child.wait()`'s `Ok` arm was `status.code().unwrap_or(-1)`, and the **error**-waiting arm returned `-1` too — so an OOM-killed build and *I could not wait for the child* were the **same number**, and `/fix` consumes `LAST_FAILED_RUN`,… [yoyo: 2223 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - `format_elapsed` is unchanged — the formatter was always fine, its input wasn't.
+  + `format_elapsed` is unchanged — the formatter was always fine, its input wasn't. **Day 186 (#878) — the same un-collapsing as `/run`, one subsystem over, in the same diff rather than a session later.** `run_background_command`'s wait `Ok` arm was `*code = Some(status.code().unwrap_or(-1))`, so a job the OOM killer took and a job whose wait failed both stored `-1` — and `-1` is literally `-SIGHUP`, so the number could not separate them even in principle. It now calls `tools::exit_code_of(&s… [yoyo: 1609 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 12s)
+  - The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index.
+  + The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index. **Day 186 (#878) — a signal death is named, and `-1` stops meaning two things at once.** The measured defect: `child.wait()`'s `Ok` arm was `status.code().unwrap_or(-1)`, and the **error**-waiting arm returned `-1` too — so an OOM-killed build and *I could not wait for the child* were the **same number**, and `/fix` consumes `LAST_FAILED_RUN`,… [yoyo: 2223 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (2m 24s)
+  - `format_elapsed` is unchanged — the formatter was always fine, its input wasn't.
+  + `format_elapsed` is unchanged — the formatter was always fine, its input wasn't. **Day 186 (#878) — the same un-collapsing as `/run`, one subsystem over, in the same diff rather than a session later.** `run_background_command`'s wait `Ok` arm was `*code = Some(status.code().unwrap_or(-1))`, so a job the OOM killer took and a job whose wait failed both stored `-1` — and `-1` is literally `-SIGHUP`, so the number could not separate them even in principle. It now calls `tools::exit_code_of(&s… [yoyo: 1609 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 35s (2 ✓)
+
+Now the stale #878 status claim in the tools.rs bullet — the exact defect that bullet's neighbouring sentence already warns about.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines) ✓ (1m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That was a no-op — I need the actual correction. Appending in the bullet's own "superseded, recorded rather than erased" style:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - because `scripts/evolve.sh` reverts a failed task with `git reset --hard` — a filing survives a revert and a note in a file does not, which is exactly how Day 185's audit notes for these two posts were lost.
+  + because `scripts/evolve.sh` reverts a failed task with `git reset --hard` — a filing survives a revert and a note in a file does not, which is exactly how Day 185's audit notes for these two posts were lost. **Superseded again the same day, and this time it is the #878 half — recorded rather than erased, because the stale clause sat two sentences above the paragraph warning about exactly this shape.** That clause ends "**filed, unfixed**"; it is a true record of what the 04:20 filing task di… [yoyo: 1755 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 12s)
+  - because `scripts/evolve.sh` reverts a failed task with `git reset --hard` — a filing survives a revert and a note in a file does not, which is exactly how Day 185's audit notes for these two posts were lost.
+  + because `scripts/evolve.sh` reverts a failed task with `git reset --hard` — a filing survives a revert and a note in a file does not, which is exactly how Day 185's audit notes for these two posts were lost. **Superseded again the same day, and this time it is the #878 half — recorded rather than erased, because the stale clause sat two sentences above the paragraph warning about exactly this shape.** That clause ends "**filed, unfixed**"; it is a true record of what the 04:20 filing task di… [yoyo: 1755 more bytes elided — diff lines are capped at 500 bytes]
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three edits landed. Verifying them, then running the full check suite.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (6 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+--stat says 2 lines changed but I made 3 real edits, and line 340 shows no #878. Let me find where the /run edit actually landed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -U0 CLAUDE.md | grep -n… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two parallel edits to the same file — the commands_bg write clobbered the commands_run one while both reported success. That is precisely the hazard the task file names for controls, applied to edits. Redoing it serially.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "The one place a line ca… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Anchor intact. Redoing the lost /run edit alone, not batched.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index.
+  + The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index. **Day 186 (#878) — a signal death is named, and `-1` stops meaning two things at once.** The measured defect: `child.wait()`'s `Ok` arm was `status.code().unwrap_or(-1)`, and the **error**-waiting arm returned `-1` too — so an OOM-killed build and *I could not wait for the child* were the **same number**, and `/fix` consumes `LAST_FAILED_RUN`,… [yoyo: 2223 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 12s)
+  - The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index.
+  + The one place a line can be cut mid-line (a single line longer than the whole budget) walks back to an `is_char_boundary()` first, never a byte index. **Day 186 (#878) — a signal death is named, and `-1` stops meaning two things at once.** The measured defect: `child.wait()`'s `Ok` arm was `status.code().unwrap_or(-1)`, and the **error**-waiting arm returned `-1` too — so an OOM-killed build and *I could not wait for the child* were the **same number**, and `/fix` consumes `LAST_FAILED_RUN`,… [yoyo: 2223 more bytes elided — diff lines are capped at 500 bytes]
+
+Now verifying all three landed this time:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -U0… (7 lines) ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All three changed. Verifying the evaluator's three named requirements are actually satisfied by content, not just by line count:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (17 lines) ✓ (22ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Docs verified. Now the full check suite — CLAUDE.md can't break the build, but the discipline is to confirm rather than assume.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca…

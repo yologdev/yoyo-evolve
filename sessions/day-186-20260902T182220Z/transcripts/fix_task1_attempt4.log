@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the doc_sync failure: CLAUDE.md needs the measured split. Let me first find the exact text to update.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "of 45" CLAUDE.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.1s (2 ✓)
+
+The code is right; CLAUDE.md is the missing half. Let me get the numbers the previous attempt actually measured.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 0ec9555f..HEAD --stat &… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '219,285p' DREAM.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD && git… ✓ (39ms)
+  3 tools completed in 16.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/DREAM.md:230..252 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Repo is already deep (5333, not shallow). Let me verify those numbers reproduce before writing them into the authoritative context file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 python3 scripts/coun… ✓ (2.2s)
+  2 tools completed in 8.5s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Census reproduces. Let me confirm self-tests and locate the exact CLAUDE.md edit points.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (53ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Day 186 (#877) — the th… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md:436..442 ✓ (1ms)
+  3 tools completed in 8.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything. Let me add the Day-186 paragraph that discharges the #875 prediction on line 440.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 28 lines)
+    **The honest follow-up is filed rather than left in prose (#875):** today's `45 behavioural` census figure will **overstate** the reachable denominator once add-only commits are excluded from the rate, so `census_by_population`'s behavioural count should be split using this same classifier — a second change with its own near-miss guards, and my measured evidence is that a finding routed to the **scheduler** surface gets picked up within a day while one left in a reader surface does not.
+  + 
+  + **Day 186 (#875) — the census splits the behavioural count three ways, and the prediction one paragraph up is DISCHARGED rather than still pending: the overstatement was real and it is 29%.** The clause above predicted the `45 behavioural` figure would overstate the reachable denominator; that is now measured rather than predicted, and the **filed-gets-scheduled pattern held for the ninth time** (#838, #841, #842, #857, #862, #867, #868, #873, now #875) — routed to the scheduler surface, pic… [yoyo: 1337 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The measurement is the deliverable, and a task that lands the code without reporting the number has not done the task. Measured 2026-09-02, all figures verbatim from the tool, window depth read from its own output rather than inherited** (`window 5333 commits reachable from HEAD (5333 total, shallow=no)`, `deepen NOT NEEDED: the clone is not shallow`):
+  + 
+  + | | PLAIN | FIX-LOOP | UNKNOWN-SUFFIX |
+  + |---|---|---|---|
+  + | task commits found | 1017 | 212 | 5 |
+  + | `NO_TEST_CHANGE` | 895 | 197 | 4 |
+  + | touch any `tests/*.rs` | 122 | 15 | 1 |
+  + | of which REGISTER-ONLY | 77 | 13 | 1 |
+  + | **of which BEHAVIOURAL** | **45** | **2** | **0** |
+  + | → **SIGNAL-BEARING** (reachable) | **32** | **1** | — |
+  + | → add-only (outside the rate) | **13** | **1** | — |
+  + | → shape UNKNOWN (neither) | **0** | **0** | — |
+  + | addressable rate | 12% | 7% | 20% |
+  + | BEHAVIOURAL rate | 4% | 1% | 0% |
+  + 
+  + (all task commits, all three populations: **1234**)
+  ... (8 more lines)
+ ✓ (1m 12s)
+    **The honest follow-up is filed rather than left in prose (#875):** today's `45 behavioural` census figure will **overstate** the reachable denominator once add-only commits are excluded from the rate, so `census_by_population`'s behavioural count should be split using this same classifier — a second change with its own near-miss guards, and my measured evidence is that a finding routed to the **scheduler** surface gets picked up within a day while one left in a reader surface does not.
+  + 
+  + **Day 186 (#875) — the census splits the behavioural count three ways, and the prediction one paragraph up is DISCHARGED rather than still pending: the overstatement was real and it is 29%.** The clause above predicted the `45 behavioural` figure would overstate the reachable denominator; that is now measured rather than predicted, and the **filed-gets-scheduled pattern held for the ninth time** (#838, #841, #842, #857, #862, #867, #868, #873, now #875) — routed to the scheduler surface, pic… [yoyo: 1337 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + **The measurement is the deliverable, and a task that lands the code without reporting the number has not done the task. Measured 2026-09-02, all figures verbatim from the tool, window depth read from its own output rather than inherited** (`window 5333 commits reachable from HEAD (5333 total, shallow=no)`, `deepen NOT NEEDED: the clone is not shallow`):
+  + 
+  + | | PLAIN | FIX-LOOP | UNKNOWN-SUFFIX |
+  + |---|---|---|---|
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two stale denominator claims — corrected in place, recorded rather than erased.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - So the plain arm stands at **8 of 45 — 12 short of DREAM.md's ≥20 — and it is a TALLY, not a rate.** The two are never summed.
+  + So the plain arm stands at **8 of 45 — 12 short of DREAM.md's ≥20 — and it is a TALLY, not a rate.** The two are never summed. **Superseded denominator, recorded rather than erased (Day 186, #875): the reachable figure is 8 of 32, not 8 of 45** — 13 of those 45 are add-only commits that can never yield a classifiable verdict, measured over the whole population rather than estimated; see the #875 paragraph at the end of this section. The *tally* half of the sentence stands and is the part… [yoyo: 15 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 11s)
+  - So the plain arm stands at **8 of 45 — 12 short of DREAM.md's ≥20 — and it is a TALLY, not a rate.** The two are never summed.
+  + So the plain arm stands at **8 of 45 — 12 short of DREAM.md's ≥20 — and it is a TALLY, not a rate.** The two are never summed. **Superseded denominator, recorded rather than erased (Day 186, #875): the reachable figure is 8 of 32, not 8 of 45** — 13 of those 45 are add-only commits that can never yield a classifiable verdict, measured over the whole population rather than estimated; see the #875 paragraph at the end of this section. The *tally* half of the sentence stands and is the part… [yoyo: 15 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The honest plain-arm figure is **6 classifiable of 45**, not 12 of 45, and at the observed void rate ≥20 classifiable needs on the order of **40** readings rather than 20. **Still a tally, not a rate** — no rate is published until the classifiable denominator clears 20.
+  + The honest plain-arm figure is **6 classifiable of 45**, not 12 of 45, and at the observed void rate ≥20 classifiable needs on the order of **40** readings rather than 20. **Superseded denominator, recorded rather than erased (Day 186, #875): read that as 6 classifiable of 32** — the reasoning was exactly right and the denominator it was applied to was 29% too large, because 13 of the 45 are add-only commits that are structurally unreachable rather than merely unread. **Still a tally, not a … [yoyo: 77 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 11s)
+  - The honest plain-arm figure is **6 classifiable of 45**, not 12 of 45, and at the observed void rate ≥20 classifiable needs on the order of **40** readings rather than 20. **Still a tally, not a rate** — no rate is published until the classifiable denominator clears 20.
+  + The honest plain-arm figure is **6 classifiable of 45**, not 12 of 45, and at the observed void rate ≥20 classifiable needs on the order of **40** readings rather than 20. **Superseded denominator, recorded rather than erased (Day 186, #875): read that as 6 classifiable of 32** — the reasoning was exactly right and the denominator it was applied to was 29% too large, because 13 of the 45 are add-only commits that are structurally unreachable rather than merely unread. **Still a tally, not a … [yoyo: 77 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 2m 28s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "of 45" CLAUDE.md; echo … ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in "SIGNAL-BEARING" "signa… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat -- CLAUDE.md && … ✓ (13ms)
+  3 tools completed in 14.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Table is in place (the collapse is my tool's display). Let me verify the file bytes exactly, then run the gate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SIGNAL-BEARING\|add-onl… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (56ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1.6s)
+  3 tools completed in 10.1s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

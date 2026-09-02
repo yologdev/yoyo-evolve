@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact sites named in the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,450p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,260p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,300p' src/commands_b… ✓ (3ms)
+ ✓ (8ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2.4s (3 ✓)
+
+Now let me find the actual signal-decoding block in tools.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "signal\|SIGKILL\|ExitSt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "exit_code\b" src/comma… ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '465,515p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,182p' src/commands_r… ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 7.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,175p' src/tools.rs; … ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the core change — extract the decoder in src/tools.rs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (3 → 93 lines)
+    fn pipeline_success(exit_code: i64) -> bool {
+        exit_code == 0 || exit_code == 141
+  + }
+  + 
+  + /// The exit code reported when we genuinely could not determine one: the child
+  + /// gave us neither an exit status nor a signal, or we failed to `wait()` for it
+  + /// at all.
+  + ///
+  + /// **The value is chosen to be un-confusable, and that is the whole point** (#878).
+  + /// A signal death is encoded as `-sig`, and `SIGHUP` is signal 1 — so the obvious
+  + /// `-1` sentinel is *literally the encoding of a real signal death*, and `/run`
+  + /// used it for both meanings at once. `/fix` reads `LAST_FAILED_RUN`, so an
+  + /// OOM-killed build and "I could not wait for the child" arrived as the same
+  + /// number and it debugged an unnamed failure. This sits far outside both the
+  + /// `0..=255` exit-code range and the `1..=64` signal range, so no signal and no
+  + /// exit status can ever produce it.
+  + pub(crate) const EXIT_CODE_UNDETERMINED: i32 = -1000;
+  + 
+  + /// The highest signal number this decoder will read back out of an exit code.
+  + ///
+  ... (73 more lines)
+ ✓ (14.8s)
+    fn pipeline_success(exit_code: i64) -> bool {
+        exit_code == 0 || exit_code == 141
+  + }
+  + 
+  + /// The exit code reported when we genuinely could not determine one: the child
+  + /// gave us neither an exit status nor a signal, or we failed to `wait()` for it
+  + /// at all.
+  + ///
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected dead-code (my own rule: no definition without its consumer). Fixing the lint and wiring the first consumer now.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 1 lines)
+  -     if exit_code < 0 && exit_code >= -MAX_SIGNAL {
+  +     if (-MAX_SIGNAL..0).contains(&exit_code) {
+ ✓ (15.0s)
+  -     if exit_code < 0 && exit_code >= -MAX_SIGNAL {
+  +     if (-MAX_SIGNAL..0).contains(&exit_code) {
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now wiring the first consumer — StreamingBashTool::execute.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (36 → 11 lines)
+  -         let exit_code = exit_status.code().unwrap_or_else(|| {
+  -             // On Unix, if code() is None the process was killed by a signal.
+  -             #[cfg(unix)]
+  -             {
+  -                 use std::os::unix::process::ExitStatusExt;
+  -                 if let Some(sig) = exit_status.signal() {
+  -                     return -sig; // e.g. SIGSEGV=11 → -11
+  -                 }
+  -             }
+  -             -1
+  -         });
+  +         // One statement of the decode/render rule, shared with `/run` and `/bg`
+  +         // (#878) — this used to be an inline copy here and a bare
+  +         // `unwrap_or(-1)` in both of those.
+  +         let exit_code = exit_code_of(&exit_status);
+            let output = accumulated.lock().await.clone();
+    
+            // One final update with the complete output
+            emit_update(&ctx, &output);
+    
+  ... (21 more lines)
+ ✓ (1m 52s)
+  -         let exit_code = exit_status.code().unwrap_or_else(|| {
+  -             // On Unix, if code() is None the process was killed by a signal.
+  -             #[cfg(unix)]
+  -             {
+  -                 use std::os::unix::process::ExitStatusExt;
+  -                 if let Some(sig) = exit_status.signal() {
+  -                     return -sig; // e.g. SIGSEGV=11 → -11
+  -                 }
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Auto-check passed. Now the two collapsed sites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (25 → 27 lines)
+        // Collect exit status
+        match child.wait() {
+            Ok(status) => {
+  -             let code = status.code().unwrap_or(-1);
+  +             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+  +             // determine" were the same number, and `-1` is literally SIGHUP (#878).
+  +             let code = crate::tools::exit_code_of(&status);
+                let success = code == 0;
+                RunResult {
+                    exit_code: code,
+  ···
+            Err(e) => {
+                eprintln!("{RED}  error waiting for command: {e}{RESET}\n");
+                RunResult {
+  -                 exit_code: -1,
+  +                 exit_code: crate::tools::EXIT_CODE_UNDETERMINED,
+                    stdout: stdout_text,
+                    stderr: format!("{stderr_text}\nerror waiting for command: {e}"),
+                    elapsed,
+ ✓ (1m 52s)
+        // Collect exit status
+        match child.wait() {
+            Ok(status) => {
+  -             let code = status.code().unwrap_or(-1);
+  +             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+  +             // determine" were the same number, and `-1` is literally SIGHUP (#878).
+  +             let code = crate::tools::exit_code_of(&status);
+                let success = code == 0;
+  ... (11 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (3 → 3 lines)
+                eprintln!("{RED}  error running command: {e}{RESET}\n");
+                return RunResult {
+  -                 exit_code: -1,
+  +                 exit_code: crate::tools::EXIT_CODE_UNDETERMINED,
+ ✓ (1m 53s)
+                eprintln!("{RED}  error running command: {e}{RESET}\n");
+                return RunResult {
+  -                 exit_code: -1,
+  +                 exit_code: crate::tools::EXIT_CODE_UNDETERMINED,
+  2 tools completed in 3m 48s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (11 → 13 lines)
+        match child.wait().await {
+            Ok(status) => {
+                let mut code = lock_or_recover(&exit_code);
+  -             *code = Some(status.code().unwrap_or(-1));
+  +             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+  +             // determine" were the same number, and `-1` is literally SIGHUP (#878).
+  +             *code = Some(crate::tools::exit_code_of(&status));
+            }
+            Err(_) => {
+                let mut code = lock_or_recover(&exit_code);
+  -             *code = Some(-1);
+  +             *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+            }
+        }
+ ✓ (1m 53s)
+        match child.wait().await {
+            Ok(status) => {
+                let mut code = lock_or_recover(&exit_code);
+  -             *code = Some(status.code().unwrap_or(-1));
+  +             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
+  +             // determine" were the same number, and `-1` is literally SIGHUP (#878).
+  +             *code = Some(crate::tools::exit_code_of(&status));
+            }
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (3 → 3 lines)
+                let mut code = lock_or_recover(&exit_code);
+  -             *code = Some(-1);
+  +             *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                return;
+ ✓ (1m 53s)
+                let mut code = lock_or_recover(&exit_code);
+  -             *code = Some(-1);
+  +             *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                return;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '408,425p' src/commands_b… ✓ (4ms)
+  3 tools completed in 3m 52s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -- "-1" src/commands_bg.… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+No test pins that marker. Fixing the third -1 meaning and the /bg display emission point.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (4 → 9 lines)
+                    let mut code = lock_or_recover(&j.exit_code);
+                    if code.is_none() {
+  -                     *code = Some(-1); // killed
+  +                     // We killed it, but the waiter has not reported a code yet,
+  +                     // so we do not know one. Deliberately NOT `-1`: since #878
+  +                     // that is the encoding of a SIGHUP death, and this row would
+  +                     // render a confident `exit -1 (SIGHUP)` for a job we killed
+  +                     // ourselves. "Killed" is real; the code is undetermined.
+  +                     *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                    }
+ ✓ (1m 52s)
+                    let mut code = lock_or_recover(&j.exit_code);
+                    if code.is_none() {
+  -                     *code = Some(-1); // killed
+  +                     // We killed it, but the waiter has not reported a code yet,
+  +                     // so we do not know one. Deliberately NOT `-1`: since #878
+  +                     // that is the encoding of a SIGHUP death, and this row would
+  +                     // render a confident `exit -1 (SIGHUP)` for a job we killed
+  +                     // ourselves. "Killed" is real; the code is undetermined.
+  +                     *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg.rs (5 → 10 lines)
+                match job.exit_code {
+                    Some(0) => format!("{GREEN}✓ done{RESET}"),
+  -                 Some(code) => format!("{RED}✗ exit {code}{RESET}"),
+  +                 // Name the signal when there is one (#878) — an ordinary code
+  +                 // renders byte-identically to before.
+  +                 Some(code) => format!(
+  +                     "{RED}✗ exit {}{RESET}",
+  +                     crate::tools::describe_exit_code(code)
+  +                 ),
+                    None => format!("{RED}✗ done{RESET}"),
+                }
+ ✓ (1m 53s)
+                match job.exit_code {
+                    Some(0) => format!("{GREEN}✓ done{RESET}"),
+  -                 Some(code) => format!("{RED}✗ exit {code}{RESET}"),
+  +                 // Name the signal when there is one (#878) — an ordinary code
+  +                 // renders byte-identically to before.
+  +                 Some(code) => format!(
+  +                     "{RED}✗ exit {}{RESET}",
+  +                     crate::tools::describe_exit_code(code)
+  ... (3 more lines)
+  2 tools completed in 3m 50s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_run.rs (1 → 4 lines)
+  -         println!("{RED}  ✗ exit {} ({elapsed}){RESET}", result.exit_code);
+  +         println!(
+  +             "{RED}  ✗ exit {} ({elapsed}){RESET}",
+  +             crate::tools::describe_exit_code(result.exit_code)
+  +         );
+ ✓ (1m 52s)
+  -         println!("{RED}  ✗ exit {} ({elapsed}){RESET}", result.exit_code);
+  +         println!(
+  +             "{RED}  ✗ exit {} ({elapsed}){RESET}",
+  +             crate::tools::describe_exit_code(result.exit_code)
+  +         );
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the tests — at the emission point, both directions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1565,1572p' src/tools.rs ✓ (2ms)
+  2 tools completed in 1.7s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
