@@ -922,16 +922,79 @@ pub fn indent_tool_output(output: &str) -> String {
 /// Maximum lines to include when auto-truncating a large file for /add.
 pub const ADD_MAX_LINES: usize = 500;
 
+/// Maximum bytes of a *single* line of tool output before it is clamped (#877).
+///
+/// This is a **judgment threshold, not a measurement** — nothing measured says
+/// 2000 is right. It sits far above any human-authored source line (what this
+/// function normally sees, so ordinary files pass through byte-identically) and
+/// far below the point where one line displaces the model's whole window.
+///
+/// It is the **third** ceiling, and the two that already existed cannot cover
+/// this case. A *line window* (`ADD_MAX_LINES`, `AST_MAX_OUTPUT_LINES`,
+/// `GREP_MAX_MATCHES`) bounds an ordinary large file; a *byte budget*
+/// (`truncate_tool_output`'s `max_chars`, `CappedCapture`'s 4KB+4KB, `/bg`'s
+/// 256KB) bounds a file whose lines are wide rather than many. Neither bounds
+/// *one* minified line that sits comfortably inside the line window — and every
+/// line-count cap waves it through precisely **because it is one line**.
+///
+/// Deliberately larger than its siblings rather than a fresh invention:
+/// `MAX_DIFF_LINE_WIDTH` = 500 is tuned for *readability* in a rendered diff,
+/// while this bounds *context spend* on text the model reads, so it can afford
+/// to keep more; `CAPTURE_HEAD_BYTES`/`CAPTURE_TAIL_BYTES` = 4096 bound `/run`'s
+/// whole capture rather than one line of it.
+pub const MAX_TOOL_OUTPUT_LINE_BYTES: usize = 2000;
+
 /// Truncate file content for context injection (used by /add).
 /// Preserves head (40%) and tail (20%) with a clear omission marker
 /// showing how many lines were skipped.
 /// Returns `(truncated_content, was_truncated, original_line_count)`.
+///
+/// Bounded on **two independent properties**, because a line count alone is not
+/// a bound on size: `max_lines` bounds how *many* lines are kept, and
+/// `MAX_TOOL_OUTPUT_LINE_BYTES` bounds how *wide* any one of them may be. The
+/// second is applied at a single site to every line that reaches the caller —
+/// head region and tail region alike — so a `bundle.min.js`, a one-line lockfile
+/// or a base64 blob cannot pass the line-count cap untouched (#877, measured: a
+/// single 100 KB line previously returned verbatim through the
+/// `total <= max_lines` early return).
+///
+/// **Stated limit.** This clamps *this* emission point. It is not a claim that
+/// every path a model reads is now per-line bounded: `/run` and `/bg`
+/// (`CappedCapture`, 256 KB), `/ast` (`AST_MAX_OUTPUT_LINES`) and the `!` bang
+/// passthrough carry their own budgets and are untouched here, and
+/// `truncate_tool_output` bounds total bytes rather than any single line.
+/// "Could not check" must not read as "checked; clean".
+///
+/// `was_truncated` keeps its existing meaning — *lines were omitted* — so a file
+/// that was only ever clamped per line still reports `false`; that loss is
+/// reported in band, at the cut, by the marker itself.
 pub fn smart_truncate_for_context(content: &str, max_lines: usize) -> (String, bool, usize) {
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
 
+    // The one clamp site. Every line that reaches the caller passes through it;
+    // if this had to be repeated at a consumer it would be in the wrong place.
+    let clamp = |line: &str| -> String {
+        super::diff::truncate_long_line(line, MAX_TOOL_OUTPUT_LINE_BYTES, "tool output lines")
+            .unwrap_or_else(|| line.to_string())
+    };
+
     if total <= max_lines {
-        return (content.to_string(), false, total);
+        // Byte-identical pass-through when every line is within budget — that is
+        // every hand-sized file, i.e. the entire regression surface. Rebuild only
+        // when a line is genuinely over, so trailing newlines and line endings
+        // are preserved exactly for everyone else.
+        if !lines.iter().any(|l| l.len() > MAX_TOOL_OUTPUT_LINE_BYTES) {
+            return (content.to_string(), false, total);
+        }
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            result.push_str(&clamp(line));
+            if i + 1 < total {
+                result.push('\n');
+            }
+        }
+        return (result, false, total);
     }
 
     // 40% head, 20% tail — gives more context at the top (imports, types, structs)
@@ -943,7 +1006,7 @@ pub fn smart_truncate_for_context(content: &str, max_lines: usize) -> (String, b
 
     let mut result = String::new();
     for line in &lines[..head_count] {
-        result.push_str(line);
+        result.push_str(&clamp(line));
         result.push('\n');
     }
     result.push_str(&format!(
@@ -952,7 +1015,7 @@ pub fn smart_truncate_for_context(content: &str, max_lines: usize) -> (String, b
     ));
     if tail_count > 0 {
         for (i, line) in lines[total - tail_count..].iter().enumerate() {
-            result.push_str(line);
+            result.push_str(&clamp(line));
             if i < tail_count - 1 {
                 result.push('\n');
             }
@@ -2675,6 +2738,148 @@ mod tests {
             result.contains("[compiler output:"),
             "Should contain compiler output header, got: {}",
             &result[..result.len().min(500)]
+        );
+    }
+
+    // --- #877: per-line clamp on tool output (Day 186) ---
+    //
+    // Step 0 of #877 asked for the defect to be REPRODUCED before being fixed.
+    // The reproduction is `..._clamps_a_single_hundred_kb_line`: before the fix a
+    // single 100 KB line hit the `total <= max_lines` early return (1 <= 500) and
+    // came back verbatim, because every ceiling on this path counted LINES.
+
+    #[test]
+    fn smart_truncate_for_context_clamps_a_single_hundred_kb_line() {
+        // One minified line: inside the line window, and on its own it eats the
+        // whole context budget. This is the shape both existing ceilings miss.
+        let content = "x".repeat(100_000);
+        let (result, truncated, total) = smart_truncate_for_context(&content, ADD_MAX_LINES);
+
+        assert_eq!(total, 1, "fixture must really be a single line");
+        assert!(
+            !truncated,
+            "no LINES were omitted — `was_truncated` keeps its existing meaning"
+        );
+        assert!(
+            result.len() < content.len(),
+            "the 100 KB line must not pass through unclamped (got {} bytes)",
+            result.len()
+        );
+        assert!(
+            result.len() <= MAX_TOOL_OUTPUT_LINE_BYTES + 200,
+            "clamped line should be about the budget plus the in-band marker, got {}",
+            result.len()
+        );
+        assert!(
+            result.starts_with(&"x".repeat(MAX_TOOL_OUTPUT_LINE_BYTES)),
+            "the kept prefix must be the head of the original line"
+        );
+        assert!(
+            result.contains("bytes elided"),
+            "the cut must be marked in band, got: {}",
+            &result[result.len().saturating_sub(120)..]
+        );
+    }
+
+    #[test]
+    fn smart_truncate_for_context_ordinary_content_is_byte_identical() {
+        // The near-miss guard, and the whole regression surface: every line under
+        // budget must come back untouched. Whole-string `assert_eq!`, never a
+        // `contains` — a discriminator tested only on the side that fires is
+        // vacuous green.
+        let content = "fn main() {\n    println!(\"hi\");\n}\n";
+        let (result, truncated, total) = smart_truncate_for_context(content, ADD_MAX_LINES);
+        assert_eq!(result, content);
+        assert!(!truncated);
+        assert_eq!(total, 3);
+
+        // A trailing-newline-free file is byte-identical too.
+        let no_trailing = "alpha\nbeta";
+        let (result, _, _) = smart_truncate_for_context(no_trailing, ADD_MAX_LINES);
+        assert_eq!(result, no_trailing);
+    }
+
+    #[test]
+    fn smart_truncate_for_context_per_line_boundary_in_both_directions() {
+        // Exactly at budget: untouched.
+        let at_cap = "a".repeat(MAX_TOOL_OUTPUT_LINE_BYTES);
+        let (result, _, _) = smart_truncate_for_context(&at_cap, ADD_MAX_LINES);
+        assert_eq!(
+            result, at_cap,
+            "a line exactly at budget must not be clamped"
+        );
+
+        // One byte over: clamped.
+        let one_past = "a".repeat(MAX_TOOL_OUTPUT_LINE_BYTES + 1);
+        let (result, _, _) = smart_truncate_for_context(&one_past, ADD_MAX_LINES);
+        assert_ne!(result, one_past, "one byte over budget must be clamped");
+        assert!(result.contains("1 more bytes elided"));
+    }
+
+    #[test]
+    fn smart_truncate_for_context_marker_count_agrees_with_what_was_dropped() {
+        // An in-band marker that lies is worse than none.
+        let content = "b".repeat(MAX_TOOL_OUTPUT_LINE_BYTES + 500);
+        let (result, _, _) = smart_truncate_for_context(&content, ADD_MAX_LINES);
+        assert!(
+            result.contains("500 more bytes elided"),
+            "marker must report the real dropped byte count, got: {}",
+            &result[result.len().saturating_sub(120)..]
+        );
+        let kept = result.split('\u{2026}').next().unwrap();
+        assert_eq!(
+            content.len() - kept.len(),
+            500,
+            "reported count must equal what was actually dropped"
+        );
+    }
+
+    #[test]
+    fn smart_truncate_for_context_never_splits_a_multibyte_char() {
+        // The cut lands mid-🐙 (4 bytes at 1998..2002, budget 2000), so the whole
+        // character must be dropped rather than sliced. Inherited from
+        // `truncate_long_line`, asserted here because this caller is what makes
+        // the property reachable from the tool-output path (CLAUDE.md rule #250).
+        let head = "a".repeat(MAX_TOOL_OUTPUT_LINE_BYTES - 2);
+        let content = format!("{head}\u{1F419}\u{1F419}");
+        assert!(
+            !content.is_char_boundary(MAX_TOOL_OUTPUT_LINE_BYTES),
+            "fixture must really straddle the cut"
+        );
+
+        let (result, _, _) = smart_truncate_for_context(&content, ADD_MAX_LINES);
+        let kept = result.split('\u{2026}').next().unwrap();
+        assert_eq!(kept, head, "the straddling char must be dropped whole");
+        assert!(
+            !kept.contains('\u{1F419}'),
+            "no partial multi-byte char may survive the cut"
+        );
+    }
+
+    #[test]
+    fn smart_truncate_for_context_clamps_wide_lines_in_head_and_tail_regions() {
+        // The other path: when lines ARE omitted, both kept regions must still be
+        // clamped — applying it to only one would be the "two doors, one policy,
+        // one deaf" shape.
+        let wide = "w".repeat(MAX_TOOL_OUTPUT_LINE_BYTES + 300);
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(wide.clone()); // head region
+        for i in 0..50 {
+            lines.push(format!("filler {i}"));
+        }
+        lines.push(wide.clone()); // tail region
+        let content = lines.join("\n");
+
+        let (result, truncated, _) = smart_truncate_for_context(&content, 10);
+        assert!(truncated, "line-count truncation must have fired");
+        assert_eq!(
+            result.matches("300 more bytes elided").count(),
+            2,
+            "both the head and the tail copy of the wide line must be clamped"
+        );
+        assert!(
+            !result.contains(&wide),
+            "no unclamped copy of the wide line may survive"
         );
     }
 }

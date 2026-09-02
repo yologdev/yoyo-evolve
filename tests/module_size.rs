@@ -276,7 +276,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // unattributed in commit 6e446f09.
     // Day 164: +45 lines — provenance corroboration gate for filter_test_output
     // (a `✓` glyph is a shape, a runner summary is provenance) + its regression tests.
-    ("src/format/output.rs", 2680),
+    ("src/format/output.rs", 2885),
     ("src/help.rs", 2739), // Day 179: +41 paid off (was 2698 at Day 174).
     // Day 161 (#662 half 1): +9 lines — run_prompt_auto_retry now breaks out of
     // the retry loop (with one dim stderr line) on deterministic tool refusals

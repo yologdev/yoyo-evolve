@@ -23,7 +23,7 @@ const DIFF_CONTEXT_LINES: usize = 3;
 /// source — those are the same number.
 const MAX_DIFF_LINE_WIDTH: usize = 500;
 
-/// Bound one diff line's width, marking the cut in band.
+/// Bound one line's width, marking the cut in band.
 ///
 /// `None` means the line is at or under budget and the caller must emit it
 /// **verbatim** — that is every line of every hand-sized diff, i.e. the whole
@@ -35,7 +35,19 @@ const MAX_DIFF_LINE_WIDTH: usize = 500;
 /// `is_char_boundary` first, so a multi-byte character straddling the cut is
 /// dropped whole rather than split (CLAUDE.md rule #250; a base64 blob is
 /// exactly where a multi-byte neighbour sits).
-fn truncate_diff_line(line: &str, max: usize) -> Option<String> {
+///
+/// **Not diff-specific** (Day 186, #877). It was written for this renderer and
+/// is now shared with `format::output::smart_truncate_for_context`, which needs
+/// the same ceiling for the same reason one subsystem over: a *line* window and
+/// a *byte* budget both wave through one minified line that is comfortably
+/// inside the line count and on its own eats the whole context budget. `what`
+/// names the thing being capped so each caller's marker says something true —
+/// "diff lines are capped at 500 bytes" would be a lie printed into tool output.
+/// Both the budget and the label are parameters, so this states the *rule* once
+/// and neither caller owns it; a second copy of this function would agree on the
+/// day it was written and diverge forever after (the `significant_braces` /
+/// `char_literal_len` precedent).
+pub(crate) fn truncate_long_line(line: &str, max: usize, what: &str) -> Option<String> {
     if line.len() <= max {
         return None;
     }
@@ -45,7 +57,7 @@ fn truncate_diff_line(line: &str, max: usize) -> Option<String> {
     }
     let dropped = line.len() - b;
     Some(format!(
-        "{}… [yoyo: {dropped} more bytes elided — diff lines are capped at {max} bytes]",
+        "{}… [yoyo: {dropped} more bytes elided — {what} are capped at {max} bytes]",
         &line[..b]
     ))
 }
@@ -176,7 +188,7 @@ pub fn format_edit_diff(old_text: &str, new_text: &str) -> String {
                 // leave the user's terminal stuck in a colour, and it would drop
                 // the trailing RESET entirely. Bounding the content first keeps
                 // every escape this function emits balanced.
-                let bounded = truncate_diff_line(line, MAX_DIFF_LINE_WIDTH);
+                let bounded = truncate_long_line(line, MAX_DIFF_LINE_WIDTH, "diff lines");
                 let line = bounded.as_deref().unwrap_or(line);
                 match op {
                     DiffOp::Keep(_) => output.push(format!("{DIM}    {line}{RESET}")),
@@ -378,8 +390,14 @@ mod tests {
     fn test_truncate_diff_line_under_budget_returns_none() {
         // `None` means "emit the line verbatim". This is essentially every line
         // of every hand-sized diff, and so the whole regression surface.
-        assert_eq!(truncate_diff_line("short line", MAX_DIFF_LINE_WIDTH), None);
-        assert_eq!(truncate_diff_line("", MAX_DIFF_LINE_WIDTH), None);
+        assert_eq!(
+            truncate_long_line("short line", MAX_DIFF_LINE_WIDTH, "diff lines"),
+            None
+        );
+        assert_eq!(
+            truncate_long_line("", MAX_DIFF_LINE_WIDTH, "diff lines"),
+            None
+        );
     }
 
     #[test]
@@ -387,10 +405,13 @@ mod tests {
         // Exactly at the cap is NOT truncated; one byte past is. A discriminator
         // tested only on the side that fires is vacuous green.
         let at_cap = "a".repeat(MAX_DIFF_LINE_WIDTH);
-        assert_eq!(truncate_diff_line(&at_cap, MAX_DIFF_LINE_WIDTH), None);
+        assert_eq!(
+            truncate_long_line(&at_cap, MAX_DIFF_LINE_WIDTH, "diff lines"),
+            None
+        );
 
         let one_past = "a".repeat(MAX_DIFF_LINE_WIDTH + 1);
-        let cut = truncate_diff_line(&one_past, MAX_DIFF_LINE_WIDTH)
+        let cut = truncate_long_line(&one_past, MAX_DIFF_LINE_WIDTH, "diff lines")
             .expect("one byte past the cap must truncate");
         assert!(cut.starts_with(&at_cap), "kept prefix must be the budget");
         assert!(
@@ -405,7 +426,7 @@ mod tests {
         // char, so it must walk back to the boundary and drop the char whole.
         // A raw byte index here would panic (CLAUDE.md rule #250).
         let line = format!("{}✓", "a".repeat(MAX_DIFF_LINE_WIDTH - 1));
-        let cut = truncate_diff_line(&line, MAX_DIFF_LINE_WIDTH)
+        let cut = truncate_long_line(&line, MAX_DIFF_LINE_WIDTH, "diff lines")
             .expect("502 bytes must truncate at a 500-byte cap");
         assert!(
             cut.starts_with(&"a".repeat(MAX_DIFF_LINE_WIDTH - 1)),
