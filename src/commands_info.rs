@@ -1247,6 +1247,24 @@ pub fn parse_iso8601_to_epoch(ts: &str) -> Option<u64> {
     let month: u64 = date_parts[1].parse().ok()?;
     let day: u64 = date_parts[2].parse().ok()?;
 
+    // A year before 1970 has no representation in this unsigned epoch, and without
+    // this guard it does not fail — it succeeds with a garbage value. `for y in
+    // 1970..year` is an EMPTY range when `year < 1970`, so the year contributes
+    // nothing and the month/day arithmetic below projects forward from 1970-01-01:
+    // `1969-12-31` returned `Some(31449600)` (i.e. 1970-12-31), and every
+    // `YYYY-01-01T00:00:00Z` before 1970 — 1900, 0001 — returned `Some(0)`, which
+    // is byte-identical to the epoch itself and so indistinguishable from a real
+    // `1970-01-01T00:00:00Z`. Refusing is the honest answer and the safe direction:
+    // this returns `Option`, and every caller already handles `None`.
+    //
+    // Same failure mode as the Day-134 repair one axis over. That commit guarded the
+    // calendar WITHIN a year (2021-02-30, 2021-04-31 "slipped past the range check
+    // and produced a garbage epoch by overflowing forward") and left the YEAR axis
+    // unguarded, because the range check it strengthened never looked at the year.
+    if year < 1970 {
+        return None;
+    }
+
     let time_parts: Vec<&str> = time_part.split(':').collect();
     if time_parts.len() != 3 {
         return None;
@@ -2308,6 +2326,61 @@ More text.
         assert!(parse_iso8601_to_epoch("2026-13-01T00:00:00Z").is_none()); // month 13
         assert!(parse_iso8601_to_epoch("2026-01-32T00:00:00Z").is_none()); // day 32
         assert!(parse_iso8601_to_epoch("").is_none());
+    }
+
+    #[test]
+    fn parse_iso8601_refuses_pre_1970_instead_of_returning_a_garbage_epoch() {
+        // Blind round 92. Measured BEFORE the fix, not inferred: `for y in 1970..year`
+        // is an EMPTY range when `year < 1970`, so the year contributed nothing and the
+        // month/day arithmetic projected forward from 1970-01-01. Receipts, verbatim:
+        //   "1969-12-31T00:00:00Z" -> Some(31449600)   i.e. 1970-12-31
+        //   "1900-01-01T00:00:00Z" -> Some(0)
+        //   "0001-01-01T00:00:00Z" -> Some(0)
+        // A confident wrong value, not a refusal — and the `Some(0)` cases collide
+        // byte-identically with the epoch itself (see the near-miss guard below), so a
+        // caller could not tell them apart from a real 1970-01-01T00:00:00Z.
+        assert_eq!(parse_iso8601_to_epoch("1969-12-31T00:00:00Z"), None);
+        assert_eq!(parse_iso8601_to_epoch("1900-01-01T00:00:00Z"), None);
+        assert_eq!(parse_iso8601_to_epoch("0001-01-01T00:00:00Z"), None);
+        // The boundary is pinned on BOTH sides: 1969 refuses, 1970 is the epoch.
+        // A discriminator tested only on the side that fires is vacuous green.
+        assert_eq!(parse_iso8601_to_epoch("1969-12-31T23:59:59Z"), None);
+        assert_eq!(parse_iso8601_to_epoch("1970-01-01T00:00:00Z"), Some(0));
+    }
+
+    #[test]
+    fn parse_iso8601_ordinary_timestamps_are_byte_identical_after_the_year_guard() {
+        // The near-miss guard, and it is the half that matters: every shape a real
+        // caller feeds this must be UNCHANGED. `gh run list --json createdAt` emits
+        // exactly this form, and it is the only live producer, so this is the whole
+        // regression surface. Asserted with assert_eq! on the value a caller
+        // receives, never a `is_some()` that a broken guard would still satisfy.
+        assert_eq!(parse_iso8601_to_epoch("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_iso8601_to_epoch("1970-01-01T01:00:00Z"), Some(3600));
+        assert_eq!(parse_iso8601_to_epoch("2026-08-26T21:22:05Z"), Some(1787779325));
+        // Leap-day handling (the Day-134 axis) must survive untouched.
+        assert_eq!(
+            parse_iso8601_to_epoch("2024-02-29T00:00:00Z"),
+            Some(1709164800)
+        );
+        // Anti-vacuous: the fixtures above are only evidence if the parser really
+        // discriminates, so a nonexistent date in the SAME year must still refuse.
+        assert_eq!(parse_iso8601_to_epoch("2024-02-30T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn parse_iso8601_refuses_rfc3339_offsets_and_fractional_seconds_rather_than_guessing() {
+        // Blind round 92, h0: recorded as a MEASURED NON-DEFECT rather than fixed.
+        // ISO-8601/RFC-3339 permits a numeric offset and fractional seconds; this
+        // parser accepts only the trailing-`Z` shape. Both are REFUSED (`None`), which
+        // is the honest answer, not a garbage value — the opposite of the pre-1970
+        // case above. Widening was deliberately declined: the only live producer is
+        // `gh`, which emits `...Z`, so a fence for a branch with n=0 is a note and not
+        // a fix. Pinned so the next reader does not re-derive it, and so that widening
+        // it later is a deliberate act that has to face this assertion.
+        assert_eq!(parse_iso8601_to_epoch("2026-08-26T21:22:05+00:00"), None);
+        assert_eq!(parse_iso8601_to_epoch("2026-08-26T21:22:05.123Z"), None);
+        assert_eq!(parse_iso8601_to_epoch("2026-08-26T21:22:05z"), None);
     }
 
     #[test]
