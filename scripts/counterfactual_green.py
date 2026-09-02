@@ -1197,7 +1197,7 @@ def commit_test_diff_shape(root: str, sha: str) -> str:
     return classify_test_diff_shape(parse_name_status(out))
 
 
-
+def collect_census(root: str, limit: int | None):
     """Walk the log, classify each task commit.
 
     Returns (rows, window, shallow, depth, error). `shallow` is THREE-VALUED (True /
