@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted_disallowed_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2470,2530p' src/cli.rs ✓ (3ms)
+ ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let restricted" src/cli… ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ cd /tmp && mkdir -p rtest && cd rtest && echo "hi" | timeout 25 /home/runner/wor…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a… ✓ (4ms)
+ ✓ (13ms)
+  6 tools completed in 11.8s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '870,935p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '925,985p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_sub_agent_tool…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/t… ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 12.4s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '876,884p' src/agent_buil… ✓ (3ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 15s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 35s (2 ✓)
+
+Verdict: FAIL
+
+The diff is well-constructed — pure decision function, one wiring site, union/dedup/idempotence/superset all table-tested, byte-identical near-miss guard, help text and CLAUDE.md moved in the same commit. But it half-works, and the documented half claims otherwise.
+
+What I verified:
+
+• bash is genuinely removed: it comes from build_tools, and agent_builder.rs:907-908 runs `tools.retain(|t| !self.disallowed_tools.contains(...))` over that list.
+• sub_agent is not: agent_builder.rs:932 does `tools.push(with_session_cap(sub_agent_tool, ...)) **after** that filter, unconditionally, and build_sub_agent_tool never consults disallowed_tools (grep in src/tools.rs` returns only a test fixture).
+• The codebase says so itself, at agent_builder.rs:880: "the sub_agent/shared_state bypass that disallowed_tools couldn't catch (they were added after filtering via with_sub_agent)."
+
+Why that's a FAIL rather than a nit: `RESTRICTED_REMOVED_TOOLS`' own doc comment argues that removing the dispatcher is *"the fail-closed choice and does not rest on that question being answered"* — the question being whether the disallowed list propagates to children. The dispatcher isn't removed, so the clause rests on exactly that unanswered question, and a sub-agent child is built with its own tool set including bash. Meanwhile --help and the startup note now both print command-running tools removed — bash, sub_agent. That is the #879 defect class shipped with the sign flipped: the flag previously failed to confine; it now denies a confinement it does not perform.
+
+All six new tests pass because they pin the pure function's returned Vec. For a tool-removal feature the emission point is the tool list the agent is built with, and nothing asserts on it.
+
+The fix is likely small — gate the two pushes at agent_builder.rs:932-933 on disallowed_tools, or filter after them — but it belongs in the same diff as the help text that promises it.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,374 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the seam that slice 1 built, before touching anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RestrictedEffects\|rest…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed" src/cli.rs … ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.5s (2 ✓)
+
+Slice 1's seam exists as described. Let me read it in detail.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1465..1625  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2170..2270 ✓ (1ms)
+ ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.7s (2 ✓)
+
+Step 0 confirmed: pure decision function, one call site. Now the note tail and the disallowed-tools collection.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:1620..1650  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2375..2435 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up at Step 1. Two things to check first — the note's tests, and the --allowed-tools conflict interaction (my wiring must not break --restricted --allowed-tools X).
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:4975..5045  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "disallowed_tools\|allo… ✓ (2ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.2s (2 ✓)
+
+Slice 1's note test asserts "command execution is NOT disabled" — slice 2 makes that sentence false, so it must be inverted, not deleted. Let me check how the tool lists are consumed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "disallowed_tools" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allowed_tools\|disallow… ✓ (5ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.3s (2 ✓)
+
+Critical finding: agent_builder.rs:898-908 applies allowed_tools first, then disallowed_tools — so adding to the disallowed list is fail-closed even under --allowed-tools bash. But parse_args has a mutual-exclusion check that would now reject --restricted --allowed-tools X. Let me read both regions to place the wiring correctly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:876..931  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:2434..2474 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All reading done — I have the full picture. Key placement decision: agent_builder.rs applies allowed_tools first then `disallowed_tools, so adding to the disallowed list is fail-closed even under --allowed-tools bash. But parse_args`' mutual-exclusion check would reject `--restricted --allowed-tools X`, so the wiring goes after that check and after auto-lite (which would otherwise overwrite the list).
+
+Step 1 — the decision half:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (6 → 50 lines)
+            set_safe_mode: true,
+            add_allow_dir,
+            dir_outcome,
+  +     }
+  + }
+  + 
+  + /// Tools `--restricted` removes, and why each one is on the list (#879 clause D,
+  + /// second slice).
+  + ///
+  + /// `bash` runs commands directly. `sub_agent` runs them by **delegation** — a
+  + /// child agent is built with its own tool set, so leaving the dispatcher live
+  + /// would make this whole clause depend on whether the disallowed list propagates
+  + /// to children. Removing the dispatcher is the fail-closed choice and does not
+  + /// rest on that question being answered.
+  + ///
+  + /// Deliberately **not** the file tools: `--restricted` is not `/read` mode. The
+  + /// external spec this parity is measured against removes command-running tools
+  + /// and keeps file tools, so writes stay live.
+  + pub(crate) const RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash", "sub_agent"];
+  + 
+  ... (29 more lines)
+ ✓ (15.1s)
+            set_safe_mode: true,
+            add_allow_dir,
+            dir_outcome,
+  +     }
+  + }
+  + 
+  + /// Tools `--restricted` removes, and why each one is on the list (#879 clause D,
+  + /// second slice).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code error is expected — the definition has no consumer yet. Per my own Day-184 lesson (sequence by verification cost: the test is a consumer too, and it confirms rather than merely references), the test comes before the wiring.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 2 lines)
+        #[test]
+        fn restricted_is_a_known_flag_that_takes_no_value() {
+  -         assert!(KNOWN_FLAGS.contains(&"--restricted"));
+ ✓ (15.2s)
+        #[test]
+        fn restricted_is_a_known_flag_that_takes_no_value() {
+  -         assert!(KNOWN_FLAGS.contains(&"--restricted"));
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That edit was wrong — I dropped an assertion instead of inserting before it. Let me check and repair.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5074,5092p' src/cli.rs ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — I dropped assert!(KNOWN_FLAGS.contains(&"--restricted"));. Restoring it and adding the slice-2 tests in one edit:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (8 → 126 lines)
+        #[test]
+        fn restricted_is_a_known_flag_that_takes_no_value() {
+  +         assert!(KNOWN_FLAGS.contains(&"--restricted"));
+            // It consumes no token after it, so it must NOT be scanned for a value
+            // (#862's guard reads cli_help_text(), which documents it with no
+            // placeholder).
+            assert!(!FLAGS_NEEDING_VALUES.contains(&"--restricted"));
+  +     }
+  + 
+  +     // ---- #879 clause D, second slice: remove command-running tools -----------
+  + 
+  +     /// The rows the decision is graded on. `(restricted, existing, why)`.
+  +     fn restricted_tool_rows() -> Vec<(bool, Vec<String>, &'static str)> {
+  +         vec![
+  +             (true, vec![], "no user list"),
+  +             (true, vec!["web_search".to_string()], "unrelated user entry"),
+  +             (true, vec!["bash".to_string()], "user already disallowed bash"),
+  +             (
+  +                 true,
+  +                 vec!["bash".to_string(), "sub_agent".to_string()],
+  ... (106 more lines)
+ ✓ (15.3s)
+        #[test]
+        fn restricted_is_a_known_flag_that_takes_no_value() {
+  +         assert!(KNOWN_FLAGS.contains(&"--restricted"));
+            // It consumes no token after it, so it must NOT be scanned for a value
+            // (#862's guard reads cli_help_text(), which documents it with no
+            // placeholder).
+            assert!(!FLAGS_NEEDING_VALUES.contains(&"--restricted"));
+  +     }
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy checks the bin target, where non-test code still has no consumer — so the wiring must land. Step 3 first (the note), since the note is what the wiring's message depends on:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (13 → 16 lines)
+  -     // The anti-false-confinement sentence. Present in every branch, on purpose.
+  +     // Clause D (second slice): the command-running tools are gone. Named
+  +     // verbatim — a user cannot act on a tool they cannot see removed — and
+  +     // scoped, because `--restricted` is deliberately NOT read-only mode.
+  +     let removed = RESTRICTED_REMOVED_TOOLS.join(", ");
+        if plain {
+            msg.push_str(&format!(
+  -             "\n{bullet} command execution is NOT disabled: use --read or --no-tools for that"
+  +             "\n{bullet} command-running tools removed: {removed} (file tools stay live; use --read for read-only)"
+            ));
+        } else {
+            msg.push_str(&format!(
+  -             "\n{bullet} command execution is NOT disabled — use --read or --no-tools for that"
+  +             "\n{bullet} command-running tools removed — {removed} (file tools stay live; use --read for read-only)"
+            ));
+        }
+    
+ ✓ (15.3s)
+  -     // The anti-false-confinement sentence. Present in every branch, on purpose.
+  +     // Clause D (second slice): the command-running tools are gone. Named
+  +     // verbatim — a user cannot act on a tool they cannot see removed — and
+  +     // scoped, because `--restricted` is deliberately NOT read-only mode.
+  +     let removed = RESTRICTED_REMOVED_TOOLS.join(", ");
+        if plain {
+            msg.push_str(&format!(
+  -             "\n{bullet} command execution is NOT disabled: use --read or --no-tools for that"
+  ... (9 more lines)
+
+Const is consumed now. Step 2 — wire the decision at one site, after the mutual-exclusion check and after auto-lite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 21 lines)
+  +     // #879 clause D, and the ONE call site for the tool-removal decision.
+  +     //
+  +     // Placement is the whole correctness of it, in two directions:
+  +     //
+  +     //  - AFTER the --allowed-tools/--disallowed-tools conflict check above. That
+  +     //    check exists to stop a *user* passing both flags; `--restricted` is not
+  +     //    the user passing `--disallowed-tools`, so running it earlier would make
+  +     //    `--restricted --allowed-tools read_file` a hard error. It stays legal,
+  +     //    and it is still fail-closed: `build_agent` applies the allowed filter
+  +     //    FIRST and the disallowed filter SECOND, so a tool named in both is
+  +     //    removed — `--restricted --allowed-tools bash` does not get bash.
+  +     //  - AFTER the auto-lite block, which assigns `disallowed_tools` wholesale
+  +     //    when it is empty. Running earlier would let auto-lite overwrite the
+  +     //    removal; running here means restricted only ever unions on top and can
+  +     //    never be undone by a later branch.
+  +     if let Some(ref mut config) = result {
+  +         config.disallowed_tools = restricted_disallowed_tools(restricted, &config.disallowed_tools);
+  +     }
+  + 
+        result
+  ... (1 more lines)
+ ✓ (1m 45s)
+  +     // #879 clause D, and the ONE call site for the tool-removal decision.
+  +     //
+  +     // Placement is the whole correctness of it, in two directions:
+  +     //
+  +     //  - AFTER the --allowed-tools/--disallowed-tools conflict check above. That
+  +     //    check exists to stop a *user* passing both flags; `--restricted` is not
+  +     //    the user passing `--disallowed-tools`, so running it earlier would make
+  +     //    `--restricted --allowed-tools read_file` a hard error. It stays legal,
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Compiles now. Let me see the test state — slice 1's note test should now fail, since its assertion became false:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (192ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5 new tests pass; slice 1's note test fails on exactly the sentence slice 2 made false. That assertion pinned a true-at-the-time claim — so it gets inverted and renamed, never deleted, with the superseded claim recorded:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (28 → 33 lines)
+            let already = restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj")));
+            let unresolved = restricted_mode_effects(&[], None);
+    
+  -         // The anti-false-confinement sentence is present in EVERY branch: the
+  -         // flag does not disable bash (clause D is deferred), so a user who
+  -         // believes otherwise is in exactly the state #879 is about.
+  +         // SUPERSEDED ASSERTION, inverted rather than deleted (#879 slice 2).
+  +         // This block used to assert the note contains "command execution is NOT
+  +         // disabled" — a true statement while clause D was deferred, and made
+  +         // FALSE by slice 2, which removes bash and sub_agent. A fixture pinning
+  +         // a claim its own fix falsified is how a stale promise becomes a green
+  +         // invariant, so the assertion is flipped to guard the other direction:
+  +         // the note must no longer make the old claim.
+            for effects in [&fenced, &already, &unresolved] {
+                for plain in [false, true] {
+                    let note = restricted_mode_note(effects, plain);
+                    assert!(
+  -                     note.contains("command execution is NOT disabled"),
+  -                     "every branch must say bash is still live: {note}"
+  +                     !note.contains("command execution is NOT disabled"),
+  ... (11 more lines)
+ ✓ (1m 56s)
+            let already = restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj")));
+            let unresolved = restricted_mode_effects(&[], None);
+    
+  -         // The anti-false-confinement sentence is present in EVERY branch: the
+  -         // flag does not disable bash (clause D is deferred), so a user who
+  -         // believes otherwise is in exactly the state #879 is about.
+  +         // SUPERSEDED ASSERTION, inverted rather than deleted (#879 slice 2).
+  +         // This block used to assert the note contains "command execution is NOT
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (204ms)
+  2 tools completed in 1m 58s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+12/12 green. Before the positive control, one weakness I can see in advance: restricted_dedups_and_is_idempotent would still pass under neutering, because its input already contains bash. That makes it non-discriminating — fixing it with an anti-vacuous assertion:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (12 → 20 lines)
+                once.iter().filter(|t| *t == "bash").count(),
+                1,
+                "exactly one bash: {once:?}"
+  +         );
+  +         // Anti-vacuous: without this the whole test passes against a decision
+  +         // that does NOTHING, because the input already carried `bash` and one
+  +         // copy of it is trivially one copy. This is what makes the dedup claim
+  +         // discriminate — the removal must actually have run.
+  +         assert!(
+  +             once.contains(&"sub_agent".to_string()),
+  +             "the removal must still have happened: {once:?}"
+            );
+            // A fixed point: applying the decision to its own output changes nothing.
+            let twice = restricted_disallowed_tools(true, &once);
+ ✓ (1m 56s)
+                once.iter().filter(|t| *t == "bash").count(),
+                1,
+                "exactly one bash: {once:?}"
+  +         );
+  +         // Anti-vacuous: without this the whole test passes against a decision
+  +         // that does NOTHING, because the input already carried `bash` and one
+  +         // copy of it is trivially one copy. This is what makes the dedup claim
+  +         // discriminate — the removal must actually have run.
+  ... (6 more lines)
+
+Now the positive control, as one atomic mutate→run→restore command (never two file-mutating controls in parallel):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.r… (21 lines) ✓ (49.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passed in both directions: neutering reddened exactly 3 tests — including restricted_dedups_and_is_idempotent, which my anti-vacuous fix converted from a would-have-passed into a real discriminator — while the byte-identical near-miss guard stayed green, which is the direction proving it tests the pass-through rather than the fix. Restored to 12/12.
+
+Now the docs. Finding the --restricted help line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" src/help.rs ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5454 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The module-size gate fired — src/cli.rs grew past its register entry. That's the gate working as designed; the remedy is the literal line it prints. Let me read it rather than hand-type a number:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (194ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs", 6361' tes… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 6361),
+  +     ("src/cli.rs", 6557),
+ ✓ (1m 15s)
+  -     ("src/cli.rs", 6361),
+  +     ("src/cli.rs", 6557),
+  3 tools completed in 1m 20s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

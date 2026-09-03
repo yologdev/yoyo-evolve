@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the code half that landed, then fix the doc half.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" src/help.rs ✓ (2ms)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1470,1545p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1700p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 11.6s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The code half is committed; the doc half is missing. Let me read the stale in-source comment the evaluator flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1495,1536p' src/cli.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bash" src/cli.rs | sed … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1520 && NR<=1535 {print… ✓ (4ms)
+  3 tools completed in 5.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have everything. Three edits — starting with the stale in-source clause-D comment.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (5 → 16 lines)
+  - /// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
+  - ///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
+  - ///   bash**, which is why `restricted_mode_note` says so outright in every
+  - ///   branch — a mode switch that overstates its own confinement is worse than an
+  - ///   invisible one.
+  + ///
+  + /// **Superseded claim, recorded rather than erased (slice 2).** This list used to
+  + /// carry a second entry reading: *"**Clause D, remove command-running tools.**
+  + /// `--no-tools` is all-or-nothing and per-tool removal is new machinery. **So
+  + /// `--restricted` does NOT disable bash**, which is why `restricted_mode_note`
+  + /// says so outright in every branch — a mode switch that overstates its own
+  + /// confinement is worse than an invisible one."* That is a true record of what
+  + /// slice 1 shipped and is **false as a description of the code**: clause D landed
+  + /// in slice 2 as `RESTRICTED_REMOVED_TOOLS` + `restricted_disallowed_tools`, and
+  + /// `restricted_mode_note` now says the opposite — that `bash` and `sub_agent` are
+  + /// gone. The reasoning survives intact and is why the note exists at all: a mode
+  + /// switch that overstates its own confinement is worse than an invisible one, and
+  + /// that cuts **both** ways — a `--help` line asserting bash still runs is the same
+  + /// defect wearing the opposite sign, which is why `src/help.rs` moved in the same
+  + /// diff. Clause D's own deferral reason (per-tool removal is new machinery) was
+  ... (1 more lines)
+ ✓ (2m 2s)
+  - /// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
+  - ///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
+  - ///   bash**, which is why `restricted_mode_note` says so outright in every
+  - ///   branch — a mode switch that overstates its own confinement is worse than an
+  - ///   invisible one.
+  + ///
+  + /// **Superseded claim, recorded rather than erased (slice 2).** This list used to
+  + /// carry a second entry reading: *"**Clause D, remove command-running tools.**
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now src/help.rs — the line that now contradicts the behaviour.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Does NOT disable\|rest… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (10 → 14 lines)
+  -         "  --restricted      Confine this run: ignore project settings (as --safe-mode) and"
+  +         "  --restricted      Confine this run: ignore project settings (as --safe-mode),"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    fence file tools to the working directory. Does NOT disable"
+  +         "                    fence file tools to the working directory, and remove the"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    command execution — use --read or --no-tools for that"
+  +         "                    command-running tools (bash, sub_agent). File tools stay"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    live — use --read for read-only"
+        );
+ ✓ (1m 56s)
+  -         "  --restricted      Confine this run: ignore project settings (as --safe-mode) and"
+  +         "  --restricted      Confine this run: ignore project settings (as --safe-mode),"
+        );
+        let _ = writeln!(
+            s,
+  -         "                    fence file tools to the working directory. Does NOT disable"
+  +         "                    fence file tools to the working directory, and remove the"
+        );
+  ... (9 more lines)
+  2 tools completed in 2m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now CLAUDE.md — the cli.rs bullet's --restricted description and the parity table.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" CLAUDE.md |… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restricted" CLAUDE.md |… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 326 358; do echo "=== $… ✓ (1.2s)
+  3 tools completed in 8.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==274' CLAUDE.md | grep -… ✓ (80ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==274' CLAUDE.md | grep -… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "of 5\|parity\|#879" CLA… ✓ (4ms)
+  3 tools completed in 8.8s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+CLAUDE.md has no --restricted text at all — slice 1 never documented it, so this is an addition, not an edit. Let me see the tail of that bullet.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==274' CLAUDE.md | tail -… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I'll append the --restricted documentation to the end of the cli.rs bullet.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - that is this function's own near-miss guard. The boundary still answers *who wrote this*, never *is this safe*.
+  + that is this function's own near-miss guard. The boundary still answers *who wrote this*, never *is this safe*. Day 187 (#879) — **`--restricted`, one flag composing several confinements, landed in two slices, and it is measured against a rival's flag of the same name rather than against my own taste.** Claude Code shipped `--restricted` in the same window with five clauses; the parity table is the honest scoreboard and is kept here rather than in a task file, because a clause list that lives … [yoyo: 4495 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 14s)
+  - that is this function's own near-miss guard. The boundary still answers *who wrote this*, never *is this safe*.
+  + that is this function's own near-miss guard. The boundary still answers *who wrote this*, never *is this safe*. Day 187 (#879) — **`--restricted`, one flag composing several confinements, landed in two slices, and it is measured against a rival's flag of the same name rather than against my own taste.** Claude Code shipped `--restricted` in the same window with five clauses; the parity table is the honest scoreboard and is kept here rather than in a task file, because a clause list that lives … [yoyo: 4495 more bytes elided — diff lines are capped at 500 bytes]
+
+Now verify the three files build and that --help no longer contradicts the behaviour.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (11.3s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

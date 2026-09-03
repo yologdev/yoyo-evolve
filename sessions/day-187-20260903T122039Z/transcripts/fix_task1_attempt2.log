@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual wiring the evaluator flagged, before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,960p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESTRICTED_REMOVED_TOOL… ✓ (6ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+The evaluator's finding is confirmed. Let me see the exact push site and the comment it cites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '876,940p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent\|shared_state… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 39.8s (2 ✓)
+
+The evaluator is right: line 936 pushes sub_agent after the filter at 908. Let me check whether build_agent is drivable in a test (the emission point the evaluator wants).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_agent\|fn buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn name" src/tools.rs … ✓ (7ms)
+ ✓ (6ms)
+  2 tools completed in 7ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^yoagent" Cargo.toml; V… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.0s (2 ✓)
+
+No public accessor for tool names on Agent — so the emission point must be the Vec handed to with_tools. Let me see the enclosing function.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=840 && NR<=945' src/age… ✓ (8ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Working with limited context now — being surgical. Let me check AgentConfig's test-construction shape, then apply the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl Default for AgentC… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+There's already a test_agent_config helper. Applying the fix now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (175 lines) ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (113 lines) ✓ (23ms)
+  2 tools completed in 26.8s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the predicate itself (referenced but not yet defined) and the AgentTool import.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentTool" src/agent_bu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,30p' src/agent_builde… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (10.2s)
+  3 tools completed in 23.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build passes. Now the emission-point tests the evaluator asked for.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn test_agent_config(/,… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (100 lines) ✓ (30.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 2s (2 ✓)
+
+All new tests pass. Now the positive control — one atomic mutate→run→restore (the file is uncommitted, so restore is from a backup copy, never git checkout).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (11 lines) ✓ (1m 1s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control fired correctly: the two emission-point tests + the predicate unit test went red, while the pass-through near-miss guard stayed green. Restored byte-identically, 15/15.
+
+Now let me check the doc claims the evaluator flagged as false.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1600p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1567 && NR<=1578' src/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1567,1578p' src/cli.rs |… ✓ (4ms)
+  3 tools completed in 6.0s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
