@@ -2218,9 +2218,17 @@ def main(argv):
             shutil.rmtree(shared, ignore_errors=True)
 
     if args.commit:
-        verdict, detail = run_counterfactual(root, args.commit, args.timeout)
+        verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
         print("")
         print(f"counterfactual verdict for {args.commit[:12]}: {verdict}")
+        if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+            # #880: the SAME line the batch path prints. Both doors, one policy --
+            # wiring one and not the other is the shape this repo has shipped nine
+            # times, and it is what the evaluator caught here: the arity moved and
+            # this call site did not, so the single-commit path raised ValueError at
+            # runtime while `--test` stayed green (Python has no compile check).
+            f_status, f_names = failing
+            print(f"  failing tests: {f_status} {f_names}")
         if detail:
             print("  ---")
             for ln in detail.splitlines():
@@ -2266,7 +2274,7 @@ def main(argv):
                 args.record,
                 ledger_line(
                     full_sha, parent, day, subject, subject_population(subject),
-                    verdict, baseline_from_verdict(verdict), ts, depth,
+                    verdict, baseline_from_verdict(verdict), ts, depth, failing,
                 ),
             )
             if err_w:
@@ -3206,6 +3214,117 @@ def run_self_tests():
     check("ledger_line round-trips the sha", back["sha"] == "abc", back)
     check("ledger_line carries the verdict", back["verdict"] == EARNED, back)
     check("ledger_line is ONE line", "\n" not in line, line)
+
+    # -- #880: WHICH test failed -------------------------------------------------------
+    # The first UNEARNED verdict ever taken (1b502eacb937) is recorded as unknown cause,
+    # because the row kept `test result: FAILED. 87 passed; 1 failed` and threw the name
+    # away. Same defect on the three BASELINE_RED rows. These pin the repair.
+
+    # ANTI-VACUOUS, AND IT IS ASSERTED FIRST. An extractor that finds nothing and reports
+    # a clean status is this very defect wearing the opposite sign, and it is quieter than
+    # the bug -- so the first thing checked is that a fixture which genuinely contains a
+    # failure block yields a NON-EMPTY list. Every assertion below is worthless if this
+    # one can pass on an extractor that returns [] for everything.
+    real_block = (
+        "running 88 tests\n"
+        "test module_size::tests::grandfathered_ok ... ok\n"
+        "test module_size::src_modules_respect_the_size_gate ... FAILED\n"
+        "\n"
+        "failures:\n"
+        "\n"
+        "---- module_size::src_modules_respect_the_size_gate stdout ----\n"
+        "thread 'x' panicked at tests/module_size.rs:266:9:\n"
+        "\n"
+        "failures:\n"
+        "    module_size::src_modules_respect_the_size_gate\n"
+        "\n"
+        "test result: FAILED. 87 passed; 1 failed; 0 ignored\n"
+    )
+    st_real, names_real = classify_failing_tests(real_block)
+    check("ANTI-VACUOUS: a real failure block yields a NON-EMPTY name list",
+          len(names_real) > 0, (st_real, names_real))
+    check("classify_failing_tests reports FAILING_NAMES on a real block",
+          st_real == FAILING_NAMES, (st_real, names_real))
+    check("classify_failing_tests names the failing test verbatim",
+          names_real == ["module_size::src_modules_respect_the_size_gate"], names_real)
+
+    # THE THREE STATES ARE NEVER FOLDED INTO EACH OTHER. All three carry an empty-or-not
+    # list, so the STATUS is the thing that must be read: `failing_test_names` returns []
+    # for "the capture had no failure block" AND for "there was no capture", and those are
+    # two different facts with two different remedies. Rendering either as an empty list
+    # alone would be "could not check" reading as "checked; clean".
+    st_nb, names_nb = classify_failing_tests(
+        "running 3 tests\ntest result: FAILED. 2 passed; 1 failed; 0 ignored\n"
+    )
+    check("output present but NO failure block -> FAILING_NO_BLOCK (NOT 'no failures')",
+          st_nb == FAILING_NO_BLOCK, (st_nb, names_nb))
+    check("FAILING_NO_BLOCK carries no invented names", names_nb == [], names_nb)
+    for empty in ("", "   ", "\n\n\t\n"):
+        st_no, names_no = classify_failing_tests(empty)
+        check(f"empty capture {empty!r} -> FAILING_NO_OUTPUT (nobody looked)",
+              st_no == FAILING_NO_OUTPUT, (st_no, names_no))
+    check("the three statuses are three DISTINCT values",
+          len({FAILING_NAMES, FAILING_NO_BLOCK, FAILING_NO_OUTPUT}) == 3)
+
+    # The streaming `... FAILED` shape alone (no trailing block) is still readable, and a
+    # test named in BOTH shapes is one failure rather than two.
+    st_s, names_s = classify_failing_tests(
+        "test a::b ... FAILED\ntest c::d ... ok\ntest result: FAILED. 1 passed; 1 failed\n"
+    )
+    check("streaming FAILED line alone is read", (st_s, names_s) == (FAILING_NAMES, ["a::b"]),
+          (st_s, names_s))
+    check("a test named in both shapes is deduped",
+          classify_failing_tests(real_block)[1].count(
+              "module_size::src_modules_respect_the_size_gate") == 1, names_real)
+
+    # ON THE ROW: the two gated verdicts carry both fields...
+    for gated in (BASELINE_RED, UNEARNED):
+        row_g = json.loads(ledger_line(
+            "abc", "def", "184", "subj", POP_PLAIN, gated,
+            baseline_from_verdict(gated), "T", "42", (st_real, names_real),
+        ))
+        check(f"{gated} row carries failing_tests",
+              row_g.get("failing_tests") == names_real, row_g)
+        check(f"{gated} row carries failing_tests_status",
+              row_g.get("failing_tests_status") == FAILING_NAMES, row_g)
+    # ...and a gated verdict with NO claim omits the fields rather than inventing a
+    # status: "no claim was made" must not render as "no failures".
+    row_none = json.loads(ledger_line(
+        "abc", "def", "184", "subj", POP_PLAIN, UNEARNED, "green", "T", "42", None))
+    check("a gated verdict with failing=None omits BOTH fields",
+          "failing_tests" not in row_none and "failing_tests_status" not in row_none,
+          row_none)
+
+    # NEAR-MISS GUARD, and it is the half that matters: every OTHER verdict's row must be
+    # BYTE-IDENTICAL to what the pre-change code emitted -- 20 of the 22 rows already in
+    # dreams/counterfactual_verdicts.jsonl, i.e. the entire regression surface. The EARNED
+    # literal below is the real on-disk shape (verified against the live ledger, whose 22
+    # rows all carry exactly these nine keys); full-string equality, never a `contains`.
+    # It earned its keep before it shipped: a hand-typed lowercase "earned" failed it,
+    # which is why the literal is transcribed from a real row rather than reasoned out.
+    # REGISTER_DRIFT is in this list deliberately: it is a void attributed by diff shape
+    # and its row already carries that attribution, so a second place the names live is
+    # how the two drift apart.
+    pre_change_earned = (
+        '{"baseline": "green", "day": "184", "parent": "def", "population": "plain", '
+        '"sha": "abc", "subject": "subj", "ts": "T", "verdict": "EARNED", '
+        '"window_depth": "42"}'
+    )
+    check("EARNED row is BYTE-IDENTICAL to the pre-change capture",
+          ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED, "green", "T", "42",
+                      (st_real, names_real)) == pre_change_earned,
+          ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED, "green", "T", "42",
+                      (st_real, names_real)))
+    pre_change_keys = {"sha", "parent", "day", "subject", "population", "verdict",
+                       "baseline", "ts", "window_depth"}
+    for ungated in (EARNED, COULD_NOT_CHECK, NO_PRE_EXISTING_TEST_EDIT,
+                    NO_TEST_CHANGE, INCONCLUSIVE, REGISTER_DRIFT):
+        row_u = json.loads(ledger_line(
+            "abc", "def", "184", "subj", POP_PLAIN, ungated,
+            baseline_from_verdict(ungated), "T", "42", (st_real, names_real),
+        ))
+        check(f"{ungated} row keeps EXACTLY the pre-change key set",
+              set(row_u.keys()) == pre_change_keys, sorted(row_u.keys()))
 
     # A malformed line is COUNTED, never silently dropped -- a shrinking denominator
     # inside my own meter is the defect this family of checks exists for.
