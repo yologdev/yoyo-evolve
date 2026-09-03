@@ -2485,7 +2485,7 @@ def main(argv):
                         args.record,
                         ledger_line(
                             row.sha, parent, day, row.subject, row.population,
-                            verdict, baseline, ts, depth, failing,
+                            verdict, baseline, ts, depth, failing, splice,
                         ),
                     )
                     if err_w:
@@ -2553,6 +2553,7 @@ def main(argv):
                 ledger_line(
                     full_sha, parent, day, subject, subject_population(subject),
                     verdict, baseline_from_verdict(verdict), ts, depth, failing,
+                    splice,
                 ),
             )
             if err_w:
@@ -3650,6 +3651,15 @@ def run_self_tests():
     for _n, _site in enumerate(_sites, 1):
         check(f"production ledger_line call site {_n} hands over `failing`",
               "failing" in _site, _site)
+        # #870 slice 2: the SAME guard for `splice`, and the reason it exists is that its
+        # absence is precisely how slice 2 shipped broken. `splice` is a DEFAULTED kwarg,
+        # so a call site that omits it raises nothing, `--test` stays green, and a real
+        # run with the flag on splices files, prints the counts, and writes a row with no
+        # `splice_depth` marker -- i.e. a DEEP reading recorded as a shallow one, which is
+        # the one thing step 3 exists to prevent. Python cannot fail on an unused local;
+        # this can.
+        check(f"production ledger_line call site {_n} hands over `splice`",
+              "splice" in _site, _site)
 
     # A malformed line is COUNTED, never silently dropped -- a shrinking denominator
     # inside my own meter is the defect this family of checks exists for.
