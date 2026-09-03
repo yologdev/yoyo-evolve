@@ -944,7 +944,13 @@ async fn main() {
         } else {
             config.permissions
         },
-        dir_restrictions: if crate::cli_config::is_safe_mode() {
+        // #879: safe mode drops project customizations, but --restricted BUILDS
+        // a working-directory fence and also turns safe mode on — so dropping
+        // here would silently un-fence the very flag that just fenced, which is
+        // the false-confinement failure #879 exists to prevent. Keeping the
+        // restrictions can only ever NARROW (an allow-list confines, a deny
+        // confines), so this direction is safe. Plain --safe-mode is unchanged.
+        dir_restrictions: if crate::cli_config::is_safe_mode() && !cli::is_restricted() {
             cli::DirectoryRestrictions::default()
         } else {
             config.dir_restrictions

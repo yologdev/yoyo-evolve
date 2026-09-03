@@ -239,6 +239,18 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(s, "                    permissions) for troubleshooting");
     let _ = writeln!(
         s,
+        "  --restricted      Confine this run: ignore project settings (as --safe-mode) and"
+    );
+    let _ = writeln!(
+        s,
+        "                    fence file tools to the working directory. Does NOT disable"
+    );
+    let _ = writeln!(
+        s,
+        "                    command execution — use --read or --no-tools for that"
+    );
+    let _ = writeln!(
+        s,
         "  --trust-project   Start MCP servers declared by a project-local .yoyo.toml"
     );
     let _ = writeln!(

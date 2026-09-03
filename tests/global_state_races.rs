@@ -92,6 +92,7 @@ const GLOBAL_SETTERS: &[&str] = &[
     "set_continue_on_silence",
     "set_trust_project",
     "set_trust_project_to",
+    "set_restricted",
     // src/cli_config.rs
     "enable_auto_edit",
     "set_effective_context_tokens",

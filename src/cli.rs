@@ -98,6 +98,21 @@ pub fn is_wait_for_reset() -> bool {
 /// here on the strength of that comment over there.
 static TRUST_PROJECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether `--restricted` (#879) was passed. Read by `main.rs` so the working
+/// directory fence that `--restricted` builds is not thrown away by the safe
+/// mode that `--restricted` also turns on.
+static RESTRICTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record that `--restricted` was passed. One call site, in `parse_args`.
+pub fn set_restricted(enabled: bool) {
+    RESTRICTED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Was `--restricted` passed this run?
+pub fn is_restricted() -> bool {
+    RESTRICTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Enable the opt-in project-config trust (`--trust-project`).
 pub fn set_trust_project() {
     set_trust_project_to(true);
@@ -499,6 +514,7 @@ pub(crate) const KNOWN_FLAGS: &[&str] = &[
     "--no-tools",
     "--lite",
     "--safe-mode",
+    "--restricted",
     "--trust-project",
     "--trust-project-always",
     "--help",
@@ -1450,6 +1466,175 @@ fn parse_permission_and_dir_config(
     (permissions, dir_restrictions)
 }
 
+/// What `--restricted` actually did, per clause.
+///
+/// #879, first slice. Claude Code v2.1.25x shipped one switch that composes
+/// four confinements; yoyo owns a primitive for every clause but had no single
+/// flag that composed them, and a capability reachable only by retyping four
+/// switches is one people alias away — where any switch they forget fails
+/// *silently*, so the user believes they are confined and is not.
+///
+/// Two clauses are taken here and two are deliberately deferred; see
+/// `restricted_mode_effects` for which and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RestrictedEffects {
+    /// Clause A: turn on whatever `--safe-mode` turns on. Always true — clause A
+    /// does not depend on clause B.
+    pub set_safe_mode: bool,
+    /// Clause B: the directory to append to `dir_restrictions.allow`, or `None`
+    /// when nothing may be added (see `dir_outcome` for *why* it is `None`).
+    pub add_allow_dir: Option<std::path::PathBuf>,
+    /// Which of the three clause-B outcomes occurred. Never derive this from
+    /// `add_allow_dir.is_none()` — two different outcomes share that shape and
+    /// only one of them means "you are fenced".
+    pub dir_outcome: RestrictedDirOutcome,
+}
+
+/// The three states of clause B. `CwdUnresolved` is a required third value and
+/// must **not** be folded into `Fenced`: a `--restricted` that silently fails to
+/// fence is the exact false-confinement failure #879 was filed about, and
+/// "could not check" must never read as "checked; clean".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestrictedDirOutcome {
+    /// The allow list was empty and the working directory resolved — cwd added.
+    Fenced,
+    /// The user supplied their own allow list — left byte-identically.
+    AlreadyFenced,
+    /// No working directory could be resolved — **not** fenced.
+    CwdUnresolved,
+}
+
+/// Decide what `--restricted` does, given the allow list the user already has
+/// and the working directory (as a *parameter*, so this stays pure and
+/// table-testable — the one `std::env::current_dir()` lives at the call site,
+/// the seam discipline `never_forecast_files` and `revisit_add_at` use).
+///
+/// **The `if and only if the allow list is empty` rule is the whole safety
+/// property, not a detail.** `DirectoryRestrictions::check_path` short-circuits
+/// to `Ok` when the allow list is empty, so the file-tool default is
+/// *unrestricted* and adding cwd there narrows. But if the user already passed
+/// `--allow-dir /a`, adding cwd would **widen** them to cwd-plus-`/a`, and #879
+/// item 4 says restricted may only ever narrow — so a user who already fenced
+/// themselves is left exactly as they are. Deliberately **not** an intersection:
+/// intersection semantics are unclear and untested here. `deny` is untouched
+/// (it only narrows anyway).
+///
+/// Deferred, named rather than smuggled:
+/// - **Clause C, refuse permission bypass.** Forcing trust off means reaching
+///   into `should_prompt_for_trust`, `set_trust_project_to` and the ordering of
+///   the trust prompt against five gate call sites in `parse_args`; #869 is the
+///   standing warning about exactly that blast radius.
+/// - **Clause D, remove command-running tools.** `--no-tools` is all-or-nothing
+///   and per-tool removal is new machinery. **So `--restricted` does NOT disable
+///   bash**, which is why `restricted_mode_note` says so outright in every
+///   branch — a mode switch that overstates its own confinement is worse than an
+///   invisible one.
+///
+/// The env-var form (`YOYO_RESTRICTED=1`) is also deferred: it is the two-source
+/// OR shape `continue_on_silence` and `wait_for_reset` already use and can be
+/// added later without redesigning any of this.
+pub(crate) fn restricted_mode_effects(
+    allow_dirs: &[String],
+    cwd: Option<&std::path::Path>,
+) -> RestrictedEffects {
+    let (add_allow_dir, dir_outcome) = if !allow_dirs.is_empty() {
+        // Monotonicity: they fenced themselves, adding cwd would widen it.
+        (None, RestrictedDirOutcome::AlreadyFenced)
+    } else {
+        match cwd {
+            Some(dir) => (
+                Some(dir.to_path_buf()),
+                RestrictedDirOutcome::Fenced,
+            ),
+            None => (None, RestrictedDirOutcome::CwdUnresolved),
+        }
+    };
+    RestrictedEffects {
+        set_safe_mode: true,
+        add_allow_dir,
+        dir_outcome,
+    }
+}
+
+/// The one statement of what `--restricted` says it did, so the startup note and
+/// the `--help` text cannot drift into disagreeing about it.
+///
+/// Names each clause **and its actual outcome**, and names what was **not** done
+/// (command execution is still available) in every branch — an invisible mode
+/// switch is a bug even when it is the right switch, and one that overstates its
+/// own confinement is worse. Glyph-free under `plain`: markers **and** em
+/// dashes, since an assertion has caught the em-dash half before.
+pub(crate) fn restricted_mode_note(effects: &RestrictedEffects, plain: bool) -> String {
+    let bullet = if plain { "  -" } else { "  •" };
+    let mut msg = if plain {
+        "restricted mode".to_string()
+    } else {
+        "🔒 restricted mode".to_string()
+    };
+
+    // Clause A.
+    if effects.set_safe_mode {
+        if plain {
+            msg.push_str(&format!(
+                "\n{bullet} project settings ignored (same as --safe-mode): MCP servers, skills, custom commands, permissions"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "\n{bullet} project settings ignored — same as --safe-mode (MCP servers, skills, custom commands, permissions)"
+            ));
+        }
+    }
+
+    // Clause B, one line per outcome. `CwdUnresolved` says NOT fenced outright.
+    match effects.dir_outcome {
+        RestrictedDirOutcome::Fenced => {
+            let dir = effects
+                .add_allow_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            msg.push_str(&format!(
+                "\n{bullet} file tools fenced to the working directory: {dir}"
+            ));
+        }
+        RestrictedDirOutcome::AlreadyFenced => {
+            if plain {
+                msg.push_str(&format!(
+                    "\n{bullet} file tools left as you fenced them (--allow-dir was already set; restricted only ever narrows)"
+                ));
+            } else {
+                msg.push_str(&format!(
+                    "\n{bullet} file tools left as you fenced them — --allow-dir was already set, and restricted only ever narrows"
+                ));
+            }
+        }
+        RestrictedDirOutcome::CwdUnresolved => {
+            if plain {
+                msg.push_str(&format!(
+                    "\n{bullet} file tools NOT fenced: the working directory could not be resolved"
+                ));
+            } else {
+                msg.push_str(&format!(
+                    "\n{bullet} file tools NOT fenced — the working directory could not be resolved"
+                ));
+            }
+        }
+    }
+
+    // The anti-false-confinement sentence. Present in every branch, on purpose.
+    if plain {
+        msg.push_str(&format!(
+            "\n{bullet} command execution is NOT disabled: use --read or --no-tools for that"
+        ));
+    } else {
+        msg.push_str(&format!(
+            "\n{bullet} command execution is NOT disabled — use --read or --no-tools for that"
+        ));
+    }
+
+    msg
+}
+
 /// Parsed MCP and OpenAPI configuration.
 struct McpConfig {
     mcp_servers: Vec<String>,
@@ -1988,7 +2173,12 @@ directory ({e}); this run is trusted, later runs will not be."
     // Safe mode (--safe-mode) skips this so a user can troubleshoot whether their
     // own project instruction files (CLAUDE.md, YOYO.md, AGENTS.md, .cursorrules,
     // .github/copilot-instructions.md) are the source of misbehavior.
-    let safe_mode = args.iter().any(|a| a == "--safe-mode");
+    // #879 clause A: --restricted turns on whatever --safe-mode already turns
+    // on — the same mechanism, not a second one. Read here, before project
+    // context is loaded, so the suppression is honoured this run rather than
+    // arriving after the thing it was meant to suppress.
+    let restricted = args.iter().any(|a| a == "--restricted");
+    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
     if !safe_mode {
         if let Some(project_context) = load_project_context() {
             system_prompt.push_str("\n\n# Project Instructions\n\n");
@@ -2052,8 +2242,26 @@ directory ({e}); this run is trusted, later runs will not be."
     let of = parse_output_flags(args, &file_config);
 
     // Parse permission and directory restriction config
-    let (permissions, dir_restrictions) =
+    let (permissions, mut dir_restrictions) =
         parse_permission_and_dir_config(args, &raw_config_content);
+
+    // #879 clause B, and the ONE call site for the decision function. Placed
+    // after the allow list is fully resolved (CLI flags *and* config file), so
+    // the monotonicity rule sees the list that will actually be in force — a
+    // decision taken against the CLI-only list could append cwd on top of a
+    // non-empty config list and widen the user.
+    set_restricted(restricted);
+    if restricted {
+        let cwd = std::env::current_dir().ok();
+        let effects = restricted_mode_effects(&dir_restrictions.allow, cwd.as_deref());
+        if let Some(dir) = &effects.add_allow_dir {
+            dir_restrictions.allow.push(dir.display().to_string());
+        }
+        if !is_quiet() {
+            let msg = restricted_mode_note(&effects, crate::format::is_plain_output());
+            eprintln!("{YELLOW}{msg}{RESET}");
+        }
+    }
 
     // --context-strategy <compaction|checkpoint> (CLI only, not in config file)
     let context_strategy = args
@@ -4710,6 +4918,130 @@ command = "server-two"
         assert!(KNOWN_FLAGS.contains(&"--safe-mode"));
         assert!(!KNOWN_FLAGS.contains(&"--safe"));
         assert!(!KNOWN_FLAGS.contains(&"--safemode"));
+    }
+
+    // ---- #879 --restricted, first slice --------------------------------------
+
+    #[test]
+    fn restricted_effects_table() {
+        use std::path::{Path, PathBuf};
+
+        // Clause B, branch 1: an empty allow list is the *unrestricted* default,
+        // so adding cwd narrows. This is the branch the flag exists for.
+        let e = restricted_mode_effects(&[], Some(Path::new("/work/proj")));
+        assert_eq!(e.dir_outcome, RestrictedDirOutcome::Fenced);
+        assert_eq!(e.add_allow_dir, Some(PathBuf::from("/work/proj")));
+
+        // Clause B, branch 3: no cwd -> NOT fenced, and it keeps its own name.
+        // Folding this into Fenced would be the false-confinement failure #879
+        // was filed about.
+        let e = restricted_mode_effects(&[], None);
+        assert_eq!(e.dir_outcome, RestrictedDirOutcome::CwdUnresolved);
+        assert_eq!(e.add_allow_dir, None);
+
+        // Clause A does not depend on clause B: safe mode is set in all three.
+        for effects in [
+            restricted_mode_effects(&[], Some(Path::new("/work/proj"))),
+            restricted_mode_effects(&[], None),
+            restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj"))),
+        ] {
+            assert!(effects.set_safe_mode, "clause A must not depend on clause B");
+        }
+    }
+
+    #[test]
+    fn restricted_leaves_a_user_supplied_allow_list_byte_identical() {
+        // THE near-miss guard, and the monotonicity property (#879 item 4):
+        // a user who already passed --allow-dir /a must NOT be widened to
+        // cwd-plus-/a. Deliberately asserted as a full equality on the list,
+        // not a `contains` — a partial assertion would quietly certify the
+        // fragment it does not inspect.
+        use std::path::Path;
+
+        let before = vec!["/a".to_string(), "/b".to_string()];
+        let e = restricted_mode_effects(&before, Some(Path::new("/work/proj")));
+
+        assert_eq!(e.dir_outcome, RestrictedDirOutcome::AlreadyFenced);
+        assert_eq!(
+            e.add_allow_dir, None,
+            "restricted may only ever narrow: never append to a list the user already fenced"
+        );
+        assert_eq!(
+            before,
+            vec!["/a".to_string(), "/b".to_string()],
+            "the incoming allow list must survive byte-identically"
+        );
+    }
+
+    #[test]
+    fn restricted_note_names_every_clause_and_what_it_did_not_do() {
+        use std::path::Path;
+
+        let fenced = restricted_mode_effects(&[], Some(Path::new("/work/proj")));
+        let already = restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj")));
+        let unresolved = restricted_mode_effects(&[], None);
+
+        // The anti-false-confinement sentence is present in EVERY branch: the
+        // flag does not disable bash (clause D is deferred), so a user who
+        // believes otherwise is in exactly the state #879 is about.
+        for effects in [&fenced, &already, &unresolved] {
+            for plain in [false, true] {
+                let note = restricted_mode_note(effects, plain);
+                assert!(
+                    note.contains("command execution is NOT disabled"),
+                    "every branch must say bash is still live: {note}"
+                );
+                assert!(
+                    note.contains("--read") && note.contains("--no-tools"),
+                    "and must point at the flags that DO disable it: {note}"
+                );
+                assert!(
+                    note.contains("--safe-mode"),
+                    "clause A names the mechanism it reuses: {note}"
+                );
+            }
+        }
+
+        // Each clause-B outcome renders as itself, never as a neighbour.
+        assert!(restricted_mode_note(&fenced, false).contains("/work/proj"));
+        assert!(restricted_mode_note(&already, false).contains("only ever narrows"));
+        let u = restricted_mode_note(&unresolved, false);
+        assert!(
+            u.contains("NOT fenced"),
+            "an unresolved cwd must say so outright, not imply a fence: {u}"
+        );
+        assert!(!u.contains("fenced to the working directory"));
+    }
+
+    #[test]
+    fn restricted_note_is_glyph_free_when_plain() {
+        use std::path::Path;
+
+        for effects in [
+            restricted_mode_effects(&[], Some(Path::new("/work/proj"))),
+            restricted_mode_effects(&["/a".to_string()], None),
+            restricted_mode_effects(&[], None),
+        ] {
+            let note = restricted_mode_note(&effects, true);
+            // Markers AND em dashes — an assertion has caught the em-dash half
+            // before, so both are pinned.
+            assert!(!note.contains('•'), "bullet glyph in plain output: {note}");
+            assert!(!note.contains('🔒'), "marker glyph in plain output: {note}");
+            assert!(!note.contains('—'), "em dash in plain output: {note}");
+            assert!(
+                note.is_ascii(),
+                "plain output must be plain ASCII: {note}"
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_is_a_known_flag_that_takes_no_value() {
+        assert!(KNOWN_FLAGS.contains(&"--restricted"));
+        // It consumes no token after it, so it must NOT be scanned for a value
+        // (#862's guard reads cli_help_text(), which documents it with no
+        // placeholder).
+        assert!(!FLAGS_NEEDING_VALUES.contains(&"--restricted"));
     }
 
     #[test]
