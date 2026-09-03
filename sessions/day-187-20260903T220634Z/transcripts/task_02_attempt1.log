@@ -1,0 +1,270 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the two files I need to change, then make the first concrete edit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch_near_miss.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"ast" =>\|"def" =>\|"te… ✓ (3ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 190,340p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_model_show\|f… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'arg == "list"\|"model"'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 640,670p src/commands_inf… ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 11.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,760p src/dispatch.rs ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,200p src/dispatch_sub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "resolve_provider_and_mo… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_routed_subcommands… ✓ (4ms)
+  5 tools completed in 14.9s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, and I have what I need. Making the first concrete change now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_near_miss.rs (2 → 3 lines)
+        "memories",
+  +     "model",
+        "outline",
+ ✓ (1m 43s)
+        "memories",
+  +     "model",
+        "outline",
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the drift guard firing exactly as designed — a free positive control. Let me confirm it names model:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_route… ✓ (176ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Guard fires by name — ["model"]. That's the table-without-arm direction proven for free. Now the pure decision half first (Day-184 lesson: build the piece carrying the risk, see it green, then wire):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 86,130p src/dispatch_sub.… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (3 → 58 lines)
+    fn join_args_as_command(args: &[String]) -> String {
+        format!("/{}", args[1..].join(" "))
+  + }
+  + 
+  + /// What `yoyo model …` was asked to do. Four values, and the fourth is not an
+  + /// error case bolted on — it is the honest answer for a shape this entry point
+  + /// cannot serve (#886).
+  + #[derive(Debug, PartialEq, Eq)]
+  + pub(crate) enum ModelSubcommand {
+  +     /// `yoyo model` — print the current model and the usage line.
+  +     Show,
+  +     /// `yoyo model list [<provider>]`. The provider filter, empty when absent.
+  +     List(String),
+  +     /// `yoyo model info [<name>]`. The model name, empty when absent, which the
+  +     /// caller reads as "the current model" exactly as the REPL arm does.
+  +     Info(String),
+  +     /// Anything else — in practice a bare model name. Carries the offending
+  +     /// token so the refusal can name it.
+  +     Refuse(String),
+  + }
+  ... (38 more lines)
+ ✓ (15.4s)
+    fn join_args_as_command(args: &[String]) -> String {
+        format!("/{}", args[1..].join(" "))
+  + }
+  + 
+  + /// What `yoyo model …` was asked to do. Four values, and the fourth is not an
+  + /// error case bolted on — it is the honest answer for a shape this entry point
+  + /// cannot serve (#886).
+  + #[derive(Debug, PartialEq, Eq)]
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code rule firing correctly. Per my Day-184 lesson, a test is a consumer too — so the test comes next, and the core goes green alone before any call site:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,915p src/dispatch_sub… ✓ (3ms)
+  2 tools completed in 2.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (5 → 72 lines)
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     fn tail(words: &[&str]) -> Vec<String> {
+  +         words.iter().map(|s| s.to_string()).collect()
+  +     }
+  + 
+  +     /// #886: `yoyo model list` used to sail past the Day-165 bare-word guard (which
+  +     /// only inspects the 2-token `yoyo <word>` shape) into the single-prompt path,
+  +     /// spending a billed LLM turn with write-capable tools to answer a question that
+  +     /// has a deterministic handler.
+  +     #[test]
+  +     fn parse_model_subcommand_table() {
+  +         let cases: &[(&[&str], ModelSubcommand)] = &[
+  +             // No tail at all, and a whitespace-only tail: the show path.
+  +             (&[], ModelSubcommand::Show),
+  +             (&["   "], ModelSubcommand::Show),
+  +             // list, bare and with a provider filter.
+  +             (&["list"], ModelSubcommand::List(String::new())),
+  +             (
+  ... (52 more lines)
+ ✓ (15.5s)
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     fn tail(words: &[&str]) -> Vec<String> {
+  +         words.iter().map(|s| s.to_string()).collect()
+  +     }
+  + 
+  +     /// #886: `yoyo model list` used to sail past the Day-165 bare-word guard (which
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Real correction: --all-targets still builds the non-test bin, so a #[cfg(test)] consumer doesn't satisfy -D dead-code there. Wiring the call site now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 1 lines)
+                "update" => {
+  -                 if let Err(e) = crate::commands_update::handle_update() {
+ ✓ (313ms)
+                "update" => {
+  -                 if let Err(e) = crate::commands_update::handle_update() {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Bad edit — I dropped a line. Restoring it and adding the arm in one go:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (3 → 42 lines)
+  +             "model" => {
+  +                 // #886: `yoyo model list` used to sail past the Day-165 bare-word
+  +                 // near-miss guard (which only inspects the 2-token `yoyo <word>`
+  +                 // shape) into the single-prompt path, spending a billed LLM turn
+  +                 // with write-capable tools to answer a question these handlers
+  +                 // answer deterministically. Ninth "two doors, one policy, one
+  +                 // deaf" — and #883 had just fixed the REPL door for these exact
+  +                 // two subcommands that same morning.
+  +                 //
+  +                 // Provider/model resolve exactly as the `doctor` and `version`
+  +                 // arms do: --flag, then the config file, then the default.
+  +                 let (file_config, _) = load_config_file();
+  +                 let provider = flag_value(args, &["--provider"])
+  +                     .or_else(|| file_config.get("provider").cloned())
+  +                     .unwrap_or_else(|| "anthropic".into())
+  +                     .to_lowercase();
+  +                 let model = flag_value(args, &["--model"])
+  +                     .or_else(|| file_config.get("model").cloned())
+  +                     .unwrap_or_else(|| default_model_for_provider(&provider));
+  +                 match parse_model_subcommand(&args[2..]) {
+  ... (22 more lines)
+ ✓ (1m 54s)
+  +             "model" => {
+  +                 // #886: `yoyo model list` used to sail past the Day-165 bare-word
+  +                 // near-miss guard (which only inspects the 2-token `yoyo <word>`
+  +                 // shape) into the single-prompt path, spending a billed LLM turn
+  +                 // with write-capable tools to answer a question these handlers
+  +                 // answer deterministically. Ninth "two doors, one policy, one
+  +                 // deaf" — and #883 had just fixed the REPL door for these exact
+  +                 // two subcommands that same morning.
+  ... (13 more lines)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5452 unit tests pass — drift guard green, so both halves landed. Module-size gate fired; let me paste what it prints rather than hand-type:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (198ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+File was at exactly 2000 (right at the cap, un-registered) and my arm pushed it 160 past. Following the Day-183 precedent — register with the reason, because a half-landed pure move is a reverted session while a register edit cannot half-land:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'commands_search.rs\|dis… ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5453 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the module-size gate I was already mid-way through paying. Let me see the register format around the dispatch.rs entry:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 232,246p tests/module_siz… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 15 lines)
+        ("src/dispatch.rs", 2338),
+  +     // Day 187 (#886): 2000 -> 2160, i.e. sitting EXACTLY at the cap and
+  +     // un-registered, then +160 for the `yoyo model` route — the pure
+  +     // `parse_model_subcommand` / `model_refusal_message` pair, the dispatch arm,
+  +     // and their emission-point tests. `yoyo model list` was spending a billed LLM
+  +     // turn with write-capable tools to answer a question `handle_model_list`
+  +     // answers deterministically, so the route is the fix and this is its cost.
+  +     // REGISTERED rather than SPLIT, and the reason is the gate's own Day-183
+  +     // precedent (`src/prompt_retry_limits.rs`): registering is the remedy this
+  +     // gate prints, while the better fix is a split — deliberately not done here
+  +     // because a half-landed pure move is a build failure and a reverted session,
+  +     // and this file is the CLI dispatcher every subcommand route passes through.
+  +     // The next task that has to grow this file should split it, not bump this.
+  +     ("src/dispatch_sub.rs", 2160),
+        ("src/format/cost.rs", 2539),
+ ✓ (1m 14s)
+        ("src/dispatch.rs", 2338),
+  +     // Day 187 (#886): 2000 -> 2160, i.e. sitting EXACTLY at the cap and
+  +     // un-registered, then +160 for the `yoyo model` route — the pure
+  +     // `parse_model_subcommand` / `model_refusal_message` pair, the dispatch arm,
+  +     // and their emission-point tests. `yoyo model list` was spending a billed LLM
+  +     // turn with write-capable tools to answer a question `handle_model_list`
+  +     // answers deterministically, so the route is the fix and this is its cost.
+  +     // REGISTERED rather than SPLIT, and the reason is the gate's own Day-183
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 242,260p tests/module_siz… ✓ (202ms)
+  3 tools completed in 1m 27s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

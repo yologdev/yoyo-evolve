@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by confirming the current state — the code half landed, and CLAUDE.md was not touched.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%H %s' && e… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed. Let me read the implementation I landed so the doc describes it accurately (not from the task file's wording).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ShrinkVerdict\|classify… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,730p' tests/module_s… ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up at Step 3 — the CLAUDE.md correction. Let me read the exact messages my implementation emits, plus the bullet that is now false.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,525p' tests/module_s… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now let me locate the exact CLAUDE.md bullet that this diff made false.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Grandfathered module \*… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50p' CLAUDE.md | wc -c &… ✓ (6ms)
+  2 tools completed in 2.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have everything I need. Now the Step 3 edit — rewriting the branch-3 bullet.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 5 lines)
+  - 3. **Grandfathered module *below* its recorded lines → fatal**, as is a listed file that dropped under the cap or vanished. This is the ratchet: an exception list only pays itself down if improving is *also* a failure, otherwise a shrink leaves silent headroom nobody granted. Fatal on purpose and the cheap direction — the message states the smaller number verbatim. (Landing this found one live instance: `src/dispatch.rs` was recorded at 2307 against an actual 2296.)
+  + 3. **Grandfathered module *below* its recorded lines → depends on *how far* under** (Day 187, #885 — the third reprice, and the one branch that had never had one). Split by the **same** `REGISTER_DRIFT_GRACE_LINES = 100` branch 2 uses, so the register is bounded at 100 lines in **both** directions instead of 100/0. Shrink of **≤ 100 lines → warning, run stays green** (`ShrinkVerdict::Grace` → `SizeViolation::ShrankWithinGrace`): the message names the file, the actual count, the recorde… [yoyo: 1096 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +    **Superseded claim, recorded rather than erased** (Day-165 rule): this bullet used to read *"Grandfathered module **below** its recorded lines → **fatal**, … Fatal on purpose and the cheap direction"*, and that was the rule from Day 165 to Day 187. It was **not** the cheap direction. **This gate has destroyed three whole correct tasks — #719, #739 (a four-line overshoot), and #884 — and a `cargo test` failure means `git reset --hard` in `scripts/evolve.sh`, so the branch's real price … [yoyo: 1260 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +    **The tradeoff is deliberate, not an oversight:** a shrink within 100 lines now leaves a **stale-high** register entry until someone pastes the printed line. A stale-high entry does not *break* the ratchet, it *loosens* it — silent headroom nobody granted. That is the same price Day 174 accepted for growth drift, and it is strictly cheaper than reverting a correct task. **And the reader half is still open on #885, stated rather than smuggled past:** `scripts/extract_trajectory.py::module_si… [yoyo: 795 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 13s)
+  - 3. **Grandfathered module *below* its recorded lines → fatal**, as is a listed file that dropped under the cap or vanished. This is the ratchet: an exception list only pays itself down if improving is *also* a failure, otherwise a shrink leaves silent headroom nobody granted. Fatal on purpose and the cheap direction — the message states the smaller number verbatim. (Landing this found one live instance: `src/dispatch.rs` was recorded at 2307 against an actual 2296.)
+  + 3. **Grandfathered module *below* its recorded lines → depends on *how far* under** (Day 187, #885 — the third reprice, and the one branch that had never had one). Split by the **same** `REGISTER_DRIFT_GRACE_LINES = 100` branch 2 uses, so the register is bounded at 100 lines in **both** directions instead of 100/0. Shrink of **≤ 100 lines → warning, run stays green** (`ShrinkVerdict::Grace` → `SizeViolation::ShrankWithinGrace`): the message names the file, the actual count, the recorde… [yoyo: 1096 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +    **Superseded claim, recorded rather than erased** (Day-165 rule): this bullet used to read *"Grandfathered module **below** its recorded lines → **fatal**, … Fatal on purpose and the cheap direction"*, and that was the rule from Day 165 to Day 187. It was **not** the cheap direction. **This gate has destroyed three whole correct tasks — #719, #739 (a four-line overshoot), and #884 — and a `cargo test` failure means `git reset --hard` in `scripts/evolve.sh`, so the branch's real price … [yoyo: 1260 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  +    **The tradeoff is deliberate, not an oversight:** a shrink within 100 lines now leaves a **stale-high** register entry until someone pastes the printed line. A stale-high entry does not *break* the ratchet, it *loosens* it — silent headroom nobody granted. That is the same price Day 174 accepted for growth drift, and it is strictly cheaper than reverting a correct task. **And the reader half is still open on #885, stated rather than smuggled past:** `scripts/extract_trajectory.py::module_si… [yoyo: 795 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the adjacent sentence in the same section, which my change just made false — it says "Both non-fatal branches" and there are now three.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Both non-fatal branches… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - Both non-fatal branches (1's grace band and 2's) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprin
+  + All **three** non-fatal branches (1's grace band, 2's, and Day 187's shrink grace) share **one** writer, `write_warnings`, so the warnings cannot drift — it filters on `!is_fatal()`, so branch 3's new `ShrankWithinGrace` was carried by it with no edit to the writer at all (**superseded count, recorded rather than erased: this read "Both non-fatal branches (1's grace band and 2's)" until Day 187** — a count in prose is exactly the claim that goes stale silently, which is the whole subject of … [yoyo: 156 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 12s)
+  - Both non-fatal branches (1's grace band and 2's) share **one** writer, `write_warnings`, so the two warnings cannot drift; it writes through a raw `std::io::stderr()` handle, **not** `eprintln!`, because libtest's capture hook intercepts the `print!`/`eprin
+  + All **three** non-fatal branches (1's grace band, 2's, and Day 187's shrink grace) share **one** writer, `write_warnings`, so the warnings cannot drift — it filters on `!is_fatal()`, so branch 3's new `ShrankWithinGrace` was carried by it with no edit to the writer at all (**superseded count, recorded rather than erased: this read "Both non-fatal branches (1's grace band and 2's)" until Day 187** — a count in prose is exactly the claim that goes stale silently, which is the whole subject of … [yoyo: 156 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both CLAUDE.md edits are in. Now verifying — first the gate itself, checking explicitly for zero drift warnings.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (203ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+28 passed and nothing printed. Let me confirm the zero-warnings claim explicitly rather than by absence-of-scroll, since these warnings deliberately bypass libtest's capture.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (177ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Zero drift warnings, exit 0. Now the full suite.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+fmt, build, clippy all clean. Now the full test suite.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green (5450 passed, 0 failed). Let me confirm the working tree contains exactly the intended change.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && echo "… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+tests/module_size.rs moved too — I need to see what cargo fmt did there before committing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff tests/module_size.rs ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's a pure cargo fmt reflow of one assertion I added (semantics unchanged) — worth catching, since the prior commit would have failed CI's cargo fmt --check. Let me verify all four things the evaluator flagged as missing are now present.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for p in "ShrankWithinGrace" "cl… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four present. Committing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT && date -u +'%H:%M… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add CLAUDE.md tests/module_s… ✓ (29ms)
+  2 tools completed in 2.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

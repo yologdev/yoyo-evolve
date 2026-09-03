@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff. Let me start by checking the key claims.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model" CLAUDE.md | grep… ✓ (12ms)
+ ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "ROU… (6 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (14ms)
+ ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%B | head -6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo test\|yoyo run\|yo… ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 20.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. Key findings:
+
+Works: ran the real binary — yoyo model list prints the model table (zero API calls), yoyo model nonsense-model-name refuses naming --model and /model.
+
+Missing: Step 3 (explicitly marked "small, required") was not done at all — the diff touches only 3 files, none of them docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '294,340p' src/help.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: cli_help_text() does enumerate subcommands (run, diff, test, tree, map… with example parentheticals), so the task's conditional resolved to "add model [list|info]" — and it was not added. Writing the verdict.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 25s)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+Summary of what I verified:
+
+The code half is correct and works. I ran the real binary rather than trusting the diff:
+• ./target/debug/yoyo model list → prints the full provider/model table with the active model marked, zero API calls. The defect is fixed.
+• ./target/debug/yoyo model nonsense-model-name → refuses, naming --model, /model and the usage line. No confidently-wrong "switch" success.
+
+The enum has all four match arms in the same diff, both halves of the self-verifying pair (ROUTED_SUBCOMMANDS entry + dispatcher arm) landed together, and the module-size register was bumped from what the gate printed.
+
+What sank it: Step 3, which the task marked "small, required", was not done at all. The diff touches 3 files, none of them docs.
+
+• src/help.rs:296 has a literal "Subcommands (run from shell, no REPL):" block enumerating run, diff, test, tree, map, lint, security… So the task's conditional resolved to "add `model [list|info]`", not "skip this file and say so" — and the commit message is a bare subject line with no skip rationale. A new subcommand absent from --help is the discoverability defect (#745/#767/#769) this fix is the inverse of.
+• CLAUDE.md still reads 37 verbs against a const now holding 39 — off by two, in the file re-injected as authoritative context every session, and the task text called this out by name as *"the one doc error that guarantees its own survival."*
+
+This is a genuine unexecuted required step rather than a style quibble, so doc_sync: FAIL forces the overall verdict. The remedy is two small edits, not a redesign — the routing work should be kept.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

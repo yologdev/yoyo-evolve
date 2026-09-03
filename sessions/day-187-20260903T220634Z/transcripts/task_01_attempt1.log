@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the gate file to see the exact shape of the existing classifier and its branches.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l tests/module_size.rs && gr… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,520p' tests/module_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,660p' tests/module_s… ✓ (4ms)
+  3 tools completed in 9.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:588..628 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:416..446 ✓ (0ms)
+  3 tools completed in 17.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tree is clean, and I have everything I need. Making the edits now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (7 → 16 lines)
+  -     /// A grandfathered module is smaller than its recorded ceiling (but still
+  -     /// over the cap) — the entry grants headroom nobody decided to give.
+  +     /// A grandfathered module is smaller than its recorded ceiling by at most
+  +     /// `REGISTER_DRIFT_GRACE_LINES` (but still over the cap) — creep down, not
+  +     /// a design event: warn (Day 187, #885). The mirror of `GrewPastCeiling`.
+  +     ShrankWithinGrace {
+  +         path: String,
+  +         lines: usize,
+  +         ceiling: usize,
+  +     },
+  +     /// A grandfathered module is smaller than its recorded ceiling by more
+  +     /// than `REGISTER_DRIFT_GRACE_LINES` (but still over the cap) — the entry
+  +     /// grants headroom nobody decided to give.
+        StaleCeiling {
+            path: String,
+            lines: usize,
+ ✓ (273ms)
+  -     /// A grandfathered module is smaller than its recorded ceiling (but still
+  -     /// over the cap) — the entry grants headroom nobody decided to give.
+  +     /// A grandfathered module is smaller than its recorded ceiling by at most
+  +     /// `REGISTER_DRIFT_GRACE_LINES` (but still over the cap) — creep down, not
+  +     /// a design event: warn (Day 187, #885). The mirror of `GrewPastCeiling`.
+  +     ShrankWithinGrace {
+  +         path: String,
+  +         lines: usize,
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the wildcard-free match forces both decisions. Adding them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (2 → 3 lines)
+                SizeViolation::GrewFarPastCeiling { .. } => true,
+  +             SizeViolation::ShrankWithinGrace { .. } => false,
+                SizeViolation::StaleCeiling { .. } => true,
+ ✓ (274ms)
+                SizeViolation::GrewFarPastCeiling { .. } => true,
+  +             SizeViolation::ShrankWithinGrace { .. } => false,
+                SizeViolation::StaleCeiling { .. } => true,
+
+Now the message. The remedy must carry the pasteable line, same shape as branch 2's:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (12 → 27 lines)
+  +             SizeViolation::ShrankWithinGrace {
+  +                 path,
+  +                 lines,
+  +                 ceiling,
+  +             } => format!(
+  +                 "{path} is down to {lines} lines from its recorded {ceiling} — {} lines of \
+  +                  headroom nobody decided to grant.\n     \
+  +                  Not fatal — within the {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace \
+  +                  band, and shrinking a file is the direction this gate wants.\n     \
+  +                  Fix: paste (\"{path}\", {lines}) over its entry in \
+  +                  GRANDFATHERED_OVERSIZED_MODULES.",
+  +                 ceiling.saturating_sub(*lines),
+  +             ),
+                SizeViolation::StaleCeiling {
+                    path,
+                    lines,
+                    ceiling,
+                } => format!(
+                    "{path} is {lines} lines but its entry still records {ceiling} — {} lines of \
+  -                  headroom nobody decided to grant.\n     \
+  ... (9 more lines)
+ ✓ (280ms)
+  +             SizeViolation::ShrankWithinGrace {
+  +                 path,
+  +                 lines,
+  +                 ceiling,
+  +             } => format!(
+  +                 "{path} is down to {lines} lines from its recorded {ceiling} — {} lines of \
+  +                  headroom nobody decided to grant.\n     \
+  +                  Not fatal — within the {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace \
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the pure classifier and its call site — the definition needs its consumer in the same pass:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 44 lines)
+  + /// The three outcomes for a grandfathered module that sits **at or below** its
+  + /// recorded ceiling — branch 3, the ratchet (Day 187, #885).
+  + ///
+  + /// The mirror of `ListedVerdict`, and it exists because the two directions had
+  + /// wildly different prices for 22 days: growth got a 100-line grace band on Day
+  + /// 174 while *any* shrink — even one line — stayed fatal. Nobody wrote that
+  + /// asymmetry down as a decision; branch 2 got a grace band and branch 3 simply
+  + /// never did. It traps a fix loop, because branch 2's printed remedy is a
+  + /// **high-water mark**: paste `("src/cli.rs", 6557)`, then let any later edit
+  + /// remove a line, and the run lands under the freshly-pasted ceiling with zero
+  + /// slack. That is the "a guard that reads the world AFTER its own action"
+  + /// lesson mirrored onto the *remedy*.
+  + ///
+  + /// The decision lives here; the I/O stays at the single call site.
+  + #[derive(Debug, PartialEq, Eq)]
+  + enum ShrinkVerdict {
+  +     /// At or above the recorded ceiling — not a shrink case at all. Branch 2
+  +     /// owns everything above the recorded number; this classifier deliberately
+  +     /// says nothing about it.
+  +     NotShrink,
+  ... (24 more lines)
+ ✓ (279ms)
+  + /// The three outcomes for a grandfathered module that sits **at or below** its
+  + /// recorded ceiling — branch 3, the ratchet (Day 187, #885).
+  + ///
+  + /// The mirror of `ListedVerdict`, and it exists because the two directions had
+  + /// wildly different prices for 22 days: growth got a 100-line grace band on Day
+  + /// 174 while *any* shrink — even one line — stayed fatal. Nobody wrote that
+  + /// asymmetry down as a decision; branch 2 got a grace band and branch 3 simply
+  + /// never did. It traps a fix loop, because branch 2's printed remedy is a
+  ... (13 more lines)
+
+Now the call site — the NotGrowth arm routes through the new classifier:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (11 → 30 lines)
+  -                         // Branch 3, untouched: at the ceiling is clean, below
+  -                         // it is the ratchet and stays fatal.
+  +                         // Branch 3 (Day 187, #885): at the ceiling is clean;
+  +                         // below it splits by how far, exactly as growth does.
+  +                         //
+  +                         // Three cases stay FATAL and must NOT be loosened by a
+  +                         // later "simplification":
+  +                         //   1. dropping under MAX_MODULE_LINES entirely — the
+  +                         //      debt is *paid* and the remedy is DELETE the
+  +                         //      entry, a different edit from updating a number
+  +                         //      (handled above, before this match);
+  +                         //   2. a listed file that has vanished (handled below);
+  +                         //   3. a shrink past the grace band — the ratchet.
+                            ListedVerdict::NotGrowth => {
+  -                             if lines < ceiling {
+  -                                 violations.push(SizeViolation::StaleCeiling {
+  -                                     path: path.clone(),
+  -                                     lines: *lines,
+  -                                     ceiling: *ceiling,
+  -                                 });
+  ... (18 more lines)
+ ✓ (1m 13s)
+  -                         // Branch 3, untouched: at the ceiling is clean, below
+  -                         // it is the ratchet and stays fatal.
+  +                         // Branch 3 (Day 187, #885): at the ceiling is clean;
+  +                         // below it splits by how far, exactly as growth does.
+  +                         //
+  +                         // Three cases stay FATAL and must NOT be loosened by a
+  +                         // later "simplification":
+  +                         //   1. dropping under MAX_MODULE_LINES entirely — the
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (208ms)
+  2 tools completed in 1m 16s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One pre-existing shrink test pins the exact behaviour being repriced (500→400 is now a 100-line grace shrink). Let me look at it:
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs:950..980 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+It's already been inverted once (Day 165). Same discipline as Day 174: keep the assertion, move the fixture so it exercises the fatal half, and record what it used to pin.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (17 → 140 lines)
+        #[test]
+  -     fn grandfathered_module_below_its_ceiling_is_a_stale_ceiling() {
+  +     fn grandfathered_module_far_below_its_ceiling_is_a_stale_ceiling() {
+            // Was `grandfathered_module_may_shrink_while_still_over_cap`, which
+            // asserted this passes. Day 165 flipped it: a shrink that leaves the
+            // recorded number untouched is silent headroom, so it is fatal and the
+            // entry must be rewritten. That is the ratchet.
+  -         let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+  +         //
+  +         // Day 187 (#885) repriced it a second time and this fixture moved with
+  +         // it: the shrink is now 200 lines, past REGISTER_DRIFT_GRACE_LINES, so
+  +         // it still exercises the fatal half. It used to be 500 -> 400, a
+  +         // 100-line shrink, which is now the *grace* band — that case did not
+  +         // disappear, it moved to the sibling test below. The assertion is
+  +         // unchanged and the ratchet direction still stays fatal.
+  +         let v = check_module_sizes(&files(&[("src/a.rs", 300)]), 200, &[("src/a.rs", 500)]);
+            assert_eq!(
+                v,
+                vec![SizeViolation::StaleCeiling {
+                    path: "src/a.rs".to_string(),
+  ... (123 more lines)
+ ✓ (1m 14s)
+        #[test]
+  -     fn grandfathered_module_below_its_ceiling_is_a_stale_ceiling() {
+  +     fn grandfathered_module_far_below_its_ceiling_is_a_stale_ceiling() {
+            // Was `grandfathered_module_may_shrink_while_still_over_cap`, which
+            // asserted this passes. Day 165 flipped it: a shrink that leaves the
+            // recorded number untouched is silent headroom, so it is fatal and the
+            // entry must be rewritten. That is the ratchet.
+  -         let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (207ms)
+  2 tools completed in 1m 21s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+28 passed. Now paying the drift warning the gate printed — pasting its line, not hand-typing it:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/dispatch.rs", 2337… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/dispatch.rs", 2337),
+  +     ("src/dispatch.rs", 2338),
+ ✓ (1m 14s)
+  -     ("src/dispatch.rs", 2337),
+  +     ("src/dispatch.rs", 2338),
+  2 tools completed in 1m 19s (2 ✓)
+
+Now the positive control — one atomic mutate→run→restore so the restore cannot be forgotten:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp tests/mod… (20 lines) ✓ (542ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
