@@ -1089,7 +1089,10 @@ mod tests {
 
         // 3. Growth is byte-identical: the band and its near miss both hold.
         let grew = check_module_sizes(&files(&[("src/a.rs", 600)]), 200, &[("src/a.rs", 500)]);
-        assert!(!grew[0].is_fatal(), "growth of 100 must still warn: {grew:?}");
+        assert!(
+            !grew[0].is_fatal(),
+            "growth of 100 must still warn: {grew:?}"
+        );
         let grew_far = check_module_sizes(&files(&[("src/a.rs", 601)]), 200, &[("src/a.rs", 500)]);
         assert!(
             grew_far[0].is_fatal(),
