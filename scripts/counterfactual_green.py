@@ -2209,7 +2209,7 @@ def main(argv):
                         args.record,
                         ledger_line(
                             row.sha, parent, day, row.subject, row.population,
-                            verdict, baseline, ts, depth,
+                            verdict, baseline, ts, depth, failing,
                         ),
                     )
                     if err_w:
@@ -3325,6 +3325,53 @@ def run_self_tests():
         ))
         check(f"{ungated} row keeps EXACTLY the pre-change key set",
               set(row_u.keys()) == pre_change_keys, sorted(row_u.keys()))
+
+    # -- THE SINK, NOT THE ROW ---------------------------------------------------------
+    # Every PRODUCTION `ledger_line(` call must hand over the `failing` value. The checks
+    # above prove the ROW SHAPE; nothing proved the WIRING, and that gap shipped: the
+    # batch `--record` path -- the one every reading session actually uses -- computed
+    # `failing` and never passed it, so the two fields landed on the single-commit path
+    # only and the bulk path kept writing `1 failed` without saying which. The tests
+    # drive `ledger_line` directly and Python has no compile check, so nothing anywhere
+    # could fail. This is that missing consumer, and it is the SECOND time this one diff
+    # grew a deaf door (the stdout print half was caught first) -- so the guard is over
+    # the whole production region rather than over the two sites known today.
+    #
+    # Deliberately WEAK, and it says so: it proves the argument is PRESENT at each call
+    # site, never that the value handed over is the right one.
+    with open(__file__, encoding="utf-8") as _f:
+        _src = _f.read()
+    # Slice to production so this test's own text cannot vouch for itself, and assemble
+    # both needles at runtime so the scan cannot match the lines doing the scanning.
+    _prod = _src.split("\ndef " + "run_self_tests")[0]
+    _call = "ledger_line" + "("
+    _sites = []
+    _i = 0
+    while True:
+        _i = _prod.find(_call, _i)
+        if _i < 0:
+            break
+        if _prod[max(0, _i - 4):_i] == "def ":       # the definition, not a call
+            _i += len(_call)
+            continue
+        _depth, _j = 0, _i + len(_call) - 1
+        while _j < len(_prod):                        # match parens to bound THIS call
+            if _prod[_j] == "(":
+                _depth += 1
+            elif _prod[_j] == ")":
+                _depth -= 1
+                if _depth == 0:
+                    break
+            _j += 1
+        _sites.append(_prod[_i:_j + 1])
+        _i = _j + 1
+    # ANTI-VACUOUS, ASSERTED FIRST: a scanner that finds nothing and passes is this very
+    # defect wearing the opposite sign, and it is quieter than the bug.
+    check("ANTI-VACUOUS: the scan finds BOTH production ledger_line call sites",
+          len(_sites) >= 2, len(_sites))
+    for _n, _site in enumerate(_sites, 1):
+        check(f"production ledger_line call site {_n} hands over `failing`",
+              "failing" in _site, _site)
 
     # A malformed line is COUNTED, never silently dropped -- a shrinking denominator
     # inside my own meter is the defect this family of checks exists for.
