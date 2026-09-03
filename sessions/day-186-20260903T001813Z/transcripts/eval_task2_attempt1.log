@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%B' | head … ✓ (4ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only && e… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "wildcard\|glob\|\*" doc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (4ms)
+ ✓ (181ms)
+  5 tools completed in 18.8s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough evidence. The implementation is sound but the docs deliverable — explicitly required by the task in both branches — is entirely absent.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== docs/permissions.md un… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1m 14s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 37s (2 ✓)
+
+Verdict: FAIL — written to session_plan/eval_task_2.md.
+
+What's good (and it's most of the work):
+• The fix is exactly the shape the task specified: a separate predicate allow_wildcard_spans_a_command_chain, not a widening of allow_wildcard_swallows_options (whose Day-178 trailing-wildcard exemption is left untouched).
+• Allow branch only — deny keeps plain glob_match, with the fails-open asymmetry written into the doc comment.
+• Reuses safety::COMMAND_SEPARATORS and `safety::strip_quoted_regions` rather than writing a fifth copy, and **both visibility widenings ship with their consumer in the same diff** (verified by grep at `src/config.rs:135-136) — the significant_braces` precedent, and not the #618/#653/#658 dangling-definition shape.
+• $(/backtick handling is decided explicitly with the reason at the code, as required.
+• Near-miss guards exist and I ran them: 4 tests pass, asserted with assert_eq! on the Option<bool> from check — the emission point — covering every "must not move" row plus the deny-still-blocks row.
+• Register drift paid in the same diff (3769 → 3927).
+
+Why it fails: git diff HEAD~1 --name-only returns only the three source/test files. The task made the docs deliverable mandatory in both branches, and neither landed. This isn't bookkeeping — docs/src/configuration/permissions.md:55 still lists git * as matching any git ... command, and lines 80–81 still assert trailing wildcards are "honest anything goes" patterns that this class of narrowing does not touch. That page is the one place a user reasons about a security control, and it now states the opposite of the shipped behaviour. The CLAUDE.md config.rs bullet likewise carries no record of the measured table, the deny asymmetry or the stated limit, and the commit message is a bare title line — so the measurement this task existed to produce survives only in a doc comment, and the next session has nothing in the file that is re-injected as authoritative context every run.
+
+The remedy is small and additive: the subsection in `permissions.md` with one worked example plus the note that such a command *prompts* rather than being refused, and the CLAUDE.md bullet update. No source change is needed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
