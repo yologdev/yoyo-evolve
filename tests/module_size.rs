@@ -180,7 +180,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a
     // source-level guard pinning that. Acknowledged, not absorbed.
-    ("src/commands_info.rs", 3240),
+    ("src/commands_info.rs", 3379),
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
     // Day 174: +3 absorbed since Day 166.

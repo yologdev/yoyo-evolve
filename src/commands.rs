@@ -250,7 +250,10 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
     match cmd {
         "architect" => Some("on | off | <model>"),
         "diff" => Some("[file] [--stat] [--cached] [--staged] [--name-only]"),
-        "model" => Some("<model-name>"),
+        // Every subcommand the `/model` dispatcher actually routes must appear here;
+        // `model_arg_hint_advertises_every_routed_subcommand` in `commands_info.rs`
+        // pins this against `dispatch.rs` itself rather than a second hand-typed list.
+        "model" => Some("[list [<provider>] | info [<name>] | <model-name>]"),
         "think" => hint_from!(THINKING_LEVELS),
         "git" => hint_from!(GIT_SUBCOMMANDS),
         "goal" => hint_from!(GOAL_SUBCOMMANDS),

@@ -644,7 +644,10 @@ pub fn handle_cost(session_total: &Usage, model: &str, messages: &[yoagent::Agen
 
 pub fn handle_model_show(model: &str) {
     println!("{DIM}  current model: {model}");
-    println!("  usage: /model <name>{RESET}\n");
+    // Same content as `commands::command_arg_hint("model")` on purpose: a user who
+    // types `/model` and a user who reads the completion hint must learn the same
+    // set of subcommands. Both were advertising only the switch path until #883.
+    println!("  usage: /model [list [<provider>] | info [<name>] | <model-name>]{RESET}\n");
 }
 
 /// Display known models grouped by provider. If `filter` is non-empty and matches
@@ -1661,12 +1664,148 @@ pub fn handle_tips() {
     println!();
 }
 
+/// Collect the subcommand string literals the `/model` dispatcher compares `arg`
+/// against, from a slice of dispatcher source.
+///
+/// Deliberately a text scan and not a Rust parser: it looks for the two shapes the
+/// dispatcher actually uses — `arg == "x"` and `arg.starts_with("x ")` — and returns
+/// the quoted token with trailing whitespace trimmed. A bare model name reaches the
+/// switch path through a plain assignment (`let new_model = arg;`) with no comparison
+/// against a literal, so it is invisible here **by construction** — which is the
+/// property `model_arg_hint_does_not_treat_a_bare_name_as_a_subcommand` pins.
+#[cfg(test)]
+fn routed_model_subcommands(region: &str) -> Vec<String> {
+    // Assembled at runtime so this function's own source cannot match itself when a
+    // guard slices this file — the discipline every source-reading test here uses.
+    let eq_marker = format!("{}{}", "arg == ", "\"");
+    let prefix_marker = format!("{}{}", "arg.starts_with(", "\"");
+    let mut found: Vec<String> = Vec::new();
+
+    for marker in [eq_marker.as_str(), prefix_marker.as_str()] {
+        let mut rest = region;
+        while let Some(at) = rest.find(marker) {
+            let after = &rest[at + marker.len()..];
+            match after.find('"') {
+                Some(end) => {
+                    let token = after[..end].trim();
+                    if !token.is_empty() && !found.iter().any(|t| t == token) {
+                        found.push(token.to_string());
+                    }
+                    rest = &after[end..];
+                }
+                // Unterminated literal: stop rather than guess at a token.
+                None => break,
+            }
+        }
+    }
+    found
+}
+
+/// Read the `/model` arm of the REPL dispatcher, from its own source on disk.
+#[cfg(test)]
+fn model_dispatch_region() -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs");
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "the /model dispatcher is unreadable at {}: {e} — this guard cannot check \
+             anything, which is NOT the same as a clean result",
+            path.display()
+        )
+    });
+    // Runtime-assembled so this file can never match its own needles.
+    let arm_start = format!("{}{}{}", "CommandRoute", "::Mod", "el =>");
+    let next_arm = format!("{}{}", "CommandRoute", "::");
+
+    let start = src.find(&arm_start).unwrap_or_else(|| {
+        panic!("could not locate the /model arm in src/dispatch.rs — the guard's slice broke")
+    });
+    let body = &src[start + arm_start.len()..];
+    let end = body.find(&next_arm).unwrap_or(body.len());
+    body[..end].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
     use yoagent::provider::AnthropicProvider;
     use yoagent::{Agent, Usage};
+
+    /// #883: `/model list` and `/model info` are routed by `dispatch.rs` but the
+    /// completion hint advertised only `<model-name>`, so two working subcommands were
+    /// unfindable. This pins the hint against **the dispatcher itself** rather than a
+    /// second hand-typed list — a doc-side repair of a doc/code mismatch deletes the
+    /// only detector, which is how this class recurred four times (#702, Day 164's
+    /// `/map --depth`, Day 182's `/tree [depth]`, now this).
+    #[test]
+    fn model_arg_hint_advertises_every_routed_subcommand() {
+        let region = model_dispatch_region();
+        let routed = routed_model_subcommands(&region);
+
+        // ANTI-VACUOUS, asserted FIRST: a scanner that finds nothing and reports a
+        // clean result is this very defect wearing the opposite sign, and quieter.
+        assert!(
+            !routed.is_empty(),
+            "extracted ZERO subcommands from the /model dispatcher — the extraction \
+             broke, so this guard checked nothing. That is NOT 'the hint is complete'."
+        );
+
+        let hint =
+            crate::commands::command_arg_hint("model").expect("/model must carry an argument hint");
+
+        for token in &routed {
+            assert!(
+                hint.contains(token.as_str()),
+                "the /model dispatcher routes `{token}` but command_arg_hint(\"model\") \
+                 does not mention it, so a user cannot discover it.\n  hint: {hint}\n  \
+                 routed: {routed:?}\nFix: add it to the hint in src/commands.rs."
+            );
+        }
+    }
+
+    /// Near-miss guard: a discriminator tested only on the side that fires is vacuous
+    /// green. A bare model name must still take the switch path — it must not be read
+    /// as a subcommand by the extractor, and the hint must not stop advertising it.
+    #[test]
+    fn model_arg_hint_does_not_treat_a_bare_name_as_a_subcommand() {
+        let hint =
+            crate::commands::command_arg_hint("model").expect("/model must carry an argument hint");
+        assert!(
+            hint.contains("<model-name>"),
+            "the switch path must stay advertised: adding subcommands to the hint must \
+             not delete `<model-name>`.\n  hint: {hint}"
+        );
+
+        // A fabricated region carrying ONLY the switch path yields no subcommands.
+        let switch_only = "let new_model = arg; ctx.agent_config.model = \
+                           \"claude-opus-5\".to_string();";
+        assert_eq!(
+            routed_model_subcommands(switch_only),
+            Vec::<String>::new(),
+            "a bare model name reaches the switch path through an assignment, not a \
+             comparison against a literal, so it must never be collected as a subcommand"
+        );
+
+        // And the real dispatcher must not have collected one either.
+        let routed = routed_model_subcommands(&model_dispatch_region());
+        assert!(
+            !routed.iter().any(|t| t.contains("claude")),
+            "a model name leaked into the routed-subcommand set: {routed:?}"
+        );
+    }
+
+    #[test]
+    fn routed_model_subcommands_reads_both_dispatcher_shapes() {
+        let region = "if arg == \"alpha\" || arg.starts_with(\"beta \") { }";
+        let mut got = routed_model_subcommands(region);
+        got.sort();
+        assert_eq!(got, vec!["alpha".to_string(), "beta".to_string()]);
+        // Unterminated literal: stop rather than guess.
+        assert_eq!(
+            routed_model_subcommands("if arg == \"oops"),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     fn test_tokens_display_labels() {
