@@ -240,6 +240,19 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // measured 11 entries carrying +1 to +480 because this branch absorbed drift for
     // eight days, and a warning nobody pays is how the third accumulation starts.
     ("src/dispatch.rs", 2338),
+    // Day 187 (#886): 2000 -> 2160, i.e. sitting EXACTLY at the cap and
+    // un-registered, then +160 for the `yoyo model` route — the pure
+    // `parse_model_subcommand` / `model_refusal_message` pair, the dispatch arm,
+    // and their emission-point tests. `yoyo model list` was spending a billed LLM
+    // turn with write-capable tools to answer a question `handle_model_list`
+    // answers deterministically, so the route is the fix and this is its cost.
+    // REGISTERED rather than SPLIT, and the reason is the gate's own Day-183
+    // precedent (`src/prompt_retry_limits.rs`): registering is the remedy this
+    // gate prints, while the better fix is a split — deliberately not done here
+    // because a half-landed pure move is a build failure and a reverted session,
+    // and this file is the CLI dispatcher every subcommand route passes through.
+    // The next task that has to grow this file should split it, not bump this.
+    ("src/dispatch_sub.rs", 2160),
     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
     // grace band, for Python triple-quoted strings carried across lines (the

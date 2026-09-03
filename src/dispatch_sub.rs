@@ -114,6 +114,61 @@ fn join_args_as_command(args: &[String]) -> String {
     format!("/{}", args[1..].join(" "))
 }
 
+/// What `yoyo model …` was asked to do. Four values, and the fourth is not an
+/// error case bolted on — it is the honest answer for a shape this entry point
+/// cannot serve (#886).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ModelSubcommand {
+    /// `yoyo model` — print the current model and the usage line.
+    Show,
+    /// `yoyo model list [<provider>]`. The provider filter, empty when absent.
+    List(String),
+    /// `yoyo model info [<name>]`. The model name, empty when absent, which the
+    /// caller reads as "the current model" exactly as the REPL arm does.
+    Info(String),
+    /// Anything else — in practice a bare model name. Carries the offending
+    /// token so the refusal can name it.
+    Refuse(String),
+}
+
+/// Parse the tail of `yoyo model …` (everything after the `model` verb).
+///
+/// **A bare model name is deliberately REFUSED rather than routed to the REPL's
+/// switch path.** `/model <name>` switches models *inside a live session*; a
+/// one-shot CLI process exits immediately, so "switching" here would be a no-op
+/// wearing a success message — a confidently wrong success, which is worse than
+/// a refusal (#710). The refusal names `--model`, which is the flag that
+/// actually chooses a model for a run.
+pub(crate) fn parse_model_subcommand(tail: &[String]) -> ModelSubcommand {
+    let Some(first) = tail.first().map(|s| s.trim()) else {
+        return ModelSubcommand::Show;
+    };
+    if first.is_empty() {
+        return ModelSubcommand::Show;
+    }
+    let rest = tail[1..].join(" ").trim().to_string();
+    match first {
+        "list" => ModelSubcommand::List(rest),
+        "info" => ModelSubcommand::Info(rest),
+        other => ModelSubcommand::Refuse(other.to_string()),
+    }
+}
+
+/// The refusal `yoyo model <something-else>` prints. Pure, so the wording has one
+/// statement and can be asserted at the emission point.
+///
+/// It states the three things a user needs: that nothing was switched, how a model
+/// is actually chosen for a one-shot run (`--model`), and where the interactive
+/// switch lives (`/model <name>`).
+pub(crate) fn model_refusal_message(arg: &str) -> String {
+    format!(
+        "unknown `yoyo model` subcommand: {arg}\n  \
+         usage: yoyo model [list [<provider>] | info [<name>]]\n  \
+         to run with a different model: yoyo --model {arg} -p \"...\"\n  \
+         to switch models inside a session: /model {arg}"
+    )
+}
+
 /// True when this `yoyo goal …` invocation is the `check` subcommand, which
 /// `handle_goal` answers by running the project-local verify command
 /// (`.yoyo/goal_verify.md`) and returning a prompt for the agent. A
@@ -315,6 +370,44 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 // `foo()` / `&foo` / `mod::foo` comes along unchanged.
                 let input = join_args_as_command(args);
                 crate::commands_search::handle_def(&input);
+                return Some(None);
+            }
+            "model" => {
+                // #886: `yoyo model list` used to sail past the Day-165 bare-word
+                // near-miss guard (which only inspects the 2-token `yoyo <word>`
+                // shape) into the single-prompt path, spending a billed LLM turn
+                // with write-capable tools to answer a question these handlers
+                // answer deterministically. Ninth "two doors, one policy, one
+                // deaf" — and #883 had just fixed the REPL door for these exact
+                // two subcommands that same morning.
+                //
+                // Provider/model resolve exactly as the `doctor` and `version`
+                // arms do: --flag, then the config file, then the default.
+                let (file_config, _) = load_config_file();
+                let provider = flag_value(args, &["--provider"])
+                    .or_else(|| file_config.get("provider").cloned())
+                    .unwrap_or_else(|| "anthropic".into())
+                    .to_lowercase();
+                let model = flag_value(args, &["--model"])
+                    .or_else(|| file_config.get("model").cloned())
+                    .unwrap_or_else(|| default_model_for_provider(&provider));
+                match parse_model_subcommand(&args[2..]) {
+                    ModelSubcommand::Show => {
+                        crate::commands_info::handle_model_show(&model);
+                    }
+                    ModelSubcommand::List(filter) => {
+                        crate::commands_info::handle_model_list(&model, &provider, &filter);
+                    }
+                    ModelSubcommand::Info(name) => {
+                        // Empty name means "the current model", the same reading
+                        // the REPL arm makes.
+                        let target = if name.is_empty() { &model } else { &name };
+                        crate::commands_info::handle_model_info(target, &model);
+                    }
+                    ModelSubcommand::Refuse(arg) => {
+                        eprintln!("{YELLOW}  {}{RESET}", model_refusal_message(&arg));
+                    }
+                }
                 return Some(None);
             }
             "update" => {
@@ -847,6 +940,73 @@ fn run_parsed_gasp_command(_cmd: crate::gasp_cli::GaspCommand) -> i32 {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    fn tail(words: &[&str]) -> Vec<String> {
+        words.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// #886: `yoyo model list` used to sail past the Day-165 bare-word guard (which
+    /// only inspects the 2-token `yoyo <word>` shape) into the single-prompt path,
+    /// spending a billed LLM turn with write-capable tools to answer a question that
+    /// has a deterministic handler.
+    #[test]
+    fn parse_model_subcommand_table() {
+        let cases: &[(&[&str], ModelSubcommand)] = &[
+            // No tail at all, and a whitespace-only tail: the show path.
+            (&[], ModelSubcommand::Show),
+            (&["   "], ModelSubcommand::Show),
+            // list, bare and with a provider filter.
+            (&["list"], ModelSubcommand::List(String::new())),
+            (
+                &["list", "anthropic"],
+                ModelSubcommand::List("anthropic".into()),
+            ),
+            // info, bare (means "current model") and with a name.
+            (&["info"], ModelSubcommand::Info(String::new())),
+            (
+                &["info", "claude-opus-5"],
+                ModelSubcommand::Info("claude-opus-5".into()),
+            ),
+            // A bare model name is REFUSED, never routed to the REPL's switch path:
+            // a one-shot process exits immediately, so a "switch" would be a no-op
+            // wearing a success message.
+            (
+                &["claude-opus-5"],
+                ModelSubcommand::Refuse("claude-opus-5".into()),
+            ),
+            (&["nonsense"], ModelSubcommand::Refuse("nonsense".into())),
+            // Near-miss guard: a verb that merely RESEMBLES one we serve is refused
+            // rather than guessed at, since guessing is the confident-wrong-success
+            // failure this whole arm exists to avoid.
+            (&["lst"], ModelSubcommand::Refuse("lst".into())),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                &parse_model_subcommand(&tail(input)),
+                expected,
+                "parse_model_subcommand({input:?})"
+            );
+        }
+    }
+
+    /// The refusal must name `--model` (how a model is actually chosen for a
+    /// one-shot run) and `/model` (where the interactive switch lives). Asserted at
+    /// the emission point — the string a caller receives — not one layer below.
+    #[test]
+    fn model_refusal_names_the_flag_and_the_repl_switch() {
+        let msg = model_refusal_message("nonsense-model-name");
+        for needle in [
+            "nonsense-model-name",
+            "--model",
+            "/model",
+            "yoyo model [list",
+        ] {
+            assert!(
+                msg.contains(needle),
+                "refusal must name {needle:?}, got: {msg}"
+            );
+        }
+    }
 
     #[test]
     fn test_flag_value_finds_value_for_single_flag() {

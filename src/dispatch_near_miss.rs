@@ -38,6 +38,7 @@ pub const ROUTED_SUBCOMMANDS: &[&str] = &[
     "lint",
     "map",
     "memories",
+    "model",
     "outline",
     "permissions",
     "review",
