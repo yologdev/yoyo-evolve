@@ -1542,10 +1542,7 @@ pub(crate) fn restricted_mode_effects(
         (None, RestrictedDirOutcome::AlreadyFenced)
     } else {
         match cwd {
-            Some(dir) => (
-                Some(dir.to_path_buf()),
-                RestrictedDirOutcome::Fenced,
-            ),
+            Some(dir) => (Some(dir.to_path_buf()), RestrictedDirOutcome::Fenced),
             None => (None, RestrictedDirOutcome::CwdUnresolved),
         }
     };
@@ -4945,7 +4942,10 @@ command = "server-two"
             restricted_mode_effects(&[], None),
             restricted_mode_effects(&["/a".to_string()], Some(Path::new("/work/proj"))),
         ] {
-            assert!(effects.set_safe_mode, "clause A must not depend on clause B");
+            assert!(
+                effects.set_safe_mode,
+                "clause A must not depend on clause B"
+            );
         }
     }
 
@@ -5028,10 +5028,7 @@ command = "server-two"
             assert!(!note.contains('•'), "bullet glyph in plain output: {note}");
             assert!(!note.contains('🔒'), "marker glyph in plain output: {note}");
             assert!(!note.contains('—'), "em dash in plain output: {note}");
-            assert!(
-                note.is_ascii(),
-                "plain output must be plain ASCII: {note}"
-            );
+            assert!(note.is_ascii(), "plain output must be plain ASCII: {note}");
         }
     }
 
