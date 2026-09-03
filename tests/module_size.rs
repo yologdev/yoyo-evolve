@@ -239,7 +239,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `trust_changed_on_cd_message`, ~:1423). Paid here rather than absorbed: Day 174
     // measured 11 entries carrying +1 to +480 because this branch absorbed drift for
     // eight days, and a warning nobody pays is how the third accumulation starts.
-    ("src/dispatch.rs", 2337),
+    ("src/dispatch.rs", 2338),
     ("src/format/cost.rs", 2539), // Day 183: +133 for the cache-ratio provenance guards (denominator pinned to upstream, NaN contract, emission-point tie + near-miss).
     // Day 183 (#865): 1763 -> 2044, i.e. 44 past the cap and inside the 50-line
     // grace band, for Python triple-quoted strings carried across lines (the
@@ -400,8 +400,17 @@ enum SizeViolation {
         lines: usize,
         ceiling: usize,
     },
-    /// A grandfathered module is smaller than its recorded ceiling (but still
-    /// over the cap) — the entry grants headroom nobody decided to give.
+    /// A grandfathered module is smaller than its recorded ceiling by at most
+    /// `REGISTER_DRIFT_GRACE_LINES` (but still over the cap) — creep down, not
+    /// a design event: warn (Day 187, #885). The mirror of `GrewPastCeiling`.
+    ShrankWithinGrace {
+        path: String,
+        lines: usize,
+        ceiling: usize,
+    },
+    /// A grandfathered module is smaller than its recorded ceiling by more
+    /// than `REGISTER_DRIFT_GRACE_LINES` (but still over the cap) — the entry
+    /// grants headroom nobody decided to give.
     StaleCeiling {
         path: String,
         lines: usize,
@@ -437,6 +446,7 @@ impl SizeViolation {
             SizeViolation::OverCapWithinGrace { .. } => false,
             SizeViolation::GrewPastCeiling { .. } => false,
             SizeViolation::GrewFarPastCeiling { .. } => true,
+            SizeViolation::ShrankWithinGrace { .. } => false,
             SizeViolation::StaleCeiling { .. } => true,
             SizeViolation::StaleGrandfatherEntry { .. } => true,
         }
@@ -484,16 +494,31 @@ impl SizeViolation {
                  move the new code to a smaller module.",
                 lines.saturating_sub(*ceiling),
             ),
+            SizeViolation::ShrankWithinGrace {
+                path,
+                lines,
+                ceiling,
+            } => format!(
+                "{path} is down to {lines} lines from its recorded {ceiling} — {} lines of \
+                 headroom nobody decided to grant.\n     \
+                 Not fatal — within the {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace \
+                 band, and shrinking a file is the direction this gate wants.\n     \
+                 Fix: paste (\"{path}\", {lines}) over its entry in \
+                 GRANDFATHERED_OVERSIZED_MODULES.",
+                ceiling.saturating_sub(*lines),
+            ),
             SizeViolation::StaleCeiling {
                 path,
                 lines,
                 ceiling,
             } => format!(
                 "{path} is {lines} lines but its entry still records {ceiling} — {} lines of \
-                 headroom nobody decided to grant.\n     \
+                 headroom nobody decided to grant, more than the \
+                 {REGISTER_DRIFT_GRACE_LINES}-line register-drift grace band, so this one is \
+                 fatal.\n     \
                  Fix: paste (\"{path}\", {lines}) over its entry in \
                  GRANDFATHERED_OVERSIZED_MODULES. Fatal on purpose: the register only \
-                 ratchets down if a shrink is also a failure.",
+                 ratchets down if a large shrink is also a failure.",
                 ceiling.saturating_sub(*lines),
             ),
             SizeViolation::StaleGrandfatherEntry { path, lines } => match lines {
@@ -576,6 +601,49 @@ fn classify_listed(lines: usize, recorded: usize, grace: usize) -> ListedVerdict
     }
 }
 
+/// The three outcomes for a grandfathered module that sits **at or below** its
+/// recorded ceiling — branch 3, the ratchet (Day 187, #885).
+///
+/// The mirror of `ListedVerdict`, and it exists because the two directions had
+/// wildly different prices for 22 days: growth got a 100-line grace band on Day
+/// 174 while *any* shrink — even one line — stayed fatal. Nobody wrote that
+/// asymmetry down as a decision; branch 2 got a grace band and branch 3 simply
+/// never did. It traps a fix loop, because branch 2's printed remedy is a
+/// **high-water mark**: paste `("src/cli.rs", 6557)`, then let any later edit
+/// remove a line, and the run lands under the freshly-pasted ceiling with zero
+/// slack. That is the "a guard that reads the world AFTER its own action"
+/// lesson mirrored onto the *remedy*.
+///
+/// The decision lives here; the I/O stays at the single call site.
+#[derive(Debug, PartialEq, Eq)]
+enum ShrinkVerdict {
+    /// At or above the recorded ceiling — not a shrink case at all. Branch 2
+    /// owns everything above the recorded number; this classifier deliberately
+    /// says nothing about it.
+    NotShrink,
+    /// Shrank below the ceiling by at most `grace` lines — warn, run stays
+    /// green. Creep down, and the direction this gate wants.
+    Grace,
+    /// Shrank by more than `grace` lines — fatal. This is the ratchet, and it
+    /// survives: a large shrink is real headroom nobody granted, and the
+    /// remedy is one pasted line.
+    Fatal,
+}
+
+/// Classify a grandfathered module that is at or below its recorded ceiling.
+///
+/// The boundary is inclusive and mirrors `classify_listed` exactly: a shrink of
+/// `grace` lines warns, `grace + 1` is fatal.
+fn classify_shrink(lines: usize, recorded: usize, grace: usize) -> ShrinkVerdict {
+    if lines >= recorded {
+        ShrinkVerdict::NotShrink
+    } else if recorded - lines <= grace {
+        ShrinkVerdict::Grace
+    } else {
+        ShrinkVerdict::Fatal
+    }
+}
+
 /// Pure checker: given every module's line count and the grandfather list,
 /// report every violation. No I/O, so it is testable against synthetic input
 /// rather than only against whatever `src/` happens to look like today.
@@ -611,15 +679,34 @@ fn check_module_sizes(
                                 ceiling: *ceiling,
                             })
                         }
-                        // Branch 3, untouched: at the ceiling is clean, below
-                        // it is the ratchet and stays fatal.
+                        // Branch 3 (Day 187, #885): at the ceiling is clean;
+                        // below it splits by how far, exactly as growth does.
+                        //
+                        // Three cases stay FATAL and must NOT be loosened by a
+                        // later "simplification":
+                        //   1. dropping under MAX_MODULE_LINES entirely — the
+                        //      debt is *paid* and the remedy is DELETE the
+                        //      entry, a different edit from updating a number
+                        //      (handled above, before this match);
+                        //   2. a listed file that has vanished (handled below);
+                        //   3. a shrink past the grace band — the ratchet.
                         ListedVerdict::NotGrowth => {
-                            if lines < ceiling {
-                                violations.push(SizeViolation::StaleCeiling {
-                                    path: path.clone(),
-                                    lines: *lines,
-                                    ceiling: *ceiling,
-                                });
+                            match classify_shrink(*lines, *ceiling, REGISTER_DRIFT_GRACE_LINES) {
+                                ShrinkVerdict::NotShrink => {}
+                                ShrinkVerdict::Grace => {
+                                    violations.push(SizeViolation::ShrankWithinGrace {
+                                        path: path.clone(),
+                                        lines: *lines,
+                                        ceiling: *ceiling,
+                                    })
+                                }
+                                ShrinkVerdict::Fatal => {
+                                    violations.push(SizeViolation::StaleCeiling {
+                                        path: path.clone(),
+                                        lines: *lines,
+                                        ceiling: *ceiling,
+                                    })
+                                }
                             }
                         }
                     }
@@ -874,21 +961,144 @@ mod tests {
     }
 
     #[test]
-    fn grandfathered_module_below_its_ceiling_is_a_stale_ceiling() {
+    fn grandfathered_module_far_below_its_ceiling_is_a_stale_ceiling() {
         // Was `grandfathered_module_may_shrink_while_still_over_cap`, which
         // asserted this passes. Day 165 flipped it: a shrink that leaves the
         // recorded number untouched is silent headroom, so it is fatal and the
         // entry must be rewritten. That is the ratchet.
-        let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+        //
+        // Day 187 (#885) repriced it a second time and this fixture moved with
+        // it: the shrink is now 200 lines, past REGISTER_DRIFT_GRACE_LINES, so
+        // it still exercises the fatal half. It used to be 500 -> 400, a
+        // 100-line shrink, which is now the *grace* band — that case did not
+        // disappear, it moved to the sibling test below. The assertion is
+        // unchanged and the ratchet direction still stays fatal.
+        let v = check_module_sizes(&files(&[("src/a.rs", 300)]), 200, &[("src/a.rs", 500)]);
         assert_eq!(
             v,
             vec![SizeViolation::StaleCeiling {
+                path: "src/a.rs".to_string(),
+                lines: 300,
+                ceiling: 500
+            }]
+        );
+        assert!(v[0].is_fatal(), "the ratchet direction must stay fatal");
+    }
+
+    #[test]
+    fn grandfathered_module_shrinking_within_grace_warns_rather_than_reverting() {
+        // Day 187 (#885). The exact fixture the test above used to carry: a
+        // 100-line shrink, at the inclusive boundary. Fatal for 22 days, and
+        // the branch that destroyed #884 — a `cargo test` failure means
+        // `git reset --hard`, so its real price was the whole session beside it.
+        let v = check_module_sizes(&files(&[("src/a.rs", 400)]), 200, &[("src/a.rs", 500)]);
+        assert_eq!(
+            v,
+            vec![SizeViolation::ShrankWithinGrace {
                 path: "src/a.rs".to_string(),
                 lines: 400,
                 ceiling: 500
             }]
         );
-        assert!(v[0].is_fatal(), "the ratchet direction must stay fatal");
+        assert!(!v[0].is_fatal(), "a 100-line shrink must not revert a task");
+
+        // The remedy has to be pasteable, exactly as branch 2's is — the whole
+        // point of a warning nobody can act on is that nobody acts on it.
+        let msg = v[0].message();
+        assert!(msg.contains("(\"src/a.rs\", 400)"), "{msg}");
+        assert!(msg.contains("Not fatal"), "{msg}");
+    }
+
+    #[test]
+    fn shrink_grace_boundary_is_inclusive_on_both_sides() {
+        // A discriminator tested only on the side that fires is vacuous green,
+        // so both sides of the boundary are pinned at the emission point.
+        let grace = check_module_sizes(
+            &files(&[("src/a.rs", 500 - REGISTER_DRIFT_GRACE_LINES)]),
+            200,
+            &[("src/a.rs", 500)],
+        );
+        assert!(
+            !grace[0].is_fatal(),
+            "a shrink of exactly {REGISTER_DRIFT_GRACE_LINES} must warn: {grace:?}"
+        );
+
+        let fatal = check_module_sizes(
+            &files(&[("src/a.rs", 500 - REGISTER_DRIFT_GRACE_LINES - 1)]),
+            200,
+            &[("src/a.rs", 500)],
+        );
+        assert!(
+            fatal[0].is_fatal(),
+            "one line past the band must stay fatal: {fatal:?}"
+        );
+    }
+
+    #[test]
+    fn classify_shrink_covers_the_band_and_both_near_misses() {
+        // Mirrors `classify_listed_covers_the_drift_band_and_both_near_misses`
+        // rather than inventing a second shape for the same question.
+        let cases = [
+            // At or above the ceiling is branch 2's business, not this one.
+            (500, ShrinkVerdict::NotShrink),
+            (501, ShrinkVerdict::NotShrink),
+            (5_000, ShrinkVerdict::NotShrink),
+            // Below it, up to and including the band: warn.
+            (499, ShrinkVerdict::Grace),
+            (400, ShrinkVerdict::Grace),
+            // Past the band: fatal.
+            (399, ShrinkVerdict::Fatal),
+            (0, ShrinkVerdict::Fatal),
+        ];
+        for (lines, want) in cases {
+            assert_eq!(
+                classify_shrink(lines, 500, 100),
+                want,
+                "classify_shrink({lines}, 500, 100)"
+            );
+        }
+    }
+
+    #[test]
+    fn shrink_grace_does_not_loosen_the_three_cases_that_stay_fatal() {
+        // The near-miss guards, and they are the half that matters: #885 gave
+        // *one* direction a grace band and must not have widened the others.
+
+        // 1. Dropped under the cap entirely — the debt is paid and the remedy
+        //    is DELETE the entry, a different edit from updating a number.
+        let paid = check_module_sizes(&files(&[("src/a.rs", 150)]), 200, &[("src/a.rs", 500)]);
+        assert_eq!(
+            paid,
+            vec![SizeViolation::StaleGrandfatherEntry {
+                path: "src/a.rs".to_string(),
+                lines: Some(150)
+            }]
+        );
+        assert!(paid[0].is_fatal(), "a fully paid debt must still be fatal");
+
+        // 2. A listed file that has vanished.
+        let gone = check_module_sizes(&files(&[]), 200, &[("src/a.rs", 500)]);
+        assert_eq!(
+            gone,
+            vec![SizeViolation::StaleGrandfatherEntry {
+                path: "src/a.rs".to_string(),
+                lines: None
+            }]
+        );
+        assert!(gone[0].is_fatal(), "a vanished entry must still be fatal");
+
+        // 3. Growth is byte-identical: the band and its near miss both hold.
+        let grew = check_module_sizes(&files(&[("src/a.rs", 600)]), 200, &[("src/a.rs", 500)]);
+        assert!(!grew[0].is_fatal(), "growth of 100 must still warn: {grew:?}");
+        let grew_far = check_module_sizes(&files(&[("src/a.rs", 601)]), 200, &[("src/a.rs", 500)]);
+        assert!(
+            grew_far[0].is_fatal(),
+            "growth of 101 must still be fatal: {grew_far:?}"
+        );
+
+        // And sitting exactly on the ceiling still says nothing at all.
+        let at = check_module_sizes(&files(&[("src/a.rs", 500)]), 200, &[("src/a.rs", 500)]);
+        assert!(at.is_empty(), "{at:?}");
     }
 
     #[test]
