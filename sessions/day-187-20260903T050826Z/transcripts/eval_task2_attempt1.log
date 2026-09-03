@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff… ✓ (9ms)
+ ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && mkdir -p restr_probe && cd restr_probe && echo "hi" | /home/runner/wo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -20 … ✓ (14ms)
+ ✓ (3.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head -2…  ▶ $ cd /tmp/restr_probe && script -qec "/home/runner/work/yoyo-evolve/yoyo-evolve/ta… ✓ (8ms)
+ ✓ (35.2s)
+  6 tools completed in 1m 0s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Feature verified live. Two findings: the flag works end-to-end (all three note lines, correct fence, safe mode on), but CLAUDE.md was not updated — 0 hits, not in the commit, working tree clean.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (5ms)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What I actually checked:
+
+Ran the feature both ways. Under a pty, yoyo --restricted printed all three note lines — safe-mode reuse, file tools fenced to the working directory: /tmp/restr_probe, and the anti-false-confinement command execution is NOT disabled — use --read or --no-tools for that. --help shows the entry with no value placeholder (so the #862 gate is satisfied). Without the flag, nothing new prints. The earlier piped run showed no note, which is correct rather than a bug: piped stdin+stdout auto-enables quiet, and the note is deliberately silent there.
+
+**The touchpoint that could have silently broken it.** `main.rs` dropped `dir_restrictions` whenever safe mode was on — and `--restricted` turns safe mode on, so without the `&& !cli::is_restricted() guard the flag would have fenced and then immediately un-fenced itself. That guard, plus set_restricted being added to GLOBAL_SETTERS, are both in this diff. The three-arm match on RestrictedDirOutcome has no _` catch-all, so a future variant is a compile error rather than a silent fall-through.
+
+**The safety property holds.** The near-miss guard asserts a user-supplied allow list survives byte-identically with a full `assert_eq!`, not a `contains` — so no one who already passed --allow-dir gets widened. CwdUnresolved is kept distinct from Fenced and its note says NOT fenced outright.
+
+Call-site placement deviates from the task text and is better for it. The task said "before parse_permission_and_dir_config"; the code puts clause B after it, with a comment explaining that the monotonicity rule must see the fully-resolved CLI+config allow list or it could append cwd on top of a non-empty config list and widen the user. Clause A is still read at the top, and the live "Safe mode" banner confirms it reaches the gates.
+
+One gap, flagged as follow-up rather than a fail: the task's Docs section asked for a CLAUDE.md note in the cli.rs bullet and it did not land — grep returns 0 hits, it is not in the commit, and the working tree is clean, so it is not pending either. The deferred clauses C/D, the monotonicity rule and the three-state outcome are recorded only in code comments. That is real debt in the file re-injected as authoritative context every session, but the required user-facing doc (cli_help_text()) is present and honest, and reverting a verified, correctly-narrowing security feature over a missing internal memo is the Day-166 lesson in miniature. Next session should paste that bullet.
+
+  watch: no files changed this turn — skipping
+

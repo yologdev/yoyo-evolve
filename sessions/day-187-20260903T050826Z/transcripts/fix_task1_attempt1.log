@@ -1,0 +1,154 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the three issues: the broken call site, the missing self-tests, and the skipped Step 3.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1345p scripts/counte… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2170,2240p scripts/counte… ✓ (4ms)
+  4 tools completed in 7.8s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2216,2275p scripts/counte… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2186,2216p scripts/counte… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2183 && NR<=2196 {print… ✓ (5ms)
+  3 tools completed in 7.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 13 lines)
+        if args.commit:
+  -         verdict, detail = run_counterfactual(root, args.commit, args.timeout)
+  +         verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
+            print("")
+            print(f"counterfactual verdict for {args.commit[:12]}: {verdict}")
+  +         if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+  +             # #880: the SAME line the batch path prints. Both doors, one policy --
+  +             # wiring one and not the other is the shape this repo has shipped nine
+  +             # times, and it is what the evaluator caught here: the arity moved and
+  +             # this call site did not, so the single-commit path raised ValueError at
+  +             # runtime while `--test` stayed green (Python has no compile check).
+  +             f_status, f_names = failing
+  +             print(f"  failing tests: {f_status} {f_names}")
+            if detail:
+ ✓ (1m 13s)
+        if args.commit:
+  -         verdict, detail = run_counterfactual(root, args.commit, args.timeout)
+  +         verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
+            print("")
+            print(f"counterfactual verdict for {args.commit[:12]}: {verdict}")
+  +         if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+  +             # #880: the SAME line the batch path prints. Both doors, one policy --
+  +             # wiring one and not the other is the shape this repo has shipped nine
+  ... (6 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the --commit path's ledger write must also carry it (or the fix is half-done):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (7 → 7 lines)
+                    args.record,
+                    ledger_line(
+                        full_sha, parent, day, subject, subject_population(subject),
+  -                     verdict, baseline_from_verdict(verdict), ts, depth,
+  +                     verdict, baseline_from_verdict(verdict), ts, depth, failing,
+                    ),
+                )
+ ✓ (1m 14s)
+                    args.record,
+                    ledger_line(
+                        full_sha, parent, day, subject, subject_population(subject),
+  -                     verdict, baseline_from_verdict(verdict), ts, depth,
+  +                     verdict, baseline_from_verdict(verdict), ts, depth, failing,
+                    ),
+                )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_counterfactual(" sc… ✓ (5ms)
+  2 tools completed in 1m 16s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "import ast,sys; ast.… ✓ (52ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=326 && NR<=356 {printf … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=3195 && NR<=3235 {print… ✓ (5ms)
+  3 tools completed in 6.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash li… (12 lines) ✓ (27ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 113 lines)
+        check("ledger_line round-trips the sha", back["sha"] == "abc", back)
+        check("ledger_line carries the verdict", back["verdict"] == EARNED, back)
+        check("ledger_line is ONE line", "\n" not in line, line)
+  + 
+  +     # -- #880: WHICH test failed -------------------------------------------------------
+  +     # The first UNEARNED verdict ever taken (1b502eacb937) is recorded as unknown cause,
+  +     # because the row kept `test result: FAILED. 87 passed; 1 failed` and threw the name
+  +     # away. Same defect on the three BASELINE_RED rows. These pin the repair.
+  + 
+  +     # ANTI-VACUOUS, AND IT IS ASSERTED FIRST. An extractor that finds nothing and reports
+  +     # a clean status is this very defect wearing the opposite sign, and it is quieter than
+  +     # the bug -- so the first thing checked is that a fixture which genuinely contains a
+  +     # failure block yields a NON-EMPTY list. Every assertion below is worthless if this
+  +     # one can pass on an extractor that returns [] for everything.
+  +     real_block = (
+  +         "running 88 tests\n"
+  +         "test module_size::tests::grandfathered_ok ... ok\n"
+  +         "test module_size::src_modules_respect_the_size_gate ... FAILED\n"
+  +         "\n"
+  +         "failures:\n"
+  ... (91 more lines)
+ ✓ (1m 13s)
+        check("ledger_line round-trips the sha", back["sha"] == "abc", back)
+        check("ledger_line carries the verdict", back["verdict"] == EARNED, back)
+        check("ledger_line is ONE line", "\n" not in line, line)
+  + 
+  +     # -- #880: WHICH test failed -------------------------------------------------------
+  +     # The first UNEARNED verdict ever taken (1b502eacb937) is recorded as unknown cause,
+  +     # because the row kept `test result: FAILED. 87 passed; 1 failed` and threw the name
+  +     # away. Same defect on the three BASELINE_RED rows. These pin the repair.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (60ms)
+  3 tools completed in 1m 51s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=100… (6 lines) ✓ (61ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -1 drea… (8 lines) ✓ (26ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (12 → 15 lines)
+        # NEAR-MISS GUARD, and it is the half that matters: every OTHER verdict's row must be
+        # BYTE-IDENTICAL to what the pre-change code emitted -- 20 of the 22 rows already in
+        # dreams/counterfactual_verdicts.jsonl, i.e. the entire regression surface. The EARNED
+  -     # literal below was captured from the pre-change body verbatim; full-string equality,
+  -     # never a `contains`. REGISTER_DRIFT is in this list deliberately: it is a void
+  -     # attributed by diff shape and its row already carries that attribution, so a second
+  -     # place the names live is how the two drift apart.
+  +     # literal below is the real on-disk shape (verified against the live ledger, whose 22
+  +     # rows all carry exactly these nine keys); full-string equality, never a `contains`.
+  +     # It earned its keep before it shipped: a hand-typed lowercase "earned" failed it,
+  +     # which is why the literal is transcribed from a real row rather than reasoned out.
+  +     # REGISTER_DRIFT is in this list deliberately: it is a void attributed by diff shape
+  +     # and its row already carries that attribution, so a second place the names live is
+  +     # how the two drift apart.
+        pre_change_earned = (
+            '{"baseline": "green", "day": "184", "parent": "def", "population": "plain", '
+  -         '"sha": "abc", "subject": "subj", "ts": "T", "verdict": "earned", '
+  +         '"sha": "abc", "subject": "subj", "ts": "T", "verdict": "EARNED", '
+            '"window_depth": "42"}'
+        )
+ ✓ (1m 13s)
+        # NEAR-MISS GUARD, and it is the half that matters: every OTHER verdict's row must be
+        # BYTE-IDENTICAL to what the pre-change code emitted -- 20 of the 22 rows already in
+        # dreams/counterfactual_verdicts.jsonl, i.e. the entire regression surface. The EARNED
+  -     # literal below was captured from the pre-change body verbatim; full-string equality,
+  -     # never a `contains`. REGISTER_DRIFT is in this list deliberately: it is a void
+  -     # attributed by diff shape and its row already carries that attribution, so a second
+  -     # place the names live is how the two drift apart.
+  +     # literal below is the real on-disk shape (verified against the live ledger, whose 22
+  ... (12 more lines)
+  3 tools completed in 1m 29s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

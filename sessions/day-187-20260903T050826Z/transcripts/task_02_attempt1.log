@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading how --safe-mode is represented today and where the gate helpers live in cli.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_mode\|safe-mode" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "safe_mode" src/ --incl… ✓ (12ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1975,2010p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow_dirs\|deny_dirs\|… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1379,1455p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2040,2090p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 10.4s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree — I spent my first pass reading. Acting now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '495,510p' src/cli.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe-mode\|trust-projec… ✓ (7ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '233,256p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) fn gate_pro… ✓ (4ms)
+ ✓ (3ms)
+  4 tools completed in 6.2s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean tree, and I've spent enough on reading. Writing STEP 1 (pure core + tests) now.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (4 → 173 lines)
+        (permissions, dir_restrictions)
+  + }
+  + 
+  + /// What `--restricted` actually did, per clause.
+  + ///
+  + /// #879, first slice. Claude Code v2.1.25x shipped one switch that composes
+  + /// four confinements; yoyo owns a primitive for every clause but had no single
+  + /// flag that composed them, and a capability reachable only by retyping four
+  + /// switches is one people alias away — where any switch they forget fails
+  + /// *silently*, so the user believes they are confined and is not.
+  + ///
+  + /// Two clauses are taken here and two are deliberately deferred; see
+  + /// `restricted_mode_effects` for which and why.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub(crate) struct RestrictedEffects {
+  +     /// Clause A: turn on whatever `--safe-mode` turns on. Always true — clause A
+  +     /// does not depend on clause B.
+  +     pub set_safe_mode: bool,
+  +     /// Clause B: the directory to append to `dir_restrictions.allow`, or `None`
+  +     /// when nothing may be added (see `dir_outcome` for *why* it is `None`).
+  ... (153 more lines)
+ ✓ (15.9s)
+        (permissions, dir_restrictions)
+  + }
+  + 
+  + /// What `--restricted` actually did, per clause.
+  + ///
+  + /// #879, first slice. Claude Code v2.1.25x shipped one switch that composes
+  + /// four confinements; yoyo owns a primitive for every clause but had no single
+  + /// flag that composed them, and a capability reachable only by retyping four
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the tests are the consumer (Day 184: a test satisfies dead-code and confirms). Adding them now.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_safe_mode_in_kn… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (7 → 131 lines)
+            assert!(KNOWN_FLAGS.contains(&"--safe-mode"));
+            assert!(!KNOWN_FLAGS.contains(&"--safe"));
+            assert!(!KNOWN_FLAGS.contains(&"--safemode"));
+  +     }
+  + 
+  +     // ---- #879 --restricted, first slice --------------------------------------
+  + 
+  +     #[test]
+  +     fn restricted_effects_table() {
+  +         use std::path::{Path, PathBuf};
+  + 
+  +         // Clause B, branch 1: an empty allow list is the *unrestricted* default,
+  +         // so adding cwd narrows. This is the branch the flag exists for.
+  +         let e = restricted_mode_effects(&[], Some(Path::new("/work/proj")));
+  +         assert_eq!(e.dir_outcome, RestrictedDirOutcome::Fenced);
+  +         assert_eq!(e.add_allow_dir, Some(PathBuf::from("/work/proj")));
+  + 
+  +         // Clause B, branch 3: no cwd -> NOT fenced, and it keeps its own name.
+  +         // Folding this into Fenced would be the false-confinement failure #879
+  +         // was filed about.
+  ... (108 more lines)
+ ✓ (15.9s)
+            assert!(KNOWN_FLAGS.contains(&"--safe-mode"));
+            assert!(!KNOWN_FLAGS.contains(&"--safe"));
+            assert!(!KNOWN_FLAGS.contains(&"--safemode"));
+  +     }
+  + 
+  +     // ---- #879 --restricted, first slice --------------------------------------
+  + 
+  +     #[test]
+  ... (13 more lines)
+  2 tools completed in 41.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code fires on the non-test bin build (clippy --all-targets). STEP 1 is green under cfg(test) though — verifying that before wiring:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo restricted… ✓ (25.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Core is green alone (5 passed; only the KNOWN_FLAGS assertion fails — that's STEP 2's job). Now checking how safe mode treats dir_restrictions before I wire, since that decides where the fence must live:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '938,960p' src/main.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found a real composition landmine: main.rs:947 discards dir_restrictions under safe mode — so clause A would silently destroy clause B's fence. That's exactly the false confinement this task forbids. Wiring accordingly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "static TRUST_PROJECT\|p… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Wiring all six edits in one pass:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (112 lines) ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -15 ✓ (10.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.6s (2 ✓)
+
+Build green. Now registering the new global setter with the race gate (a writer it can't see is the gate un-covering itself):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"set_trust_project_to"'… ✓ (3ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (1m 53s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 5447 pass. Only the size gate — pasting the line it prints, never hand-typed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (198ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    ("src/cli.rs", 603… ✓ (442ms)
+  2 tools completed in 3.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

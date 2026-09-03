@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff. Let me verify the key touchpoints — especially the call-site arity change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_counterfactual(" sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_line(" scripts/c… ✓ (6ms)
+ ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Both call sites updated. Now checking the batch --record ledger_line call site (line 2210) — the diff only showed one `ledger_line` update:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2200,2222p scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (4ms)
+ ✓ (61ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2205 && NR<=2218' scrip… ✓ (6ms)
+  3 tools completed in 2.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Found the blocking defect. Confirming precisely before writing the verdict:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (10 lines) ✓ (63ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the batch --record path writes an UNEARNED row with no failing-test fields.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 25s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md. Evaluation complete.
+
+Verdict: FAIL
+
+The instrument half of the task is genuinely good — classify_failing_tests delegates to the existing failing_test_names rather than growing a second parser, the three states are kept distinct with the anti-vacuous assertion first, the verdict gate lives in ledger_line so a caller can't corrupt a row, and the byte-identical near-miss guard uses full-string equality against a real captured row.
+
+But the deliverable doesn't reach the ledger on the path that matters:
+
+```
+2210  ledger_line(
+2211      row.sha, parent, day, row.subject, row.population,
+2212      verdict, baseline, ts, depth,          # <-- no `failing`
+2213  ),
+```
+
+That's the batch --record path — --population plain --max-runs 2 --record ... --resume, which is how every reading session since Day 184 has been run. failing is computed there (the arity change was propagated) and printed to stdout, but never threaded into the row, so it defaults to None and both fields are omitted. Only the single-commit --commit path at 2275 was wired.
+
+Verified by driving ledger_line in both call shapes: the batch shape emits an UNEARNED row carrying the same nine keys it always did.
+
+Two things make this worth failing rather than waving through:
+
+• The self-tests can't see it. They drive ledger_line directly and never the batch call site, so --test stays green over a path that writes the old row. Python has no compile check to catch the missing argument, because it's a defaulted parameter rather than a signature mismatch.
+• CLAUDE.md now asserts a capability the primary path doesn't have — "The two fields … are emitted only on `BASELINE_RED and UNEARNED`" is false for the batch path, where they're emitted on neither.
+
+The fix is one argument on line 2212. The diff's own comment at 2224 names this exact shape ("Both doors, one policy — wiring one and not the other is the shape this repo has shipped nine times") for the print half; the ledger half is the same omission one line further down.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,284 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing extractor to verify the issue's premise.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,560p' scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "failing_test_names\|att… ✓ (8ms)
+ ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.6s (2 ✓)
+
+failing_test_names already exists — the issue's remedy claim was wrong in the cheap direction, exactly as step 0 predicted. Let me confirm its behaviour on the three shapes and read the ledger writer.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1655,1720p' scripts/coun… ✓ (3ms)
+ ✓ (59ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.8s (2 ✓)
+
+Confirmed — failing_test_names returns [] for both "no block" and "empty output", which is exactly the collapse the three-state classifier must undo. Now the call sites:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ledger_line(\|classify_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1390,1450p' scripts/coun… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing written yet — picking up at step 1. Let me see the baseline branch and both ledger_line call sites.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1340,1382p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2075,2170p' scripts/coun… ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.3s (2 ✓)
+
+Now I have the full picture. Let me count the return sites in run_counterfactual before threading:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1320 && NR<=1450 && /re… ✓ (15ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+9 real return sites. Let me write the classifier and constants first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '138,160p' scripts/counte… ✓ (5ms)
+
+Now the constants and the pure three-state classifier:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 22 lines)
+    # Internal sentinel, deliberately NOT a run verdict: the baseline passed, so the
+    # comparison is licensed and the counterfactual may proceed. It never reaches a report.
+    BASELINE_OK = "BASELINE_OK"
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #880 -- the three states of "which test failed?". NEVER folded into each other, and the
+  + # middle one is the whole point of there being three:
+  + #
+  + #   FAILING_NAMES        a failure block was found and the names were read.
+  + #   FAILING_NO_BLOCK     the run REPORTED a failure and the capture carries no libtest
+  + #                        failure block, so the names could not be read. This is NOT "no
+  + #                        failures". Rendering it as a bare empty list would be "could not
+  + #                        check" reading as "checked; clean", the one collapse this whole
+  + #                        instrument refuses.
+  + #   FAILING_NO_OUTPUT    the capture is empty or whitespace only -- nobody looked, or the
+  + #                        output was lost. A different fact again from either neighbour.
+  + #
+  + # These are NOT verdicts and never enter RUN_VERDICTS: a verdict says what happened to the
+  + # green, this says whether the reason is legible.
+  + FAILING_NAMES = "names"
+  ... (2 more lines)
+ ✓ (1m 14s)
+    # Internal sentinel, deliberately NOT a run verdict: the baseline passed, so the
+    # comparison is licensed and the counterfactual may proceed. It never reaches a report.
+    BASELINE_OK = "BASELINE_OK"
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #880 -- the three states of "which test failed?". NEVER folded into each other, and the
+  + # middle one is the whole point of there being three:
+  + #
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 31 lines)
+        if TEST_RESULT_OK_RE.search(output):
+            return BASELINE_OK
+        return COULD_NOT_CHECK
+  + 
+  + 
+  + def classify_failing_tests(output: str) -> tuple[str, list[str]]:
+  +     """WHICH tests failed, from the capture a verdict was already read out of (#880).
+  + 
+  +     Pure over the captured string, exactly like `classify_baseline` and
+  +     `classify_counterfactual` beside it, so it is table-testable with fabricated output
+  +     and never runs cargo.
+  + 
+  +     ONE PARSER, NOT TWO. The name extraction delegates to `failing_test_names`, which
+  +     already existed and is what `attribute_failures` uses for REGISTER_DRIFT attribution.
+  +     A second extractor would be two copies of one rule agreeing the day they are written
+  +     and diverging forever after -- the `significant_braces` / `char_literal_len`
+  +     precedent. What was missing was never the parser; it was putting its answer on the
+  +     LEDGER ROW.
+  + 
+  +     Returns `(status, names)` where status is one of the three FAILING_* values above.
+  ... (11 more lines)
+ ✓ (1m 13s)
+        if TEST_RESULT_OK_RE.search(output):
+            return BASELINE_OK
+        return COULD_NOT_CHECK
+  + 
+  + 
+  + def classify_failing_tests(output: str) -> tuple[str, list[str]]:
+  +     """WHICH tests failed, from the capture a verdict was already read out of (#880).
+  + 
+  ... (13 more lines)
+  2 tools completed in 2m 37s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (11 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+14 returns — rather than churn all of them, I'll keep the existing body intact and add a thin public wrapper with an explicit capture sink. Two branches set it; everything else is untouched.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (20ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (1 → 28 lines)
+  - def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
+  + def run_counterfactual(
+  +     root: str, sha: str, timeout: int, target: str | None = None
+  + ) -> tuple[str, str, tuple[str, list[str]] | None]:
+  +     """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+  + 
+  +     `failing` is the `(status, names)` pair from `classify_failing_tests` for the two
+  +     verdicts whose CAUSE is legible in a capture — BASELINE_RED and UNEARNED — and `None`
+  +     everywhere else, meaning **no claim was made**, which is not the same as "no failures".
+  + 
+  +     THIS IS A WRAPPER RATHER THAN 14 EDITED RETURNS ON PURPOSE. `_run_counterfactual` has
+  +     fourteen return sites and only two of them ever see a capture worth naming; widening
+  +     the arity of all fourteen to thread a value twelve of them cannot supply is churn that
+  +     buys nothing and risks a mis-edited branch in the one function the whole tool hangs
+  +     on. The sink is written at exactly the two branches that already read the capture, and
+  +     is inert everywhere else.
+  +     """
+  +     sink: dict = {"failing": None}
+  +     verdict, detail = _run_counterfactual(root, sha, timeout, target, sink)
+  +     return verdict, detail, sink["failing"]
+  ... (9 more lines)
+ ✓ (1m 14s)
+  - def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
+  + def run_counterfactual(
+  +     root: str, sha: str, timeout: int, target: str | None = None
+  + ) -> tuple[str, str, tuple[str, list[str]] | None]:
+  +     """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+  + 
+  +     `failing` is the `(status, names)` pair from `classify_failing_tests` for the two
+  +     verdicts whose CAUSE is legible in a capture — BASELINE_RED and UNEARNED — and `None`
+  ... (13 more lines)
+  2 tools completed in 1m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 8 lines)
+            baseline = classify_baseline(rc, out)
+            if baseline != BASELINE_OK:
+  +             # #880: the capture is in hand HERE and was thrown away until Day 187, which
+  +             # is why all three recorded BASELINE_RED rows say `1 failed` and cannot say
+  +             # WHICH. Read it from the same string `classify_baseline` just read.
+  +             if sink is not None:
+  +                 sink["failing"] = classify_failing_tests(out)
+                return baseline, "BASELINE (parent whole): " + summarise(out)
+ ✓ (1m 14s)
+            baseline = classify_baseline(rc, out)
+            if baseline != BASELINE_OK:
+  +             # #880: the capture is in hand HERE and was thrown away until Day 187, which
+  +             # is why all three recorded BASELINE_RED rows say `1 failed` and cannot say
+  +             # WHICH. Read it from the same string `classify_baseline` just read.
+  +             if sink is not None:
+  +                 sink["failing"] = classify_failing_tests(out)
+                return baseline, "BASELINE (parent whole): " + summarise(out)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 12 lines)
+            # refuse, one layer inside the instrument itself.
+  +         if sink is not None:
+  +             # The higher-value half of #880. This branch carries UNEARNED — the single
+  +             # most consequential verdict this milestone produces — and the name of the
+  +             # test that failed was discarded from a string already read twice, by
+  +             # `classify_counterfactual` and by `apply_register_drift`. Read once more,
+  +             # here, from that same capture. `ledger_line` gates on the verdict, so an
+  +             # EARNED or INCONCLUSIVE reaching this line is recorded byte-identically.
+  +             sink["failing"] = classify_failing_tests(out)
+            return verdict, (
+                absent_note + "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
+            )
+ ✓ (1m 13s)
+            # refuse, one layer inside the instrument itself.
+  +         if sink is not None:
+  +             # The higher-value half of #880. This branch carries UNEARNED — the single
+  +             # most consequential verdict this milestone produces — and the name of the
+  +             # test that failed was discarded from a string already read twice, by
+  +             # `classify_counterfactual` and by `apply_register_drift`. Read once more,
+  +             # here, from that same capture. `ledger_line` gates on the verdict, so an
+  +             # EARNED or INCONCLUSIVE reaching this line is recorded byte-identically.
+  ... (4 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 34s (2 ✓)
+
+Now ledger_line — the verdict gate lives inside it, so callers can pass unconditionally:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (20 → 40 lines)
+  - def ledger_line(sha, parent, day, subject, population, verdict, baseline, ts, depth):
+  + def ledger_line(
+  +     sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+  + ):
+        """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
+    
+        `ts` and `depth` are passed IN rather than read here, so the record is a pure
+        function of its inputs and can be pinned by a self-test byte-for-byte.
+  + 
+  +     #880: `failing` is the `(status, names)` pair from `classify_failing_tests`, and THE
+  +     VERDICT GATE LIVES HERE rather than at the call sites — one statement of the rule, so
+  +     a caller that hands over names for the wrong verdict cannot corrupt a row. The two
+  +     fields are emitted for BASELINE_RED and UNEARNED only:
+  + 
+  +       * those are the two verdicts whose CAUSE is a failing test, and the only two where
+  +         "which one?" is the question the row could not answer;
+  +       * REGISTER_DRIFT is deliberately excluded even though it is DERIVED from failing
+  +         names — it is a void attributed by diff shape, its row already carries that
+  +         attribution, and a second place the names live is how the two drift apart;
+  +       * every other verdict's row is BYTE-IDENTICAL to before, which is 20 of the 22 rows
+  ... (35 more lines)
+ ✓ (1m 13s)
+  - def ledger_line(sha, parent, day, subject, population, verdict, baseline, ts, depth):
+  + def ledger_line(
+  +     sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+  + ):
+        """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
+    
+        `ts` and `depth` are passed IN rather than read here, so the record is a pure
+        function of its inputs and can be pinned by a self-test byte-for-byte.
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the two call sites in main must unpack the third element and pass it through:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_counterfactual(" sc… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2184,2212p' scripts/coun… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (5 → 11 lines)
+  -                 verdict, detail = run_counterfactual(
+  +                 verdict, detail, failing = run_counterfactual(
+                        root, row.sha, args.timeout, target=target
+                    )
+                    baseline = baseline_from_verdict(verdict)
+                    print(f"  verdict: {verdict}   (baseline: {baseline})")
+  +                 if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+  +                     # #880: say it on stdout too, not only in the ledger. A row nobody
+  +                     # reads until later is still better than the summary line alone, but
+  +                     # the reader watching the run is the one who can act on it now.
+  +                     f_status, f_names = failing
+  +                     print(f"  failing tests: {f_status} {f_names}")
+ ✓ (1m 14s)
+  -                 verdict, detail = run_counterfactual(
+  +                 verdict, detail, failing = run_counterfactual(
+                        root, row.sha, args.timeout, target=target
+                    )
+                    baseline = baseline_from_verdict(verdict)
+                    print(f"  verdict: {verdict}   (baseline: {baseline})")
+  +                 if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+  +                     # #880: say it on stdout too, not only in the ledger. A row nobody
+  ... (4 more lines)
+  3 tools completed in 1m 21s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
