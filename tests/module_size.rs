@@ -155,7 +155,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // boundary — `gate_project_notify_command` + `project_notify_refusal_message`
     // and their table tests. A project-local `notify_command` is arbitrary shell
     // (`sh -c`), so it is executable code by the same test #820 applied to hooks.
-    ("src/cli.rs", 6364),
+    ("src/cli.rs", 6361),
     // Day 162 (#698): +12 lines — SUPPORTED_IMAGE_FORMATS single source of truth
     // (bmp removed; API only accepts png/jpg/jpeg/gif/webp) plus regression tests
     // pinning the extension↔MIME agreement. Tests must live in this module.
