@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the script to understand the existing conventions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,90p' scripts/counterfa… ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,200p' scripts/counter…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^TEST_DIFF_\|^NO_TEST_C… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '778,960p' scripts/counte… ✓ (5ms)
+  5 tools completed in 10.0s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+No changes made yet — let me act. First, the self-test conventions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2294,2360p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def check\|^    check("… ✓ (5ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" tests/git_ch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- module-level markers, … ✓ (6ms)
+ ✓ (7ms)
+  4 tools completed in 14.9s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That's the decisive evidence: src/git.rs carries #[cfg(test)] at column 0 on lines 8/44/77 followed by const/fn. So column-0 on the attribute is not the discriminator — the column-0 mod on the next line is. Writing the splicer now:
+  ▶ edit scripts/counterfactual_green.py (7 → 129 lines)
+        kept = [p for p in post_task_test_files if p in parent]
+        absent = [p for p in post_task_test_files if p not in parent]
+        return kept, absent
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND DELIBERATELY UNWIRED.
+  + #
+  + # Three states, none folded into another. They live beside the verdict constants because
+  + # they are the same kind of thing one file-granularity down, and they are NOT in
+  + # RUN_VERDICTS: nothing here produces a verdict, writes a ledger line, or is called by
+  + # `run_counterfactual`. See `splice_test_module`'s docstring for what this does not do.
+  + # --------------------------------------------------------------------------------------
+  + 
+  + SPLICE_OK = "SPLICE_OK"
+  + SPLICE_NO_POST_MARKER = "SPLICE_NO_POST_MARKER"
+  + SPLICE_NO_PRE_MARKER = "SPLICE_NO_PRE_MARKER"
+  + 
+  + 
+  + def test_module_start(src: str) -> int | None:
+  ... (108 more lines)
+ ✓ (1m 48s)
+        kept = [p for p in post_task_test_files if p in parent]
+        absent = [p for p in post_task_test_files if p not in parent]
+        return kept, absent
+  + 
+  + 
+  + # --------------------------------------------------------------------------------------
+  + # #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND DELIBERATELY UNWIRED.
+  + #
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests — near-miss guards first, anti-vacuous asserted first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (1 → 93 lines)
+  +     # -- #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND WIRED TO NOTHING -----------
+  +     # The needle is assembled the same way the function assembles it, so the fixtures and
+  +     # the code under test agree by construction rather than by transcription.
+  +     CFG = "#[cfg" + "(test)]"
+  + 
+  +     # ANTI-VACUOUS, ASSERTED FIRST: a fixture that GENUINELY carries a module-level marker
+  +     # must be found. A finder that finds nothing and reports a clean result is this defect
+  +     # wearing the opposite sign, and it is quieter than the bug.
+  +     real = f"pub fn f() {{}}\n\n{CFG}\nmod tests {{\n    // t\n}}\n"
+  +     st, txt = splice_test_module(real, real)
+  +     check("splicer: a genuine module marker IS found", st == SPLICE_OK, st)
+  +     check("splicer: SPLICE_OK carries non-empty text", bool(txt), txt)
+  +     check(
+  +         "splicer: the marker index is the ATTRIBUTE line, not the mod line",
+  +         test_module_start(real) == 2,
+  +         test_module_start(real),
+  +     )
+  + 
+  +     # THE HAPPY PATH: post-task production half + pre-task test half. Asserted on the WHOLE
+  +     # string with `==`, never a `contains` — a partial assertion is a green light over the
+  ... (73 more lines)
+ ✓ (1m 14s)
+  +     # -- #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND WIRED TO NOTHING -----------
+  +     # The needle is assembled the same way the function assembles it, so the fixtures and
+  +     # the code under test agree by construction rather than by transcription.
+  +     CFG = "#[cfg" + "(test)]"
+  + 
+  +     # ANTI-VACUOUS, ASSERTED FIRST: a fixture that GENUINELY carries a module-level marker
+  +     # must be found. A finder that finds nothing and reports a clean result is this defect
+  +     # wearing the opposite sign, and it is quieter than the bug.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (66ms)
+  2 tools completed in 1m 22s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Self-tests green. Now the positive control — one atomic mutate → run → restore, run serially:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (13 lines) ✓ (146ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+11 red. Let me capture the full list so I report which stayed green rather than inferring it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp scripts/c… (12 lines) ✓ (150ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "RED (1… (6 lines) ✓ (10ms)
+  2 tools completed in 6.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control is exact — and one result differs from the task file's prediction, which I'll record rather than paper over. Now the docs:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent: Don't Reinvent… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=487 && NR<=491 {printf … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -c 400 <(sed -n '487p' CLAU… ✓ (3ms)
+  3 tools completed in 6.5s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the CLAUDE.md bullet:
+  ▶ edit CLAUDE.md (1 → 3 lines)
+    It also names *which* test failed and never *why*: a name is mechanically extractable, a cause is not.
+  + 
+  + **Day 187 (#870 slice 1) — a pure `#[cfg(test)]` splicer, WIRED TO NOTHING, so the counterfactual can one day reach the unit tests inside `src/`.** The measured wall: the backward counterfactual lays pre-task `tests/` over post-task `src/`, which reaches the 12 top-level `tests/*.rs` and **nothing else** — Rust buries unit tests inside 91 `src/` files behind `#[cfg(test)]`, and those ride the counterfactual tree at their **post-task** version, so a commit that loosened one is invisible. That… [yoyo: 5046 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 14s)
+    It also names *which* test failed and never *why*: a name is mechanically extractable, a cause is not.
+  + 
+  + **Day 187 (#870 slice 1) — a pure `#[cfg(test)]` splicer, WIRED TO NOTHING, so the counterfactual can one day reach the unit tests inside `src/`.** The measured wall: the backward counterfactual lays pre-task `tests/` over post-task `src/`, which reaches the 12 top-level `tests/*.rs` and **nothing else** — Rust buries unit tests inside 91 `src/` files behind `#[cfg(test)]`, and those ride the counterfactual tree at their **post-task** version, so a commit that loosened one is invisible. That… [yoyo: 5046 more bytes elided — diff lines are capped at 500 bytes]
+
+Now the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (318ms)
+  2 tools completed in 4.3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

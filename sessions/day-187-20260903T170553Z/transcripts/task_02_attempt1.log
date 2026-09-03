@@ -1,0 +1,231 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant code to confirm the defect before changing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,760p' src/dispatch.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"model"' src/commands.r… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'usage: /model' src/ ; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'model' docs/src/usage/c… ✓ (3ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '635,660p' src/commands_i… ✓ (6ms)
+  5 tools completed in 15.5s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed the defect. Three artifacts carry the wrong string (commands.rs:253, commands_info.rs:647, and a duplicate in dispatch.rs:715). Docs line 102 is already correct, so I'll skip it. Making the literal edits first:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 4 lines)
+  -         "model" => Some("<model-name>"),
+  +         // Every subcommand the `/model` dispatcher actually routes must appear here;
+  +         // `model_arg_hint_advertises_every_routed_subcommand` in `commands_info.rs`
+  +         // pins this against `dispatch.rs` itself rather than a second hand-typed list.
+  +         "model" => Some("[list [<provider>] | info [<name>] | <model-name>]"),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (4 → 7 lines)
+    pub fn handle_model_show(model: &str) {
+        println!("{DIM}  current model: {model}");
+  -     println!("  usage: /model <name>{RESET}\n");
+  +     // Same content as `commands::command_arg_hint("model")` on purpose: a user who
+  +     // types `/model` and a user who reads the completion hint must learn the same
+  +     // set of subcommands. Both were advertising only the switch path until #883.
+  +     println!("  usage: /model [list [<provider>] | info [<name>] | <model-name>]{RESET}\n");
+    }
+ ✓ (1m 57s)
+  -         "model" => Some("<model-name>"),
+  +         // Every subcommand the `/model` dispatcher actually routes must appear here;
+  +         // `model_arg_hint_advertises_every_routed_subcommand` in `commands_info.rs`
+  +         // pins this against `dispatch.rs` itself rather than a second hand-typed list.
+  +         "model" => Some("[list [<provider>] | info [<name>] | <model-name>]"),
+ ✓ (3m 13s)
+    pub fn handle_model_show(model: &str) {
+        println!("{DIM}  current model: {model}");
+  -     println!("  usage: /model <name>{RESET}\n");
+  +     // Same content as `commands::command_arg_hint("model")` on purpose: a user who
+  +     // types `/model` and a user who reads the completion hint must learn the same
+  +     // set of subcommands. Both were advertising only the switch path until #883.
+  +     println!("  usage: /model [list [<provider>] | info [<name>] | <model-name>]{RESET}\n");
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 26s (2 ✓)
+
+Now the third copy of the same string — dispatch.rs:715 duplicates handle_model_show verbatim. Fixing only two of three doors is the "two doors, one policy, one deaf" shape I keep recording, so I'll collapse it into the existing call rather than write a third copy:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (6 → 7 lines)
+                let arg = s.trim_start_matches("/model ").trim();
+                if arg.is_empty() {
+  -                 println!("{DIM}  current model: {}", ctx.agent_config.model);
+  -                 println!("  usage: /model <name>{RESET}\n");
+  +                 // Same output as the `s == "/model"` branch above, so the usage line
+  +                 // has ONE statement rather than two copies that agree today (#883).
+  +                 commands::handle_model_show(&ctx.agent_config.model);
+                    return Some(CommandResult::Continue);
+                }
+ ✓ (1m 55s)
+                let arg = s.trim_start_matches("/model ").trim();
+                if arg.is_empty() {
+  -                 println!("{DIM}  current model: {}", ctx.agent_config.model);
+  -                 println!("  usage: /model <name>{RESET}\n");
+  +                 // Same output as the `s == "/model"` branch above, so the usage line
+  +                 // has ONE statement rather than two copies that agree today (#883).
+  +                 commands::handle_model_show(&ctx.agent_config.model);
+                    return Some(CommandResult::Continue);
+                }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard — the actual point of this task. Let me check the existing test-module style and the source-reading precedent:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1664,1680p' src/commands… ✓ (5ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the guard — the point of the task. Writing it into commands_info.rs's test module:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (3 → 63 lines)
+  + /// Collect the subcommand string literals the `/model` dispatcher compares `arg`
+  + /// against, from a slice of dispatcher source.
+  + ///
+  + /// Deliberately a text scan and not a Rust parser: it looks for the two shapes the
+  + /// dispatcher actually uses — `arg == "x"` and `arg.starts_with("x ")` — and returns
+  + /// the quoted token with trailing whitespace trimmed. A bare model name reaches the
+  + /// switch path through a plain assignment (`let new_model = arg;`) with no comparison
+  + /// against a literal, so it is invisible here **by construction** — which is the
+  + /// property `model_arg_hint_does_not_treat_a_bare_name_as_a_subcommand` pins.
+  + #[cfg(test)]
+  + fn routed_model_subcommands(region: &str) -> Vec<String> {
+  +     // Assembled at runtime so this function's own source cannot match itself when a
+  +     // guard slices this file — the discipline every source-reading test here uses.
+  +     let eq_marker = format!("{}{}", "arg == ", "\"");
+  +     let prefix_marker = format!("{}{}", "arg.starts_with(", "\"");
+  +     let mut found: Vec<String> = Vec::new();
+  + 
+  +     for marker in [eq_marker.as_str(), prefix_marker.as_str()] {
+  +         let mut rest = region;
+  +         while let Some(at) = rest.find(marker) {
+  ... (43 more lines)
+ ✓ (14.8s)
+  + /// Collect the subcommand string literals the `/model` dispatcher compares `arg`
+  + /// against, from a slice of dispatcher source.
+  + ///
+  + /// Deliberately a text scan and not a Rust parser: it looks for the two shapes the
+  + /// dispatcher actually uses — `arg == "x"` and `arg.starts_with("x ")` — and returns
+  + /// the quoted token with trailing whitespace trimmed. A bare model name reaches the
+  + /// switch path through a plain assignment (`let new_model = arg;`) with no comparison
+  + /// against a literal, so it is invisible here **by construction** — which is the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own rule biting me — definition without consumer. Adding the tests (the consumers) now:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (2 → 78 lines)
+  +     /// #883: `/model list` and `/model info` are routed by `dispatch.rs` but the
+  +     /// completion hint advertised only `<model-name>`, so two working subcommands were
+  +     /// unfindable. This pins the hint against **the dispatcher itself** rather than a
+  +     /// second hand-typed list — a doc-side repair of a doc/code mismatch deletes the
+  +     /// only detector, which is how this class recurred four times (#702, Day 164's
+  +     /// `/map --depth`, Day 182's `/tree [depth]`, now this).
+  +     #[test]
+  +     fn model_arg_hint_advertises_every_routed_subcommand() {
+  +         let region = model_dispatch_region();
+  +         let routed = routed_model_subcommands(&region);
+  + 
+  +         // ANTI-VACUOUS, asserted FIRST: a scanner that finds nothing and reports a
+  +         // clean result is this very defect wearing the opposite sign, and quieter.
+  +         assert!(
+  +             !routed.is_empty(),
+  +             "extracted ZERO subcommands from the /model dispatcher — the extraction \
+  +              broke, so this guard checked nothing. That is NOT 'the hint is complete'."
+  +         );
+  + 
+  +         let hint = crate::commands::command_arg_hint("model")
+  ... (58 more lines)
+ ✓ (1m 56s)
+  +     /// #883: `/model list` and `/model info` are routed by `dispatch.rs` but the
+  +     /// completion hint advertised only `<model-name>`, so two working subcommands were
+  +     /// unfindable. This pins the hint against **the dispatcher itself** rather than a
+  +     /// second hand-typed list — a doc-side repair of a doc/code mismatch deletes the
+  +     /// only detector, which is how this class recurred four times (#702, Day 164's
+  +     /// `/map --depth`, Day 182's `/tree [depth]`, now this).
+  +     #[test]
+  +     fn model_arg_hint_advertises_every_routed_subcommand() {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 56s)
+  2 tools completed in 4m 0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+One gate failed (24-test binary). Finding which:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B2 -A25 … ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate working as designed. Pasting the literal line it printed (not hand-typed):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/commands_info.rs"'… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/commands_info.rs", 3240),
+  +     ("src/commands_info.rs", 3379),
+ ✓ (1m 14s)
+  -     ("src/commands_info.rs", 3240),
+  +     ("src/commands_info.rs", 3379),
+  2 tools completed in 1m 17s (2 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Now the positive control — mutate → run → restore as one atomic command:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (15 lines) ✓ (1m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passed cleanly — exactly 1 test red, naming the token verbatim (routes \list\ but command_arg_hint("model") does not mention it, routed: ["list", "info"]), while the pre-existing `test_command_arg_hint_model_shows_placeholder stayed **green** under the sabotage — which is precisely why it could never have caught this (it asserts only contains("model")`, the vacuous-green shape). The near-miss guard stayed green too, the direction proving it tests the pass-through.
+
+Verifying the restore is byte-clean and everything is green:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '"model" => Some("\[list… ✓ (3m 11s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green — 14 test binaries ok, clippy clean. Checking the module-size gate prints zero warnings (the debt that has silently recurred three times):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (464ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Zero drift warnings, and neutered_guards is green (no marker left behind — I used a file backup rather than an in-file marker). Now the one-sentence CLAUDE.md note:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_info.rs`' … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (37 lines) ✓ (25ms)
+  2 tools completed in 14.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
