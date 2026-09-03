@@ -158,6 +158,25 @@ RUN_VERDICTS = (
 # comparison is licensed and the counterfactual may proceed. It never reaches a report.
 BASELINE_OK = "BASELINE_OK"
 
+# --------------------------------------------------------------------------------------
+# #880 -- the three states of "which test failed?". NEVER folded into each other, and the
+# middle one is the whole point of there being three:
+#
+#   FAILING_NAMES        a failure block was found and the names were read.
+#   FAILING_NO_BLOCK     the run REPORTED a failure and the capture carries no libtest
+#                        failure block, so the names could not be read. This is NOT "no
+#                        failures". Rendering it as a bare empty list would be "could not
+#                        check" reading as "checked; clean", the one collapse this whole
+#                        instrument refuses.
+#   FAILING_NO_OUTPUT    the capture is empty or whitespace only -- nobody looked, or the
+#                        output was lost. A different fact again from either neighbour.
+#
+# These are NOT verdicts and never enter RUN_VERDICTS: a verdict says what happened to the
+# green, this says whether the reason is legible.
+FAILING_NAMES = "names"
+FAILING_NO_BLOCK = "no_failure_block"
+FAILING_NO_OUTPUT = "no_output"
+
 # Second copy of scripts/extract_trajectory.py:219 — see the module doc for why.
 #
 # WIDENED (Day 184, #868), and the widening IS the deliverable. The pattern used to end
@@ -306,6 +325,34 @@ def classify_baseline(exit_code: int, output: str) -> str:
     if TEST_RESULT_OK_RE.search(output):
         return BASELINE_OK
     return COULD_NOT_CHECK
+
+
+def classify_failing_tests(output: str) -> tuple[str, list[str]]:
+    """WHICH tests failed, from the capture a verdict was already read out of (#880).
+
+    Pure over the captured string, exactly like `classify_baseline` and
+    `classify_counterfactual` beside it, so it is table-testable with fabricated output
+    and never runs cargo.
+
+    ONE PARSER, NOT TWO. The name extraction delegates to `failing_test_names`, which
+    already existed and is what `attribute_failures` uses for REGISTER_DRIFT attribution.
+    A second extractor would be two copies of one rule agreeing the day they are written
+    and diverging forever after -- the `significant_braces` / `char_literal_len`
+    precedent. What was missing was never the parser; it was putting its answer on the
+    LEDGER ROW.
+
+    Returns `(status, names)` where status is one of the three FAILING_* values above.
+    The list is empty for both non-`FAILING_NAMES` statuses, which is exactly why the
+    status must be read and never the list alone: `failing_test_names` returns `[]` for
+    "the capture had no failure block" AND for "there was no capture", and those are two
+    different facts with two different remedies.
+    """
+    if not output or not output.strip():
+        return FAILING_NO_OUTPUT, []
+    names = failing_test_names(output)
+    if names:
+        return FAILING_NAMES, names
+    return FAILING_NO_BLOCK, []
 
 
 # --------------------------------------------------------------------------------------
@@ -1250,7 +1297,34 @@ def collect_census(root: str, limit: int | None):
     return rows, window, shallow, depth, ""
 
 
-def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = None) -> tuple[str, str]:
+def run_counterfactual(
+    root: str, sha: str, timeout: int, target: str | None = None
+) -> tuple[str, str, tuple[str, list[str]] | None]:
+    """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+
+    `failing` is the `(status, names)` pair from `classify_failing_tests` for the two
+    verdicts whose CAUSE is legible in a capture — BASELINE_RED and UNEARNED — and `None`
+    everywhere else, meaning **no claim was made**, which is not the same as "no failures".
+
+    THIS IS A WRAPPER RATHER THAN 14 EDITED RETURNS ON PURPOSE. `_run_counterfactual` has
+    fourteen return sites and only two of them ever see a capture worth naming; widening
+    the arity of all fourteen to thread a value twelve of them cannot supply is churn that
+    buys nothing and risks a mis-edited branch in the one function the whole tool hangs
+    on. The sink is written at exactly the two branches that already read the capture, and
+    is inert everywhere else.
+    """
+    sink: dict = {"failing": None}
+    verdict, detail = _run_counterfactual(root, sha, timeout, target, sink)
+    return verdict, detail, sink["failing"]
+
+
+def _run_counterfactual(
+    root: str,
+    sha: str,
+    timeout: int,
+    target: str | None = None,
+    sink: dict | None = None,
+) -> tuple[str, str]:
     """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
 
     Returns (verdict, detail). Every landmine from the module doc is enforced here.
@@ -1364,6 +1438,11 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         baseline = classify_baseline(rc, out)
         if baseline != BASELINE_OK:
+            # #880: the capture is in hand HERE and was thrown away until Day 187, which
+            # is why all three recorded BASELINE_RED rows say `1 failed` and cannot say
+            # WHICH. Read it from the same string `classify_baseline` just read.
+            if sink is not None:
+                sink["failing"] = classify_failing_tests(out)
             return baseline, "BASELINE (parent whole): " + summarise(out)
 
         # ---- COUNTERFACTUAL: post-task src/, pre-task tests/. -------------------------
@@ -1436,6 +1515,14 @@ def run_counterfactual(root: str, sha: str, timeout: int, target: str | None = N
         # overlay must not be recorded as a whole one — a verdict that silently drops the
         # absent files is the shrinking-denominator defect this instrument exists to
         # refuse, one layer inside the instrument itself.
+        if sink is not None:
+            # The higher-value half of #880. This branch carries UNEARNED — the single
+            # most consequential verdict this milestone produces — and the name of the
+            # test that failed was discarded from a string already read twice, by
+            # `classify_counterfactual` and by `apply_register_drift`. Read once more,
+            # here, from that same capture. `ledger_line` gates on the verdict, so an
+            # EARNED or INCONCLUSIVE reaching this line is recorded byte-identically.
+            sink["failing"] = classify_failing_tests(out)
         return verdict, (
             absent_note + "BASELINE: green. COUNTERFACTUAL: " + summarise(out)
         )
@@ -1658,26 +1745,46 @@ LEDGER_UNREADABLE = "ledger-unreadable"
 LEDGER_READ = "ledger-read"
 
 
-def ledger_line(sha, parent, day, subject, population, verdict, baseline, ts, depth):
+def ledger_line(
+    sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+):
     """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
 
     `ts` and `depth` are passed IN rather than read here, so the record is a pure
     function of its inputs and can be pinned by a self-test byte-for-byte.
+
+    #880: `failing` is the `(status, names)` pair from `classify_failing_tests`, and THE
+    VERDICT GATE LIVES HERE rather than at the call sites — one statement of the rule, so
+    a caller that hands over names for the wrong verdict cannot corrupt a row. The two
+    fields are emitted for BASELINE_RED and UNEARNED only:
+
+      * those are the two verdicts whose CAUSE is a failing test, and the only two where
+        "which one?" is the question the row could not answer;
+      * REGISTER_DRIFT is deliberately excluded even though it is DERIVED from failing
+        names — it is a void attributed by diff shape, its row already carries that
+        attribution, and a second place the names live is how the two drift apart;
+      * every other verdict's row is BYTE-IDENTICAL to before, which is 20 of the 22 rows
+        already in the ledger and the whole regression surface.
+
+    `failing is None` on a gated verdict omits the fields rather than inventing a status:
+    no claim was made, and "no claim" must not render as "no failures".
     """
-    return json.dumps(
-        {
-            "sha": sha,
-            "parent": parent,
-            "day": day,
-            "subject": subject,
-            "population": population,
-            "verdict": verdict,
-            "baseline": baseline,
-            "ts": ts,
-            "window_depth": depth,
-        },
-        sort_keys=True,
-    )
+    row = {
+        "sha": sha,
+        "parent": parent,
+        "day": day,
+        "subject": subject,
+        "population": population,
+        "verdict": verdict,
+        "baseline": baseline,
+        "ts": ts,
+        "window_depth": depth,
+    }
+    if verdict in (BASELINE_RED, UNEARNED) and failing is not None:
+        status, names = failing
+        row["failing_tests"] = list(names)
+        row["failing_tests_status"] = status
+    return json.dumps(row, sort_keys=True)
 
 
 def parse_ledger(text):
@@ -2074,11 +2181,17 @@ def main(argv):
 
                 print(f"\n[{i}/{len(todo)}] {row.sha[:12]} {row.subject[:70]}")
                 sys.stdout.flush()
-                verdict, detail = run_counterfactual(
+                verdict, detail, failing = run_counterfactual(
                     root, row.sha, args.timeout, target=target
                 )
                 baseline = baseline_from_verdict(verdict)
                 print(f"  verdict: {verdict}   (baseline: {baseline})")
+                if failing is not None and verdict in (BASELINE_RED, UNEARNED):
+                    # #880: say it on stdout too, not only in the ledger. A row nobody
+                    # reads until later is still better than the summary line alone, but
+                    # the reader watching the run is the one who can act on it now.
+                    f_status, f_names = failing
+                    print(f"  failing tests: {f_status} {f_names}")
                 for ln in detail.splitlines()[:6]:
                     print(f"  {ln}")
                 sys.stdout.flush()
