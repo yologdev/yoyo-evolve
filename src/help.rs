@@ -393,6 +393,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  model             Show, list, or inspect models (e.g. yoyo model list)"
+    );
+    let _ = writeln!(
+        s,
         "  undo              Undo changes (e.g. yoyo undo --last-commit)"
     );
     let _ = writeln!(
