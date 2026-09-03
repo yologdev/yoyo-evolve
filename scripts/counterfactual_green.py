@@ -1046,6 +1046,57 @@ def splice_test_module(post_task_src: str, pre_task_src: str) -> tuple[str, str 
     return SPLICE_OK, "".join(post_lines[:post_start]) + "".join(pre_lines[pre_start:])
 
 
+def src_splice_candidates(rows) -> list[str]:
+    """Paths a `src/` splice may be attempted on, from `git diff --name-status` rows.
+
+    #870 slice 2, Day 187. The selector half of the splicer: slice 1 built
+    `splice_test_module` and wired it to nothing; this decides WHICH files it is offered.
+
+    IN SCOPE: a MODIFIED (`M`) path under `src/` ending `.rs`. Nothing else, and each
+    exclusion has its own reason rather than a shared shrug:
+
+      * `A` (added)   -> no parent version exists; there is nothing older to lay back.
+      * `D` (deleted) -> the file is gone from the post-task tree; there is nothing to
+                         splice INTO.
+      * `R*` (rename) -> the parent path differs from the post-task path, so resolving
+                         which pre-task file to read is a separate decision. `R100 old new`
+                         yields BOTH paths from `parse_name_status`, and neither is `M`,
+                         so both are correctly out of scope.
+      * outside `src/`, or not `.rs` -> not this overlay's business. `tests/` is handled
+                         by `parent_test_pathspec`, and a non-Rust file has no
+                         `#[cfg(test)]` module to move.
+      * an unrecognised status letter -> OUT of scope, deliberately.
+
+    THE SAFETY PROPERTY, and it decides every ambiguous case above: **every refusal here
+    must fail toward EARNED, never toward UNEARNED.** Skipping a file leaves it at its
+    post-task version, i.e. exactly today's shallower reading — the worst outcome is a
+    reading no deeper than the 25 already in the ledger. Splicing a file we understood
+    wrongly could break a test the commit never touched and manufacture a false
+    `UNEARNED`, which is a public accusation that a past commit's green was bought with
+    test edits, and it is the one verdict I have committed never to re-run until it moves.
+    So when in doubt, leave the file alone.
+
+    It reuses `parse_name_status` rather than parsing status lines a second time — two
+    copies of a rule agree the day they are written and diverge forever after.
+
+    Order is first-seen and duplicates are dropped, so the caller's splice order is
+    stable and a path cannot be rewritten twice.
+    """
+    seen: set = set()
+    out: list[str] = []
+    for status, path in rows or ():
+        if str(status).strip() != "M":
+            continue
+        p = str(path).strip()
+        if not p.startswith("src/") or not p.endswith(".rs"):
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -1420,24 +1471,31 @@ def collect_census(root: str, limit: int | None):
 
 
 def run_counterfactual(
-    root: str, sha: str, timeout: int, target: str | None = None
-) -> tuple[str, str, tuple[str, list[str]] | None]:
-    """Public contract: `(verdict, detail, failing)` — a thin wrapper over `_run_counterfactual`.
+    root: str, sha: str, timeout: int, target: str | None = None,
+    splice_src: bool = False,
+) -> tuple[str, str, tuple[str, list[str]] | None, dict | None]:
+    """Public contract: `(verdict, detail, failing, splice)` — a thin wrapper over `_run_counterfactual`.
 
     `failing` is the `(status, names)` pair from `classify_failing_tests` for the two
     verdicts whose CAUSE is legible in a capture — BASELINE_RED and UNEARNED — and `None`
     everywhere else, meaning **no claim was made**, which is not the same as "no failures".
 
+    `splice` (#870 slice 2) is `None` when `splice_src` is False — the DEFAULT — so the
+    verdict, the detail string, the ledger row and the git/cargo calls made are all
+    byte-identical to every one of the 25 readings already taken. When True it is
+    `{"spliced": N, "refused": M}`, recorded so rows of different DEPTH can never be
+    pooled into one rate.
+
     THIS IS A WRAPPER RATHER THAN 14 EDITED RETURNS ON PURPOSE. `_run_counterfactual` has
     fourteen return sites and only two of them ever see a capture worth naming; widening
     the arity of all fourteen to thread a value twelve of them cannot supply is churn that
     buys nothing and risks a mis-edited branch in the one function the whole tool hangs
-    on. The sink is written at exactly the two branches that already read the capture, and
-    is inert everywhere else.
+    on. The sink is written at exactly the branches that already have the value, and is
+    inert everywhere else.
     """
-    sink: dict = {"failing": None}
-    verdict, detail = _run_counterfactual(root, sha, timeout, target, sink)
-    return verdict, detail, sink["failing"]
+    sink: dict = {"failing": None, "splice": None}
+    verdict, detail = _run_counterfactual(root, sha, timeout, target, sink, splice_src)
+    return verdict, detail, sink["failing"], sink["splice"]
 
 
 def _run_counterfactual(
@@ -1446,6 +1504,7 @@ def _run_counterfactual(
     timeout: int,
     target: str | None = None,
     sink: dict | None = None,
+    splice_src: bool = False,
 ) -> tuple[str, str]:
     """Baseline the parent, then build post-src/ + pre-tests/ and run cargo test.
 
@@ -1615,6 +1674,70 @@ def _run_counterfactual(
         )
         if rc != 0:
             return COULD_NOT_CHECK, f"checkout of pre-tests failed: {out.strip()[:200]}"
+
+        # ---- #870 slice 2: lay the pre-task `#[cfg(test)]` blocks back too. -----------
+        # DEFAULT OFF. With the flag off nothing below runs, no extra git call is made,
+        # and the tree handed to cargo is byte-identical to the 25 readings already taken.
+        #
+        # WHY IT EXISTS: ~157k lines of unit tests live inside 91 `src/` files behind
+        # `#[cfg(test)]` and ride the counterfactual tree at their POST-task version, so a
+        # commit that loosened one of them is invisible. Splicing makes the reading
+        # strictly DEEPER. It does NOT close #870 — the census and selector still classify
+        # by top-level `tests/*.rs`, so the fix-loop arm stays at 1 signal-bearing commit.
+        #
+        # EVERY REFUSAL FAILS TOWARD `EARNED`. Skipping a file leaves it at its post-task
+        # version, i.e. today's shallower reading; splicing a file we understood wrongly
+        # could break a test the commit never touched and manufacture a false `UNEARNED`.
+        if splice_src:
+            spliced = 0
+            refused = 0
+            rc_ss, ss_out = run_cmd(
+                ["git", "-C", root, "diff", "--name-status", parent, sha, "--", "src/"],
+                timeout=60,
+            )
+            if rc_ss != 0:
+                # Could not read the shape -> splice nothing. Shallower, never wronger.
+                print("    SPLICE: could not read src/ diff — no file spliced", flush=True)
+            else:
+                for rel in src_splice_candidates(parse_name_status(ss_out)):
+                    rc_pre, pre_text = run_cmd(
+                        ["git", "-C", root, "show", f"{parent}:{rel}"], timeout=60
+                    )
+                    if rc_pre != 0:
+                        refused += 1
+                        continue
+                    abs_path = os.path.join(wt, rel)
+                    try:
+                        with open(abs_path, "r", encoding="utf-8") as fh:
+                            post_text = fh.read()
+                    except (OSError, UnicodeDecodeError):
+                        refused += 1
+                        continue
+                    st_sp, text = splice_test_module(post_text, pre_text)
+                    if st_sp != SPLICE_OK or text is None:
+                        # SPLICE_NO_PRE_MARKER (the module is NEW in this commit) leaves
+                        # the file alone in this slice, and the reason is here so nobody
+                        # "simplifies" it later: deleting a test module that did not exist
+                        # at the parent is the NO_PRE_EXISTING_TEST_EDIT argument one
+                        # granularity down and deserves its own decision. Leaving it makes
+                        # the counterfactual WEAKER, which is the safe direction — it can
+                        # never manufacture an UNEARNED.
+                        refused += 1
+                        continue
+                    try:
+                        with open(abs_path, "w", encoding="utf-8") as fh:
+                            fh.write(text)
+                    except OSError:
+                        refused += 1
+                        continue
+                    spliced += 1
+            if sink is not None:
+                sink["splice"] = {"spliced": spliced, "refused": refused}
+            print(
+                f"    SPLICE (src+tests depth): {spliced} file(s) spliced, "
+                f"{refused} candidate(s) left alone",
+                flush=True,
+            )
 
         rc, out = run_cmd(["cargo", "test"], cwd=wt, timeout=timeout, env=env)
         verdict = classify_counterfactual(rc, out)
@@ -1868,12 +1991,25 @@ LEDGER_READ = "ledger-read"
 
 
 def ledger_line(
-    sha, parent, day, subject, population, verdict, baseline, ts, depth, failing=None
+    sha, parent, day, subject, population, verdict, baseline, ts, depth,
+    failing=None, splice=None,
 ):
     """One JSON line for one completed counterfactual. Pure: no I/O and no clock.
 
     `ts` and `depth` are passed IN rather than read here, so the record is a pure
     function of its inputs and can be pinned by a self-test byte-for-byte.
+
+    #870 slice 2: `splice` is `None` when `--splice-src-tests` was OFF, which is the
+    DEFAULT and every one of the 25 rows already recorded — that row is byte-identical to
+    the pre-slice-2 shape, asserted with `==` on the whole string rather than a `contains`.
+    When it is on, the row carries `src_spliced` (files rewritten), `src_splice_refused`
+    (candidates left alone) and the marker `splice_depth: "src+tests"`.
+
+    THE MARKER IS NOT BOOKKEEPING, IT IS THE THING THAT STOPS A DISHONEST RATE. The 10
+    classifiable verdicts already recorded were measured against a SHALLOWER
+    counterfactual (post-task `src/` tests riding at their post-task version); pooling
+    them with deeper ones would answer a question DREAM.md did not ask. A row with no
+    marker is `tests`-only depth, and the two must never be averaged together.
 
     #880: `failing` is the `(status, names)` pair from `classify_failing_tests`, and THE
     VERDICT GATE LIVES HERE rather than at the call sites — one statement of the rule, so
@@ -1906,6 +2042,13 @@ def ledger_line(
         status, names = failing
         row["failing_tests"] = list(names)
         row["failing_tests_status"] = status
+    if splice is not None:
+        # Emitted for EVERY verdict when the flag is on, including the ones that return
+        # before a splice is attempted (both counts are then 0). The marker answers "how
+        # deep was this reading?", which is a property of the RUN, not of the outcome.
+        row["src_spliced"] = int(splice.get("spliced", 0))
+        row["src_splice_refused"] = int(splice.get("refused", 0))
+        row["splice_depth"] = "src+tests"
     return json.dumps(row, sort_keys=True)
 
 
@@ -2159,6 +2302,16 @@ def main(argv):
         action="store_true",
         help="skip shas already present in --record (a missing ledger skips nothing)",
     )
+    parser.add_argument(
+        "--splice-src-tests",
+        action="store_true",
+        help=(
+            "#870: also lay pre-task #[cfg(test)] blocks back over post-task src/, "
+            "making the reading strictly DEEPER. DEFAULT OFF -- off is byte-identical "
+            "to every reading already recorded. Rows taken with it carry "
+            "splice_depth=src+tests and must never be pooled with rows without it."
+        ),
+    )
     parser.add_argument("--test", action="store_true", help="run self-tests and exit")
     args = parser.parse_args(argv)
 
@@ -2303,8 +2456,9 @@ def main(argv):
 
                 print(f"\n[{i}/{len(todo)}] {row.sha[:12]} {row.subject[:70]}")
                 sys.stdout.flush()
-                verdict, detail, failing = run_counterfactual(
-                    root, row.sha, args.timeout, target=target
+                verdict, detail, failing, splice = run_counterfactual(
+                    root, row.sha, args.timeout, target=target,
+                    splice_src=args.splice_src_tests,
                 )
                 baseline = baseline_from_verdict(verdict)
                 print(f"  verdict: {verdict}   (baseline: {baseline})")
@@ -2340,7 +2494,9 @@ def main(argv):
             shutil.rmtree(shared, ignore_errors=True)
 
     if args.commit:
-        verdict, detail, failing = run_counterfactual(root, args.commit, args.timeout)
+        verdict, detail, failing, splice = run_counterfactual(
+            root, args.commit, args.timeout, splice_src=args.splice_src_tests
+        )
         print("")
         print(f"counterfactual verdict for {args.commit[:12]}: {verdict}")
         if failing is not None and verdict in (BASELINE_RED, UNEARNED):
@@ -3711,6 +3867,61 @@ def run_self_tests():
     # folding them into RUN_VERDICTS would put a file-granularity status into the rate.
     for _s in (SPLICE_OK, SPLICE_NO_POST_MARKER, SPLICE_NO_PRE_MARKER):
         check(f"splicer: {_s} is not a run verdict", _s not in RUN_VERDICTS, _s)
+
+    # ---- #870 slice 2: the SELECTOR half. ---------------------------------------------
+    # ANTI-VACUOUS, ASSERTED FIRST: a fixture holding a genuine `M src/*.rs` row must
+    # yield a non-empty list. A selector that finds nothing and reports a clean pass is
+    # this defect wearing the opposite sign, and it is quieter than the bug.
+    real_rows = parse_name_status("M\tsrc/foo.rs\nM\tsrc/format/mod.rs\n")
+    check("splice-select: a genuine M src/*.rs row IS selected",
+          src_splice_candidates(real_rows) == ["src/foo.rs", "src/format/mod.rs"],
+          src_splice_candidates(real_rows))
+
+    # Every exclusion is its own row, and every one fails toward EARNED (leave it alone).
+    for _label, _text in [
+        ("A (added: no parent version to lay back)", "A\tsrc/new.rs\n"),
+        ("D (deleted: nothing to splice into)", "D\tsrc/gone.rs\n"),
+        ("R100 (rename: parent path differs)", "R100\tsrc/old.rs\tsrc/new.rs\n"),
+        ("tests/ (parent_test_pathspec's job)", "M\ttests/module_size.rs\n"),
+        ("non-.rs under src/", "M\tsrc/notes.md\n"),
+        ("outside src/", "M\tCargo.toml\n"),
+        ("unrecognised status letter", "X\tsrc/weird.rs\n"),
+    ]:
+        check(f"splice-select: {_label} is OUT of scope",
+              src_splice_candidates(parse_name_status(_text)) == [],
+              _text)
+
+    check("splice-select: an empty row list yields []",
+          src_splice_candidates([]) == [], "not empty")
+    check("splice-select: None yields [] rather than raising",
+          src_splice_candidates(None) == [], "not empty")
+    # A mixed diff keeps only the in-scope half, in first-seen order, deduped.
+    mixed = parse_name_status(
+        "A\tsrc/added.rs\nM\tsrc/b.rs\nM\ttests/x.rs\nM\tsrc/a.rs\nM\tsrc/b.rs\n"
+    )
+    check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
+          src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
+          src_splice_candidates(mixed))
+
+    # DEFAULT-OFF BYTE-IDENTITY: the whole regression surface is the 25 readings already
+    # in the ledger plus every future one taken without the flag. A row built with no
+    # splice info must be byte-identical to the pre-slice-2 shape.
+    _base = ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED, "green", "T", "42")
+    check("splice-ledger: flag OFF is byte-identical to the pre-slice-2 row",
+          _base == ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED,
+                               "green", "T", "42", None, None),
+          _base)
+    _off = json.loads(_base)
+    check("splice-ledger: flag OFF carries NO splice fields",
+          not any(k in _off for k in ("src_spliced", "src_splice_refused", "splice_depth")),
+          sorted(_off))
+    _on = json.loads(ledger_line("abc", "def", "184", "subj", POP_PLAIN, EARNED,
+                                 "green", "T", "42", None,
+                                 {"spliced": 3, "refused": 2}))
+    check("splice-ledger: flag ON records both counts and the depth marker",
+          _on.get("src_spliced") == 3 and _on.get("src_splice_refused") == 2
+          and _on.get("splice_depth") == "src+tests",
+          _on)
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
