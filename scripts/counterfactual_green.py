@@ -924,6 +924,128 @@ def parent_test_pathspec(
     return kept, absent
 
 
+# --------------------------------------------------------------------------------------
+# #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND DELIBERATELY UNWIRED.
+#
+# Three states, none folded into another. They live beside the verdict constants because
+# they are the same kind of thing one file-granularity down, and they are NOT in
+# RUN_VERDICTS: nothing here produces a verdict, writes a ledger line, or is called by
+# `run_counterfactual`. See `splice_test_module`'s docstring for what this does not do.
+# --------------------------------------------------------------------------------------
+
+SPLICE_OK = "SPLICE_OK"
+SPLICE_NO_POST_MARKER = "SPLICE_NO_POST_MARKER"
+SPLICE_NO_PRE_MARKER = "SPLICE_NO_PRE_MARKER"
+
+
+def test_module_start(src: str) -> int | None:
+    """Line index of a file's **module-level** `#[cfg(test)] mod` marker, or `None`.
+
+    ONE STATEMENT OF THE RULE, read by both halves of `splice_test_module`. Two copies of
+    a rule agree the day they are written and diverge forever after, which is why
+    `commands_refactor::significant_braces` was made `pub(crate)` rather than copied.
+
+    THE RULE, AND ITS PROVENANCE. `tests/git_chokepoint.rs` truncates each file at the
+    `#[cfg(test)]` attribute line **followed by a column-0 `mod`**, and its module doc
+    records why a bare `#[cfg(test)]` split is wrong. Measured here rather than inherited:
+    `src/git.rs` carries item-level `#[cfg(test)]` attributes at lines 8, 44 and 77 — at
+    **column 0**, followed by `const` and `fn` — and its real test module is at line 947.
+    So requiring column 0 on the *attribute* discriminates nothing. The column-0 `mod` on
+    the **next** line is the whole discriminator, and a bare split would blank the
+    chokepoint file itself, i.e. hand the caller an empty production half that compiles to
+    nothing and reads as a catastrophic result.
+
+    Returns the index of the ATTRIBUTE line, not of the `mod` line: the attribute belongs
+    to the test half, so splicing at the attribute keeps each side's own gate with it.
+
+    The first marker wins. A file with two module-level test modules is not a shape that
+    occurs in `src/` today, and taking the last one would silently drop production code
+    sitting between them into the pre-task half.
+    """
+    lines = src.splitlines()
+    # Assembled at runtime, the discipline every source-level guard in this repo uses
+    # (`src/git.rs:1757` builds the same needle with `format!`). This file is never
+    # pointed at itself today — the splicer reads `src/*.rs` — but a needle that cannot
+    # match its own source costs nothing and removes the question.
+    needle = "#[cfg" + "(test)]"
+    for i in range(len(lines) - 1):
+        if lines[i].strip() != needle:
+            continue
+        nxt = lines[i + 1]
+        # Column-0 `mod` ONLY. An indented `mod`, a `fn`, a `const` or a blank line all
+        # mean this attribute guards an item, not the test module.
+        if nxt.startswith("mod ") or nxt.startswith("mod\t"):
+            return i
+    return None
+
+
+def splice_test_module(post_task_src: str, pre_task_src: str) -> tuple[str, str | None]:
+    """Build one `src/` file's counterfactual tree: post-task production + pre-task tests.
+
+    #870 slice 1, Day 187. Returns `(status, text)`.
+
+    WHY. The backward counterfactual lays PRE-task `tests/` over POST-task `src/`, which
+    reaches the 12 top-level `tests/*.rs` and **nothing else**. Rust buries unit tests
+    inside 91 `src/` files behind `#[cfg(test)]`, and those ride the counterfactual tree
+    at their POST-task version — so a commit that loosened a `#[cfg(test)]` assertion
+    inside `src/` is invisible. That is not a marginal blind spot for the question
+    DREAM.md actually asks: of 199 fix-loop commits, **11** touch a top-level `tests/*.rs`
+    while **~88** edit assertion-shaped code inside `src/`. The fix-loop arm holds **1**
+    signal-bearing commit, and no amount of reading moves it while the wall stands.
+
+    This is the same claim the `tests/` overlay already makes, one file-granularity down:
+    a `src/` file's counterfactual is its post-task **production** half plus its pre-task
+    **test** half.
+
+    THREE STATES, NONE FOLDED INTO ANOTHER:
+
+      * `SPLICE_OK`               -> both sides carry a module-level marker; `text` is the
+                                     spliced source.
+      * `SPLICE_NO_POST_MARKER`   -> the post-task file has no `#[cfg(test)] mod`. A
+                                     DIFFERENT FACT: the commit deleted the test module,
+                                     or the file never had one. `text` is `None`.
+      * `SPLICE_NO_PRE_MARKER`    -> the pre-task file has none, i.e. the test module is
+                                     **new in this commit**. `text` is `None`.
+
+    `NO_PRE_MARKER` is the add-only shape one file-granularity down and is **vacuous** for
+    exactly the reason `NO_PRE_EXISTING_TEST_EDIT` is: you cannot have weakened a
+    pre-existing assertion in a module that did not exist. Collapsing it into
+    `NO_POST_MARKER` — or either into a verdict — would be the denominator-inflation
+    defect this whole instrument exists to refuse.
+
+    IDENTITY IS THE REGRESSION SURFACE. When both halves are byte-identical the splice
+    returns the input byte-for-byte, because `post[:i] + pre[i:]` with `pre == post` is
+    `post`. Any future wiring inherits that property, so it is asserted with `==` on the
+    whole string rather than a `contains`.
+
+    THREE LIMITS, stated here and not only in CLAUDE.md:
+
+      1. It is a **text scan, not a Rust parser**. A `#[cfg(test)]` inside a string
+         literal or a comment would be mis-read. There are none in `src/` today.
+      2. It matches the **module-level** marker only, so per-item `#[cfg(test)]` functions
+         scattered outside a `mod` block are invisible to it — and those are exactly what
+         `src/git.rs` carries at lines 8/44/77, which stay on the production side.
+      3. **This does not make the fix-loop arm measurable, and it closes nothing.** It is
+         one piece of #870 option 2. Nothing is wired: `run_counterfactual`,
+         `select_runnable`, the ledger, the census and every verdict state are untouched,
+         no verdict changes, no ledger line is written, and the fix-loop arm is still 1
+         signal-bearing commit after this lands.
+    """
+    post_start = test_module_start(post_task_src)
+    if post_start is None:
+        return SPLICE_NO_POST_MARKER, None
+    pre_start = test_module_start(pre_task_src)
+    if pre_start is None:
+        return SPLICE_NO_PRE_MARKER, None
+
+    # keepends=True so line endings survive verbatim: a splice that normalises CRLF or
+    # eats a trailing newline is a different file, and the identity assertion is the only
+    # thing that would notice.
+    post_lines = post_task_src.splitlines(keepends=True)
+    pre_lines = pre_task_src.splitlines(keepends=True)
+    return SPLICE_OK, "".join(post_lines[:post_start]) + "".join(pre_lines[pre_start:])
+
+
 def census_summary(rows: list[CensusRow]) -> dict:
     """Fold census rows. Anti-vacuous: zero task commits is a refusal, not a zero.
 
@@ -3497,6 +3619,98 @@ def run_self_tests():
               state == LEDGER_READ and shas == {"aaa", "bbb", "ccc"}, (state, shas))
     finally:
         shutil.rmtree(_tmp, ignore_errors=True)
+
+    # -- #870 slice 1: the `#[cfg(test)]` splicer. PURE, AND WIRED TO NOTHING -----------
+    # The needle is assembled the same way the function assembles it, so the fixtures and
+    # the code under test agree by construction rather than by transcription.
+    CFG = "#[cfg" + "(test)]"
+
+    # ANTI-VACUOUS, ASSERTED FIRST: a fixture that GENUINELY carries a module-level marker
+    # must be found. A finder that finds nothing and reports a clean result is this defect
+    # wearing the opposite sign, and it is quieter than the bug.
+    real = f"pub fn f() {{}}\n\n{CFG}\nmod tests {{\n    // t\n}}\n"
+    st, txt = splice_test_module(real, real)
+    check("splicer: a genuine module marker IS found", st == SPLICE_OK, st)
+    check("splicer: SPLICE_OK carries non-empty text", bool(txt), txt)
+    check(
+        "splicer: the marker index is the ATTRIBUTE line, not the mod line",
+        test_module_start(real) == 2,
+        test_module_start(real),
+    )
+
+    # THE HAPPY PATH: post-task production half + pre-task test half. Asserted on the WHOLE
+    # string with `==`, never a `contains` — a partial assertion is a green light over the
+    # part of the value it does not inspect.
+    post = f"fn prod() -> u8 {{ 2 }}\n\n{CFG}\nmod tests {{\n    // NEW assertion\n}}\n"
+    pre = f"fn prod() -> u8 {{ 1 }}\n\n{CFG}\nmod tests {{\n    // OLD assertion\n}}\n"
+    want = f"fn prod() -> u8 {{ 2 }}\n\n{CFG}\nmod tests {{\n    // OLD assertion\n}}\n"
+    st, txt = splice_test_module(post, pre)
+    check("splicer: post production + pre tests, byte-exact", st == SPLICE_OK, st)
+    check("splicer: spliced text is exactly the counterfactual tree", txt == want, txt)
+
+    # THE NEAR-MISS GUARD THAT DECIDES CORRECTNESS, and it is `src/git.rs`'s real shape:
+    # item-level `#[cfg(test)]` attributes AT COLUMN 0 (lines 8, 44, 77 there), followed by
+    # `const` and `fn`, with the real test module far below (line 947). Requiring column 0
+    # on the attribute discriminates nothing; the column-0 `mod` on the NEXT line is the
+    # whole rule. A bare split here would blank the chokepoint file's production half.
+    gitlike = (
+        f"{CFG}\n"
+        'const DESTRUCTIVE: &[&str] = &["push"];\n'
+        "\n"
+        f"{CFG}\n"
+        "fn resolve_git_invocation() {}\n"
+        "\n"
+        "pub fn run_git() {}\n"
+        "\n"
+        f"{CFG}\n"
+        "mod tests {\n"
+        "    // the real test module\n"
+        "}\n"
+    )
+    check(
+        "splicer: an item-level cfg(test) is NOT the module marker",
+        test_module_start(gitlike) == 8,
+        test_module_start(gitlike),
+    )
+    st, txt = splice_test_module(gitlike, gitlike)
+    check("splicer: the git.rs shape still splices", st == SPLICE_OK, st)
+    check(
+        "splicer: production after an item-level guard is NOT truncated away",
+        txt is not None and "pub fn run_git() {}" in txt,
+        txt,
+    )
+    check("splicer: the git.rs shape round-trips byte-for-byte", txt == gitlike, txt)
+
+    # NO_PRE_MARKER — the test module is NEW in this commit. Vacuous, exactly like
+    # NO_PRE_EXISTING_TEST_EDIT: you cannot weaken an assertion in a module that did not
+    # exist. NO_POST_MARKER is a DIFFERENT fact (deleted, or never had one).
+    only_post = f"fn a() {{}}\n{CFG}\nmod tests {{}}\n"
+    plain = "fn a() {}\n"
+    st, txt = splice_test_module(only_post, plain)
+    check("splicer: a new test module -> NO_PRE_MARKER", st == SPLICE_NO_PRE_MARKER, st)
+    check("splicer: NO_PRE_MARKER yields no text", txt is None, txt)
+
+    st, txt = splice_test_module(plain, only_post)
+    check("splicer: a deleted test module -> NO_POST_MARKER", st == SPLICE_NO_POST_MARKER, st)
+    check("splicer: NO_POST_MARKER yields no text", txt is None, txt)
+
+    # Precedence, pinned rather than left accidental: with neither side carrying a marker
+    # the post-task side answers first.
+    st, _ = splice_test_module(plain, plain)
+    check("splicer: neither side marked -> NO_POST_MARKER", st == SPLICE_NO_POST_MARKER, st)
+
+    # IDENTITY IS THE ENTIRE REGRESSION SURFACE FOR ANY FUTURE WIRING. CRLF and a missing
+    # trailing newline are included on purpose: a splice that normalises either is a
+    # different file, and nothing but this assertion would notice.
+    crlf = f"fn a() {{}}\r\n{CFG}\r\nmod tests {{}}"
+    st, txt = splice_test_module(crlf, crlf)
+    check("splicer: identity preserves CRLF and a missing trailing newline",
+          st == SPLICE_OK and txt == crlf, txt)
+
+    # The splice states are NOT verdicts. Nothing here produces one, and a later reader
+    # folding them into RUN_VERDICTS would put a file-granularity status into the rate.
+    for _s in (SPLICE_OK, SPLICE_NO_POST_MARKER, SPLICE_NO_PRE_MARKER):
+        check(f"splicer: {_s} is not a run verdict", _s not in RUN_VERDICTS, _s)
 
     if failures:
         print(f"SELF-TESTS FAILED ({len(failures)}):", file=sys.stderr)
