@@ -711,8 +711,9 @@ async fn dispatch_config_command(
             }
             let arg = s.trim_start_matches("/model ").trim();
             if arg.is_empty() {
-                println!("{DIM}  current model: {}", ctx.agent_config.model);
-                println!("  usage: /model <name>{RESET}\n");
+                // Same output as the `s == "/model"` branch above, so the usage line
+                // has ONE statement rather than two copies that agree today (#883).
+                commands::handle_model_show(&ctx.agent_config.model);
                 return Some(CommandResult::Continue);
             }
             if arg == "list" || arg.starts_with("list ") {
