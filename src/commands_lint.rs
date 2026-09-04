@@ -601,20 +601,91 @@ pub fn handle_lint_unsafe() -> Option<String> {
 
     Some(summary)
 }
+/// An external tool `security_audit_command` may probe the machine for.
+///
+/// An enum rather than a bare program name so the probe is exhaustive (a new
+/// tool is a compile error in `probe_audit_tool`) and so a test can state
+/// exactly which tools it is pretending are installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuditTool {
+    CargoAudit,
+    PipAudit,
+    Safety,
+    Govulncheck,
+    BundleAudit,
+}
+
+/// Ask the machine whether an audit tool is installed.
+///
+/// **This is the only function in this pair that spawns a subprocess**, and
+/// every program name is spelled as a literal on purpose: `tests/
+/// cargo_spawning_tests.rs` derives its spawner set by textual match, so
+/// routing these through a variable would make the `cargo` spawn invisible to
+/// that gate — laundering the defect past the check rather than fixing it.
+///
+/// A tool that cannot be executed at all (`Err`) and one that runs and fails
+/// (non-zero exit) are both "not installed", which is what the pre-split code
+/// did with `.map(|s| s.success()).unwrap_or(false)`.
+fn probe_audit_tool(tool: AuditTool) -> bool {
+    let status = match tool {
+        AuditTool::CargoAudit => std::process::Command::new("cargo")
+            .args(["audit", "--version"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+        AuditTool::PipAudit => std::process::Command::new("pip-audit")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+        AuditTool::Safety => std::process::Command::new("safety")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+        AuditTool::Govulncheck => std::process::Command::new("govulncheck")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+        AuditTool::BundleAudit => std::process::Command::new("bundle-audit")
+            .arg("version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+    };
+    status.map(|s| s.success()).unwrap_or(false)
+}
+
 /// Return the security audit command for a given project type, or `None` if
 /// the tool isn't installed (with an install hint as the error string).
+///
+/// Thin wrapper: it supplies the real subprocess probe and holds no decision.
+/// The whole decision lives in [`security_audit_command_with`], which shells
+/// nothing — so a test can pin what `/security` runs on a machine with or
+/// without a given tool, instead of accommodating whichever answer the
+/// machine happens to give (#834).
 fn security_audit_command(
     project_type: &ProjectType,
 ) -> Result<(&'static str, Vec<&'static str>), Option<&'static str>> {
+    security_audit_command_with(project_type, &probe_audit_tool)
+}
+
+/// The decision half: which audit command a project type gets, given an
+/// answer to "is this tool installed?".
+///
+/// `installed` is consulted **lazily and in the original order** — a project
+/// type that needs no probe asks for none, and Python asks about `safety`
+/// only once `pip-audit` has said no. That ordering is behaviour, not an
+/// implementation detail: it decides which tool a user's `/security` runs
+/// when both are present, so it is pinned by test.
+fn security_audit_command_with(
+    project_type: &ProjectType,
+    installed: &dyn Fn(AuditTool) -> bool,
+) -> Result<(&'static str, Vec<&'static str>), Option<&'static str>> {
     match project_type {
         ProjectType::Rust => {
-            // Check if cargo-audit is installed
-            let check = std::process::Command::new("cargo")
-                .args(["audit", "--version"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if check.map(|s| s.success()).unwrap_or(false) {
+            if installed(AuditTool::CargoAudit) {
                 Ok(("cargo audit", vec!["cargo", "audit"]))
             } else {
                 Err(Some("cargo install cargo-audit"))
@@ -622,34 +693,17 @@ fn security_audit_command(
         }
         ProjectType::Node => Ok(("npm audit", vec!["npm", "audit", "--json"])),
         ProjectType::Python => {
-            // Try pip-audit first, then safety
-            let pip_check = std::process::Command::new("pip-audit")
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if pip_check.map(|s| s.success()).unwrap_or(false) {
+            // Try pip-audit first, then safety.
+            if installed(AuditTool::PipAudit) {
                 Ok(("pip-audit", vec!["pip-audit"]))
+            } else if installed(AuditTool::Safety) {
+                Ok(("safety check", vec!["safety", "check"]))
             } else {
-                let safety_check = std::process::Command::new("safety")
-                    .arg("--version")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-                if safety_check.map(|s| s.success()).unwrap_or(false) {
-                    Ok(("safety check", vec!["safety", "check"]))
-                } else {
-                    Err(Some("pip install pip-audit"))
-                }
+                Err(Some("pip install pip-audit"))
             }
         }
         ProjectType::Go => {
-            let check = std::process::Command::new("govulncheck")
-                .arg("-version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if check.map(|s| s.success()).unwrap_or(false) {
+            if installed(AuditTool::Govulncheck) {
                 Ok(("govulncheck ./...", vec!["govulncheck", "./..."]))
             } else {
                 Err(Some("go install golang.org/x/vuln/cmd/govulncheck@latest"))
@@ -659,12 +713,7 @@ fn security_audit_command(
             "For Java, consider: mvn org.owasp:dependency-check-maven:check",
         )),
         ProjectType::Ruby => {
-            let check = std::process::Command::new("bundle-audit")
-                .arg("version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if check.map(|s| s.success()).unwrap_or(false) {
+            if installed(AuditTool::BundleAudit) {
                 Ok(("bundle-audit check", vec!["bundle-audit", "check"]))
             } else {
                 Err(Some("gem install bundler-audit"))
@@ -1476,105 +1525,229 @@ unsafe impl Send for Foo {}
         );
     }
 
+    // ---- security_audit_command: driven through the injected probe (#834) ----
+    //
+    // These eight used to call `security_audit_command`, which spawns
+    // `cargo audit --version` (and three sibling probes). That made every one
+    // of them depend on whichever tools this machine happens to have
+    // installed, and `security_audit_command_rust` accommodated BOTH the `Ok`
+    // and `Err` branches — so it asserted nothing about the Rust arm at all.
+    // They now drive the pure core with the answer supplied explicitly, and
+    // assert the actual command produced on BOTH sides of each discriminator.
+    //
+    // This was never #832's defect: a `--version` subcommand probe builds
+    // nothing and cannot clobber the shared `target/debug/yoyo` uplift path.
+    // It is toolchain-dependence and vacuous green.
+
+    /// Every audit tool present.
+    fn all_present(_: AuditTool) -> bool {
+        true
+    }
+
+    /// No audit tool present.
+    fn none_present(_: AuditTool) -> bool {
+        false
+    }
+
     #[test]
     fn security_audit_command_rust() {
-        // Result depends on whether cargo-audit is installed, but type must be correct
-        let result = security_audit_command(&ProjectType::Rust);
-        match result {
-            Ok((label, args)) => {
-                assert_eq!(label, "cargo audit");
-                assert_eq!(args[0], "cargo");
-                assert!(args.contains(&"audit"));
-            }
-            Err(hint) => {
-                assert_eq!(hint, Some("cargo install cargo-audit"));
-            }
-        }
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Rust, &|t| t == AuditTool::CargoAudit),
+            Ok(("cargo audit", vec!["cargo", "audit"])),
+            "cargo-audit installed: /security must run `cargo audit`"
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Rust, &none_present),
+            Err(Some("cargo install cargo-audit")),
+            "cargo-audit missing: the hint is the install command, not a run"
+        );
     }
 
     #[test]
     fn security_audit_command_node() {
-        // Node always returns Ok (npm is assumed present)
-        let result = security_audit_command(&ProjectType::Node);
-        assert!(result.is_ok(), "Node should always return a command");
-        let (label, args) = result.unwrap();
-        assert_eq!(label, "npm audit");
-        assert_eq!(args[0], "npm");
-        assert!(args.contains(&"audit"));
-        assert!(args.contains(&"--json"));
+        // npm is assumed present, so the answer must not move with the probe.
+        // Near-miss guard: a discriminator that ignores its input still has to
+        // be shown ignoring it in both directions.
+        let expected = Ok(("npm audit", vec!["npm", "audit", "--json"]));
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Node, &all_present),
+            expected
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Node, &none_present),
+            expected
+        );
     }
 
     #[test]
     fn security_audit_command_python() {
-        // Returns Ok with pip-audit or safety, or Err with install hint
-        let result = security_audit_command(&ProjectType::Python);
-        match result {
-            Ok((label, _args)) => {
-                assert!(
-                    label == "pip-audit" || label == "safety check",
-                    "Python audit label should be pip-audit or safety check, got: {label}"
-                );
-            }
-            Err(hint) => {
-                assert_eq!(hint, Some("pip install pip-audit"));
-            }
-        }
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Python, &|t| t == AuditTool::PipAudit),
+            Ok(("pip-audit", vec!["pip-audit"]))
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Python, &|t| t == AuditTool::Safety),
+            Ok(("safety check", vec!["safety", "check"])),
+            "pip-audit absent, safety present: the fallback arm must fire"
+        );
+        // Precedence, which nothing pinned before: with both installed,
+        // pip-audit wins. That is a user-visible choice, not an accident.
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Python, &all_present),
+            Ok(("pip-audit", vec!["pip-audit"]))
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Python, &none_present),
+            Err(Some("pip install pip-audit"))
+        );
     }
 
     #[test]
     fn security_audit_command_go() {
-        let result = security_audit_command(&ProjectType::Go);
-        match result {
-            Ok((label, args)) => {
-                assert_eq!(label, "govulncheck ./...");
-                assert_eq!(args[0], "govulncheck");
-            }
-            Err(hint) => {
-                assert_eq!(
-                    hint,
-                    Some("go install golang.org/x/vuln/cmd/govulncheck@latest")
-                );
-            }
-        }
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Go, &|t| t == AuditTool::Govulncheck),
+            Ok(("govulncheck ./...", vec!["govulncheck", "./..."]))
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Go, &none_present),
+            Err(Some("go install golang.org/x/vuln/cmd/govulncheck@latest"))
+        );
     }
 
     #[test]
     fn security_audit_command_ruby() {
-        let result = security_audit_command(&ProjectType::Ruby);
-        match result {
-            Ok((label, args)) => {
-                assert_eq!(label, "bundle-audit check");
-                assert_eq!(args[0], "bundle-audit");
-            }
-            Err(hint) => {
-                assert_eq!(hint, Some("gem install bundler-audit"));
-            }
-        }
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Ruby, &|t| t == AuditTool::BundleAudit),
+            Ok(("bundle-audit check", vec!["bundle-audit", "check"]))
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Ruby, &none_present),
+            Err(Some("gem install bundler-audit"))
+        );
     }
 
     #[test]
     fn security_audit_command_java() {
-        // Java always returns Err with a Maven hint
-        let result = security_audit_command(&ProjectType::Java);
-        assert!(result.is_err(), "Java should return Err (hint only)");
-        let hint = result.unwrap_err();
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("mvn"));
+        // Hint only, and it must not move with the probe.
+        let expected: Result<(&str, Vec<&str>), Option<&str>> = Err(Some(
+            "For Java, consider: mvn org.owasp:dependency-check-maven:check",
+        ));
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Java, &all_present),
+            expected
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Java, &none_present),
+            expected
+        );
     }
 
     #[test]
     fn security_audit_command_unknown() {
-        let result = security_audit_command(&ProjectType::Unknown);
-        assert!(result.is_err(), "Unknown project should return Err");
-        assert_eq!(result.unwrap_err(), None);
+        // `Err(None)` is "no audit tool for this project type", which is a
+        // different fact from `Err(Some(hint))` = "there is one, install it".
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Unknown, &all_present),
+            Err(None)
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Unknown, &none_present),
+            Err(None)
+        );
     }
 
     #[test]
     fn security_audit_command_make_returns_none() {
-        // Make has no security audit tool
-        let result = security_audit_command(&ProjectType::Make);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), None);
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Make, &all_present),
+            Err(None)
+        );
+        assert_eq!(
+            security_audit_command_with(&ProjectType::Make, &none_present),
+            Err(None)
+        );
+    }
+
+    /// The seam must not have made probing eager: a project type that needs no
+    /// probe must ask for none, and Python must ask about `safety` only after
+    /// `pip-audit` has said no. Spawning a subprocess nobody needed is the
+    /// regression an injected resolver makes easy and invisible.
+    #[test]
+    fn security_audit_command_probes_lazily_and_only_what_it_needs() {
+        use std::cell::RefCell;
+        let seen: RefCell<Vec<AuditTool>> = RefCell::new(Vec::new());
+        let absent = |t: AuditTool| {
+            seen.borrow_mut().push(t);
+            false
+        };
+
+        let _ = security_audit_command_with(&ProjectType::Node, &absent);
+        assert!(
+            seen.borrow().is_empty(),
+            "Node probed {:?} — it needs no tool check at all",
+            seen.borrow()
+        );
+
+        seen.borrow_mut().clear();
+        let _ = security_audit_command_with(&ProjectType::Java, &absent);
+        assert!(
+            seen.borrow().is_empty(),
+            "Java is a hint, it probes nothing"
+        );
+
+        seen.borrow_mut().clear();
+        let _ = security_audit_command_with(&ProjectType::Rust, &absent);
+        assert_eq!(*seen.borrow(), vec![AuditTool::CargoAudit]);
+
+        seen.borrow_mut().clear();
+        let _ = security_audit_command_with(&ProjectType::Python, &absent);
+        assert_eq!(
+            *seen.borrow(),
+            vec![AuditTool::PipAudit, AuditTool::Safety],
+            "safety must be probed only after pip-audit says no"
+        );
+
+        // The other direction: pip-audit present means safety is never asked.
+        let seen2: RefCell<Vec<AuditTool>> = RefCell::new(Vec::new());
+        let pip_only = |t: AuditTool| {
+            seen2.borrow_mut().push(t);
+            t == AuditTool::PipAudit
+        };
+        let _ = security_audit_command_with(&ProjectType::Python, &pip_only);
+        assert_eq!(*seen2.borrow(), vec![AuditTool::PipAudit]);
+    }
+
+    /// Deliberately WEAK source-level guard, and it says so: it proves the
+    /// wrapper still hands the core the real subprocess probe, never that the
+    /// probe works. No behavioural test may call `security_audit_command`
+    /// itself — that is the spawn this task removed from the test path — so
+    /// this is the only check available on the wiring.
+    ///
+    /// Needles are assembled at runtime so this test cannot match its own
+    /// source.
+    #[test]
+    fn the_audit_wrapper_still_injects_the_real_probe() {
+        let src = include_str!("commands_lint.rs");
+        let wrapper = format!("{}{}", "fn security_audit_", "command(");
+        let core = format!("{}{}", "security_audit_command", "_with(");
+        let probe = format!("{}{}", "probe_audit", "_tool");
+
+        let start = src
+            .find(&wrapper)
+            .unwrap_or_else(|| panic!("wrapper {wrapper} not found — was it renamed?"));
+        let body = &src[start..];
+        let end = body.find("\n}\n").unwrap_or(body.len());
+        let body = &body[..end];
+
+        assert!(
+            body.contains(&core),
+            "the wrapper no longer delegates to the pure core"
+        );
+        assert!(
+            body.contains(&probe),
+            "the wrapper no longer injects the real probe — /security would \
+             stop asking the machine anything"
+        );
     }
 
     #[test]

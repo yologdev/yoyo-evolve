@@ -106,64 +106,26 @@ use std::path::{Path, PathBuf};
 /// since names repeat across modules. An empty or whitespace-only reason is
 /// fatal: an unnamed debt wearing a name is not a name.
 const REGISTERED_CARGO_SPAWNING_TESTS: &[(&str, &str, &str)] = &[
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_go",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Go, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_java",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Java, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_make_returns_none",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Make, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_node",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Node, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_python",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Python, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_ruby",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Ruby, not Rust.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_rust",
-        "The sharp one. Reaches security_audit_command, which probes `cargo audit --version`. NOT \
-         #832's defect — a subcommand probe builds nothing and cannot clobber target/debug/yoyo — \
-         but its answer depends on whether the machine has cargo-audit installed, and the test \
-         accommodates BOTH branches (Ok and Err), so it asserts nothing about the Rust arm in \
-         particular. #834 option 1 (inject the probe as a resolver) is the follow-up, not this task.",
-    ),
-    (
-        "src/commands_lint.rs",
-        "security_audit_command_unknown",
-        "Reaches security_audit_command, whose Rust arm probes `cargo audit --version`. NOT #832's \
-         defect: a subcommand probe builds nothing and cannot clobber target/debug/yoyo. But the \
-         result still depends on the machine's toolchain, and this arm asserts about Unknown, not Rust.",
-    ),
+    // EMPTY, and that is a payment rather than a deletion (Day 188, #834).
+    //
+    // This shipped on Day 179 holding 8 entries, every one a
+    // `security_audit_command_*` arm in src/commands_lint.rs that reached
+    // `cargo audit --version`. All 8 were paid: the probe is now injected
+    // (`security_audit_command_with` takes an `installed` resolver), so each
+    // test drives the pure core with the answer supplied explicitly and
+    // asserts BOTH directions instead of accommodating whichever answer the
+    // machine happened to give.
+    //
+    // The debt was never #832's clobbering defect and this register never
+    // said it was: a subcommand probe builds nothing and cannot touch the
+    // shared target/debug/yoyo uplift path. It was toolchain-dependence and
+    // vacuous green.
+    //
+    // An empty register is a legitimate terminal state for this gate family,
+    // not a broken scan: `tests/orphan_modules.rs` ships `REGISTERED_ORPHANS`
+    // empty for the same reason. The scan is kept honest by the live gate's
+    // anti-vacuous branch, which asserts on the DERIVED SPAWNER SET and not
+    // on this list, so nothing here can make a broken scanner pass.
 ];
 
 /// One violation. Two variants running in **opposite directions**: the first
@@ -1020,16 +982,29 @@ async fn asyncy() {}
         );
     }
 
-    /// Every register entry must carry a real reason. The live gate makes an
-    /// empty one fatal; this asserts the shipped register is not already in
-    /// that state, and that it is non-empty (its size is the finding).
+    /// Every register entry must carry a real reason and name a `src/` path.
+    ///
+    /// **Superseded clause, recorded rather than erased (Day 188, #834).** This
+    /// test was `..._is_non_empty_and_every_reason_is_real` and opened with
+    /// `assert!(!REGISTERED_CARGO_SPAWNING_TESTS.is_empty())`, because on Day
+    /// 179 the register's SIZE was the finding. The 8 entries it guarded have
+    /// now been paid, so that clause would forbid the ratchet's own terminal
+    /// state — an exception list that may never reach zero is not a ratchet.
+    ///
+    /// It is dropped rather than weakened, and the distinction matters: both
+    /// failure modes its message named are guarded elsewhere, so nothing is
+    /// left uncovered. "The scan found nothing" is the live gate's anti-vacuous
+    /// branch, which asserts on the DERIVED SPAWNER SET (`!spawners.is_empty()`,
+    /// plus the file and `#[test]` counts) and never on this list. "Someone
+    /// deleted the finding" is branch 1: a test that reaches a spawn and is not
+    /// registered is fatal, so an entry cannot be dropped without converting
+    /// the test it named. Precedent for an empty register:
+    /// `tests/orphan_modules.rs` ships `REGISTERED_ORPHANS` empty.
+    ///
+    /// What this still pins is what it always really pinned — that no entry is
+    /// an unnamed debt wearing a name, and that none points outside `src/`.
     #[test]
-    fn the_shipped_register_is_non_empty_and_every_reason_is_real() {
-        assert!(
-            !REGISTERED_CARGO_SPAWNING_TESTS.is_empty(),
-            "the register shipped empty — either the scan found nothing (see the anti-vacuous \
-             branch) or someone deleted the finding"
-        );
+    fn every_register_entry_carries_a_real_reason_and_a_src_path() {
         for (path, test, reason) in REGISTERED_CARGO_SPAWNING_TESTS {
             assert!(
                 !reason.trim().is_empty(),
