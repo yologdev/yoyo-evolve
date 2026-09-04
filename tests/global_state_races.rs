@@ -122,6 +122,8 @@ const GLOBAL_SETTERS: &[&str] = &[
     "todo_add",
     "todo_clear",
     "todo_remove",
+    // src/prompt_budget.rs
+    "record_run_cost",
     // src/watch.rs
     "clear_watch_command",
     "set_watch_command",

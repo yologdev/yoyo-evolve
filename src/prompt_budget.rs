@@ -9,7 +9,7 @@
 use crate::format::safe_truncate;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 // ── Audit log ───────────────────────────────────────────────────────────
@@ -228,6 +228,15 @@ pub fn audit_log_usage(
     num_turns: usize,
     is_error: bool,
 ) {
+    // FIRST statement, and deliberately ABOVE the `is_audit_enabled()` gate.
+    // `emit_output` calls this on the first line of its body, ungated by output
+    // mode (#848), so the cost budget inherits that reach for free: print_mode,
+    // `--output-format json` and the default path all arrive here. Moving this
+    // inside `audit_log_usage_when` would count for `--audit` users only, which
+    // is #848's "works in json mode" defect wearing a different hat.
+    // `estimate_cost` is pure, so the second call is free.
+    record_run_cost(crate::format::estimate_cost(usage, model));
+
     audit_log_usage_when(
         is_audit_enabled(),
         usage,
@@ -327,6 +336,270 @@ pub fn read_audit_log(n: usize) -> Vec<String> {
 }
 
 // ── Session wall-clock budget ───────────────────────────────────────────
+// ── Cost budget ─────────────────────────────────────────────────────────────
+// A soft, opt-in *money* budget. Three things already bound a session —
+// `YOYO_SESSION_BUDGET_SECS` (wall-clock), `SessionCapTool` (200 web_search /
+// sub_agent calls) and yoagent's `ExecutionLimits` (turns/tokens) — and none of
+// them is dollars, which is the one dimension `ECONOMICS.md` prices a session
+// in. Since #848 every run writes `cost_usd` to `.yoyo/audit.jsonl`, and the
+// Day-181 follow-up added a reader that checks *whether* records exist and
+// never *how much*: producer shipped, presence-checker shipped, no consumer of
+// the value. This is that consumer.
+//
+// It WARNS and never stops: a hard stop mid-task is a data-loss risk and would
+// be a wrong default (#448). Opt-in via env var, so a user who sets nothing
+// gets byte-identical output.
+
+/// Env var carrying this session's cost budget, in US dollars.
+///
+/// Deliberately env-var-only for now: a flag would need `cli.rs` + `help.rs` +
+/// `config.rs` + `SETTABLE_KEYS` + `validate_config_value`, turning a verified
+/// narrow change into an unverified wide one. Named follow-up on #891.
+const COST_WARN_ENV: &str = "YOYO_COST_WARN_USD";
+
+/// Parse the configured cost threshold. Pure; all I/O lives in the wrapper.
+///
+/// `None` means **off**, and every unusable input maps to it: absent, empty,
+/// whitespace-only, unparseable, `<= 0.0`, and any non-finite value. A typo'd
+/// budget must never fabricate a threshold — `Some(0.0)` would alarm on the
+/// first run of every such session, so "I could not read a budget" is "no
+/// budget", never "budget zero".
+pub(crate) fn parse_cost_threshold(raw: Option<&str>) -> Option<f64> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed = trimmed.parse::<f64>().ok()?;
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Running spend for this process.
+///
+/// `unpriced_runs` is its own counter and is **never** folded into
+/// `spent_usd`: `format::estimate_cost` returns `Option<f64>` and #848
+/// deliberately writes `null` rather than `0.0` so "no price for this model"
+/// stays distinguishable from "this run was free". Adding an unpriced run as
+/// `0.0` rebuilds that defect one layer down, and it fails in the flattering
+/// direction — an unpriced model would read as free forever.
+#[derive(Default)]
+pub(crate) struct CostTally {
+    spent_usd: f64,
+    unpriced_runs: usize,
+    warned: bool,
+}
+
+/// Fold one run's cost into the tally. Pure over its `&mut` argument (the
+/// `context_budget_warning_with` seam), so tests never touch a process global.
+///
+/// A missing, negative or non-finite cost adds **nothing** and bumps
+/// `unpriced_runs` instead.
+pub(crate) fn record_cost(tally: &mut CostTally, cost: Option<f64>) {
+    match cost {
+        Some(c) if c.is_finite() && c >= 0.0 => tally.spent_usd += c,
+        _ => tally.unpriced_runs += 1,
+    }
+}
+
+/// Return the crossing warning, at most **once per process**.
+///
+/// The once-only flag lives here rather than at the call site so it cannot
+/// drift: a long session crossing its budget says so one time, not on every
+/// subsequent run. Below threshold is `None`; the boundary is inclusive, so
+/// spending exactly the budget warns.
+///
+/// Glyph-free under `plain` (marker **and** em dash).
+pub(crate) fn maybe_cost_warning(
+    tally: &mut CostTally,
+    threshold: f64,
+    plain: bool,
+) -> Option<String> {
+    if tally.warned || tally.spent_usd < threshold {
+        return None;
+    }
+    tally.warned = true;
+
+    let marker = if plain { "warning:" } else { "⚠" };
+    let dash = if plain { "-" } else { "—" };
+    let mut msg = format!(
+        "{} session cost ${:.2} has crossed the ${:.2} budget ({}) {} this is a warning only, nothing was stopped.",
+        marker, tally.spent_usd, threshold, COST_WARN_ENV, dash
+    );
+    if tally.unpriced_runs > 0 {
+        msg.push_str(&format!(
+            " {} run(s) used a model with no price and are NOT counted in that figure.",
+            tally.unpriced_runs
+        ));
+    }
+    Some(msg)
+}
+
+/// Cached parse of [`COST_WARN_ENV`]. Read once and frozen for the lifetime of
+/// the process so the budget cannot shift mid-session. `None` means off.
+static COST_WARN_THRESHOLD: OnceLock<Option<f64>> = OnceLock::new();
+
+/// This process's running spend.
+static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
+    spent_usd: 0.0,
+    unpriced_runs: 0,
+    warned: false,
+});
+
+/// Fold one run's cost into the session tally and warn on a budget crossing.
+///
+/// Returns immediately when no budget is configured — no lock taken, nothing
+/// accumulated, nothing printed. That is every user who sets nothing, and it is
+/// the entire regression surface.
+///
+/// The warning is **not** gated on `is_quiet()`, deliberately: `--quiet`'s
+/// documented scope is *informational* stderr output, and a spend alarm is not
+/// informational (the trust prompt is the same call, for the same reason). It
+/// *is* gated on `is_plain_output()` for glyphs.
+pub(crate) fn record_run_cost(cost_usd: Option<f64>) {
+    let threshold = *COST_WARN_THRESHOLD
+        .get_or_init(|| parse_cost_threshold(std::env::var(COST_WARN_ENV).ok().as_deref()));
+    let Some(threshold) = threshold else {
+        return;
+    };
+
+    let warning = {
+        let mut tally = crate::sync_util::lock_or_recover(&COST_TALLY);
+        record_cost(&mut tally, cost_usd);
+        maybe_cost_warning(&mut tally, threshold, crate::format::is_plain_output())
+    };
+    if let Some(msg) = warning {
+        eprintln!("{}", msg);
+    }
+}
+
+#[cfg(test)]
+mod cost_budget_tests {
+    use super::*;
+
+    #[test]
+    fn parse_cost_threshold_table() {
+        // Off — every unusable shape, never a fabricated 0.0.
+        for raw in [
+            None,
+            Some(""),
+            Some("   "),
+            Some("abc"),
+            Some("0"),
+            Some("0.0"),
+            Some("-1"),
+            Some("-0.5"),
+            Some("nan"),
+            Some("inf"),
+            Some("-inf"),
+        ] {
+            assert_eq!(
+                parse_cost_threshold(raw),
+                None,
+                "expected OFF for {:?}",
+                raw
+            );
+        }
+        // On.
+        assert_eq!(parse_cost_threshold(Some("5")), Some(5.0));
+        assert_eq!(parse_cost_threshold(Some("5.50")), Some(5.5));
+        assert_eq!(parse_cost_threshold(Some("  2.5  ")), Some(2.5));
+    }
+
+    #[test]
+    fn record_cost_accumulates_priced_runs_and_counts_unpriced_separately() {
+        let mut t = CostTally::default();
+        record_cost(&mut t, Some(1.5));
+        record_cost(&mut t, Some(2.0));
+        assert_eq!(t.spent_usd, 3.5);
+        assert_eq!(t.unpriced_runs, 0);
+
+        // An unpriced run leaves the total EXACTLY unchanged — asserted on the
+        // number, not on "approximately zero added".
+        record_cost(&mut t, None);
+        assert_eq!(t.spent_usd, 3.5);
+        assert_eq!(t.unpriced_runs, 1);
+
+        // Non-finite and negative are unpriced too, never arithmetic.
+        record_cost(&mut t, Some(f64::NAN));
+        record_cost(&mut t, Some(f64::INFINITY));
+        record_cost(&mut t, Some(-1.0));
+        assert_eq!(t.spent_usd, 3.5);
+        assert_eq!(t.unpriced_runs, 4);
+    }
+
+    #[test]
+    fn maybe_cost_warning_fires_once_at_or_above_the_threshold() {
+        // Below — the near-miss guard, and the whole common path.
+        let mut t = CostTally::default();
+        record_cost(&mut t, Some(4.99));
+        assert_eq!(maybe_cost_warning(&mut t, 5.0, false), None);
+
+        // Boundary, pinned on BOTH sides: exactly at the threshold fires.
+        let mut at = CostTally::default();
+        record_cost(&mut at, Some(5.0));
+        assert!(maybe_cost_warning(&mut at, 5.0, false).is_some());
+
+        // Above fires, and only once per process.
+        let mut over = CostTally::default();
+        record_cost(&mut over, Some(7.25));
+        assert!(maybe_cost_warning(&mut over, 5.0, false).is_some());
+        assert_eq!(
+            maybe_cost_warning(&mut over, 5.0, false),
+            None,
+            "a crossing must be announced once, not on every later run"
+        );
+    }
+
+    #[test]
+    fn cost_warning_names_the_spend_the_threshold_and_any_unpriced_runs() {
+        let mut t = CostTally::default();
+        record_cost(&mut t, Some(7.25));
+        let msg = maybe_cost_warning(&mut t, 5.0, false).expect("should warn");
+        assert!(msg.contains("$7.25"), "must name the spend: {msg}");
+        assert!(msg.contains("$5.00"), "must name the threshold: {msg}");
+        assert!(msg.contains(COST_WARN_ENV), "must name the env var: {msg}");
+        assert!(
+            !msg.contains("run(s) used a model with no price"),
+            "no unpriced runs, so no unpriced clause: {msg}"
+        );
+
+        let mut u = CostTally::default();
+        record_cost(&mut u, Some(7.25));
+        record_cost(&mut u, None);
+        record_cost(&mut u, None);
+        let msg = maybe_cost_warning(&mut u, 5.0, false).expect("should warn");
+        assert!(
+            msg.contains("2 run(s) used a model with no price"),
+            "must disclose the unpriced runs: {msg}"
+        );
+        assert!(
+            msg.contains("NOT counted"),
+            "must say they are excluded from the figure: {msg}"
+        );
+    }
+
+    #[test]
+    fn cost_warning_is_glyph_free_under_plain_output() {
+        let mut t = CostTally::default();
+        record_cost(&mut t, Some(7.25));
+        record_cost(&mut t, None);
+        let msg = maybe_cost_warning(&mut t, 5.0, true).expect("should warn");
+        assert!(
+            msg.is_ascii(),
+            "screen-reader mode must carry no glyph: {msg}"
+        );
+        assert!(
+            !msg.contains('—'),
+            "screen-reader mode must carry no em dash: {msg}"
+        );
+        // Still says everything it says in the decorated form.
+        assert!(msg.contains("$7.25") && msg.contains("$5.00"));
+        assert!(msg.contains("1 run(s) used a model with no price"));
+    }
+}
+
 // A soft, opt-in wall-clock budget for evolution sessions. The hourly evolve
 // cron can fire while a previous session is still running, causing GH Actions
 // to cancel the in-flight run (#262). This helper lets the agent voluntarily
