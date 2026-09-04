@@ -1,0 +1,208 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with Step 0 — paying the register debt before touching any source, since src/cli.rs is at the inclusive fatal boundary.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (203ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed — src/cli.rs is at exactly +100, the inclusive fatal boundary. Pasting the literal lines the gate printed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/cli.rs"\|"src/help… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/cli.rs", 6520),
+  +     ("src/cli.rs", 6620),
+ ✓ (1m 15s)
+  -     ("src/cli.rs", 6520),
+  +     ("src/cli.rs", 6620),
+  2 tools completed in 1m 18s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up mid-Step 0. src/cli.rs is pasted; src/help.rs still needs its line.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/help.rs", 2755), // Day 187: +4 paid off (was 2751 at Day 179).
+  +     ("src/help.rs", 2759), // Day 188: +4 paid off (was 2755 at Day 187).
+ ✓ (1m 15s)
+  -     ("src/help.rs", 2755), // Day 187: +4 paid off (was 2751 at Day 179).
+  +     ("src/help.rs", 2759), // Day 188: +4 paid off (was 2755 at Day 187).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (200ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 22s (2 ✓)
+
+Zero warnings. Committing the register payment alone before touching any source:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- … ✓ (9ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Register payment is clean and isolated. Committing it alone:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Step 0 done. Now Step 1 — reading the exact call sites before building the predicate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1340,1480p' src/tools.rs ✓ (4ms)
+  2 tools completed in 3.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Call sites read. Checking the parent's existing filter semantics so the child's predicate matches it exactly:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,940p' src/agent_buil… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Parent filter is exact-name membership on t.name(). Checking the AgentConfig field and the test helper:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+AgentConfig already carries the list and build_sub_agent_tool_at_depth already receives the config — so I read it from there rather than threading a redundant second copy that could drift. Step 1: the pure predicate + its table test first, green alone, before any call site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 16 lines)
+  + /// Is `name` on the parent's disallow list?
+  + ///
+  + /// The decision half of "a disallow list reaches transitively" (#887). It is
+  + /// deliberately the *same* rule the parent's own filter applies at
+  + /// `agent_builder.rs` — exact membership on `t.name()` — rather than a second
+  + /// spelling of it, because two copies of a rule agree the day they are written
+  + /// and diverge forever after.
+  + ///
+  + /// An **empty list disallows nothing**, which is every user who has never
+  + /// passed `--restricted`, `--disallowed-tools` or `--lite`, and is the whole
+  + /// regression surface.
+  + pub(crate) fn child_tool_is_disallowed(name: &str, disallowed: &[String]) -> bool {
+  +     disallowed.iter().any(|d| d == name)
+  + }
+  + 
+    pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (Box<dyn AgentTool>, SharedState) {
+ ✓ (15.6s)
+  + /// Is `name` on the parent's disallow list?
+  + ///
+  + /// The decision half of "a disallow list reaches transitively" (#887). It is
+  + /// deliberately the *same* rule the parent's own filter applies at
+  + /// `agent_builder.rs` — exact membership on `t.name()` — rather than a second
+  + /// spelling of it, because two copies of a rule agree the day they are written
+  + /// and diverge forever after.
+  + ///
+  ... (8 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Dead-code, as expected — and per the Day-184 lesson a test is a consumer too: it satisfies dead-code at one file's cost and confirms rather than merely references. Adding the table test now so the predicate goes green alone:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_build_sub_agent… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 34 lines)
+  +     #[test]
+  +     fn child_tool_is_disallowed_table() {
+  +         // (name, disallow list, expected)
+  +         let cases: &[(&str, &[&str], bool)] = &[
+  +             // Fires: the name is on the list.
+  +             ("bash", &["bash"], true),
+  +             ("bash", &["web_search", "bash"], true),
+  +             ("write_file", &["write_file"], true),
+  +             // Near-miss guard: a name NOT on a non-empty list is still allowed.
+  +             // A discriminator tested only on the side that fires is vacuous green.
+  +             ("read_file", &["bash"], false),
+  +             ("shared_state", &["bash"], false),
+  +             ("sub_agent", &["bash"], false),
+  +             // The whole regression surface: an empty list disallows NOTHING.
+  +             ("bash", &[], false),
+  +             ("read_file", &[], false),
+  +             ("", &[], false),
+  +             // Exact membership, never a prefix or substring match.
+  +             ("bash", &["bas"], false),
+  +             ("bash", &["bashful"], false),
+  ... (14 more lines)
+ ✓ (15.7s)
+  +     #[test]
+  +     fn child_tool_is_disallowed_table() {
+  +         // (name, disallow list, expected)
+  +         let cases: &[(&str, &[&str], bool)] = &[
+  +             // Fires: the name is on the list.
+  +             ("bash", &["bash"], true),
+  +             ("bash", &["web_search", "bash"], true),
+  +             ("write_file", &["write_file"], true),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.9s (2 ✓)
+
+Correction worth noting: a #[cfg(test)] consumer satisfies dead-code for the test build only — the release binary still sees it unused. Confirming the predicate is green alone before wiring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo child_tool… ✓ (25.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Predicate green alone — 12 rows, including the empty-list surface. Step 2: wire it at one site.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (2 → 26 lines)
+            Arc::new(WebSearchTool),
+        ];
+  + 
+  +     // #887: a disallow list reaches TRANSITIVELY. `--restricted` folds its tool
+  +     // list into `config.disallowed_tools`, whose only other consumer filters the
+  +     // PARENT's tool set — so before this, `--restricted` removed `bash` from the
+  +     // parent and command execution stayed one `sub_agent` hop away.
+  +     //
+  +     // Filtering here, at the one place a child's leaf tools are assembled, closes
+  +     // that hop by MECHANISM rather than by name: no new entry in
+  +     // `RESTRICTED_REMOVED_TOOLS`, and any future command-running tool is covered
+  +     // the day it is added. The recursion below passes the same `config`, so a
+  +     // depth-2 child cannot re-acquire what the depth-1 child lost.
+  +     //
+  +     // Deliberate and consistent, not a side effect: `--lite` also populates
+  +     // `disallowed_tools`, so a lite sub-agent's child now loses whatever lite
+  +     // disallows. That is a NARROWING — the safe direction — and it is the same
+  +     // rule, not a second one.
+  +     //
+  +     // The nested `sub_agent` push below is deliberately NOT filtered here: the
+  ... (6 more lines)
+ ✓ (1m 57s)
+            Arc::new(WebSearchTool),
+        ];
+  + 
+  +     // #887: a disallow list reaches TRANSITIVELY. `--restricted` folds its tool
+  +     // list into `config.disallowed_tools`, whose only other consumer filters the
+  +     // PARENT's tool set — so before this, `--restricted` removed `bash` from the
+  +     // parent and command execution stayed one `sub_agent` hop away.
+  +     //
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now Step 3 — tests at the emission point, i.e. the child tool names a caller ends up with. That set is currently buried inside the function, so I extract the assembly (leaves + filter + nested push) into one testable seam:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1379,1440p' src/tools.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1455p' src/tools.rs ✓ (3ms)
+  2 tools completed in 3.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

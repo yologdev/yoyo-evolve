@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1450p' src/tools.rs ✓ (4ms)
+ ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|c… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD && echo "==…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 180 cargo test --test mo… ✓ (14ms)
+ ✓ (208ms)
+  6 tools completed in 34.2s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have all the evidence I need. Let me write the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 14s)
+
+Verdict: FAIL
+
+The core mechanism is genuinely correct — I traced it rather than trusting the diff:
+
+• child_tool_is_disallowed filters at one site (src/tools.rs:1436), before sub_agent_tool_for, gated on !is_empty() so the default path is byte-identical.
+• config.disallowed_tools is provably the same field agent_builder.rs:908 filters and the same one `cli.rs:2531 folds restricted_disallowed_tools into — so --restricted` really does close the shell hop.
+• The recursion passes the same config, so a depth-2 child cannot re-acquire what depth-1 lost.
+• Reading the list off the already-passed config instead of threading &[String] through the builders is an acceptable equivalent, and correctly left agent_builder.rs:635 untouched.
+• Register debt was paid first, in its own commit, as STEP 0 required.
+
+Two things sank it, and neither is a style quibble:
+
+1. STEP 3 landed zero of its four assertions. The task named emission-point testing as "the half that matters" and said explicitly to assert on the child tool names a caller ends up with, "never the predicate one layer below." The only test added is the predicate table — precisely the forbidden layer. There is no full-vector assert_eq! empty-list near-miss guard, no anti-vacuous check that the unfiltered set contains bash, and no #715 sub_agent/`shared_state pairing assertion. Nothing verifies the retain` actually removes anything.
+
+2. CLAUDE.md was not updated. The task budgeted one bullet for it, and this is a behavior change to product surface. The src/tools.rs bullet still describes the hop as open, in the file re-injected as authoritative context every session — the stale-claim class this repo has paid for repeatedly.
+
+Cleanup feedback rather than a failure reason: the end-of-task register re-run was skipped. cargo test --test module_size prints `src/tools.rs grew to 3916 lines, 71 past its recorded 3845` with the pasteable remedy. Non-fatal today, but the task's success criterion said zero warnings, and this is the fourth recurrence of exactly this debt.
+
+I also could not verify STEP 4's positive control from the diff; no NEUTERED markers remain, so nothing is left sabotaged, but whether it was actually run in both directions is not observable here.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
