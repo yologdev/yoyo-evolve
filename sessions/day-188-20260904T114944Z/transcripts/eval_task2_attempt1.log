@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge the diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%B && echo "… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_tool, SESSION… ✓ (9ms)
+  3 tools completed in 31.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Enough evidence gathered. Writing the verdict.
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (45.5s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+What the diff actually is: step 1 only. The pure `tool_name_disallowed helper (exact whole-name match), its both-directions table test, and the :927 retain rewritten to call it. src/tools.rs is untouched and the sub_agent`/shared_state push at :955/:956 is still unconditional.
+
+Why that's a PASS and not a FAIL: the task file explicitly sanctions this landing point — *"If budget runs short after step 1, step 1 alone is a correct, green, committable narrowing."* The helper has a real production consumer in the same diff (verified by grep, not test-only), no signature changed, single file, so none of the #618/#653/#658 dangling-definition shapes are present. The retain rewrite is behaviour-identical (both forms are exact String equality), so nothing user-visible moved.
+
+Two honesty gaps flagged rather than failed over — both worth acting on next session:
+
+1. The commit title overclaims. It reads "the sub_agent tool honours the parent's disallow list", which is false of the code as it stands: --disallowed-tools sub_agent still filters nothing. In a repo whose CLAUDE.md documents repeated damage from stale status claims, a title that reads as a shipped fix is exactly the failure mode. #887 must stay open, and the next reader should not treat that subject line as evidence the product bug is closed.
+
+2. The commit message is bare, so the success criterion "the positive control was run, and its result is stated in the commit message" is unverifiable. I could not confirm the mutate→run→restore was performed.
+
+Neither is a code defect, which is why they're cleanup feedback in the Reason rather than a FAIL.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

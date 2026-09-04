@@ -1,0 +1,174 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the two line numbers and the mechanism before editing anything.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent_tool\|SESSION… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 860,960p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|f… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 900,940p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1345,1420p src/tools.rs ✓ (3ms)
+ ✓ (2ms)
+  6 tools completed in 7.3s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both mechanisms verified. Now step 1 — the pure helper and its table test, landed green before any wiring.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,60p src/agent_builder.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub(crate) fn detect_m… ✓ (3ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 58,72p src/agent_builder.… ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3.5s (3 ✓)
+
+Now the pure helper — one statement of the rule, so the three consumers cannot drift:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (4 → 23 lines)
+            .filter(|name| builtins.iter().any(|b| b == &name.as_str()))
+            .cloned()
+            .collect()
+  + }
+  + 
+  + /// Pure helper: is `name` on the caller's `--disallowed-tools` / `--lite` /
+  + /// `--restricted` list?
+  + ///
+  + /// **Exact match on the whole tool name, never a prefix or a substring.** A
+  + /// disallowed `sub` must not take `sub_agent` with it, and a tool whose name
+  + /// merely *contains* a disallowed one must pass — over-filtering a security
+  + /// list silently removes capabilities the user never asked to lose, and the
+  + /// user has no way to tell that from the tool simply not existing.
+  + ///
+  + /// This is the **one statement** of that rule (#887). It has three consumers:
+  + /// the `build_agent` retain over `build_tools`' output, the `sub_agent` /
+  + /// `shared_state` push that used to sit *after* that retain and so could never
+  + /// be filtered by it, and the child tool set in
+  + /// `tools::build_sub_agent_tool_at_depth`. A second copy would agree the day it
+  + /// was written and diverge forever after (the `significant_braces` precedent).
+  ... (3 more lines)
+ ✓ (12.2s)
+            .filter(|name| builtins.iter().any(|b| b == &name.as_str()))
+            .cloned()
+            .collect()
+  + }
+  + 
+  + /// Pure helper: is `name` on the caller's `--disallowed-tools` / `--lite` /
+  + /// `--restricted` list?
+  + ///
+  ... (13 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected — the rule says no definition without its consumer. Wiring the retain and the table test now:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools.contai… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (1 → 1 lines)
+  -                 tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+  +                 tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
+ ✓ (1m 18s)
+  -                 tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+  +                 tools.retain(|t| !tool_name_disallowed(t.name(), &self.disallowed_tools));
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn builtin_tool_names_i… ✓ (2ms)
+  3 tools completed in 1m 25s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3200,3215p src/agent_buil… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (61 → 2 lines)
+  -     #[test]
+  -     fn tool_name_disallowed_matches_whole_names_only() {
+  -         // Both directions in one table: a discriminator tested only on the
+  -         // side that fires is vacuous green, and this file's history is
+  -         // discriminators pointed at the wrong input.
+  -         let cases: &[(&str, &[&str], bool, &str)] = &[
+  -             // --- must fire ---
+  -             ("sub_agent", &["sub_agent"], true, "exact match"),
+  -             (
+  -                 "shared_state",
+  -                 &["sub_agent", "shared_state"],
+  -                 true,
+  -                 "exact match, not first in list",
+  -             ),
+  -             ("bash", &["bash"], true, "the --lite / --restricted shape"),
+  -             // --- near-miss guards: must NOT fire ---
+  -             ("sub_agent", &[], false, "empty list disallows nothing"),
+  -             (
+  -                 "sub_agent",
+  -                 &["bash", "web_search"],
+  ... (41 more lines)
+ ✗ (1ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn builtin_tool_names_i… ✓ (5ms)
+  3 tools completed in 15.7s (2 ✓, 1 ✗)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I swapped old_text/new_text in that call. Retrying correctly:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (2 → 61 lines)
+  +     #[test]
+  +     fn tool_name_disallowed_matches_whole_names_only() {
+  +         // Both directions in one table: a discriminator tested only on the
+  +         // side that fires is vacuous green, and this file's history is
+  +         // discriminators pointed at the wrong input.
+  +         let cases: &[(&str, &[&str], bool, &str)] = &[
+  +             // --- must fire ---
+  +             ("sub_agent", &["sub_agent"], true, "exact match"),
+  +             (
+  +                 "shared_state",
+  +                 &["sub_agent", "shared_state"],
+  +                 true,
+  +                 "exact match, not first in list",
+  +             ),
+  +             ("bash", &["bash"], true, "the --lite / --restricted shape"),
+  +             // --- near-miss guards: must NOT fire ---
+  +             ("sub_agent", &[], false, "empty list disallows nothing"),
+  +             (
+  +                 "sub_agent",
+  +                 &["bash", "web_search"],
+  ... (41 more lines)
+ ✓ (1m 17s)
+  +     #[test]
+  +     fn tool_name_disallowed_matches_whole_names_only() {
+  +         // Both directions in one table: a discriminator tested only on the
+  +         // side that fires is vacuous green, and this file's history is
+  +         // discriminators pointed at the wrong input.
+  +         let cases: &[(&str, &[&str], bool, &str)] = &[
+  +             // --- must fire ---
+  +             ("sub_agent", &["sub_agent"], true, "exact match"),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 26s (2 ✓)
+
+Step 1 test passes. Now the checkpoint the reverted attempt skipped — full green before any wiring:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (44.7s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Step 1 is committable on its own. Now step 2(a) — gating the push:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool(se… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '942,956p' src/agent_buil… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:941..957 ✓ (1ms)
+  3 tools completed in 4.9s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
