@@ -2056,6 +2056,12 @@ read as "checked; clean"):
   8. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
      the whole reachable log can span a day or two rather than the weeks a commit count
      suggests. The window line above states the depth measured; read it, don't infer it.
+  9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
+     fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
+     verdict, no ledger row, no census figure and no --max-runs selection: those commits
+     are still NOT selected, because selection runs UPSTREAM of depth. It is the number
+     the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
+     widening is the half that can manufacture a false denominator.
 """
 
 
@@ -2552,10 +2558,21 @@ def main(argv):
     if args.test:
         return run_self_tests()
 
+    # A flag that is accepted and then silently does nothing is the "capability with a
+    # description and no consumer" shape this repo has reverted tasks over. --src-census
+    # rides on the census walk, so without --census there is nothing to ride: say so
+    # rather than exiting 0 having measured nothing. Same refusal as --resume/--record.
+    if args.src_census and not args.census:
+        print(
+            "--src-census needs --census: it counts rows from the census walk, so "
+            "there is nothing for it to scan on its own.",
+            file=sys.stderr,
+        )
+        return 2
+
     if not args.census and not args.commit and args.max_runs is None:
         parser.print_help()
         return 2
-
     root = repo_root()
     status = 0
 
@@ -2594,6 +2611,16 @@ def main(argv):
         )
         print(render_census(rows, summary, window, args.limit, note,
                             shape_split=shape_split))
+        # #870, Day 188: the src+tests readability measurement. DEFAULT OFF, and the
+        # branch is the whole regression guard -- without the flag not one byte of the
+        # census above or below changes, which is what every prior session's figures
+        # were read from. The resolver is injected here, at the ONE call site, so
+        # `src_census_fix_loop` stays pure and table-testable with no git.
+        if args.src_census:
+            src_counts = src_census_fix_loop(
+                rows, lambda sha: commit_src_test_readability(root, sha)
+            )
+            print(render_src_census(src_counts, window))
         status = 0
 
     if args.max_runs is not None:
