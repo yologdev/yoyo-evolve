@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by checking the current state of the code and CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---L…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "child_tool_set" src/too… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.9s (2 ✓)
+
+The code landed correctly; only the docs are missing. Let me read the actual implementation before writing about it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1375,1450p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1790,1880p' src/tools.rs ✓ (4ms)
+ ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me see the full doc comment and locate the two now-false sentences in CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1400p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "887" CLAUDE.md | head -… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 6ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Grep dumped a 15k-char line. Let me locate the two stale sentences with narrow context instead.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "#887's status[^.]*\.\{0… ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.5s (2 ✓)
+
+Now I have the exact stale text. Let me verify the facts I'm about to assert before writing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o "res… (5 lines) ✓ (8ms)
+ ✓ (22ms)
+  2 tools completed in 23ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+Confirmed: three production sites now (definition, parent retain :927, child retain tools.rs:1404), contradicting the "exactly two" claim. Let me check the (#887) clause wording before correcting it.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -o ".\{120\}(#887).\{200\}"… ✓ (7ms)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "887" src/cli.rs | head ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the exact stale clause is clear. Let me find the end of the src/tools.rs bullet to append the new documentation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- tests/module_si… ✓ (6ms)
+  2 tools completed in 3.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All facts verified. Now the first doc edit — appending the src/tools.rs bullet content:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 2 lines)
+  - `src/tools.rs`'s register entry moved **3651 → 3842** in the same diff rather than absorbing the drift, pasted from what the gate itself printed.
+  + `src/tools.rs`'s register entry moved **3651 → 3842** in the same diff rather than absorbing the drift, pasted from what the gate itself printed. **Day 188 (#887 step 2) — a dispatched sub-agent's child tools honour the PARENT's disallow list, so `--restricted` no longer leaves command execution one `sub_agent` hop away.** The measured defect: `--restricted` folds `RESTRICTED_REMOVED_TOOLS` into `config.disallowed_tools`, the parent's own `retain` at `agent_builder.rs:927` drops `bash`, and … [yoyo: 3794 more bytes elided — diff lines are capped at 500 bytes]
+    - `smart_edit.rs`
+ ✓ (1m 16s)
+  - `src/tools.rs`'s register entry moved **3651 → 3842** in the same diff rather than absorbing the drift, pasted from what the gate itself printed.
+  + `src/tools.rs`'s register entry moved **3651 → 3842** in the same diff rather than absorbing the drift, pasted from what the gate itself printed. **Day 188 (#887 step 2) — a dispatched sub-agent's child tools honour the PARENT's disallow list, so `--restricted` no longer leaves command execution one `sub_agent` hop away.** The measured defect: `--restricted` folds `RESTRICTED_REMOVED_TOOLS` into `config.disallowed_tools`, the parent's own `retain` at `agent_builder.rs:927` drops `bash`, and … [yoyo: 3794 more bytes elided — diff lines are capped at 500 bytes]
+    - `smart_edit.rs`
+
+Now the second edit — correcting the two now-false sentences in the cli.rs bullet, recording rather than erasing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - **#887's status, verified against the tree rather than inherited from a receipt (Day 188):** the sub-agent hop is **still open**. The 10:51 commit landed the *pure* half — `tool_name_disallowed`, sequenced pure-function-first after the first attempt was reverted for building the wiring before its 12-line core — and `grep -n tool_name_disallowed src/*.rs` returns exactly **two** sites: the definition and the parent's own retain at ~:927. `build_sub_agent_tool` does **not** consult it, so a di… [yoyo: 185 more bytes elided — diff lines are capped at 500 bytes]
+  + **#887's status, verified against the tree rather than inherited from a receipt (Day 188):** the sub-agent hop is **still open**. The 10:51 commit landed the *pure* half — `tool_name_disallowed`, sequenced pure-function-first after the first attempt was reverted for building the wiring before its 12-line core — and `grep -n tool_name_disallowed src/*.rs` returns exactly **two** sites: the definition and the parent's own retain at ~:927. `build_sub_agent_tool` does **not** consult it, so a di… [yoyo: 2190 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 18s)
+  - **#887's status, verified against the tree rather than inherited from a receipt (Day 188):** the sub-agent hop is **still open**. The 10:51 commit landed the *pure* half — `tool_name_disallowed`, sequenced pure-function-first after the first attempt was reverted for building the wiring before its 12-line core — and `grep -n tool_name_disallowed src/*.rs` returns exactly **two** sites: the definition and the parent's own retain at ~:927. `build_sub_agent_tool` does **not** consult it, so a di… [yoyo: 185 more bytes elided — diff lines are capped at 500 bytes]
+  + **#887's status, verified against the tree rather than inherited from a receipt (Day 188):** the sub-agent hop is **still open**. The 10:51 commit landed the *pure* half — `tool_name_disallowed`, sequenced pure-function-first after the first attempt was reverted for building the wiring before its 12-line core — and `grep -n tool_name_disallowed src/*.rs` returns exactly **two** sites: the definition and the parent's own retain at ~:927. `build_sub_agent_tool` does **not** consult it, so a di… [yoyo: 2190 more bytes elided — diff lines are capped at 500 bytes]
+
+Both doc edits are in. Now let me verify the evaluator's exact failing checks now pass, and run the full gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== evaluator grep 1 (was …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (8ms)
+ ✓ (194ms)
+  2 tools completed in 195ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Module-size gate passes. Let me confirm it prints zero warnings (stderr), then run the full gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (177ms)
+ ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ec… ✓ (1m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 22s (3 ✓)
+
+All green. Let me confirm the aggregate across every test binary and verify no failures anywhere:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✗ (2m 0s)
+    │ Command timed out after 120s
+
+  ⚡ auto-retrying after tool error (attempt 1/2)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That timed out from running cargo test twice. Running once, capturing to a file:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test >/tmp/t.log 2>&1; ech… ✓ (1m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "^test result" /tmp/t.lo… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 45s (2 ✓)
+
+5702 passed, 0 failed. Now let me re-demonstrate the positive control as one atomic mutate→run→restore:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools.rs /tmp/tools.bak &…

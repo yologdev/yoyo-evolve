@@ -1,0 +1,200 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start with STEP 0 — pay the register debt before touching any source.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (192ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clean — 28 passed, zero warnings. Now let me read the actual code.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool" s… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,120p' src/agent_build…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1340,1440p' src/tools.rs ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 3.3s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Picking up: I have the register clean (28 passed, zero warnings). Now let me nail down the exact shapes before editing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '915,965p' src/agent_buil… ✓ (4ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+disallowed_tools is already a field on AgentConfig (line 860), and build_sub_agent_tool_at_depth already receives config. So no new parameter is needed — reading config.disallowed_tools is zero call-site churn and avoids two sources for one fact. Let me get the exact text.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1358,1396p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DirectoryRestrictions" … ✓ (4ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.6s (2 ✓)
+
+Now I have everything. Making the change — extract the child tool set and filter it with the existing predicate.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (13 → 1 lines)
+  -     let restrictions = &config.dir_restrictions;
+  -     let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
+  -         with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+  -         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+  -         with_read_guard_arc(maybe_guard_arc(
+  -             Arc::new(WriteFileTool::new()),
+  -             restrictions,
+  -         )),
+  -         with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),
+  -         maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions),
+  -         maybe_guard_arc(Arc::new(SearchTool::default()), restrictions),
+  -         Arc::new(WebSearchTool),
+  -     ];
+  +     let mut child_tools = child_tool_set(&config.dir_restrictions, &config.disallowed_tools);
+ ✓ (13.0s)
+  -     let restrictions = &config.dir_restrictions;
+  -     let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
+  -         with_read_guard_bash_arc(Arc::new(yoagent::tools::bash::BashTool::default())),
+  -         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+  -         with_read_guard_arc(maybe_guard_arc(
+  -             Arc::new(WriteFileTool::new()),
+  -             restrictions,
+  -         )),
+  ... (6 more lines)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I removed the vec; now I need to add the helper that holds it. Let me insert it above build_sub_agent_tool_at_depth.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1352,1390p' src/tools.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 51 lines)
+  + /// Build the tool set a dispatched sub-agent receives, honouring the parent's
+  + /// `disallowed_tools` list.
+  + ///
+  + /// #887: `--restricted` folds its removals into `config.disallowed_tools`, and
+  + /// the parent filters its own tool vec with `tool_name_disallowed` before
+  + /// handing it to yoagent. The child was built from a hardcoded vec that
+  + /// consulted nothing, so `--restricted` removed `bash` from the parent while
+  + /// command execution stayed exactly one `sub_agent` hop away. The rule is
+  + /// stated once, in `agent_builder::tool_name_disallowed`, and read here — never
+  + /// a second predicate, because two copies of a rule agree the day they are
+  + /// written and diverge forever after (the `significant_braces` precedent).
+  + ///
+  + /// **An empty `disallowed` list returns the vec byte-identically** — same tools,
+  + /// same order — which is every user who has passed neither `--restricted` nor
+  + /// `--disallowed-tools`, and is the whole regression surface.
+  + ///
+  + /// The filter is a **narrowing**: it can only ever remove a tool the parent was
+  + /// already told not to have. That is deliberate for `--lite` too, which
+  + /// populates the same field via `compute_lite_disallowed_tools` — a lite
+  + /// session's sub-agent now loses whatever lite disallows, which is consistent
+  ... (31 more lines)
+ ✓ (1m 58s)
+  + /// Build the tool set a dispatched sub-agent receives, honouring the parent's
+  + /// `disallowed_tools` list.
+  + ///
+  + /// #887: `--restricted` folds its removals into `config.disallowed_tools`, and
+  + /// the parent filters its own tool vec with `tool_name_disallowed` before
+  + /// handing it to yoagent. The child was built from a hardcoded vec that
+  + /// consulted nothing, so `--restricted` removed `bash` from the parent while
+  + /// command execution stayed exactly one `sub_agent` hop away. The rule is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 34s (2 ✓)
+
+Now the tests. Let me find the anchor and check the real tool names.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_build_sub_agent… ✓ (3ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (6 → 75 lines)
+            let (tool, _state) = build_sub_agent_tool(&config);
+            assert_eq!(tool.name(), "sub_agent");
+  +     }
+  + 
+  +     /// #887: a dispatched sub-agent's child tools honour the parent's disallow
+  +     /// list, so `--restricted` closes the shell hop instead of leaving command
+  +     /// execution one `sub_agent` dispatch away.
+  +     ///
+  +     /// Asserts on child tool NAMES only, never on `SharedState` contents —
+  +     /// `get`/`set` are `async` in yoagent 0.18.1 and cannot be driven from a
+  +     /// plain `#[test]` (this is what reverted the first attempt, #890).
+  +     #[test]
+  +     fn child_tool_set_honours_the_parents_disallow_list() {
+  +         let dirs = cli::DirectoryRestrictions::default();
+  +         let names = |d: &[String]| -> Vec<String> {
+  +             child_tool_set(&dirs, d)
+  +                 .iter()
+  +                 .map(|t| t.name().to_string())
+  +                 .collect()
+  +         };
+  ... (54 more lines)
+ ✓ (1m 56s)
+            let (tool, _state) = build_sub_agent_tool(&config);
+            assert_eq!(tool.name(), "sub_agent");
+  +     }
+  + 
+  +     /// #887: a dispatched sub-agent's child tools honour the parent's disallow
+  +     /// list, so `--restricted` closes the shell hop instead of leaving command
+  +     /// execution one `sub_agent` dispatch away.
+  +     ///
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (25.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 42s (2 ✓)
+
+Test passes and the name literal was right. Now the positive control — one atomic mutate→run→restore.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && \ (7 lines) ✓ (24.5s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control is exactly right: it failed at line 1838 — the firing assertion — while the near-miss assert_eq! (which runs before it) stayed green. That's the direction proving the guard tests the pass-through, not the fix. Restore verified byte-identical (md5 OK, 0 markers).
+
+Now the full gate:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (16.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 42s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 4s (2 ✓)
+
+The module-size gate fired as expected (tools.rs grew). Let me get the line the gate itself prints — never hand-typed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (188ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate printed its own remedy. Pasting it verbatim (+109 is past the 100-line grace band — the gate working as designed):
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/tools.rs"' tests/m… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/tests/module_size.rs (1 → 1 lines)
+  -     ("src/tools.rs", 3845),
+  +     ("src/tools.rs", 3954),
+ ✓ (1m 17s)
+  -     ("src/tools.rs", 3845),
+  +     ("src/tools.rs", 3954),
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (184ms)
+  3 tools completed in 1m 22s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

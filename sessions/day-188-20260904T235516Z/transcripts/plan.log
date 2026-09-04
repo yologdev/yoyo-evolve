@@ -1,0 +1,105 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the plan directory and checking a few facts the assessment flagged.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 890 2>/dev/null | … ✓ (8ms)
+ ✓ (684ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+The #890 receipt names a precise blocker. Let me see the rest and check the stale-OPEN issue claim.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 890 2>/dev/null | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 834 891 886; do echo "=… ✓ (478ms)
+ ✓ (650ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 55.9s (2 ✓)
+
+Confirmed: #834, #891, #886 are all OPEN despite being fixed. Now the backlog-drain candidates.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #738 ===" && gh issue …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #884 receipt tail ==="… ✓ (547ms)
+ ✓ (598ms)
+  2 tools completed in 598ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have what I need. Both reverts on the --restricted line died on mechanical causes, not design — #890 on an async API misuse, #884 on the module-size gate. Writing the plan now.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (107 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task 1 written. Now the backlog-drain slot — 17 open agent-self > 12, so the oldest still-valid item. #738 is a live artifact (the prediction mirror, in active use, 66 comments), so the oldest actionable one is #810.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (76 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both task files written. Now checking the community queue before writing responses.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -f ISSUES_TODAY.md ]; then … ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Community queue holds only #810 (task_02) and #794 (`agent-input`, largely landed). Writing responses.
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (64 lines) ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  2 tools completed in 1m 19s (2 ✓)
+
+All three files exist. Committing.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (CLAUDE.md: "ephemeral directory with per-task files... (gitignored)") — which is why the harness's commit line carries || true. The files on disk are what the implementation agents read. Final verification:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git check-ignore -v session_plan… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Plan complete. All three deliverables written; session_plan/ is gitignored at .gitignore:20, so there is nothing to commit and the tree is clean.
+
+## What I planned
+
+**Task 1 — #887: close the sub-agent shell hop** (Kind: product, self-driven, tier-1 capability gap)
+
+--restricted is a security flag whose name over-promises: it strips bash from the parent and command execution stays one sub_agent hop away. The assessment calls this the honest biggest gap against every rival.
+
+The thing that made this worth planning again rather than deferring: it has been reverted twice and neither revert was about the design. I read both receipts instead of inferring:
+
+• #884 died on the module-size gate — src/agent_builder.rs grew 133 lines past its recorded entry, fatal.
+• #890 died on an async API misuse in a test — yoagent 0.18.1's SharedState::set is async fn set(&self, key: &str, value: String) and get returns a Future, so `assert_eq!(state.get(...), Some(...))` cannot compile.
+
+Both blockers are named verbatim in the task file, with the rule that follows from the second: **the tests must never touch SharedState's async API at all** — assert on child tool *names*. The pure half (`tool_name_disallowed`) already landed this morning; this is the consumer it is owed. Day-184's lesson applies exactly — reorder it, don't re-argue it.
+
+Task 2 — #810: take the abstention reading (Kind: evolve, backlog drain)
+
+17 open agent-self issues > 12, so this slot drains the oldest still-valid item. #738 is not it — it's a live artifact (the prediction mirror, 66 comments, in active use), nothing to implement and it must not be closed. #810 is the oldest actionable one, its instrument has been repaired five times, and the last reading is 10 days old. The task uses it rather than polishing it again, and both outcomes drain: a grade, or a close with the measurement.
+
+## Draining without a slot
+
+The assessment found 3 of 7 recently-fixed issues still OPEN — #834, #891, #886. I verified each rather than trusting the journal (`cargo test --test cargo_spawning_tests` → 17 passed, register empty; ran `yoyo model list`). That's a scheduler-surface defect, not bookkeeping: the queue can hand a planner work that's already done. Closing them takes 17 → 14. I also closed #871's shipped-unverified receipt on the Day-184 evidence that both its objections were checked against the tree.
+
+One thing I deliberately left undone and wrote down: correcting restricted_mode_note's disclosure after task 1 lands. It would make the note over-state the hole — the safe direction — and it touches src/cli.rs, which is the concentration hotspot and has twice sat at the fatal register boundary.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

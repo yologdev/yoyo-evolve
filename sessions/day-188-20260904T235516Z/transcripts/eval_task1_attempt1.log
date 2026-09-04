@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s… ✓ (3ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -8 &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,645p' src/agent_buil… ✓ (5ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "child_tool_set\|honours…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1430,1470p' src/tools.rs ✓ (3ms)
+ ✓ (6ms)
+  6 tools completed in 25.5s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict written to session_plan/eval_task_1.md.
+
+Verdict: FAIL — on docs only; the implementation itself is sound.
+
+What's correct:
+• child_tool_set filters with the existing tool_name_disallowed at a single retain — no second predicate, matching the `significant_braces` precedent the task demanded.
+• Reading config.disallowed_tools directly instead of threading a new parameter is a smaller edit than the task described and yields the identical value (build_sub_agent_tool(self) already passes the parent's AgentConfig, and agent_builder.rs:926 retains on that same field). Given #884 died on module-size growth, fewer lines is the right call, not a deviation to punish.
+• The nested sub_agent push at :1438 happens **after** the filter, so the #715 sub_agent/shared_state pairing structurally cannot break — and the test asserts exactly that.
+• Tests are shaped as asked: anti-vacuous assertion first, near-miss guard as a full-vector assert_eq! against a literal (not a tautological second call), firing case verifying only bash was removed.
+• Tests avoid async `SharedState::get/set` entirely — the #890 blocker is respected.
+• Register line 3845 → 3954 matches the file's actual length.
+
+Why it fails: the CLAUDE.md bullet the task listed as a deliverable is absent — git show --stat HEAD shows only two files, working tree clean. That would be borderline on its own, but CLAUDE.md currently states "#887's status, verified against the tree… the sub-agent hop is **still open**" and "the `(#887)` clause in `restricted_mode_note` is **correct, not stale**." Both are now false, in the file re-injected as authoritative context every session. That is the stale-claim shape this repo has paid for repeatedly (eight sessions on src/gasp.rs), and it will send the next session to re-do work that already landed.
+
+The remedy is small and doesn't touch source: add the src/tools.rs bullet (child set honours the parent's disallow list, the empty-list near-miss guard, the --lite narrowing, and the stated limit that this closes the hop without making --restricted a sandbox), and mark those two cli.rs-bullet sentences superseded rather than erasing them.
+
+  watch: no files changed this turn — skipping
+
