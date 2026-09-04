@@ -249,7 +249,10 @@ pub fn cli_help_text() -> String {
         s,
         "                    agent. NOT a sandbox — a sub_agent builds its own bash. File"
     );
-    let _ = writeln!(s, "                    tools remain — use --read to stop writes");
+    let _ = writeln!(
+        s,
+        "                    tools remain — use --read to stop writes"
+    );
     let _ = writeln!(
         s,
         "  --trust-project   Start MCP servers declared by a project-local .yoyo.toml"
