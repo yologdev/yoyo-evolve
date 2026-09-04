@@ -1,0 +1,191 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by sealing the prediction — before opening src/hooks.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Round 93 confirmed (max in ledger = 92). Sealing the prediction before opening the file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && date -u +%Y-%m-%dT%H:%M:%SZ && w… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (50 lines) ✓ (50ms)
+  2 tools completed in 46.6s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Prediction sealed (round 93, 4 hypotheses). Now the mirror to #738, then reading the file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (24 lines) ✓ (675ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Mirror landed. Now opening the file — targeted at the four bets.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/hooks.rs && grep -n "c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,200p' src/hooks.rs ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,340p' src/hooks.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,340p' src/hooks.rs &… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=316 && NR<=332' src/hoo… ✓ (5ms)
+  3 tools completed in 28.0s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "kill\|timed out\|Hook.*… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+h1 is a MISS — and it's the pre-registered likely miss. Timeout returns Err, and pre_execute maps Err(e) => Err(e), so a timed-out pre-hook blocks. Fails closed, not open. Now h2 (empirical) and h3.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/hooks.rs &… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && cat > nulprobe.rs <<'EOF' (25 lines) ✓ (197ms)
+  2 tools completed in 10.1s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four graded. 3 hit / 1 miss — and h1 was the pre-registered likely miss. h2 verified empirically (InvalidInput: nul byte found, control spawns fine, NUL survives the cap).
+
+Now the fix. h0 and h2 are one defect by mechanism: the value handed to a hook through TOOL_OUTPUT is never sanitized for the env-var channel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncated_output\|Trunc… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (1 → 65 lines)
+  + /// Chars of tool output handed to a hook through `TOOL_OUTPUT` by
+  + /// [`hook_tool_output`].
+  + ///
+  + /// A **judgment threshold, not a measurement**: nothing measured says 1000 is
+  + /// right. It is the historical value (`output.chars().take(1000)`) and is kept
+  + /// verbatim so no existing hook sees a different amount of text — this change
+  + /// is about how the cut and the channel are *reported*, never about how much is
+  + /// sent. The unit is **chars**, matching the value it replaces; it is
+  + /// deliberately *not* switched to bytes like [`HOOK_STDERR_HEAD_BYTES`], since
+  + /// changing the unit would silently move the budget for every hook that exists.
+  + const HOOK_TOOL_OUTPUT_MAX_CHARS: usize = 1000;
+  + 
+  + /// Prepare tool output for the `TOOL_OUTPUT` environment variable of a shell hook.
+  + ///
+  + /// Two things the raw output cannot do, both properties of the **channel** rather
+  + /// than of anything a hook author controls:
+  + ///
+  + /// 1. **A NUL byte is unrepresentable.** `execve`'s `envp` is an array of
+  + ///    NUL-terminated strings, so a value containing `\0` cannot be passed at all;
+  + ///    Rust's `Command` converts env values to `CString` at spawn time and returns
+  ... (45 more lines)
+ ✓ (15.2s)
+  + /// Chars of tool output handed to a hook through `TOOL_OUTPUT` by
+  + /// [`hook_tool_output`].
+  + ///
+  + /// A **judgment threshold, not a measurement**: nothing measured says 1000 is
+  + /// right. It is the historical value (`output.chars().take(1000)`) and is kept
+  + /// verbatim so no existing hook sees a different amount of text — this change
+  + /// is about how the cut and the channel are *reported*, never about how much is
+  + /// sent. The unit is **chars**, matching the value it replaces; it is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.7s (2 ✓)
+
+Expected — definition without consumer. Wiring the call site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (2 → 4 lines)
+  -         // Truncate output to 1000 chars for the env var
+  -         let truncated_output: String = output.chars().take(1000).collect();
+  +         // Cap and escape for the env-var channel: marks its own cut and makes a
+  +         // NUL representable, so a binary-carrying tool output can no longer make
+  +         // the spawn fail and silently skip the user's hook. See `hook_tool_output`.
+  +         let truncated_output = hook_tool_output(output, HOOK_TOOL_OUTPUT_MAX_CHARS);
+ ✓ (1m 45s)
+  -         // Truncate output to 1000 chars for the env var
+  -         let truncated_output: String = output.chars().take(1000).collect();
+  +         // Cap and escape for the env-var channel: marks its own cut and makes a
+  +         // NUL representable, so a binary-carrying tool output can no longer make
+  +         // the spawn fail and silently skip the user's hook. See `hook_tool_output`.
+  +         let truncated_output = hook_tool_output(output, HOOK_TOOL_OUTPUT_MAX_CHARS);
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/ho… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (125 lines) ✓ (26.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 57.5s (2 ✓)
+
+5/5 green. Positive control — one atomic mutate→run→restore, with the marker in place so tests/neutered_guards.rs enforces the restore.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/hooks… (12 lines) ✓ (25.3s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 5472 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::collision_guard_skipped_message_escapes_both_interpolated_strings ... ok
+test agent_builder::tests::collision_guard_skipped_message_is_glyph_free_when_plain ... ok
+test agent_builder::tests::builtin_tool_names_keeps_the_builtins_build_tools_does_not_register ... ok
+test agent_builder::tests::collision_guard_skipped_message_leaves_clean_inputs_byte_identical ... ok
+test agent_builder::tests::collision_guard_skipped_message_names_server_guard_and_symptom ... ok
+test agent_builder::tests::collision_guard_skipped_message_no_longer_claims_connect_will_fail ... ok
+test agent_builder::tests::connections_lost_note_table ... ok
+test agent_builder::tests::every_registered_builtin_tool_is_named_in_builtin_tool_names ... ok
+test agent_builder::tests::external_tool_failure_note_cuts_long_ids_on_a_char_boundary ... ok
+test agent_builder::tests::external_tool_failure_note_table ... ok
+test agent_builder::tests::every_rebuild_arm_resets_the_counter_it_invalidated ... ok
+test agent_builder::tests::failure_note_fires_once_then_the_store_is_empty ... ok
+test agent_builder::tests::both_mcp_loops_route_through_the_retrying_preflight ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+te...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control passed exactly as designed: 4 red, 1 green — the near-miss guard (byte-identical pass-through) stayed green, which is the direction that proves it tests the pass-through rather than the fix. Restored with 0 markers left.
+
+The remaining failure is the blind-round gate demanding step 3 — the grade line. That's correct behaviour.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (203ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Gate green. Now filing the two unfixed finds with pasteable remedies, then CLAUDE.md.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (30 lines) ✓ (1.1s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - The existing 1000-char `TOOL_OUTPUT` input cap is correct and unchanged.
+  + The existing 1000-char `TOOL_OUTPUT` input cap is correct and unchanged. **Day 188 (blind round 93, the #1 dark room — 39 snapshots stale, never studied) closed #844's missing twin: the value handed to a hook through `TOOL_OUTPUT` was never prepared for the ENV-VAR CHANNEL.** That sentence above — *"correct and unchanged"* — is **superseded, recorded rather than erased**: it was true of what #844 changed and false as a description of the cap, and the tell is sitting in #844's own paragraph… [yoyo: 5328 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (1m 15s)
+  - The existing 1000-char `TOOL_OUTPUT` input cap is correct and unchanged.
+  + The existing 1000-char `TOOL_OUTPUT` input cap is correct and unchanged. **Day 188 (blind round 93, the #1 dark room — 39 snapshots stale, never studied) closed #844's missing twin: the value handed to a hook through `TOOL_OUTPUT` was never prepared for the ENV-VAR CHANNEL.** That sentence above — *"correct and unchanged"* — is **superseded, recorded rather than erased**: it was true of what #844 changed and false as a description of the cap, and the tell is sitting in #844's own paragraph… [yoyo: 5328 more bytes elided — diff lines are capped at 500 bytes]
+  2 tools completed in 1m 46s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+  ⚠ memory full (20) — not auto-saving; use /forget to make room
+

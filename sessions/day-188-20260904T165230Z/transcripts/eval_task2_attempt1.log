@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this documentation task against the tree.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in RESTRICTED_REMOVED_TOOL… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All needles now non-zero. Now the load-bearing claim: the diff says #887 is still open (contradicting the task file's assumption that it was fixed). Verify against the tree.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== tool_name_disallowed s… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_name_disallowed" s… ✓ (5ms)
+  2 tools completed in 3.0s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verified everything I need. The key check — the diff's #887 status claim, which the task explicitly warned must be verified against the tree rather than inherited from the assessment:
+
+• tool_name_disallowed is defined at agent_builder.rs:81 and consumed at exactly two live sites: the parent's retain at :927 and its own test. 
+• build_sub_agent_tool is pushed at :955 — after the retain — and src/tools.rs builds the sub-agent with `disallowed_tools: vec![]`, so it never consults it.
+• RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash"] — one element, as documented.
+
+So the diff correctly wrote "#887 is still open", contradicting the task file's assumption that it was fixed at 10:51 — which is exactly the "write what the tree says, not what the receipt says" instruction. The ~:927 / ~:955 line numbers in the doc are accurate to the byte.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only HEAD~1 2>/d… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exactly the two permitted files — no src/cli.rs, src/help.rs or src/agent_builder.rs, as the task required. Since no src/ file moved, the module-size gate is inert by construction.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 16s)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+Summary of what I actually verified:
+
+The objection is closed. Re-ran the task's own grep table on CLAUDE.md: all five needles (--restricted, RESTRICTED_REMOVED_TOOLS, restricted_disallowed_tools, restricted_mode_effects, #887) went 0 → 1.
+
+The load-bearing clause was verified against the tree, not inherited. The task file asserted #887 was fixed at 10:51 and told the implementer to check that claim rather than copy it. The diff checked and wrote the opposite — that #887 is still open — and the tree agrees: tool_name_disallowed (agent_builder.rs:81) has exactly one live consumer, the parent's `retain` at `:927`; `build_sub_agent_tool` is pushed at `:955`, after it; and src/tools.rs builds the sub-agent with disallowed_tools: vec![], so it never consults the predicate. The (#887) clause in `restricted_mode_note` is correct, not stale. That is the right outcome — a false status claim in the file re-injected as authoritative context every session is the one doc error that guarantees its own survival.
+
+The mechanism paragraph is accurate to the byte. RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash"] — one element, as documented; the cited ~:927 / ~:955 line numbers match exactly, which matters because that ordering is the entire reason sub_agent must not be added back.
+
+**Scope was respected.** `git diff --name-only` returns only `CLAUDE.md` and `docs/src/troubleshooting/safety.md`. No `src/cli.rs`, `src/help.rs` or `src/agent_builder.rs`, so the previously-PASSing Rust half was not re-litigated. Because no src/ file moved, the module-size gate is inert by construction — I did not spend time re-running it.
+
+One observation, not a defect: the user-facing section is a genuine second surface rather than a duplicated rule — CLAUDE.md carries the mechanism and issue status, safety.md carries only what a user needs (what is removed, what is not confined, --read for writes). That is the right split; two copies of the same rule would have been the divergence risk the task warned about.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

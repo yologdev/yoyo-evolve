@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll judge this diff against the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,130p' src/hooks.rs ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hoo… (9 lines) ✓ (34ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scope_limit" src/comman… ✓ (3ms)
+  3 tools completed in 21.4s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '318,335p' src/commands_r… ✓ (4ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1m 15s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 32s (2 ✓)
+
+Verdict written to session_plan/eval_task_1.md.
+
+PASS — the round followed its own protocol and the fix is properly wired.
+
+What I actually checked:
+
+1. Ledger integrity (the gate that reverts the task) — `dreams/experiments.jsonl carries both round-93 lines keyed on (93, src/hooks.rs): the prediction with 4 hypotheses (each with provenance` and a pre-set derivable) and the result with 4 hypothesis_grades. A prediction with no grade is fatal to tests/blind_round_grades.rs, and tests pass.
+
+2. **`scope_limit reaches its consumer** — it sits on the result line, and commands_risk_epistemic.rs:327 reads scope_limit` off the *same* line it reads `graded` from, so #839's `PartiallyGraded` tier fires and the round does not credit a whole-file study for ~470 of 1338 lines read.
+
+3. forgotten_touchpoints — hook_tool_output and HOOK_TOOL_OUTPUT_MAX_CHARS are both consumed at `src/hooks.rs:445, replacing the old inline output.chars().take(1000), with truncated_output.as_str() still feeding the same TOOL_OUTPUT` entry. No dangling definition, no enum variant, no rename.
+
+4. The near-miss guard is real — hook_tool_output_ordinary_output_is_byte_identical uses a whole-string assert_eq! over five shapes including exactly-at-budget, which is the entire existing regression surface; the boundary is pinned on both sides and the marker's dropped count is asserted against reality.
+
+5. Docs — CLAUDE.md's hooks.rs bullet supersedes #844's now-false "the existing 1000-char TOOL_OUTPUT input cap is correct and unchanged" rather than erasing it, and states three limits.
+
+Minor, non-failing notes: scope_limit was placed only on the result line rather than both as the task suggested (harmless — the consumer reads it from the graded line), and I could not verify the #738 mirror comment from here, which is a process step rather than a code-correctness matter.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
