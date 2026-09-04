@@ -247,12 +247,46 @@ fn diff_header_path(line: &str) -> Option<String> {
         }
     }
     let rest = line.strip_prefix("diff --git a/")?;
-    let mut parts = rest.match_indices(" b/");
-    let (at, _) = parts.next()?;
-    if parts.next().is_some() {
-        // More than one candidate separator: ambiguous, refuse to guess.
-        return None;
-    }
+    // Candidate separators. Every offset is the start of an ASCII match, so every
+    // index derived from one lands on a char boundary (rule #250 — never a raw byte
+    // index into a `&str`).
+    let candidates: Vec<usize> = rest.match_indices(" b/").map(|(at, _)| at).collect();
+    let at = match candidates.len() {
+        0 => return None,
+        // Exactly one candidate: nothing to disambiguate, and this stays byte-identical
+        // to the pre-#830 behaviour. That is every ordinary header — *including a
+        // rename*, whose two paths legitimately differ, which is why the equal-paths
+        // rule below must never reach this arm.
+        1 => candidates[0],
+        _ => {
+            // #830: the path itself contains a literal " b/", so several offsets split
+            // the header and the old code refused outright — dropping the file from
+            // `files_changed`, which then wrecked the scope, the category weights, the
+            // >3-file threshold and the summary focus (the `26defce9` class, one shape
+            // over).
+            //
+            // The split point is *checkable* rather than a guess: for a non-rename
+            // header git emits the same path on both sides, so keep only the candidates
+            // whose left and right halves are byte-equal. Exactly one match resolves the
+            // header; zero (an ambiguous *rename*, whose paths genuinely differ) or
+            // several leave it refused exactly as before.
+            //
+            // This is a pure NARROWING of the refusal: the only inputs whose behaviour
+            // moves are ones that already returned `None`. Do not "simplify" this into
+            // taking the first or last candidate — a confidently wrong path is worse
+            // than a dropped one, which is the whole reason the refusal exists (round
+            // 81), and it would invent a path that is not in the diff.
+            let mut equal = candidates
+                .iter()
+                .copied()
+                .filter(|&at| rest[..at] == rest[at + " b/".len()..]);
+            let only = equal.next()?;
+            if equal.next().is_some() {
+                return None;
+            }
+            only
+        }
+    };
     let new_path = &rest[at + " b/".len()..];
     if new_path.is_empty() {
         return None;
@@ -1023,6 +1057,107 @@ new mode 100755
         assert_eq!(msg, "feat(keep): update code");
     }
 
+    /// #830: a path containing a literal " b/" reaches the message instead of being
+    /// dropped. A mode-only change is the shape that exercises it — the `diff --git`
+    /// header is the file's ONLY mention (no `---`/`+++`), so the header's ambiguity
+    /// used to delete the file from `files_changed` entirely, taking the scope, the
+    /// category weights, the >3-file threshold and the summary focus with it.
+    ///
+    /// Asserted at the emission point (the `String` a caller receives), never on
+    /// `diff_header_path` one layer below.
+    #[test]
+    fn a_path_containing_the_separator_reaches_the_message() {
+        let diff = "\
+diff --git a/src/a b/c.rs b/src/a b/c.rs
+old mode 100644
+new mode 100755
+";
+        // Anti-vacuous: the fixture must really be ambiguous, or this test could pass
+        // by agreeing with itself on a header that was never in question.
+        let header = diff.lines().next().unwrap();
+        assert!(
+            header.matches(" b/").count() > 1,
+            "fixture is not ambiguous: {header}"
+        );
+
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(c): update code");
+    }
+
+    /// The residue, pinned on purpose: an ambiguous *rename* names two genuinely
+    /// different paths, so no candidate split has byte-equal halves and the file is
+    /// still dropped (empty scope). Inventing a path that is not in the diff is worse
+    /// than dropping one — a later "improvement" has to face this assertion.
+    #[test]
+    fn an_ambiguous_rename_is_still_refused() {
+        let diff = "\
+diff --git a/has b/one.rs b/has b/two.rs
+similarity index 100%
+rename from has b/one.rs
+rename to has b/two.rs
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(): update code");
+    }
+
+    /// Near-miss guard: an ordinary path is byte-identical to before. This is every
+    /// commit anyone has ever made and the whole regression surface, so it is a
+    /// whole-string `assert_eq!` rather than a `contains`.
+    #[test]
+    fn an_ordinary_header_is_byte_identical() {
+        let diff = "\
+diff --git a/src/main.rs b/src/main.rs
+old mode 100644
+new mode 100755
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(main): update code");
+    }
+
+    /// Near-miss guard: a path with a plain SPACE but no " b/". git does not quote a
+    /// space, so this takes the unquoted branch with exactly one candidate separator —
+    /// which is precisely what makes it the case proving #830's change is a narrowing.
+    #[test]
+    fn a_spaced_path_without_the_separator_is_byte_identical() {
+        let diff = "\
+diff --git a/src/we ird.rs b/src/we ird.rs
+old mode 100644
+new mode 100755
+";
+        let msg = generate_commit_message(diff);
+        assert_eq!(msg, "feat(we ird): update code");
+    }
+
+    /// Near-miss guards for the two `/dev/null` branches, which share the walker with
+    /// the header path: an added file and a whole-file deletion are byte-identical.
+    #[test]
+    fn the_dev_null_branches_are_byte_identical() {
+        let added = "\
+diff --git a/new.rs b/new.rs
+new file mode 100644
+--- /dev/null
++++ b/new.rs
+@@ -0,0 +1,2 @@
++fn main() {}
++// hi
+";
+        assert_eq!(generate_commit_message(added), "feat(new): add changes");
+
+        let deleted = "\
+diff --git a/gone.rs b/gone.rs
+deleted file mode 100644
+--- a/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-fn main() {}
+-// bye
+";
+        assert_eq!(
+            generate_commit_message(deleted),
+            "refactor(gone): remove code"
+        );
+    }
+
     /// A rename WITH a content change. This one git does render with `---`/`+++`,
     /// carrying the *new* path on the `+++` side — so it was already recorded
     /// correctly before this round. The fixture is a regression guard, and the
@@ -1237,11 +1372,26 @@ index 94954ab..0000000
             ("Binary files a/x and b/x differ", None),
             ("@@ -1,2 +1,3 @@", None),
             ("", None),
-            // Ambiguous: a path containing the separator. Refuse rather than guess a
-            // path that is not in the diff — this degrades to the pre-round-81
-            // behaviour (file dropped), which is wrong but honest. **#830 is still
-            // open**: this row pins the refusal, not a fix.
-            ("diff --git a/has b/dir/f b/has b/dir/f", None),
+            // A path containing the separator (#830). This row used to assert `None` —
+            // it pinned the defect, not a decision, and is inverted deliberately rather
+            // than deleted quietly (a fixture asserting a known-wrong output that
+            // outlives its fix converts a defect into a green invariant). git emits the
+            // same path on both sides of a non-rename header, so exactly one of the
+            // three candidate splits has byte-equal halves and the header resolves.
+            (
+                "diff --git a/has b/dir/f b/has b/dir/f",
+                Some("has b/dir/f"),
+            ),
+            // The worked example from #830, with the separator twice inside one path.
+            (
+                "diff --git a/src/a b/c.rs b/src/a b/c.rs",
+                Some("src/a b/c.rs"),
+            ),
+            // The residue, kept on purpose: an ambiguous *rename* has two genuinely
+            // different paths, so no candidate split has equal halves and the file is
+            // still dropped. Inventing a path that is not in the diff is worse than
+            // dropping one — that is why the refusal exists, and it survives here.
+            ("diff --git a/has b/one.rs b/has b/two.rs", None),
             // Quoted headers (#829). This row used to assert `None` — it pinned the
             // defect, not a decision, and is replaced deliberately rather than
             // deleted quietly: git quotes *both* paths when either contains a
