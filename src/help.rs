@@ -243,13 +243,13 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "                    file tools to the working directory, and remove the"
+        "                    file tools to the working directory, and remove bash from this"
     );
     let _ = writeln!(
         s,
-        "                    command-running tools (bash, sub_agent). File tools remain —"
+        "                    agent. NOT a sandbox — a sub_agent builds its own bash. File"
     );
-    let _ = writeln!(s, "                    use --read to stop writes");
+    let _ = writeln!(s, "                    tools remain — use --read to stop writes");
     let _ = writeln!(
         s,
         "  --trust-project   Start MCP servers declared by a project-local .yoyo.toml"

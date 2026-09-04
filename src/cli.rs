@@ -1564,20 +1564,40 @@ pub(crate) fn restricted_mode_effects(
 ///   flag called `--restricted`, pointed at a stranger's repository, handing
 ///   back a live shell is not a missing feature: it is a *wrong belief about
 ///   confinement*, and nobody complains because nothing visibly breaks.
-/// - `sub_agent` — a dispatched sub-agent is built with its own tool set,
-///   including `bash` (`src/tools.rs` builds it independently of this list), so
-///   leaving it would make the whole restriction bypassable in one call.
-///   Removing `bash` alone is a fence with a gate in it.
 ///
-/// `web_search` is deliberately **not** here. It runs no local command, so
-/// network egress is a different question with a different answer, and folding
-/// it in would widen a security change past what its own argument supports.
+/// **`sub_agent` is deliberately NOT on this list, and its absence is the
+/// honest half of this flag rather than an oversight.** It was on it for one
+/// revision, and it was **inert**. This list has exactly one consumer — the
+/// retain in `AgentConfig::build_agent` (`src/agent_builder.rs:908`) — and the
+/// sub-agent tool is pushed *after* it, unconditionally, at `:936`; that file's
+/// own comment at `:880` already said `disallowed_tools` "couldn't catch" it.
+/// So listing it filtered nothing, while the help text and the startup note
+/// both asserted it had. A list entry that is dead at runtime is the
+/// "definition without an effective consumer" defect, and wearing a confinement
+/// claim over it is worse than the gap it pretends to close.
+///
+/// **So the gap is real, and it is stated wherever this flag speaks rather than
+/// implied: `--restricted` is a narrowing, NOT a sandbox.**
+/// `build_sub_agent_tool` hands the child its own raw
+/// `yoagent::tools::bash::BashTool` (`src/tools.rs:1388`), built with no
+/// reference to this list, so command execution is still one `sub_agent` hop
+/// away. Closing it needs the filter moved past that push **and** the child
+/// builder taught about the list — two files this slice is scoped out of, so it
+/// is filed as **#887** rather than half-done here. Anything added to this list
+/// must be checked against that same consumer first: `build_tools` builds the
+/// tools the retain can actually see, and nothing pushed after `:908` is
+/// reachable from here.
+///
+/// `web_search` is deliberately **not** here either. It runs no local command,
+/// so network egress is a different question with a different answer, and
+/// folding it in would widen a security change past what its own argument
+/// supports.
 ///
 /// This is a *tool* list, not a mode: `--restricted` is **not** `/read` mode.
 /// File tools (`write_file`, `edit_file`, `rename_symbol`) keep working — the
-/// flag fences *where* they may write (clause B) and removes *command
-/// execution*, and `--read` is still the way to stop writes.
-pub(crate) const RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash", "sub_agent"];
+/// flag fences *where* they may write (clause B) and takes the shell away from
+/// *this* agent, and `--read` is still the way to stop writes.
+pub(crate) const RESTRICTED_REMOVED_TOOLS: &[&str] = &["bash"];
 
 /// Fold `RESTRICTED_REMOVED_TOOLS` into whatever disallow list the user already
 /// has. Pure, so the rule is table-testable without building an agent.
@@ -1696,11 +1716,17 @@ pub(crate) fn restricted_mode_note(effects: &RestrictedEffects, plain: bool) -> 
     let removed = RESTRICTED_REMOVED_TOOLS.join(", ");
     if plain {
         msg.push_str(&format!(
-            "\n{bullet} command-running tools removed: {removed} (file tools remain; use --read to stop writes)"
+            "\n{bullet} command-running tools removed from this agent: {removed} (file tools remain; use --read to stop writes)"
+        ));
+        msg.push_str(&format!(
+            "\n{bullet} NOT a sandbox: a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
         ));
     } else {
         msg.push_str(&format!(
-            "\n{bullet} command-running tools removed — {removed} (file tools remain; use --read to stop writes)"
+            "\n{bullet} command-running tools removed from this agent — {removed} (file tools remain; use --read to stop writes)"
+        ));
+        msg.push_str(&format!(
+            "\n{bullet} NOT a sandbox — a dispatched sub_agent builds its own bash, so command execution is still one sub_agent hop away (#887)"
         ));
     }
 
@@ -5084,12 +5110,13 @@ command = "server-two"
             "no --restricted: a user's list must pass through byte-identically"
         );
 
-        // The fix itself: both command-running tools are removed.
+        // The fix itself: the command-running tool is removed. `sub_agent` is
+        // deliberately NOT here — see `restricted_list_excludes_the_tool_the_
+        // filter_cannot_reach` for the mechanism and #887 for the remedy.
         assert_eq!(
             restricted_disallowed_tools(&[], true),
-            s(&["bash", "sub_agent"]),
-            "--restricted must remove bash AND sub_agent — removing bash alone \
-             is a fence with a gate in it, since a sub-agent builds its own bash"
+            s(&["bash"]),
+            "--restricted must remove bash from this agent"
         );
 
         // Rule 1 — UNION, never replacement. This is the safety property: a
@@ -5097,20 +5124,51 @@ command = "server-two"
         // living inside, the one direction a safety flag must never move.
         assert_eq!(
             restricted_disallowed_tools(&s(&["web_search", "todo"]), true),
-            s(&["web_search", "todo", "bash", "sub_agent"]),
+            s(&["web_search", "todo", "bash"]),
             "every entry the user passed must survive alongside the new ones"
         );
 
-        // Rule 2 — deduplicate, in both orders and for both names.
+        // Rule 2 — deduplicate. Both orders: the name already present at the
+        // end, and already present with other entries after it, so a dedup that
+        // only checked the tail would fail the second row.
         assert_eq!(
             restricted_disallowed_tools(&s(&["bash"]), true),
-            s(&["bash", "sub_agent"]),
+            s(&["bash"]),
             "--restricted --disallowed-tools bash must not emit bash twice"
         );
         assert_eq!(
-            restricted_disallowed_tools(&s(&["sub_agent", "bash"]), true),
-            s(&["sub_agent", "bash"]),
+            restricted_disallowed_tools(&s(&["bash", "web_search"]), true),
+            s(&["bash", "web_search"]),
             "already-complete list: nothing added, nothing reordered"
+        );
+    }
+
+    #[test]
+    fn restricted_list_excludes_the_tool_the_filter_cannot_reach() {
+        // The ratchet on the const, and the reason it is a test rather than a
+        // comment: `sub_agent` was on this list for one revision and was INERT.
+        // The list's only consumer is the retain in `AgentConfig::build_agent`
+        // (src/agent_builder.rs:908), and the sub-agent tool is pushed *after*
+        // it, unconditionally, at :936 — that file's own comment at :880 says
+        // `disallowed_tools` "couldn't catch" it. So the entry filtered nothing
+        // while the help text and the startup note both claimed it had, which is
+        // a false confinement claim on a security flag: worse than the gap.
+        //
+        // Re-adding it is only correct once #887 moves the filter past that push
+        // AND teaches `build_sub_agent_tool` about the list. Until then this
+        // fails, so the next session meets the mechanism instead of the name.
+        assert!(
+            !RESTRICTED_REMOVED_TOOLS.contains(&"sub_agent"),
+            "sub_agent is filtered before it is added (agent_builder.rs:908 vs :936), \
+             so listing it confines nothing — fix #887 first, then add it here"
+        );
+
+        // Anti-vacuous: an empty const would satisfy the assertion above by
+        // having nothing to check, which is this defect wearing the opposite
+        // sign and is quieter than the bug.
+        assert!(
+            RESTRICTED_REMOVED_TOOLS.contains(&"bash"),
+            "the list must still remove the shell — that half does reach the filter"
         );
     }
 
