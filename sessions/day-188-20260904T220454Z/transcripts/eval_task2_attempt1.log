@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this diff against the task description.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git diff…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_lint" tests/mo… ✓ (3ms)
+ ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_lint.rs && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "834" CLAUDE.md && grep … ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test ca… ✓ (1.0s)
+  5 tools completed in 21.8s (5 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The gate output is the self-verifying evidence: 2 spawner(s) DERIVED (count_tests_via_cargo, probe_audit_tool); 0 test(s) reach one, 0 registered as debt — the conversion and the register deletion landed together (converting without deleting fires the ratchet; deleting without converting fires branch 1). The derivation also followed the split automatically (security_audit_command → probe_audit_tool), which is what "derived rather than hand-written" buys.
+
+Now the docs check:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD --name-only… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1m 27s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 45s (2 ✓)
+
+Verdict: FAIL — on docs only; the engineering is sound.
+
+What landed correctly (and is genuinely good work):
+• The split follows the established handle_evolution_with / added_ts discipline: a wrapper that only injects probe_audit_tool, and a pure security_audit_command_with that shells nothing.
+• Probe **laziness and order are preserved and newly pinned** — Node/Java probe nothing, Python asks `safety` only after `pip-audit` says no. That's the regression an injected resolver makes easy and invisible, and it was guarded.
+• All 8 tests now assert the actual command on both sides of each discriminator instead of accommodating whichever answer the machine gave. Python precedence with both tools installed was never pinned before and now is.
+• Step 2 self-verified exactly as designed: cargo test --test cargo_spawning_tests prints 2 spawner(s) DERIVED (count_tests_via_cargo, probe_audit_tool); 0 test(s) reach one, 0 registered as debt — the ratchet would have fired on either half alone.
+• Keeping the program names as literals inside probe_audit_tool is the right call and is commented as such: routing them through a variable would have made the cargo spawn invisible to the gate, laundering the defect past the check.
+• Dropping the !register.is_empty() clause is defensible, not a weakened assertion — the anti-vacuous branch asserts on the derived spawner set, branch 1 catches a deleted-without-converting entry, and REGISTERED_ORPHANS ships empty for the same reason. The doc comment argues it rather than assuming it.
+
+Why it still fails: the task's ## Docs section was an explicit deliverable, and CLAUDE.md is untouched. It now asserts, in the paragraph describing this exact gate:
+
+• `security_audit_command as the derived spawner — a **dead symbol**; the gate's own census says probe_audit_tool`.
+• "8 tests reach one; 8 registered as debt" — now 0 and 0.
+• "#834's option 1 (the injected-resolver split) is the follow-up, not this task" — a false status claim about the fix that just shipped.
+
+That's the stale-claim shape this repo has paid for repeatedly, in the one file re-injected as authoritative context every session. The fix is one superseded-claim paragraph in the same style already used a dozen times in that document — small, and it is the difference between a payment and a payment the next agent can't see.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

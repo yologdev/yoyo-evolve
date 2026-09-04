@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the script to understand what I'm working with.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_splice_candidates\|… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '770,1100p' scripts/count… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '936,1000p' scripts/count… ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "^… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1117,1145p;1190,1235p;13… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '665,720p;1100,1117p' scr… ✓ (4ms)
+  3 tools completed in 8.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have enough understanding now. Let me write the classifier first (Step 1), placed right after src_splice_candidates.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1093,1100p' scripts/coun… ✓ (4ms)
+  ▶ edit scripts/counterfactual_green.py (8 → 104 lines)
+            seen.add(p)
+            out.append(p)
+        return out
+  + 
+  + 
+  + # Three states for "could a src+tests counterfactual read this commit at all?", and none
+  + # is folded into another. Day 188, #870. `UNKNOWN` exists because folding it into `NONE`
+  + # UNDERSTATES the reachable population, which is the flattering direction — it would make
+  + # widening the census look less worthwhile than it is, and the whole point of this
+  + # measurement is to decide whether widening is worth doing.
+  + SRC_TESTS_READABLE = "SRC_TESTS_READABLE"
+  + SRC_TESTS_NONE = "SRC_TESTS_NONE"
+  + SRC_TESTS_UNKNOWN = "SRC_TESTS_UNKNOWN"
+  + 
+  + 
+  + def classify_src_test_readability(rows, has_parent_test_module) -> str:
+  +     """Could a src+tests counterfactual read this commit? Pure; the resolver is injected.
+  + 
+  +     Day 188, #870. `rows` are `(status, path)` pairs from
+  +     `git diff --name-status <parent> <sha> -- src/`; `has_parent_test_module(path)` answers
+  ... (82 more lines)
+ ✓ (1m 15s)
+            seen.add(p)
+            out.append(p)
+        return out
+  + 
+  + 
+  + # Three states for "could a src+tests counterfactual read this commit at all?", and none
+  + # is folded into another. Day 188, #870. `UNKNOWN` exists because folding it into `NONE`
+  + # UNDERSTATES the reachable population, which is the flattering direction — it would make
+  ... (13 more lines)
+  2 tools completed in 1m 45s (2 ✓)
+
+Now the table test for it — built and seen green alone before any wiring.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_splice_candidates\|… ✓ (6ms)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4004,4020p' scripts/coun… ✓ (4ms)
+  ▶ edit scripts/counterfactual_green.py (3 → 86 lines)
+        check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
+              src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
+              src_splice_candidates(mixed))
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # #870, Day 188: could a src+tests counterfactual READ this commit at all? Pure, with
+  +     # the parent-module resolver injected, so none of these rows touches git or the disk.
+  +     # ----------------------------------------------------------------------------------
+  + 
+  +     def _yes(_p):
+  +         return True
+  + 
+  +     def _no(_p):
+  +         return False
+  + 
+  +     def _dunno(_p):
+  +         return None
+  + 
+  +     # ANTI-VACUOUS, AND ASSERTED FIRST: a row set that genuinely contains a modified
+  +     # src/*.rs with a parent test module must come back READABLE. A classifier that finds
+  ... (66 more lines)
+ ✓ (1m 14s)
+        check("splice-select: mixed diff keeps M src/*.rs only, ordered and deduped",
+              src_splice_candidates(mixed) == ["src/b.rs", "src/a.rs"],
+              src_splice_candidates(mixed))
+  + 
+  +     # ----------------------------------------------------------------------------------
+  +     # #870, Day 188: could a src+tests counterfactual READ this commit at all? Pure, with
+  +     # the parent-module resolver injected, so none of these rows touches git or the disk.
+  +     # ----------------------------------------------------------------------------------
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (68ms)
+  3 tools completed in 1m 39s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Step 1 is green alone. Now Step 2 — the I/O half and the fold. Let me find the argparse and census call site.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--census"\|"--deepen"\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2340,2365p;2424,2465p' s… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^def commit_test_diff_s… ✓ (3ms)
+  3 tools completed in 5.9s (3 ✓)
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1510,1516p' scripts/coun… ✓ (3ms)
+  ▶ edit scripts/counterfactual_green.py (6 → 135 lines)
+        if rc != 0:
+            return SHAPE_UNKNOWN
+        return classify_test_diff_shape(parse_name_status(out))
+  + 
+  + 
+  + def commit_src_test_readability(root: str, sha: str) -> str:
+  +     """The I/O half of the #870 measurement: is THIS commit readable at src+tests depth?
+  + 
+  +     Day 188. Returns one of `SRC_TESTS_READABLE` / `SRC_TESTS_NONE` / `SRC_TESTS_UNKNOWN`.
+  + 
+  +     EVERY PIECE HERE ALREADY EXISTED — this reuses and never re-derives. `run_cmd` issues
+  +     the diff, `parse_name_status` parses it, `src_splice_candidates` scopes it,
+  +     `test_module_start` answers the parent-module question, and
+  +     `classify_src_test_readability` decides. No third scanner (#835 already refuses a
+  +     third copy of a brace scanner), and no second `src/*.rs` predicate.
+  + 
+  +     A `<sha>^` that does not resolve — a root commit, or a shallow-clone boundary — is
+  +     `SRC_TESTS_UNKNOWN`, not a crash and not a fallback into either real bucket.
+  + 
+  +     THE RESOLVER IS THE EXPENSIVE HALF and it is lazy by construction: the classifier
+  ... (115 more lines)
+ ✓ (1m 14s)
+        if rc != 0:
+            return SHAPE_UNKNOWN
+        return classify_test_diff_shape(parse_name_status(out))
+  + 
+  + 
+  + def commit_src_test_readability(root: str, sha: str) -> str:
+  +     """The I/O half of the #870 measurement: is THIS commit readable at src+tests depth?
+  + 
+  ... (13 more lines)
+  2 tools completed in 1m 48s (2 ✓)
+
+Now the --src-census flag and its call site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/counterfactual_green.py (3 → 12 lines)
+        parser.add_argument(
+            "--limit", type=int, metavar="N", help="census: only the last N task commits"
+  +     )
+  +     parser.add_argument(
+  +         "--src-census",
+  +         action="store_true",
+  +         help=(
+  +             "with --census: also measure how many fix-loop NO_TEST_CHANGE commits a "
+  +             "src+tests counterfactual could read (#870). Default off; a plain --census "
+  +             "run is byte-identical without it. Enters no denominator."
+  +         ),
+        )
+ ✓ (1m 15s)
+        parser.add_argument(
+            "--limit", type=int, metavar="N", help="census: only the last N task commits"
+  +     )
+  +     parser.add_argument(
+  +         "--src-census",
+  +         action="store_true",
+  +         help=(
+  +             "with --census: also measure how many fix-loop NO_TEST_CHANGE commits a "
+  ... (4 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

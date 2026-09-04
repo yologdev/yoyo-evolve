@@ -1,0 +1,135 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the file to see what landed and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src_census\|SRC_TESTS\|… ✓ (4ms)
+ ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1500,1660p scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2440,2620p scripts/counte… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1601,1650p scripts/counte…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^LIMITS" scripts/counte… ✓ (4ms)
+ ✓ (7ms)
+  6 tools completed in 10.8s (6 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2009,2075p' scripts/coun…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1611,1636p' scripts/coun… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.9s (2 ✓)
+
+Now I'll wire the flag into the --census branch — that's the missing STEP 2.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 13 lines)
+            print(render_census(rows, summary, window, args.limit, note,
+                                shape_split=shape_split))
+  +         # #870, Day 188: the src+tests readability measurement. DEFAULT OFF, and the
+  +         # branch is the whole regression guard -- without the flag not one byte of the
+  +         # census above or below changes, which is what every prior session's figures
+  +         # were read from. The resolver is injected here, at the ONE call site, so
+  +         # `src_census_fix_loop` stays pure and table-testable with no git.
+  +         if args.src_census:
+  +             src_counts = src_census_fix_loop(
+  +                 rows, lambda sha: commit_src_test_readability(root, sha)
+  +             )
+  +             print(render_src_census(src_counts, window))
+            status = 0
+ ✓ (1m 14s)
+            print(render_census(rows, summary, window, args.limit, note,
+                                shape_split=shape_split))
+  +         # #870, Day 188: the src+tests readability measurement. DEFAULT OFF, and the
+  +         # branch is the whole regression guard -- without the flag not one byte of the
+  +         # census above or below changes, which is what every prior session's figures
+  +         # were read from. The resolver is injected here, at the ONE call site, so
+  +         # `src_census_fix_loop` stays pure and table-testable with no git.
+  +         if args.src_census:
+  ... (5 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "if not args.census and … ✓ (3ms)
+  2 tools completed in 1m 19s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2550,2560p' scripts/coun… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (3 → 15 lines)
+        if not args.census and not args.commit and args.max_runs is None:
+            parser.print_help()
+  +         return 2
+  + 
+  +     # A flag that is accepted and then silently does nothing is the "capability with a
+  +     # description and no consumer" shape this repo has reverted tasks over. --src-census
+  +     # rides on the census walk, so without --census there is nothing to ride: say so
+  +     # rather than exiting 0 having measured nothing. Same refusal as --resume/--record.
+  +     if args.src_census and not args.census:
+  +         print(
+  +             "--src-census needs --census: it counts rows from the census walk, so "
+  +             "there is nothing for it to scan on its own.",
+  +             file=sys.stderr,
+  +         )
+            return 2
+ ✓ (1m 15s)
+        if not args.census and not args.commit and args.max_runs is None:
+            parser.print_help()
+  +         return 2
+  + 
+  +     # A flag that is accepted and then silently does nothing is the "capability with a
+  +     # description and no consumer" shape this repo has reverted tasks over. --src-census
+  +     # rides on the census walk, so without --census there is nothing to ride: say so
+  +     # rather than exiting 0 having measured nothing. Same refusal as --resume/--record.
+  ... (7 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 21s (2 ✓)
+
+Now the LIMITS entry the task asked for:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/counterfactual_green.py (4 → 10 lines)
+      8. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
+         the whole reachable log can span a day or two rather than the weeks a commit count
+         suggests. The window line above states the depth measured; read it, don't infer it.
+  +   9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
+  +      fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
+  +      verdict, no ledger row, no census figure and no --max-runs selection: those commits
+  +      are still NOT selected, because selection runs UPSTREAM of depth. It is the number
+  +      the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
+  +      widening is the half that can manufacture a false denominator.
+    """
+ ✓ (1m 14s)
+      8. A WINDOW IN COMMITS IS NOT A WINDOW IN TIME. This harness runs on a shallow clone, so
+         the whole reachable log can span a day or two rather than the weeks a commit count
+         suggests. The window line above states the depth measured; read it, don't infer it.
+  +   9. --src-census ENTERS NO DENOMINATOR (#870, Day 188). Its three counts measure how many
+  +      fix-loop NO_TEST_CHANGE commits a src+tests counterfactual COULD read. They change no
+  +      verdict, no ledger row, no census figure and no --max-runs selection: those commits
+  +      are still NOT selected, because selection runs UPSTREAM of depth. It is the number
+  +      the NEXT decision -- whether to widen what counts as behavioural -- gets made on, and
+  +      widening is the half that can manufacture a false denominator.
+    """
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (65ms)
+ ✓ (67ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/counterfactual_g… ✓ (134ms)
+  4 tools completed in 10.6s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:scripts/counterfac… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 /tmp/cg_old.py --census … ✓ (269ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "--- stdout diff hunks:"; d… ✓ (10ms)
+  3 tools completed in 22.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 python3 scripts/coun… ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/SRC+TESTS READABILITY/,… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/SRC\+TESTS READABILITY/,/^… ✓ (5ms)
+  3 tools completed in 14.3s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

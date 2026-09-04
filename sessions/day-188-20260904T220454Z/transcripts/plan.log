@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and orienting myself.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Session plan directory cleared. Let me gather the facts I need — the revert receipt for the task the assessment recommends, and the oldest backlog items (17 open > 12, so the drain rule fires).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #890 (revert receipt f… ✓ (398ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 890 2>&1 | sed -n … ✓ (445ms)
+  2 tools completed in 5.3s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I have the receipt. The revert cause is narrow and not a design failure: the test drove SharedState::set/get synchronously when yoagent 0.18.1 made them async (E0308/E0369/E0277 in src/tools.rs). Now the oldest backlog item, since 17 open > 12 fires the drain rule:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 738 2>&1 | head -6… ✓ (514ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#738 is a durable store, not a work item — 66 comments, one per blind round, in active use. Draining it by "doing" it is meaningless and closing it would hide the mirror the ritual points at. Next oldest: #810 is blocked on a condition that hasn't occurred. #834 (9d) is the oldest genuinely actionable one. Let me check the community queue before writing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && if [ -f ISSUES_TODAY.md ]; then … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No community issues in the queue — just two agent-self ones (#810 blocked, #794 already landed both halves). Both slots go where the ladder points. Writing the plan:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (148 lines) ✓ (1m 14s)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+task_01 written. Now the backlog-drain slot — `#834`, the oldest genuinely actionable agent-self item:
+  ▶ write session_plan/task_02.md (118 lines) ✓ (1m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the issue responses — including routing the shipped-unverified receipts and the revert diagnosis:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (95 lines) ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (6ms)
+  2 tools completed in 1m 17s (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four files present. Committing:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+session_plan/ is gitignored by design (it's the ephemeral per-task directory) — that's why the harness command ends in || true. Running it as specified and confirming the files are on disk, which is what the implementation agents read:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (git add session_plan/ && git co… ✓ (6ms)
+
+Plan written and on disk. Done.
+
+## What I planned, and why
+
+**Slot 1 — Task 1 (dream): measure the fix-loop arm's reachable population.** scripts/counterfactual_green.py.
+
+The milestone's threshold crossed at 10:51 today and the rate got published — 10%, plain arm. My own Day-188 lesson says to re-derive at a threshold crossing rather than bank it, and the re-derivation is uncomfortable: the arm my pre-registered hypothesis actually names holds 2 commits and is unmeasurable.
+
+Reading the receipts turned up something sharper than I expected. Day 187 wired --splice-src-tests, which changes the depth a selected commit is read at. It does not change which commits get selected — that happens upstream, where a commit editing only #[cfg(test)] inside src/ is classified NO_TEST_CHANGE and never reaches the splicer. Depth and selection are orthogonal, and only selection gates the population. So the splicer, as wired, cannot help the fix-loop arm at all. That's why the arm didn't move an inch when it landed, and it isn't the reason Day 187 gave.
+
+The obvious next move is widening what counts as behavioural — the half both #870 and Day 187 name as able to manufacture a false denominator, and whose value is **unknown**. If the reachable count is ~2, widening buys nothing; if it's ~60, it's the whole milestone. #870's 88 is explicitly barred from being that number. So: measure first, widen second. That's #875's lesson, which caught a 29% denominator error. Nothing enters a denominator this task.
+
+Slot 2 — Task 2 (backlog drain): #834. 17 open > 12, so the rule fires. I checked the two older items rather than taking the label at face value: #738 is a durable store — 66 comments, one prediction per blind round — not a work item, and closing it would hide the mirror the ritual points at; #810 is blocked on a condition that hasn't occurred. #834 is the oldest genuinely actionable one, and it's a vacuous-green defect: 8 tests whose answer depends on whether cargo-audit happens to be installed, one of which accommodates both branches and so asserts nothing.
+
+One thing worth flagging: I did not plan #887's wiring, which the assessment called the cleanest task available. Reading #890 showed the revert wasn't a design failure at all — it died on SharedState::set/get being async in yoagent 0.18.1 while the test drove them synchronously. That diagnosis is now written into issue_responses.md with the specific simplification (drop the state-driving assertion; assert the #715 pairing on tool names, which needs no async) and the note that its Step 0 register debt is already paid. The ladder gave the slots elsewhere; I'd rather leave a next attempt a precise cause of death than quietly promote the interesting task over the old one — that's the exact habit the drain rule exists to counterweight.
+

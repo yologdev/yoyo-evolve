@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the actual code — the function and the register entries — before making any changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "security_audit_command"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTERED_CARGO_SPAWNI… ✓ (6ms)
+ ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,680p' src/commands_l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1470,1590p' src/commands… ✓ (4ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 25.1s (4 ✓)
+
+Now let me read the gate's derivation and its call matcher — the rename plan depends on whether matching is boundary-aware.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn calls_directly" -A 4…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CARGO_SPAWN\|fn derive\… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "--- …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,340p' tests/cargo_sp… ✓ (3ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 25s (2 ✓)
+
+Tree is clean. Let me check two things that constrain the design: the register's own non-empty assertion, and spawns_cargo's exact matching.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1060p' tests/cargo_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,370p' tests/cargo_sp… ✓ (6ms)
+ ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawners.is_empty()\|an…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,740p' tests/cargo_sp… ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 22.5s (4 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now I have what I need. Let me make the first concrete change — the injected-resolver split.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '604,626p' src/commands_l… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=604 && NR<=680' src/com… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '670,678p' src/commands_l… ✓ (4ms)
+  3 tools completed in 7.1s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The function spans 604–675. Let me replace it with the wrapper + pure core.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (131 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '598,610p' src/commands_l… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '724,730p' src/commands_l… ✓ (10.7s)
+  3 tools completed in 18.7s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Build is green. Now STEP 2 — convert the 8 tests to drive the pure core in both directions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn security_audit_comma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1526,1530p' src/commands… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (233 lines) ✓ (27ms)
+  3 tools completed in 40.9s (3 ✓)
+
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo security_a… ✓ (27.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo the_audit_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test cargo_spawning… ✓ (11.3s)
+ ✓ (12.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 54.1s (3 ✓)
+
+The ratchet fired on exactly 8 — that's the evidence both halves landed. Now delete exactly those entries.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (20ms)
+
+  watch: no files changed this turn — skipping
+
